@@ -64,7 +64,7 @@ function Caption({ children, testId }: { children: ReactNode; testId?: string })
  *  month NUMBERS (unique, <= 2 chars). Unmeasured (width 0) is treated as wide. */
 const NARROW_HEATMAP_PX = 520;
 
-function MonthHeatmap({ cells, rows, months }: { cells: HeatCell[]; rows: string[]; months: MonthKey[] }) {
+function MonthHeatmap({ cells, rows, rowLabels, months }: { cells: HeatCell[]; rows: string[]; rowLabels: Record<string, string>; months: MonthKey[] }) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const narrow = width > 0 && width < NARROW_HEATMAP_PX;
   const labels = narrow ? months.map((m) => String(Number(m.slice(5, 7)))) : heatmapColLabels(months);
@@ -74,6 +74,7 @@ function MonthHeatmap({ cells, rows, months }: { cells: HeatCell[]; rows: string
       <Heatmap
         cells={cells.map((c) => ({ ...c, col: labelOf.get(c.col) ?? c.col }))}
         rows={rows}
+        rowLabels={rowLabels}
         cols={labels}
         height={Math.min(420, 30 + 28 * rows.length)}
         valueFormat={fmtSigned}
@@ -274,6 +275,7 @@ export function ExpensesView() {
   // Portfolio-only views: heatmap + small-multiples.
   let cards: SparkCardModel[] = [];
   let heatRows: string[] = [];
+  let heatLabels: Record<string, string> = {};
   let heatData: ReturnType<typeof heatmapCells> = [];
   if (isAll) {
     for (const id of loadedIds) {
@@ -312,12 +314,9 @@ export function ExpensesView() {
       return rb - ra || a.name.localeCompare(b.name);
     });
     const live = cards.filter((c) => !c.unavailable);
-    heatRows = live.map((c) => c.name);
-    const idOf = new Map(live.map((c) => [c.id, c.name]));
-    heatData = heatmapCells(points, live.map((c) => c.id), windowMonths, WINDOW).map((c) => ({
-      ...c,
-      row: idOf.get(c.row) ?? c.row,
-    }));
+    heatRows = live.map((c) => c.id);
+    heatLabels = Object.fromEntries(live.map((c) => [c.id, c.name]));
+    heatData = heatmapCells(points, live.map((c) => c.id), windowMonths, WINDOW);
   }
 
   const latestLabel = monthLabel(latest);
@@ -374,7 +373,7 @@ export function ExpensesView() {
           <Card>
             <CardHeader title="Variance vs own trailing-12 average" />
             <div className="p-3">
-              <MonthHeatmap cells={heatData} rows={heatRows} months={windowMonths} />
+              <MonthHeatmap cells={heatData} rows={heatRows} rowLabels={heatLabels} months={windowMonths} />
             </div>
           </Card>
           <Caption>Red = above own trailing-12 average (more spend), green = below; hatched = not enough history.</Caption>

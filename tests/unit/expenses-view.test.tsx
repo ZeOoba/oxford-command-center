@@ -20,8 +20,8 @@ const hook = vi.hoisted(() => ({
 vi.mock('../../src/modules/portfolio/expenses-hooks', () => ({ useExpensesMonthly: () => hook.result }));
 vi.mock('../../src/lib/useCountUp', () => ({ useCountUp: (t: number | null) => t ?? 0 }));
 vi.mock('../../src/charts/Heatmap', () => ({
-  Heatmap: (p: { rows: string[]; cols: string[]; cells: unknown[]; ariaLabel?: string }) => (
-    <div data-testid="heatmap" aria-label={p.ariaLabel} data-rows={JSON.stringify(p.rows)} data-cols={JSON.stringify(p.cols)} data-cells={JSON.stringify(p.cells)} />
+  Heatmap: (p: { rows: string[]; rowLabels?: Record<string, string>; cols: string[]; cells: unknown[]; ariaLabel?: string }) => (
+    <div data-testid="heatmap" data-row-labels={JSON.stringify(p.rowLabels ?? {})} aria-label={p.ariaLabel} data-rows={JSON.stringify(p.rows)} data-cols={JSON.stringify(p.cols)} data-cells={JSON.stringify(p.cells)} />
   ),
 }));
 vi.mock('../../src/charts/StackedBarChart', () => ({
@@ -263,15 +263,16 @@ describe('ExpensesView charts', () => {
 
   it('heatmap rows are sorted worst-first (largest positive variance first, null last); mixed-basis and Residence excluded', () => {
     renderView();
-    expect(attr('heatmap', 'data-rows')).toEqual(['Alpha Commons', 'Beta Park', 'Gamma Yard']);
+    expect(attr('heatmap', 'data-rows')).toEqual(['a', 'b', 'c']);
+    expect(attr('heatmap', 'data-row-labels')).toMatchObject({ a: 'Alpha Commons', b: 'Beta Park', c: 'Gamma Yard' });
     expect(attr('heatmap', 'data-cols')).toHaveLength(12);
     expect(screen.getByTestId('heatmap').getAttribute('aria-label')).toBeTruthy();
     const cells = attr('heatmap', 'data-cells') as Array<{ row: string; col: string; value: number | null }>;
-    const alpha = cells.find((c) => c.row === 'Alpha Commons' && c.col === 'Sep')!;
+    const alpha = cells.find((c) => c.row === 'a' && c.col === 'Sep')!;
     expect(alpha.value).toBeCloseTo(0.2, 6);
-    const beta = cells.find((c) => c.row === 'Beta Park' && c.col === 'Sep')!;
+    const beta = cells.find((c) => c.row === 'b' && c.col === 'Sep')!;
     expect(beta.value).toBeCloseTo(-0.2, 6);
-    expect(cells.find((c) => c.row === 'Gamma Yard' && c.col === 'Sep')!.value).toBeNull();
+    expect(cells.find((c) => c.row === 'c' && c.col === 'Sep')!.value).toBeNull();
   });
 
   it('small-multiples are ordered worst-first and the mixed-basis entity is "unavailable — mixed basis"', () => {
@@ -307,7 +308,7 @@ describe('ExpensesView narrow heatmap', () => {
     renderView();
     expect(attr('heatmap', 'data-cols')).toEqual(['10', '11', '12', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
     const cells = attr('heatmap', 'data-cells') as Array<{ row: string; col: string; value: number | null }>;
-    expect(cells.find((c) => c.row === 'Alpha Commons' && c.col === '9')!.value).toBeCloseTo(0.2, 6);
+    expect(cells.find((c) => c.row === 'a' && c.col === '9')!.value).toBeCloseTo(0.2, 6);
     expect(screen.getByText(/Columns are months/)).toBeTruthy();
   });
 });
@@ -459,7 +460,8 @@ describe('ExpensesView movers and ordering robustness', () => {
     setData({ points, coverage: { propertiesLoaded: 4, propertiesExpected: 4, firstMonth: '2025-08', lastMonth: LATEST } });
     renderView();
     expect(screen.getAllByTestId('spark-card').map((c) => c.getAttribute('data-property'))).toEqual(['a', 'b', 'c', 'd']);
-    expect(attr('heatmap', 'data-rows')).toEqual(['Alpha Commons', 'Beta Park', 'Gamma Yard']);
+    expect(attr('heatmap', 'data-rows')).toEqual(['a', 'b', 'c']);
+    expect(attr('heatmap', 'data-row-labels')).toMatchObject({ a: 'Alpha Commons', b: 'Beta Park', c: 'Gamma Yard' });
   });
 });
 
@@ -531,5 +533,16 @@ describe('ExpensesView fold bucket never collides with a real Other category', (
       expect(d.segments.find((s) => s.key === 'Other')!.value).toBe(700);
       expect(d.segments.find((s) => s.key === 'Other (rest)')!.value).toBe(300);
     }
+  });
+});
+
+describe('ExpensesView heatmap rows keyed by id', () => {
+  it('two properties with the same display name stay separate rows', () => {
+    const qc = seededClient((() => { const s = snapshot(); s.properties = s.properties.map((p) => (p.id === 'b' ? { ...p, name: 'Alpha Commons' } : p)); return s; })());
+    render(tree(qc));
+    expect(attr('heatmap', 'data-rows')).toEqual(['a', 'b', 'c']);
+    const cells = attr('heatmap', 'data-cells') as Array<{ row: string; col: string; value: number | null }>;
+    expect(cells.find((c) => c.row === 'a' && c.col === 'Sep')!.value).toBeCloseTo(0.2, 6);
+    expect(cells.find((c) => c.row === 'b' && c.col === 'Sep')!.value).toBeCloseTo(-0.2, 6);
   });
 });

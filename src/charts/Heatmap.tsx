@@ -10,7 +10,10 @@ export interface HeatCell {
 
 interface Props {
   cells: HeatCell[];
+  /** Row ids (cells reference these). Must be unique. */
   rows: string[];
+  /** Optional display labels by row id; default is the id. Labels may repeat across rows. */
+  rowLabels?: Record<string, string>;
   cols: string[];
   height?: number;
   valueFormat?: (n: number) => string;
@@ -38,11 +41,12 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(1,
 /** Diverging variance heatmap. Values above 0 shade toward the negative/alert token (expense
  *  overrun), values below 0 toward the positive token, 0 is neutral. null / missing cells render a
  *  hatched dashed "no data" cell and are never coloured as zero. Duplicate (row, col) cells: last wins. */
-export function Heatmap({ cells, rows, cols, height = 260, valueFormat, domain, ariaLabel }: Props) {
+export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueFormat, domain, ariaLabel }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<HoverState | null>(null);
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const patternId = `hm-nodata-${uid}`;
+  const labelOf = (id: string) => rowLabels?.[id] ?? id;
   const fmt = (n: number) => (valueFormat ? valueFormat(n) : String(n));
 
   // Last duplicate wins; non-finite values are treated as no data.
@@ -101,8 +105,8 @@ export function Heatmap({ cells, rows, cols, height = 260, valueFormat, domain, 
                 dominantBaseline="central"
                 style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fill: 'var(--text-secondary)' }}
               >
-                <title>{row}</title>
-                {clip(row, 14)}
+                <title>{labelOf(row)}</title>
+                {clip(labelOf(row), 14)}
               </text>
               {cols.map((col, ci) => {
                 const v = byKey.get(`${row}\u0000${col}`) ?? null;
@@ -176,7 +180,7 @@ export function Heatmap({ cells, rows, cols, height = 260, valueFormat, domain, 
           }}
         >
           <div style={{ color: 'var(--text-tertiary)' }}>
-            {hover.row} · {hover.col}
+            {labelOf(hover.row)} · {hover.col}
           </div>
           <div className="num" style={{ color: 'var(--text-primary)' }}>
             {hoverVal === null ? 'no data' : fmt(hoverVal)}

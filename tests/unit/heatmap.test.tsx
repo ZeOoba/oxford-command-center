@@ -181,3 +181,25 @@ describe('Heatmap', () => {
     expect(queryByTestId('heatmap-tooltip')).toBeNull();
   });
 });
+
+describe('Heatmap rowLabels', () => {
+  it('two row ids with the SAME display label render two separate rows with their own values', () => {
+    const cells: HeatCell[] = [
+      { row: 'id-1', col: 'Jan', value: 0.1 },
+      { row: 'id-2', col: 'Jan', value: -0.2 },
+    ];
+    const { container } = render(<Heatmap rows={['id-1', 'id-2']} cols={['Jan']} cells={cells} rowLabels={{ 'id-1': 'Same Name', 'id-2': 'Same Name' }} />);
+    expect(cellEls(container)).toHaveLength(2);
+    expect(cell(container, 'id-1', 'Jan').getAttribute('data-value')).toBe('0.1');
+    expect(cell(container, 'id-2', 'Jan').getAttribute('data-value')).toBe('-0.2');
+    const labels = [...container.querySelectorAll('svg title')].map((t) => t.textContent);
+    expect(labels).toEqual(['Same Name', 'Same Name']);
+  });
+
+  it('labels default to the id and the tooltip uses the label', () => {
+    const { container } = render(<Heatmap rows={['id-1', 'x']} cols={['Jan']} cells={[{ row: 'id-1', col: 'Jan', value: 0.1 }]} rowLabels={{ 'id-1': 'Pretty' }} />);
+    expect([...container.querySelectorAll('svg title')].map((t) => t.textContent)).toEqual(['Pretty', 'x']);
+    fireEvent.mouseMove(cell(container, 'id-1', 'Jan'));
+    expect(container.textContent).toContain('Pretty · Jan');
+  });
+});
