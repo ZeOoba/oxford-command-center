@@ -5,3 +5,4 @@ export * from './property-basis';
 export * from './debt-basis';
 export * from './conditions';
 export * from './lease-forecast';
+export * from './portfolio-trends';

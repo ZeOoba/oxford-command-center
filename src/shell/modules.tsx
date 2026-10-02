@@ -24,12 +24,13 @@ import { LEASING_TABS } from '@/modules/leasing/tabs';
 import { BRAIN_TABS } from '@/modules/command-brain/tabs';
 import { ACQUISITIONS_TABS } from '@/modules/acquisitions/tabs';
 import { LEASE_MARKET_TABS } from '@/modules/lease-market/tabs';
+import { PORTFOLIO_TABS } from '@/modules/portfolio/tabs';
 import type { ModuleTabDef } from './tab-types';
 
 // Each module is its own code-split chunk — only the active one loads.
 const OverviewModule = lazy(() => import('@/modules/overview/OverviewModule').then((m) => ({ default: m.OverviewModule })));
 const AcquisitionsModule = lazy(() => import('@/modules/acquisitions/AcquisitionsModule').then((m) => ({ default: m.AcquisitionsModule })));
-const PortfolioModule = lazy(() => import('@/modules/portfolio/PortfolioModule').then((m) => ({ default: m.PortfolioModule })));
+const PortfolioDestination = lazy(() => import('@/modules/portfolio/PortfolioDestination').then((m) => ({ default: m.PortfolioDestination })));
 const ObligationsModule = lazy(() => import('@/modules/obligations/ObligationsModule').then((m) => ({ default: m.ObligationsModule })));
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
@@ -63,7 +64,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule, tabs: ACQUISITIONS_TABS },
   { id: 'worklist', label: 'Worklist', icon: CheckSquare, group: 'Command', Component: WorklistModule, tabs: WORKLIST_TABS },
   { id: 'command-brain', label: 'Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule, tabs: BRAIN_TABS },
-  { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
+  { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioDestination, tabs: PORTFOLIO_TABS },
   // Financials — module id stays `intel` so /intel/:propertyId deep links + MODULE_PRIMARY_TYPE keep working.
   { id: 'intel', label: 'Financials', icon: BarChart3, group: 'Assets', Component: IntelModule, tabs: INTEL_TABS },
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule, tabs: LEASING_TABS },
