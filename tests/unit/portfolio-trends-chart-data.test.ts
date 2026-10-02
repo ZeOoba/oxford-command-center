@@ -20,7 +20,7 @@ describe('trends chart data', () => {
     const k = kpiAt(pts, '2026-09');
     expect(k.rent).toBe(1000);
     expect(k.rentMoM).toBeCloseTo(1000 / 900 - 1, 6);
-    expect(k.rentYoY).toBeCloseTo(1000 / 800 - 1, 6);
+    expect('rentYoY' in k).toBe(false);
     expect(k.vacancyMoMPts).toBeCloseTo(3, 6);
     expect(kpiAt([pt('2026-09', 1000, 0.08)], '2026-09').rentMoM).toBeNull();
   });

@@ -98,13 +98,15 @@ function renderView() {
 /** The KPI tile whose label is `label` — scopes value assertions away from chart axis ticks. */
 const tile = (label: string | RegExp) => screen.getByText(label).closest('[class*="rounded"]') as HTMLElement;
 
+const vacTile = () => screen.getAllByText('Vacancy (lease-SF basis)').map((e) => e.closest('[class*="rounded"]') as HTMLElement).find((t) => t.textContent?.includes('workbook occupancy'))!;
+
 describe('TrendsView', () => {
   it('renders the KPI labels and the reconstructed-history badge', () => {
     renderView();
     expect(screen.getByText(/In-place rent \/ mo/)).toBeTruthy();
-    expect(screen.getByText('Vacancy')).toBeTruthy();
+    expect(screen.getAllByText('Vacancy (lease-SF basis)').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Reconstructed from current leases')).toBeTruthy();
-    expect(within(tile('Vacancy')).getByText('25.0%')).toBeTruthy();
+    expect(within(vacTile()).getByText('25.0%')).toBeTruthy();
   });
 
   it('lists each investment property in the scope selector', () => {
@@ -116,18 +118,28 @@ describe('TrendsView', () => {
   it("selecting a property swaps the KPIs to that property's series", async () => {
     renderView();
     fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'b' } });
-    await waitFor(() => expect(within(tile('Vacancy')).getByText('50.0%')).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(within(vacTile()).getByText('50.0%')).toBeTruthy(), { timeout: 3000 });
   });
 
-  it('flags forecast months on the charts', () => {
+  it('labels forward months as contractual roll-off, never forecast', () => {
     renderView();
-    expect(screen.getAllByText(/Forecast after 2026-09/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('Contractual roll-off after 2026-09 · no renewals assumed').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/forecast/i)).toBeNull();
+    expect(screen.getByText(/NO renewals or re-leasing/)).toBeTruthy();
+    expect(screen.getByText(/reconstructed from current leases only/)).toBeTruthy();
+  });
+
+  it('drops the YoY tile and annotates the rent and vacancy tiles', () => {
+    renderView();
+    expect(screen.queryByText(/YoY/)).toBeNull();
+    expect(within(tile(/In-place rent \/ mo/)).getByText('reconstructed · excludes departed tenants')).toBeTruthy();
+    expect(within(vacTile()).getByText(/may differ from workbook occupancy/)).toBeTruthy();
   });
 
   it('renders an empty state, not zero KPIs, when the as-of month is absent from the series', () => {
     force.emptyPortfolio = true;
     renderView();
     expect(screen.getByText('No trend data for the as-of month')).toBeTruthy();
-    expect(screen.queryByText('Vacancy')).toBeNull();
+    expect(screen.queryByText('Vacancy (lease-SF basis)')).toBeNull();
   });
 });

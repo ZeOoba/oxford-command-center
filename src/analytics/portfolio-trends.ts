@@ -28,7 +28,7 @@ export function monthRange(from: MonthKey, to: MonthKey): MonthKey[] {
 export function leaseActive(l: Lease, m: MonthKey): boolean {
   if (!l.leaseStart) return false;
   if (monthOf(l.leaseStart) > m) return false;
-  return l.leaseEnd === null || monthOf(l.leaseEnd) >= m;
+  return l.leaseEnd == null || monthOf(l.leaseEnd) >= m;
 }
 
 /**
@@ -128,7 +128,7 @@ export function buildPortfolioTrend(leases: Lease[], properties: Property[], opt
   const months = monthRange(addMonths(asOfMonth, -(opts.monthsBack ?? 12)), addMonths(asOfMonth, opts.monthsForward ?? 18));
   const props = properties.filter(isInvestmentProperty);
   const ids = new Set(props.map((p) => p.id));
-  const inScope = leases.filter((l) => l.propertyId !== null && ids.has(l.propertyId));
+  const inScope = leases.filter((l) => l.propertyId !== null && ids.has(l.propertyId) && l.status !== 'Vacant');
 
   const byProperty: Record<string, MonthPoint[]> = {};
   for (const p of props) {

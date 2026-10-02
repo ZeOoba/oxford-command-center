@@ -34,6 +34,9 @@ describe('leaseActive', () => {
     expect(leaseActive(lease({ leaseEnd: null }), '2035-01')).toBe(true);
     expect(leaseActive(lease({ leaseStart: null }), '2026-06')).toBe(false);
   });
+  it('treats an undefined end as ongoing', () => {
+    expect(leaseActive(lease({ leaseEnd: undefined as unknown as null }), '2035-01')).toBe(true);
+  });
 });
 
 describe('leaseRent', () => {
@@ -86,6 +89,18 @@ describe('buildPortfolioTrend', () => {
     );
     expect(Object.keys(res.byProperty)).toEqual(['p1']);
     expect(res.portfolio.find((p) => p.month === '2026-03')).toMatchObject({ totalSf: 10000, leaseCount: 1 });
+  });
+  it('excludes Vacant placeholder rows from every count', () => {
+    const v = lease({ id: 'V', status: 'Vacant', sf: 3000, monthlyRent: 700 });
+    const r = buildPortfolioTrend([A, v], [prop({})], opts);
+    expect(r.portfolio.find((p) => p.month === '2026-03')).toMatchObject({ leasedSf: 6000, inPlaceRent: 1000, leaseCount: 1 });
+  });
+  it('pins vacancy to the lease-SF basis, independent of workbook occPct', () => {
+    // occPct says 50% occupied; active leases cover 6000 of 10000 SF -> 40% vacant.
+    const r = buildPortfolioTrend([A], [prop({ occPct: 0.5 })], opts);
+    const cur = r.portfolio.find((p) => p.month === '2026-09')!;
+    expect(cur.vacancyPct).toBeCloseTo((10000 - 6000) / 10000, 9);
+    expect(r.byProperty['p1']!.find((p) => p.month === '2026-09')!.vacancyPct).toBeCloseTo(0.4, 9);
   });
   it('never divides by zero for a property with no SF', () => {
     const z = buildPortfolioTrend([], [prop({ sf: 0 })], opts);

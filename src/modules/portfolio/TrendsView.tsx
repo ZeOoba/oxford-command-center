@@ -24,7 +24,9 @@ export function TrendsView() {
   if (gate) return gate;
   if (!data || !trend) return null;
 
-  const points = scope === ALL ? trend.portfolio : (trend.byProperty[scope] ?? trend.portfolio);
+  // A scope whose property vanished from the trend (snapshot refresh) falls back to the portfolio.
+  const effectiveScope = scope !== ALL && trend.byProperty[scope] ? scope : ALL;
+  const points = effectiveScope === ALL ? trend.portfolio : trend.byProperty[effectiveScope]!;
   // kpiAt falls back to 0 when the as-of month is absent — show an empty state instead of fake zeros.
   if (!points.some((p) => p.month === trend.asOfMonth)) {
     return (
@@ -36,26 +38,27 @@ export function TrendsView() {
   }
   const k = kpiAt(points, trend.asOfMonth);
   const names = data.snapshot.properties.filter((p) => trend.byProperty[p.id]);
-  const bridge = scope === ALL ? trend.bridge : [];
-  const forecastFlag = <Badge tone="amber">Forecast after {trend.asOfMonth}</Badge>;
+  const bridge = effectiveScope === ALL ? trend.bridge : [];
+  const forecastFlag = <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>;
+  // Sparklines show history + as-of only; forward months are roll-off, not a trend.
+  const histPoints = points.filter((p) => !p.isForecast);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <select aria-label="Scope" value={scope} onChange={(e) => setScope(e.target.value)}>
+        <select aria-label="Scope" value={effectiveScope} onChange={(e) => setScope(e.target.value)}>
           <option value={ALL}>Entire portfolio</option>
           {names.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <Badge tone="neutral">Reconstructed from current leases</Badge>
         <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-          History omits leases already off the roll; months after {trend.asOfMonth} are forecast.
+          Months after {trend.asOfMonth} show contractual roll-off assuming NO renewals or re-leasing; history is reconstructed from current leases only.
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" spark={points.map((p) => p.inPlaceRent)} />
-        <KpiStat label="In-place rent YoY" value={k.rentYoY === null ? null : k.rentYoY * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} />
-        <KpiStat label="Vacancy" value={k.vacancyPct * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel={k.vacancyMoMPts === null ? undefined : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM`} spark={points.map((p) => p.vacancyPct)} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" sublabel="reconstructed · excludes departed tenants" spark={histPoints.map((p) => p.inPlaceRent)} />
+        <KpiStat label="Vacancy (lease-SF basis)" value={k.vacancyPct * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel={`${k.vacancyMoMPts === null ? '' : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM · `}may differ from workbook occupancy`} spark={histPoints.map((p) => p.vacancyPct)} />
         <KpiStat label="Vacant SF" value={k.vacantSf} format={fmtSf} />
       </div>
 
@@ -65,7 +68,7 @@ export function TrendsView() {
           <div className="p-3"><AreaChart data={rentSeries(points)} valueFormat={fmtUsdCompact} /></div>
         </Card>
         <Card>
-          <CardHeader title="Vacancy %" trailing={forecastFlag} />
+          <CardHeader title="Vacancy (lease-SF basis)" trailing={forecastFlag} />
           <div className="p-3"><AreaChart data={vacancySeries(points)} color="var(--color-neg)" valueFormat={(n) => fmtPct(n / 100)} /></div>
         </Card>
       </div>
