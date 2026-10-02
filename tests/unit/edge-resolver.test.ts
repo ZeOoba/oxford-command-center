@@ -1,0 +1,123 @@
+// tests/unit/edge-resolver.test.ts — F2 / F13 (spec §8.4, §9). No fuzzy matching, no default.
+import { describe, expect, it } from 'vitest';
+import { Market } from '@contracts/common';
+import type { Deal } from '@contracts/index';
+import {
+  EDGE_TIER1_TABLE, EDGE_TIER2_MARKETS, EDGE_UNMATCHED_TEXT, edgeCandidateCell, findDealForCandidate, parseCityState,
+  resolveEdgeMarket,
+} from '../../src/modules/acquisitions/edge-hooks';
+import { fourMarkets, mkMarket, mkMarketsResponse } from './edge-test-helpers';
+
+const MARKETS = [
+  mkMarket('columbus', 'Columbus', 'OH', 'named'),
+  mkMarket('cleveland', 'Cleveland', 'OH', 'auto'),
+  mkMarket('hagerstown', 'Hagerstown', 'MD', 'named'),
+  mkMarket('indianapolis_south', 'Indianapolis (South Metro)', 'IN', 'named_custom'),
+  mkMarket('indianapolis_carmel_greenwood', 'Indianapolis-Carmel-Greenwood', 'IN', 'auto'),
+  mkMarket('washington_arlington_alexandria', 'Washington-Arlington-Alexandria', 'DC', 'auto'),
+  mkMarket('scranton_wilkes_barre', 'Scranton--Wilkes-Barre', 'PA', 'auto'),
+];
+const deal = (market: Deal['market'], location: string | null) => ({ market, location });
+
+describe('Tier 1 (Deal.market enum)', () => {
+  it('every Market member is either in the reviewed table or deferred to Tier 2 (enum-completeness guard)', () => {
+    for (const m of Market.options) {
+      const inTier1 = Object.prototype.hasOwnProperty.call(EDGE_TIER1_TABLE, m);
+      expect(inTier1 || EDGE_TIER2_MARKETS.has(m), `Market '${m}' has no Edge decision`).toBe(true);
+      expect(inTier1 && EDGE_TIER2_MARKETS.has(m), `Market '${m}' is in both tiers`).toBe(false);
+    }
+  });
+
+  it("'Indianapolis IN' maps to the full CBSA, never the South cut", () => {
+    expect(EDGE_TIER1_TABLE['Indianapolis IN']).toBe('indianapolis_carmel_greenwood');
+    const r = resolveEdgeMarket(deal('Indianapolis IN', null), MARKETS);
+    expect(r).toMatchObject({ kind: 'matched', via: 'tier1_market', market: { id: 'indianapolis_carmel_greenwood' } });
+  });
+
+  it("'Twinsburg, OH (Cleveland MSA)' with market Cleveland MSA → tier 1 cleveland", () => {
+    const r = resolveEdgeMarket(deal('Cleveland MSA', 'Twinsburg, OH (Cleveland MSA)'), MARKETS);
+    expect(r).toMatchObject({ kind: 'matched', via: 'tier1_market', market: { id: 'cleveland' } });
+  });
+
+  it('a table id missing from markets.json → edge_id_absent, never a substitute', () => {
+    expect(resolveEdgeMarket(deal('Toledo OH', 'Toledo, OH'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'edge_id_absent' });
+  });
+});
+
+describe('Tier 2 (Deal.location exact City, ST)', () => {
+  it('Mid-Atlantic + Hagerstown, MD → hagerstown', () => {
+    expect(resolveEdgeMarket(deal('Mid-Atlantic', 'Hagerstown, MD'), MARKETS)).toMatchObject({
+      kind: 'matched', via: 'tier2_location', market: { id: 'hagerstown' },
+    });
+  });
+
+  it('Mid-Atlantic + Salisbury, MD → unmatched', () => {
+    expect(resolveEdgeMarket(deal('Mid-Atlantic', 'Salisbury, MD'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_market_for_location' });
+  });
+
+  it('TBD → no_location', () => {
+    expect(resolveEdgeMarket(deal(null, 'TBD'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_location' });
+    expect(resolveEdgeMarket(deal(null, null), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_location' });
+  });
+
+  it('Columbus, IN never resolves to Columbus OH (state-checked)', () => {
+    expect(resolveEdgeMarket(deal('Other', 'Columbus, IN'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_market_for_location' });
+  });
+
+  it('F13: Alexandria, VA does not match the DC-primary CBSA', () => {
+    expect(resolveEdgeMarket(deal('Other', 'Alexandria, VA'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_market_for_location' });
+  });
+
+  it('street address + city: Indianapolis resolves to the full CBSA by principal city, not the South cut', () => {
+    expect(resolveEdgeMarket(deal(null, '3849 N Richardt, Indianapolis, IN'), MARKETS)).toMatchObject({
+      kind: 'matched', market: { id: 'indianapolis_carmel_greenwood' },
+    });
+  });
+
+  it('matches the CBSA principal city on a double-hyphen title', () => {
+    expect(resolveEdgeMarket(deal('Unknown', 'Scranton, PA'), MARKETS)).toMatchObject({ kind: 'matched', market: { id: 'scranton_wilkes_barre' } });
+  });
+
+  it('two candidates → ambiguous, never picks one', () => {
+    const twins = [mkMarket('springfield', 'Springfield', 'MO', 'auto'), mkMarket('springfield_x', 'Springfield-Branson', 'MO', 'auto')];
+    expect(resolveEdgeMarket(deal('Other', 'Springfield, MO'), twins)).toEqual({ kind: 'unmatched', reason: 'ambiguous' });
+  });
+
+  it('parseCityState takes the LAST City, ST pair after stripping parentheticals', () => {
+    expect(parseCityState('3849 N Richardt, Indianapolis, IN')).toEqual({ city: 'Indianapolis', state: 'IN' });
+    expect(parseCityState('Twinsburg, OH (Cleveland MSA)')).toEqual({ city: 'Twinsburg', state: 'OH' });
+    expect(parseCityState('St. Louis, MO 63101')).toEqual({ city: 'St. Louis', state: 'MO' });
+    expect(parseCityState('Columbus, Ohio')).toBeNull();
+  });
+
+  it('every reason has display text', () => {
+    expect(Object.keys(EDGE_UNMATCHED_TEXT).sort()).toEqual(['ambiguous', 'edge_id_absent', 'no_location', 'no_market_for_location']);
+  });
+});
+
+describe('Sourcing candidate join', () => {
+  const columbusDeal: Deal = {
+    id: 'page-1', name: 'Fixture', shortName: null, location: 'Columbus, OH', market: 'Columbus OH', sf: null, buildings: null,
+    stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null, lender: null, status: null,
+    nextAction: null, owner: null, targetCloseDate: null, notionDealId: 'DEAL-9', confidential: false, estimatedFields: [],
+  };
+
+  it('joins candidate.notionDealId to Deal.id (the Notion page id), never by name', () => {
+    expect(findDealForCandidate([columbusDeal], 'page-1')).toBe(columbusDeal);
+    expect(findDealForCandidate([columbusDeal], 'DEAL-9')).toBeNull();
+    expect(findDealForCandidate([columbusDeal], null)).toBeNull();
+  });
+
+  it('edgeCandidateCell renders every state honestly', () => {
+    const data = mkMarketsResponse(fourMarkets());
+    expect(edgeCandidateCell(null, [columbusDeal], data, 'ready').text).toBe('No Edge market (no linked deal)');
+    expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'idle').text).toBe('—');
+    expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'error').text).toBe('Edge unavailable');
+    const ok = edgeCandidateCell('page-1', [columbusDeal], data, 'ready');
+    expect(ok.text).toBe('3.0% · +1.8% · STALE');
+    expect(ok.title).toContain('Columbus, OH — Flex vacancy: 3.0%');
+    expect(ok.title).toContain('STALE (as of 2026-07-14)');
+    const tbd = { ...columbusDeal, market: null, location: 'TBD' };
+    expect(edgeCandidateCell('page-1', [tbd], data, 'ready')).toEqual({ text: 'No Edge market', title: EDGE_UNMATCHED_TEXT.no_location });
+  });
+});

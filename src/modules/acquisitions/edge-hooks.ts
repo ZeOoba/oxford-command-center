@@ -13,6 +13,7 @@ import {
   type EdgeMarket, type EdgeSeriesCell, type EdgeSeriesKey, type EdgeStatus, type EdgeUnit, type RecordPullRequest,
 } from '@contracts/edge';
 import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
+import type { Deal, Market } from '@contracts/index';
 import { fetchJson, isWarehouseUnavailable, QUERY_OPTS } from '../intel/hooks';
 
 // ── Queries ────────────────────────────────────────────────────────────────────────────────────
@@ -281,4 +282,124 @@ export function localIsoToday(now: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
-// ── Deal → market resolver (Task 9 appends below this line) ──────────────────────────────────
+// ── Deal → Edge market resolver (spec §8.4; F2, F13) ───────────────────────────────────────────
+// Pure, two tiers, no fuzzy matching, no default. Tier 1 decides whenever it applies. Runs
+// client-side against the snapshot the client already holds: no deal identity reaches the Edge API.
+
+export type EdgeUnmatchedReason = 'no_location' | 'no_market_for_location' | 'ambiguous' | 'edge_id_absent';
+
+export type EdgeResolution =
+  | { kind: 'matched'; market: EdgeMarket; via: 'tier1_market' | 'tier2_location' }
+  | { kind: 'unmatched'; reason: EdgeUnmatchedReason };
+
+/** Reviewed Tier-1 table. Every Market member is here or in EDGE_TIER2_MARKETS
+ *  (tests/unit/edge-resolver.test.ts fails the build otherwise). */
+export const EDGE_TIER1_TABLE: Readonly<Partial<Record<Market, string>>> = {
+  'Columbus OH': 'columbus',
+  'Toledo OH': 'toledo',
+  'Cleveland MSA': 'cleveland',
+  'Kansas City MO': 'kansas_city',
+  // Full CBSA. indianapolis_south is a 3-county submarket cut (Johnson/Morgan/Shelby) and a deal
+  // tagged only "Indianapolis IN" is not known to sit inside it. Phase 2's county crosswalk revisits.
+  'Indianapolis IN': 'indianapolis_carmel_greenwood',
+  'Cincinnati OH': 'cincinnati',
+  'Madison WI': 'madison',
+  'Grand Rapids MI': 'grand_rapids',
+  'Des Moines IA': 'des_moines',
+  'Louisville KY': 'louisville',
+  'Richmond VA': 'richmond',
+};
+
+/** Market members (plus a null market) that defer to the Tier-2 location match. */
+export const EDGE_TIER2_MARKETS: ReadonlySet<Market> = new Set<Market>(['Mid-Atlantic', 'Other', 'Unknown']);
+
+export const EDGE_UNMATCHED_TEXT: Readonly<Record<EdgeUnmatchedReason, string>> = {
+  no_location: 'no parseable "City, ST" in the deal location',
+  no_market_for_location: 'no Edge market for this city and state',
+  ambiguous: 'more than one Edge market matches this city and state',
+  edge_id_absent: 'the mapped Edge market is missing from markets.json',
+};
+
+/** The LAST "City, ST" pair in a location string, after stripping parentheticals. */
+export function parseCityState(location: string | null): { city: string; state: string } | null {
+  if (!location) return null;
+  const stripped = location.replace(/\([^)]*\)/g, ' ');
+  const re = /([A-Za-z][A-Za-z .'-]*?)\s*,\s*([A-Z]{2})\b/g;
+  let last: { city: string; state: string } | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stripped)) !== null) {
+    const city = m[1]?.trim();
+    const state = m[2];
+    if (city && state) last = { city, state };
+  }
+  return last;
+}
+
+/** First hyphen-segment of a CBSA title = its principal city ("Scranton--Wilkes-Barre" → "scranton"). */
+function principalCity(name: string): string {
+  return (name.split('-')[0] ?? name).trim().toLowerCase();
+}
+
+export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, markets: readonly EdgeMarket[]): EdgeResolution {
+  const tier1Id = deal.market !== null ? EDGE_TIER1_TABLE[deal.market] : undefined;
+  if (tier1Id !== undefined) {
+    const market = markets.find((m) => m.id === tier1Id);
+    return market ? { kind: 'matched', market, via: 'tier1_market' } : { kind: 'unmatched', reason: 'edge_id_absent' };
+  }
+  const pair = parseCityState(deal.location);
+  if (!pair) return { kind: 'unmatched', reason: 'no_location' };
+  const city = pair.city.toLowerCase();
+  const hits = markets.filter(
+    (m) => m.state === pair.state && (m.name.trim().toLowerCase() === city || principalCity(m.name) === city),
+  );
+  const only = hits.length === 1 ? hits[0] : undefined;
+  if (only) return { kind: 'matched', market: only, via: 'tier2_location' };
+  return { kind: 'unmatched', reason: hits.length === 0 ? 'no_market_for_location' : 'ambiguous' };
+}
+
+/**
+ * Sourcing candidate → snapshot Deal. The join is `Deal.id === candidate.notionDealId`: both carry the
+ * Notion PAGE id (server/warehouse/acq-notion-sync.ts stores page.id in acq_candidates.notion_deal_id;
+ * server/sources/notion-deals.ts sets Deal.id = page.id for live pipeline rows). This is the same join
+ * DealDrawer.findRankedCandidateForDeal and PipelineTierBoard already use. Deal.notionDealId holds the
+ * Notion "Deal ID" unique-id ("DEAL-3"), which never equals a page id, so joining on it would leave
+ * every candidate unlinked. `null` = unjoinable; never fall back to a name match.
+ */
+export function findDealForCandidate(deals: readonly Deal[], notionDealId: string | null): Deal | null {
+  if (notionDealId === null) return null;
+  return deals.find((d) => d.id === notionDealId) ?? null;
+}
+
+const SERIES_UNIT_OF = (field: EdgeSeriesKey, data: EdgeMarketsResponse): EdgeUnit =>
+  data.fieldMeta[field]?.unit ?? 'signal';
+
+export function edgeReadoutTitle(market: EdgeMarket, data: EdgeMarketsResponse): string {
+  const parts = EDGE_READOUT_SERIES.map(
+    ({ field, label }) => `${label}: ${edgeCellDisplay(market.series[field], SERIES_UNIT_OF(field, data), data.years, field).text}`,
+  );
+  const f = data.freshness;
+  const fresh = f ? (f.stale ? ` · STALE (as of ${f.asOf})` : ` · as of ${f.asOf}`) : '';
+  return `${market.name}, ${market.state} — ${parts.join(' · ')}${fresh}`;
+}
+
+export type EdgeQueryState = 'idle' | 'loading' | 'error' | 'ready';
+
+/** Compact Sourcing-list cell: "vacancy · rent growth" (+ STALE), full readout in the tooltip. */
+export function edgeCandidateCell(
+  notionDealId: string | null,
+  deals: readonly Deal[],
+  data: EdgeMarketsResponse | undefined,
+  state: EdgeQueryState,
+): { text: string; title: string | null } {
+  const deal = findDealForCandidate(deals, notionDealId);
+  if (!deal) return { text: 'No Edge market (no linked deal)', title: null };
+  if (state === 'idle' || state === 'loading') return { text: '—', title: null };
+  if (state === 'error' || !data || data.availability !== 'ok') {
+    return { text: 'Edge unavailable', title: data ? `Edge dataset ${data.availability}` : 'Edge is local-only (Brain Server)' };
+  }
+  const res = resolveEdgeMarket(deal, data.markets);
+  if (res.kind === 'unmatched') return { text: 'No Edge market', title: EDGE_UNMATCHED_TEXT[res.reason] };
+  const vac = edgeCellDisplay(res.market.series.vac, SERIES_UNIT_OF('vac', data), data.years, 'vac').text;
+  const rent = edgeCellDisplay(res.market.series.rent, SERIES_UNIT_OF('rent', data), data.years, 'rent').text;
+  return { text: `${vac} · ${rent}${data.freshness?.stale ? ' · STALE' : ''}`, title: edgeReadoutTitle(res.market, data) };
+}
