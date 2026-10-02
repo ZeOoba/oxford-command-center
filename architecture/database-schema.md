@@ -38,9 +38,9 @@
 | 022 | `022_insurance_loss_events.sql` | New table: `insurance_loss_events` — broker loss-run history (ships empty until broker data arrives); `property_insurance_policies`: adds `deductible`, `coverage_limit` (nullable, additive) |
 | 024 | `024_property_master_content_hash.sql` | `property_master`: adds `content_hash TEXT` (nullable, additive). `seedPropertyMaster()` now hashes each row's data fields and only bumps `updated_at` when the hash actually changes, fixing `updated_at` previously being stamped to `datetime('now')` on every backfill run regardless of whether any data changed (a batch-sync signature, not a real edit-tracking column) |
 | 025 | `025_acq_hubspot_sync_content_hash.sql` | `acq_candidates`: adds `content_hash TEXT` (nullable, additive). `syncHubSpotPipeline()`'s upsert now hashes each deal's synced (address, status) and only bumps `updated_at` when the hash actually changes, fixing `updated_at` previously being stamped to `datetime('now')` on every sync run regardless of whether the deal's data changed (same anti-pattern as migration 024's property_master fix — a batch-sync signature, not a real edit-tracking column) |
-| 033 | `033_portfolio_month_snapshot.sql` | New table: `portfolio_month_snapshot` — Portfolio Trends Wave 2 recorded per-property month snapshots (observed values only, never back-cast); additive. Next free migration number: 034 |
+| 033 | `033_portfolio_month_snapshot.sql` | New table: `portfolio_month_snapshot` — Portfolio Trends Wave 2 recorded per-property month snapshots (observed values only, never back-cast); additive |
 
-**NOTE — duplicate migration-number prefix (017):** two files share the `017` numeric prefix — `017_market_series_constraints.sql` and `017_ratify_hurdle_rate.sql` (see rows 017a/017b above). `migrate.ts` sorts filenames by parsed numeric prefix only (`parseInt(a.split('_')[0])`, `migrate.ts:41-45`); files sharing a prefix fall back to `readdirSync` enumeration order for their relative order, which is filesystem-dependent and not a guaranteed alphabetical or creation-order tiebreak. In this case it is harmless — the two `017` files touch disjoint tables (`market_series` vs. `capital_config`) with no dependency between them, so either application order produces the same end state. **Duplicate migration numbers are forbidden going forward** — this note documents the one exception already on disk, not a pattern to repeat. 023 (`023_debt_rate_reset.sql`) and 024 (`024_property_master_content_hash.sql`) are also taken. The next free migration number after this change is **026**.
+**NOTE — duplicate migration-number prefix (017):** two files share the `017` numeric prefix — `017_market_series_constraints.sql` and `017_ratify_hurdle_rate.sql` (see rows 017a/017b above). `migrate.ts` sorts filenames by parsed numeric prefix only (`parseInt(a.split('_')[0])`, `migrate.ts:41-45`); files sharing a prefix fall back to `readdirSync` enumeration order for their relative order, which is filesystem-dependent and not a guaranteed alphabetical or creation-order tiebreak. In this case it is harmless — the two `017` files touch disjoint tables (`market_series` vs. `capital_config`) with no dependency between them, so either application order produces the same end state. **Duplicate migration numbers are forbidden going forward** — this note documents the one exception already on disk, not a pattern to repeat. 023 (`023_debt_rate_reset.sql`) and 024 (`024_property_master_content_hash.sql`) are also taken. The next free migration number after this change is **034**.
 
 ---
 
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS portfolio_month_snapshot (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   property_id      TEXT    NOT NULL REFERENCES property_master(id) ON DELETE CASCADE,
   month            TEXT    NOT NULL CHECK (month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
-  captured_through TEXT    NOT NULL,
+  captured_through TEXT    NOT NULL,                 -- ET calendar day of the last capture into this row
   total_sf         REAL    NOT NULL CHECK (total_sf >= 0),
   leased_sf        REAL    NOT NULL CHECK (leased_sf >= 0),
   in_place_rent    REAL    NOT NULL CHECK (in_place_rent >= 0),   -- monthly $
@@ -219,6 +219,7 @@ CREATE TABLE IF NOT EXISTS portfolio_month_snapshot (
   recorded_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
   UNIQUE (property_id, month)
 );
+
 CREATE INDEX IF NOT EXISTS idx_pms_month ON portfolio_month_snapshot(month);
 ```
 
