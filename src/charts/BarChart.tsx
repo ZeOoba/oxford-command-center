@@ -16,6 +16,8 @@ interface Props {
   data: BarDatum[];
   height?: number;
   color?: string;
+  /** Fill for bars with a negative value. Defaults to the semantic loss token. */
+  negativeColor?: string;
   valueFormat?: (n: number) => string;
   /** Accessible name for the chart's <svg>. Optional — omitted callers get no aria-label
    *  (unchanged from before this prop existed), same opt-in pattern as Waterfall's ariaLabel. */
@@ -28,8 +30,9 @@ interface HoverState {
   top: number;
 }
 
-/** Vertical bar chart — branded gradient bars, animated draw-in, hover tooltip. */
-export function BarChart({ data, height = 250, color = 'var(--accent)', valueFormat, ariaLabel }: Props) {
+/** Vertical bar chart — branded gradient bars, animated draw-in, hover tooltip. Negative values
+ *  render as diverging bars hanging below a zero baseline. */
+export function BarChart({ data, height = 250, color = 'var(--accent)', negativeColor = 'var(--color-neg)', valueFormat, ariaLabel }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<HoverState | null>(null);
   const gid = useId().replace(/:/g, '');
@@ -38,19 +41,28 @@ export function BarChart({ data, height = 250, color = 'var(--accent)', valueFor
   const ih = height - margin.top - margin.bottom;
 
   const x = scaleBand({ domain: data.map((d) => d.label), range: [0, iw], padding: 0.36 });
-  const max = Math.max(...data.map((d) => d.value), 1);
-  const y = scaleLinear({ domain: [0, max], range: [ih, 0] });
+  const hasNeg = data.some((d) => d.value < 0);
+  // Positive-only data keeps the original [0, max(…,1)] domain and full-height range (unchanged).
+  // With negatives the domain spans zero, and the range stops short of the axis labels so the
+  // below-bar value label of the lowest bar does not collide with the x tick labels.
+  const max = hasNeg ? Math.max(...data.map((d) => d.value), 0) : Math.max(...data.map((d) => d.value), 1);
+  const min = Math.min(...data.map((d) => d.value), 0);
+  const y = scaleLinear({ domain: [min, max], range: [hasNeg ? Math.max(0, ih - 18) : ih, 0] });
+  const y0 = y(0); // zero baseline (== ih for positive-only data)
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && (
         <svg width={width} height={height} role="img" aria-label={ariaLabel}>
           <LinearGradient id={`bar-${gid}`} from={color} to={color} fromOpacity={0.95} toOpacity={0.32} vertical />
+          <LinearGradient id={`barneg-${gid}`} from={negativeColor} to={negativeColor} fromOpacity={0.32} toOpacity={0.95} vertical />
           <Group left={margin.left} top={margin.top}>
             {data.map((d, i) => {
               const bw = x.bandwidth();
               const bx = x(d.label) ?? 0;
-              const bh = ih - y(d.value);
+              const neg = d.value < 0;
+              const bTop = Math.min(y(d.value), y0);
+              const bh = Math.abs(y(d.value) - y0);
               const active = hover?.index === i;
               return (
                 <g key={d.label}>
@@ -58,17 +70,17 @@ export function BarChart({ data, height = 250, color = 'var(--accent)', valueFor
                     x={bx}
                     width={bw}
                     rx={4}
-                    fill={`url(#bar-${gid})`}
+                    fill={`url(#${neg ? 'barneg' : 'bar'}-${gid})`}
                     style={{ cursor: 'pointer', opacity: hover && !active ? 0.55 : 1, transition: 'opacity 120ms' }}
-                    initial={{ height: 0, y: ih }}
-                    animate={{ height: bh, y: y(d.value) }}
+                    initial={{ height: 0, y: y0 }}
+                    animate={{ height: bh, y: bTop }}
                     transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-                    onMouseMove={() => setHover({ index: i, left: margin.left + bx + bw / 2, top: margin.top + y(d.value) })}
+                    onMouseMove={() => setHover({ index: i, left: margin.left + bx + bw / 2, top: margin.top + bTop })}
                     onMouseLeave={() => setHover(null)}
                   />
                   <text
                     x={bx + bw / 2}
-                    y={y(d.value) - 7}
+                    y={neg ? y(d.value) + 15 : y(d.value) - 7}
                     textAnchor="middle"
                     style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, fill: 'var(--text-secondary)', fontWeight: 600, pointerEvents: 'none' }}
                   >
@@ -77,6 +89,9 @@ export function BarChart({ data, height = 250, color = 'var(--accent)', valueFor
                 </g>
               );
             })}
+            {hasNeg && (
+              <line className="zero-baseline" x1={0} x2={iw} y1={y0} y2={y0} stroke="var(--border-strong)" strokeWidth={1} pointerEvents="none" />
+            )}
             <AxisBottom
               top={ih}
               scale={x}
