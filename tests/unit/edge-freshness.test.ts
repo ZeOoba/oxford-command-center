@@ -60,4 +60,38 @@ describe('edgeFreshness', () => {
     expect(f.ageDays).toBe(0);
     expect(f.stale).toBe(true);
   });
+
+  // Fail closed: stale data is never presented as current.
+  it.each(['', 'garbage', '2026-99-99', '2026-02-30', 'N/A', '2026-07-14T10:00:00Z'])(
+    'unparseable pulled date %j → stale, asOf = mtime date, finite ageDays',
+    (bad) => {
+      const f = edgeFreshness(bad, ms('2026-10-02T08:00:00Z'), NOW);
+      expect(f.stale).toBe(true);
+      expect(f.asOf).toBe('2026-10-02');
+      expect(Number.isFinite(f.ageDays)).toBe(true);
+      expect(f.ageDays).toBeGreaterThanOrEqual(0);
+      expect(f.metaPulled).toBe(bad);
+    },
+  );
+
+  it('unparseable pulled date with an older mtime → ageDays from the mtime date', () => {
+    const f = edgeFreshness('garbage', ms('2026-09-30T10:00:00Z'), NOW);
+    expect(f.asOf).toBe('2026-09-30');
+    expect(f.ageDays).toBe(2);
+    expect(f.stale).toBe(true);
+  });
+
+  it('non-finite mtime → stale with finite ageDays and valid asOf', () => {
+    const f = edgeFreshness('2026-10-01', Number.NaN, NOW);
+    expect(f.stale).toBe(true);
+    expect(f.asOf).toBe('2026-10-01');
+    expect(f.ageDays).toBe(1);
+  });
+
+  it('non-finite mtime and invalid pulled date → stale, finite ageDays, valid asOf', () => {
+    const f = edgeFreshness('garbage', Number.POSITIVE_INFINITY, NOW);
+    expect(f.stale).toBe(true);
+    expect(Number.isFinite(f.ageDays)).toBe(true);
+    expect(f.asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
 });
