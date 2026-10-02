@@ -1,7 +1,7 @@
 // server/edge/pull-queue.ts
 //
 // Oxford Edge manual-pull queue (spec §5.3). Scope lists and cadences are CODE (versioned,
-// reviewable); the DB holds only the append-only edge_pull_log (migration 033). The 21 storage/IOS
+// reviewable); the DB holds only the append-only edge_pull_log (migration 034). The 21 storage/IOS
 // scopes are derived from markets.json `type` when the dataset is available and fall back to the
 // frozen copy of the retired Morning Guide's list when it is not. VA and MI truck coverage is
 // automated (derived from markets.json), never a queue row. Labels, slugs, press feeds and truck

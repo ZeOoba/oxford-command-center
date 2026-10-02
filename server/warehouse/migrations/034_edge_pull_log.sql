@@ -1,4 +1,4 @@
--- 033_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
+-- 034_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
 -- User state only; holds no market data. Scope/cadence live in server/edge/pull-queue.ts.
 -- Spec: docs/superpowers/specs/2026-10-02-oxford-edge-tab-design.md §7.
 --

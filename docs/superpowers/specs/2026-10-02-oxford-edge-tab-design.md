@@ -133,7 +133,7 @@ Spine placement: Edge is a **third, read-only reference input**. It is neither S
 | `server/edge/pull-queue.ts` | `PULL_ITEMS`, cadence, queue-state derivation, log reads/writes | Integration |
 | `server/edge/edge-api.ts` | Hono sub-router | Integration |
 | `server/warehouse/sub-routers.ts` (**edit, +1 line**) | `{ prefix: '/edge', factory: edgeApi }` as a literal entry (required shape: `scripts/check-write-schema-drift.ts` `buildMountPrefixMap()` reads this file as text) | Not in `architect_owned_files`; shared single-writer surface → status.json claim |
-| `server/warehouse/migrations/033_edge_pull_log.sql` | Pull-queue table | **Architect-owned** |
+| `server/warehouse/migrations/034_edge_pull_log.sql` | Pull-queue table | **Architect-owned** |
 | `src/contracts/edge.ts` + one `export * from './edge'` line in `src/contracts/index.ts` | Zod contracts | **Architect-owned** (`src/contracts/` per CLAUDE.md §4; `index.ts` is explicitly listed in `architecture/ownership.json`) |
 
 `server/index.ts` is **not** touched. Mounting goes through `WAREHOUSE_SUB_ROUTERS`, which `index.ts` already iterates (line 125). `server/warehouse/migrate.ts` is **not** touched either: `listMigrationFiles()` discovers `NNN_*.sql` by `readdirSync`, so a new file needs no registration.
@@ -261,12 +261,12 @@ The raw-file schema (`RawEdgeFile`, `RawEdgeMarket`) lives in `server/edge/loade
 
 `edge.ts` is not in `FINANCIAL_CONTRACT_PATHS` (`scripts/check-refute-required.ts`) and must not be added in Phase 1. Phase 2 re-evaluates this (§13).
 
-## 7. Database: migration `033_edge_pull_log.sql` (Architect-owned)
+## 7. Database: migration `034_edge_pull_log.sql` (Architect-owned)
 
-Highest existing prefix is `032` (`032_lm_cumulative_reduction_event_chain.sql`). Verified on `origin/main` @ `f36b995` and across all remote branches on 2026-10-02. If another PR lands `033` first, renumber before merge. `checkMigrationPrefixUniqueness` in the governance gate fails on a collision.
+Highest existing prefix was `032` when this spec was written; #425 landed `033_portfolio_month_snapshot.sql` first, so this migration was renumbered to `034`. Original note: highest existing prefix is `032` (`032_lm_cumulative_reduction_event_chain.sql`). Verified on `origin/main` @ `f36b995` and across all remote branches on 2026-10-02. If another PR lands `034` first, renumber before merge. `checkMigrationPrefixUniqueness` in the governance gate fails on a collision.
 
 ```sql
--- 033_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
+-- 034_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
 -- User state only; holds no market data. Scope/cadence live in server/edge/pull-queue.ts.
 CREATE TABLE IF NOT EXISTS edge_pull_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -287,7 +287,7 @@ CREATE INDEX IF NOT EXISTS ix_edge_pull_log_kind_scope
 - `scope_key` membership is enforced in the route rather than by a CHECK. The scope list lives in code and changes without a migration.
 - `check:schema-drift` will cross-reference the POST route's Zod schema (`kind, scopeKey, doneOn, note`) against the INSERT's bound values. The INSERT must bind exactly those four fields to `pull_kind, scope_key, done_on, note`.
 
-**Live-DB safety.** `openWarehouse()` migrates as a side effect (`server/warehouse/db.ts` line 94). A branch dev server pointed at the live `data/warehouse/finance.sqlite` would apply `033` from an unmerged branch, which is the 2026-09-17 incident class. Worktree development **must** use the worktree-local `WAREHOUSE_DB` from `worktree-env.example`. `033` reaches the live warehouse only when the dev server on `main` starts after merge.
+**Live-DB safety.** `openWarehouse()` migrates as a side effect (`server/warehouse/db.ts` line 94). A branch dev server pointed at the live `data/warehouse/finance.sqlite` would apply `034` from an unmerged branch, which is the 2026-09-17 incident class. Worktree development **must** use the worktree-local `WAREHOUSE_DB` from `worktree-env.example`. `034` reaches the live warehouse only when the dev server on `main` starts after merge.
 
 ## 8. UI
 
@@ -444,7 +444,7 @@ Assume Phase 1 ships and is wrong. These are the most likely ways, with the cont
 - `edge-status-label.test.ts`: all 5 statuses + JSON `null` value with each status.
 - `edge-pull-queue.test.ts`: state derivation (open/current/due at cadence boundaries); latest-non-voided ordering (`done_on DESC, id DESC`); scope lists = 21/21/15/13; VA/MI in `automatedCoverage`, not the queue; buy-box derivation equals the frozen list.
 - `edge-api.test.ts`: in-process Hono via `edgeApi(getDb)` against a fresh `openWarehouse()` on a `mkdtempSync(tmpdir())` path, all migrations applied (pattern: `tests/unit/acq-api.test.ts`); GET markets without DB; GET/POST/void pull-queue; 400s for bad kind/scope/date/future date/oversize note; 503 when `getDb` throws; F9 key assertion.
-- `edge-migration.test.ts`: fresh DB migrates through `033`; CHECKs reject a bad `pull_kind`, a non-date `done_on` (`'2026-02-30'`), and an oversize note.
+- `edge-migration.test.ts`: fresh DB migrates through `034`; CHECKs reject a bad `pull_kind`, a non-date `done_on` (`'2026-02-30'`), and an oversize note.
 - `acquisitions-tabs.test.tsx` (**update**): five tabs; Edge lazy; F11 no-fetch assertion.
 - `edge-view.test.tsx`: banner STALE text; each availability state; pull-queue write controls hidden when not live; proxy labels (F3/F4).
 - `sub-routers-mount-prefix.test.ts` already guards the literal-entry shape. Confirm it covers `/edge`.
@@ -469,18 +469,18 @@ Assume Phase 1 ships and is wrong. These are the most likely ways, with the cont
 
 **Coordination (CLAUDE.md §0/§2/§5)**
 1. Create a worktree with `git worktree add .claude/worktrees/oxford-edge-tab -b feat/oxford-edge-tab` from fresh `origin/main`. Copy `worktree-env.example` → `.env`, keeping the worktree-local `WAREHOUSE_DB`.
-2. Add an `architecture/status.json` entry `oxford-edge-tab` with `review_needed: true`. Its `review_detail` names the three Architect-owned touches: `src/contracts/edge.ts` (new) + `src/contracts/index.ts` (+1 export line), and `server/warehouse/migrations/033_edge_pull_log.sql`. It also claims the shared single-writer surfaces: `server/warehouse/sub-routers.ts`, `.claude/launch.json`, `env.example`. Commit that declaration on the branch and wait for acknowledgment before editing those files.
+2. Add an `architecture/status.json` entry `oxford-edge-tab` with `review_needed: true`. Its `review_detail` names the three Architect-owned touches: `src/contracts/edge.ts` (new) + `src/contracts/index.ts` (+1 export line), and `server/warehouse/migrations/034_edge_pull_log.sql`. It also claims the shared single-writer surfaces: `server/warehouse/sub-routers.ts`, `.claude/launch.json`, `env.example`. Commit that declaration on the branch and wait for acknowledgment before editing those files.
 3. UX-owned edits: `tabs.ts`, `AcquisitionsModule.tsx`, `RankedCandidateList.tsx`, `src/brain/DealDrawer.tsx` and the new `src/modules/acquisitions/Edge*.tsx`/`edge-hooks.ts`. The new `server/edge/*` files fall to the Integration Agent role.
 4. Run `git status` before each edit. Every uncommitted file the session did not create is locked; at spec time that is `data/snapshots/portfolio.json` and `docs/superpowers/plans/2026-10-02-portfolio-trends.md`. Commit explicit paths only, never `git add -A`. Gabriel owns integration to `main`.
 
 **Rollout**
 1. PR 1 (one PR, squash-merge): contracts, migration, `server/edge/*`, the sub-router entry, UI, tests, and the `env.example` doc line.
-2. After merge, Gabriel restarts the dev server on `main`, which applies `033` to the live warehouse. Then confirm `GET /api/warehouse/edge/pull-queue` returns 70 open scopes.
+2. After merge, Gabriel restarts the dev server on `main`, which applies `034` to the live warehouse. Then confirm `GET /api/warehouse/edge/pull-queue` returns 70 open scopes.
 3. Artifact retirement happens only after step 2 is verified. Republish the artifact with a top banner: "Retired — live in Command Center › Acquisitions › Edge (local). This page is frozen at 2026-07-14." Do not delete it. Decided: Q1, §12.
 
 **Rollback**
 - UI: revert the squash commit (`git revert -m 1` per CLAUDE.md §8). The tab, overlay column and drawer card disappear. `markets.json` is untouched by construction.
-- DB: `033` creates one isolated table that no other code reads. After a code revert it stays inert, and the `_migrations` row remains. The table is **not** dropped, which preserves any recorded pulls (never-delete). A re-land reuses it via `CREATE TABLE IF NOT EXISTS`.
+- DB: `034` creates one isolated table that no other code reads. After a code revert it stays inert, and the `_migrations` row remains. The table is **not** dropped, which preserves any recorded pulls (never-delete). A re-land reuses it via `CREATE TABLE IF NOT EXISTS`.
 
 ## 12. Decisions (resolved by Gabriel, 2026-10-02)
 

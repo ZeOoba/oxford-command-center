@@ -4,7 +4,7 @@
 
 **Goal:** Add a read-only fifth Acquisitions tab, **Edge**, that renders the Oxford Edge `markets.json` dataset (market board, data health, server-side manual-pull queue) and a strict deal→market overlay in the DealDrawer and Sourcing list, with no change to any score, ruleset or governor.
 
-**Architecture:** A new `server/edge/*` module reads `markets.json` read-only (memo + last-good cache + retry), reshapes it into the `src/contracts/edge.ts` output contract, and serves it from a Hono sub-router mounted at `/api/warehouse/edge` through `WAREHOUSE_SUB_ROUTERS`. The only warehouse write is an append-only `edge_pull_log` table (migration 033) for manual-pull done-state. The client fetches with `fetchJson` + Zod (no mirror fallback), resolves deals to Edge markets client-side with a two-tier exact resolver, and lazy-mounts the tab.
+**Architecture:** A new `server/edge/*` module reads `markets.json` read-only (memo + last-good cache + retry), reshapes it into the `src/contracts/edge.ts` output contract, and serves it from a Hono sub-router mounted at `/api/warehouse/edge` through `WAREHOUSE_SUB_ROUTERS`. The only warehouse write is an append-only `edge_pull_log` table (migration 034) for manual-pull done-state. The client fetches with `fetchJson` + Zod (no mirror fallback), resolves deals to Edge markets client-side with a two-tier exact resolver, and lazy-mounts the tab.
 
 **Tech Stack:** TypeScript (strict, `noUncheckedIndexedAccess`), Zod 3, Hono 4, better-sqlite3, React 19, TanStack Query, react-aria-components primitives, Vitest (jsdom / node), ESLint `--max-warnings 0`.
 
@@ -22,7 +22,7 @@
 - Proxies (`isProxy === true`: `biz`, `hvacPermits`, `eGrocery`) always show `fieldMeta.trueLabel` + ` [PROXY]`, never the raw key.
 - `availability ∈ {ok, missing, unreadable, invalid}` is returned as **HTTP 200**; `GET /markets` never goes through the `withDb` 503 guard.
 - `/edge/*` is **not** added to `FIXED_ROUTES` in `scripts/bake-warehouse.ts`; no Edge tool in `server/ai/tools.ts`; nothing in briefings/PDF. The Edge API accepts and returns **no deal data**.
-- Migration `033_edge_pull_log.sql` (renumber if 033 is taken before merge). Append-only, no DELETE path; "Undo" sets `voided_at`. Latest state per (kind, scope) = latest non-voided row ordered `done_on DESC, id DESC`.
+- Migration `034_edge_pull_log.sql` (renumber if 034 is taken before merge). Append-only, no DELETE path; "Undo" sets `voided_at`. Latest state per (kind, scope) = latest non-voided row ordered `done_on DESC, id DESC`.
 - Pull scopes: `storage` 21 buy-box markets / 90 d · `ios` same 21 / 90 d · `mfgInvest` PA MD VA WV OH IN MI KY MO KS WI IA NE IL MN (15) / 30 d · `truck` OH IN WI PA MD KY MO KS IA NE WV IL MN (13) / 365 d. VA and MI are `automatedCoverage`, not queue rows. Launch state: all **70** scopes `open`, no seeding. `localStorage` `oe-guide-*` keys are **not imported**.
 - `RecordPullRequest` (strict): `{ kind: 'storage'|'ios'|'mfgInvest'|'truck', scopeKey: string, doneOn: 'YYYY-MM-DD', note?: string (≤ 2000) }`; unknown scope, unreal date, or future date (server local date) → 400.
 - Query keys: `['warehouse','edge','markets']` (`staleTime: 5 min`), `['warehouse','edge','pull-queue']` (`QUERY_OPTS`). Mutations send `ORA_JSON_MUTATION_HEADERS` / `ORA_CLIENT_HEADERS` and invalidate `['warehouse','edge','pull-queue']`.
@@ -30,7 +30,7 @@
 - Test fixture `tests/fixtures/edge/markets.slice.json` is **synthetic** (`"_synthetic": true`, made-up values). Never copy real CoStar-derived values into git.
 - Every commit touching `server/**` carries `Refute-Skip: Oxford Edge Phase 1 — read-only display ingest + manual-pull log; no scoring, NOI, governor or capital math`. `server/edge/*` is **not** added to `DELIVERY_ONLY_PATHS`; `src/contracts/edge.ts` is **not** added to `FINANCIAL_CONTRACT_PATHS`.
 - Every commit ends with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`. Commit explicit paths only — never `git add -A`. Gabriel owns integration to `main`. Never `--no-verify`.
-- Worktree development uses the worktree-local `WAREHOUSE_DB` (`./data/warehouse/finance.sqlite` inside the worktree). Migration 033 reaches the live warehouse only when the dev server on `main` starts after merge.
+- Worktree development uses the worktree-local `WAREHOUSE_DB` (`./data/warehouse/finance.sqlite` inside the worktree). Migration 034 reaches the live warehouse only when the dev server on `main` starts after merge.
 
 ---
 
@@ -42,7 +42,7 @@ All paths are relative to the worktree root `C:/Users/Owner/oxford-command-cente
 |---|---|---|---|
 | `src/contracts/edge.ts` | Create | Zod output contracts, `EDGE_SERIES`, `SERIES_UNITS`, `EDGE_OBSERVED_STATUSES` | **Architect** |
 | `src/contracts/index.ts` | Modify (+1 line after line 45) | `export * from './edge';` | **Architect** |
-| `server/warehouse/migrations/033_edge_pull_log.sql` | Create | Append-only pull log table | **Architect** |
+| `server/warehouse/migrations/034_edge_pull_log.sql` | Create | Append-only pull log table | **Architect** |
 | `server/edge/config.ts` | Create | `edgeDir()`, `EDGE_STALE_DAYS` | Integration |
 | `server/edge/series.ts` | Create | Re-exports `EDGE_SERIES`/`SERIES_UNITS`; `BUY_BOX_TYPES` | Integration |
 | `server/edge/freshness.ts` | Create | `edgeFreshness()` | Integration |
@@ -67,7 +67,7 @@ All paths are relative to the worktree root `C:/Users/Owner/oxford-command-cente
 | `tests/fixtures/edge/markets.slice.json` | Create | Synthetic 4-market fixture | — |
 | `tests/unit/edge-test-helpers.ts` | Create | `mkMarket`, `obs`, `fourMarkets`, `mkMarketsResponse` | — |
 | `tests/unit/edge-contracts.test.ts` | Create | Contract invariants | — |
-| `tests/unit/edge-migration.test.ts` | Create | Migration 033 | — |
+| `tests/unit/edge-migration.test.ts` | Create | Migration 034 | — |
 | `tests/unit/edge-config.test.ts` | Create | `edgeDir`, `BUY_BOX_TYPES` | — |
 | `tests/unit/edge-freshness.test.ts` | Create | F1 matrix | — |
 | `tests/unit/edge-coverage.test.ts` | Create | Coverage rule | — |
@@ -117,7 +117,7 @@ node -e "const s=require('./architecture/status.json');for(const [k,v] of Object
 Expected:
 - `git status --short` shows only other writers' files (at plan time: ` M data/snapshots/portfolio.json`, `?? docs/superpowers/plans/2026-10-02-portfolio-trends.md`, plus this plan file). Treat every uncommitted file you did not create as **locked**.
 - The highest migration on `origin/main` is `032_lm_cumulative_reduction_event_chain.sql`.
-- The `03[3-9]_` loop prints **nothing**. If it prints a `033_*` file: use the next free number everywhere this plan says `033` (file name, test name, `_migrations` assertions, status claim) and say so in the PR.
+- The `03[3-9]_` loop prints **nothing**. If it prints a `033_*` file: use the next free number everywhere this plan says `034` (file name, test name, `_migrations` assertions, status claim) and say so in the PR.
 - No `oxford-edge-tab` directory exists.
 - No open status entry claims `server/warehouse/sub-routers.ts`, `env.example`, `.claude/launch.json` or `src/contracts/index.ts`. If one does: STOP and ask Gabriel (AskUserQuestion) before continuing.
 - Note `origin/main`'s SHA; Step 2 branches from it. If `origin/main` moved past `f36b995`, re-check the spec's verification ledger claims you depend on (`sub-routers.ts` shape, `tabs.ts` four tabs, `acquisitions-tabs.test.tsx` four-tab assertion) before Task 1.
@@ -193,7 +193,7 @@ Read `architecture/status.json` immediately before editing. Insert this entry as
     "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/033_edge_pull_log.sql (one isolated append-only table edge_pull_log; no existing table touched). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Waiting for Gabriel's acknowledgment before editing any Architect-owned file.",
+    "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/034_edge_pull_log.sql (one isolated append-only table edge_pull_log; no existing table touched). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Waiting for Gabriel's acknowledgment before editing any Architect-owned file.",
     "last_updated": "<ISO-8601 now>"
   }
 ```
@@ -206,7 +206,7 @@ Expected: PASS (status-bus integrity accepts the entry).
 ```bash
 git add architecture/status.json
 git commit -F - <<'EOF'
-chore(status): claim oxford-edge-tab (review_needed: contracts/edge.ts, migration 033, sub-routers)
+chore(status): claim oxford-edge-tab (review_needed: contracts/edge.ts, migration 034, sub-routers)
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 EOF
@@ -215,7 +215,7 @@ EOF
 - [ ] **Step 7: WAIT for Gabriel's acknowledgment**
 
 Ask with AskUserQuestion:
-- "(Recommended) Acknowledge — I'll touch `.claude/overrides/architect-edit-ok` in the worktree; proceed with contracts + migration 033" — unblocks Tasks 1–2 inside one 60-minute window.
+- "(Recommended) Acknowledge — I'll touch `.claude/overrides/architect-edit-ok` in the worktree; proceed with contracts + migration 034" — unblocks Tasks 1–2 inside one 60-minute window.
 - "Hold — I want to review the claim first" — no Architect-owned edit until a later go.
 - "Change scope" — Gabriel names the change; update the status entry and re-commit.
 
@@ -597,10 +597,10 @@ EOF
 
 ---
 
-### Task 2: Migration `033_edge_pull_log.sql` (Architect-owned)
+### Task 2: Migration `034_edge_pull_log.sql` (Architect-owned)
 
 **Files:**
-- Create: `server/warehouse/migrations/033_edge_pull_log.sql`
+- Create: `server/warehouse/migrations/034_edge_pull_log.sql`
 - Test: `tests/unit/edge-migration.test.ts`
 
 **Interfaces:**
@@ -614,7 +614,7 @@ Create `tests/unit/edge-migration.test.ts`:
 ```ts
 // @vitest-environment node
 //
-// tests/unit/edge-migration.test.ts — migration 033 (spec §7). In-memory DB; never touches finance.sqlite.
+// tests/unit/edge-migration.test.ts — migration 034 (spec §7). In-memory DB; never touches finance.sqlite.
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigrations } from '../../server/warehouse/migrate';
@@ -629,10 +629,10 @@ function makeDb(): Database.Database {
 const insert = (db: Database.Database, kind: string, scope: string, doneOn: string, note: string | null = null) =>
   db.prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on, note) VALUES (?, ?, ?, ?)').run(kind, scope, doneOn, note);
 
-describe('migration 033 — edge_pull_log', () => {
-  it('a fresh DB migrates through 033 and records it', () => {
+describe('migration 034 — edge_pull_log', () => {
+  it('a fresh DB migrates through 034 and records it', () => {
     const db = makeDb();
-    const row = db.prepare("SELECT filename FROM _migrations WHERE filename = '033_edge_pull_log.sql'").get();
+    const row = db.prepare("SELECT filename FROM _migrations WHERE filename = '034_edge_pull_log.sql'").get();
     expect(row).toBeDefined();
     const cols = (db.pragma('table_info(edge_pull_log)') as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toEqual(['id', 'pull_kind', 'scope_key', 'done_on', 'note', 'recorded_by', 'created_at', 'voided_at']);
@@ -677,14 +677,14 @@ describe('migration 033 — edge_pull_log', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/unit/edge-migration.test.ts`
-Expected: FAIL — first test: `expected undefined to be defined` (no `033` row); others `no such table: edge_pull_log`.
+Expected: FAIL — first test: `expected undefined to be defined` (no `034` row); others `no such table: edge_pull_log`.
 
 - [ ] **Step 3: Write the migration**
 
-Create `server/warehouse/migrations/033_edge_pull_log.sql`:
+Create `server/warehouse/migrations/034_edge_pull_log.sql`:
 
 ```sql
--- 033_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
+-- 034_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
 -- User state only; holds no market data. Scope/cadence live in server/edge/pull-queue.ts.
 -- Spec: docs/superpowers/specs/2026-10-02-oxford-edge-tab-design.md §7.
 --
@@ -714,14 +714,14 @@ CREATE INDEX IF NOT EXISTS ix_edge_pull_log_kind_scope
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/unit/edge-migration.test.ts && npm run governance`
-Expected: 6 tests PASS; governance PASS (no `DUPLICATE migration prefix 033`).
+Expected: 6 tests PASS; governance PASS (no `DUPLICATE migration prefix 034`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/warehouse/migrations/033_edge_pull_log.sql tests/unit/edge-migration.test.ts
+git add server/warehouse/migrations/034_edge_pull_log.sql tests/unit/edge-migration.test.ts
 git commit -F - <<'EOF'
-feat(warehouse): migration 033 edge_pull_log (append-only Oxford Edge pull log)
+feat(warehouse): migration 034 edge_pull_log (append-only Oxford Edge pull log)
 
 Architect-owned; acknowledged per architecture/status.json oxford-edge-tab claim.
 One isolated table; no existing table touched. done_on CHECK adds `date(done_on) IS NOT NULL`
@@ -2039,7 +2039,7 @@ Create `server/edge/pull-queue.ts`:
 // server/edge/pull-queue.ts
 //
 // Oxford Edge manual-pull queue (spec §5.3). Scope lists and cadences are CODE (versioned,
-// reviewable); the DB holds only the append-only edge_pull_log (migration 033). The 21 storage/IOS
+// reviewable); the DB holds only the append-only edge_pull_log (migration 034). The 21 storage/IOS
 // scopes are derived from markets.json `type` when the dataset is available and fall back to the
 // frozen copy of the retired Morning Guide's list when it is not. VA and MI truck coverage is
 // automated (derived from markets.json), never a queue row. Labels, slugs, press feeds and truck
@@ -5346,7 +5346,7 @@ Call `mcp__Claude_Browser__preview_list`. If anything already holds 5273/8911 th
 
 `mcp__Claude_Browser__preview_start` with `name: "edge-server"`, then `name: "edge-web"`. Check `mcp__Claude_Browser__preview_logs` (level `error`) for both: expected no errors.
 
-Prove migration 033 applied to the **worktree** DB and **not** the live warehouse:
+Prove migration 034 applied to the **worktree** DB and **not** the live warehouse:
 
 ```bash
 cd C:/Users/Owner/oxford-command-center/.claude/worktrees/oxford-edge-tab
@@ -5408,7 +5408,7 @@ git push -u origin feat/oxford-edge-tab
 gh pr create --base main --head feat/oxford-edge-tab --title "feat(acquisitions): Oxford Edge tab — Phase 1 display (market board, data health, pull queue, deal overlay)" --body-file <scratchpad>/edge-pr-body.md
 ```
 
-The PR body (`<scratchpad>/edge-pr-body.md`) lists: files changed by area (contracts, migration 033, `server/edge/*`, sub-router entry, UI, tests, env doc); the Architect-owned acknowledgment (status.json `oxford-edge-tab`); the gate record from Task 16 verbatim (attempt counts; the `reconcile` statement if applicable); `check:schema-drift` warnings quoted; `check:refute` result; preview results from Task 17; the deviations listed in this plan's "Spec coverage" notes; and ends with:
+The PR body (`<scratchpad>/edge-pr-body.md`) lists: files changed by area (contracts, migration 034, `server/edge/*`, sub-router entry, UI, tests, env doc); the Architect-owned acknowledgment (status.json `oxford-edge-tab`); the gate record from Task 16 verbatim (attempt counts; the `reconcile` statement if applicable); `check:schema-drift` warnings quoted; `check:refute` result; preview results from Task 17; the deviations listed in this plan's "Spec coverage" notes; and ends with:
 
 ```
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -5425,11 +5425,11 @@ Refute-Skip: Oxford Edge Phase 1 — read-only display ingest + manual-pull log;
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ```
 
-Before merge, re-run Task 0 Step 1's migration-number loop against fresh `origin/main`; if `033` was taken meanwhile, renumber (file, test, PR text) and re-run the gate.
+Before merge, re-run Task 0 Step 1's migration-number loop against fresh `origin/main`; if `034` was taken meanwhile, renumber (file, test, PR text) and re-run the gate.
 
 - [ ] **Step 3: Rollout verification (spec §11 rollout step 2)**
 
-After merge, Gabriel restarts the dev server on `main` (this applies `033` to the live warehouse). Then:
+After merge, Gabriel restarts the dev server on `main` (this applies `034` to the live warehouse). Then:
 
 ```bash
 curl -s http://localhost:8911/api/warehouse/edge/pull-queue | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const q=JSON.parse(s);const open=q.items.flatMap(i=>i.scopes).filter(x=>x.state==='open').length;console.log(open, q.items.map(i=>i.kind+':'+i.scopes.length).join(' '))})"
@@ -5457,7 +5457,7 @@ git -C C:/Users/Owner/oxford-command-center worktree remove .claude/worktrees/ox
 ```
 Expected: `True` after the junction removal (shared `node_modules` intact), then the worktree is removed. Delete the merged local branch only after Gabriel confirms the merge.
 
-**Rollback (spec §11):** UI — `git revert -m 1 <squash sha>` (CLAUDE.md §8); `markets.json` is untouched by construction. DB — `033`'s table stays (never dropped; recorded pulls preserved); a re-land reuses it via `CREATE TABLE IF NOT EXISTS`.
+**Rollback (spec §11):** UI — `git revert -m 1 <squash sha>` (CLAUDE.md §8); `markets.json` is untouched by construction. DB — `034`'s table stays (never dropped; recorded pulls preserved); a re-land reuses it via `CREATE TABLE IF NOT EXISTS`.
 
 ---
 
@@ -5482,7 +5482,7 @@ Expected: `True` after the junction removal (shared `node_modules` intact), then
 | §5.3 scopes 21/21/15/13, cadences, VA/MI automated, outside-scope states, launch 70 open | | 6, 7, 12 |
 | §5.4 mirror/AI/confidentiality | | 7 (F9 tests), 14 (no deal id to /edge) |
 | §6 contracts; raw schema in loader; not in `FINANCIAL_CONTRACT_PATHS` | | 1, 5, 16 |
-| §7 migration 033, append-only, void, schema-drift binding, live-DB safety | | 2, 6, 7, 15, 17 |
+| §7 migration 034, append-only, void, schema-drift binding, live-DB safety | | 2, 6, 7, 15, 17 |
 | §8.1 tab registration, cap 5, palette, no badge, lazy, lifted state, tab test | | 13 |
 | §8.2 layout, KPIs, error/empty states | | 12 |
 | §8.3 board columns, latest rule, status labels, picker, set filter + pin, detail, footnote | | 8, 10 |
@@ -5498,7 +5498,7 @@ Expected: `True` after the junction removal (shared `node_modules` intact), then
 
 **Resolved ambiguities / deviations from the spec text (state each in the PR):**
 1. **Candidate→deal join** uses `Deal.id === candidate.notionDealId`, not `Deal.notionDealId`: `acq_candidates.notion_deal_id` stores the Notion page id, which is `Deal.id` for live pipeline rows; `Deal.notionDealId` holds the `DEAL-n` unique id. This is the join `DealDrawer.findRankedCandidateForDeal` already uses. Seed-matched deals (seed `id`) therefore read "no linked deal", same as the drawer's existing behaviour.
-2. **Migration 033 `done_on` CHECK** adds `date(done_on) IS NOT NULL` — the spec's bare equality admits non-date strings because SQLite passes a NULL CHECK.
+2. **Migration 034 `done_on` CHECK** adds `date(done_on) IS NOT NULL` — the spec's bare equality admits non-date strings because SQLite passes a NULL CHECK.
 3. **`EdgeMarketReadout`** lives in its own file (not exported from `EdgeView.tsx`) to keep the drawer's import light and avoid a `react-refresh` lint warning.
 4. **`DataTable` limits:** no expandable rows → detail panel under the table; string headers → always-visible "Column definitions" list instead of header tooltips; header sort unused (pinning needs a two-key sort and the sort must be liftable) → explicit sort control.
 5. **Sparkline** takes `number[]`, so unpublished years are dropped rather than drawn as gaps.

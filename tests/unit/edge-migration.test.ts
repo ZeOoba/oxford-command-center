@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// tests/unit/edge-migration.test.ts — migration 033 (spec §7). In-memory DB; never touches finance.sqlite.
+// tests/unit/edge-migration.test.ts — migration 034 (spec §7). In-memory DB; never touches finance.sqlite.
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigrations } from '../../server/warehouse/migrate';
@@ -15,10 +15,10 @@ function makeDb(): Database.Database {
 const insert = (db: Database.Database, kind: string, scope: string, doneOn: string, note: string | null = null) =>
   db.prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on, note) VALUES (?, ?, ?, ?)').run(kind, scope, doneOn, note);
 
-describe('migration 033 — edge_pull_log', () => {
-  it('a fresh DB migrates through 033 and records it', () => {
+describe('migration 034 — edge_pull_log', () => {
+  it('a fresh DB migrates through 034 and records it', () => {
     const db = makeDb();
-    const row = db.prepare("SELECT filename FROM _migrations WHERE filename = '033_edge_pull_log.sql'").get();
+    const row = db.prepare("SELECT filename FROM _migrations WHERE filename = '034_edge_pull_log.sql'").get();
     expect(row).toBeDefined();
     const cols = (db.pragma('table_info(edge_pull_log)') as Array<{ name: string }>).map((c) => c.name);
     expect(cols).toEqual(['id', 'pull_kind', 'scope_key', 'done_on', 'note', 'recorded_by', 'created_at', 'voided_at']);
