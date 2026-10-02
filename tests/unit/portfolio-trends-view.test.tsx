@@ -30,6 +30,8 @@ vi.mock('@analytics/portfolio-trends', async (orig) => {
   };
 });
 
+vi.mock('../../src/lib/useCountUp', () => ({ useCountUp: (t: number | null) => t ?? 0 }));
+
 import { TrendsView } from '../../src/modules/portfolio/TrendsView';
 
 const ASOF = '2026-09-23';
