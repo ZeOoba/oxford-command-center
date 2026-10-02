@@ -87,6 +87,7 @@ export function EdgeMarketReadout({ deal, onNavigate }: { deal: Pick<Deal, 'mark
               }
             >
               {d.text}
+              {d.marker && <span className="text-2xs" style={{ ...TERTIARY, marginLeft: '0.25rem' }}>{d.marker}</span>}
             </span>
           </div>
         );

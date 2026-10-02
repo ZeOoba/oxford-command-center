@@ -74,7 +74,7 @@ describe('edgeCellDisplay', () => {
 
   it('marks estimated values dotted with an Est. title', () => {
     const d = edgeCellDisplay(cell([1, 1, 1, 1, 9], ['actual', 'actual', 'actual', 'actual', 'estimated']), 'pct_yoy', TEST_YEARS, 'trades');
-    expect(d).toEqual({ text: '+9.0%', title: 'Est.', dotted: true, observed: true });
+    expect(d).toEqual({ text: '+9.0%', title: 'Est.', dotted: true, observed: true, marker: 'Est.' });
   });
 
   it('F4: storage reads Pending manual pull, never 0', () => {

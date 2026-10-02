@@ -11,7 +11,7 @@
 // expandable rows, so a row click opens the detail panel directly beneath the table; its headers are
 // plain strings, so header tooltips are replaced by the always-visible "Column definitions" list.
 import { useId, useState } from 'react';
-import { EDGE_OBSERVED_STATUSES, SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeSeriesKey } from '@contracts/edge';
+import { EDGE_OBSERVED_STATUSES, SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeSeriesKey, type EdgeUnit } from '@contracts/edge';
 import { Card, CardHeader } from '@/primitives/Card';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge } from '@/primitives/Badge';
@@ -75,9 +75,23 @@ function EdgeValue({ market, field, years }: { market: EdgeMarket; field: EdgeSe
   );
 }
 
-/** Sparkline takes number[] only, so unpublished years are dropped rather than drawn as gaps. */
+/** Sparkline takes number[] only, so unobserved years (null, guide_only, unpublished) are dropped
+ *  rather than drawn as gaps or as values the board would not print. */
 function observedValues(market: EdgeMarket, field: EdgeSeriesKey): number[] {
-  return market.series[field].values.filter((v): v is number => v !== null);
+  const { values, status } = market.series[field];
+  const out: number[] = [];
+  values.forEach((v, i) => {
+    const st = status[i];
+    if (v !== null && st !== undefined && EDGE_OBSERVED_STATUSES.includes(st)) out.push(v);
+  });
+  return out;
+}
+
+function sparklineLabel(points: readonly number[], unit: EdgeUnit): string {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first === undefined || last === undefined || points.length < 2) return 'Trend: not enough observed years';
+  return `Trend: ${formatEdgeValue(first, unit) ?? '—'} to ${formatEdgeValue(last, unit) ?? '—'} over ${points.length} observed years`;
 }
 
 function EdgeMarketDetail({ id, market, data, onClose }: { id: string; market: EdgeMarket; data: EdgeMarketsResponse; onClose: () => void }) {
@@ -219,7 +233,14 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
           field === 'trades' ? (
             <span className="inline-flex items-center gap-2">
               <EdgeValue market={m} field={field} years={data.years} />
-              <Sparkline data={observedValues(m, 'trades')} width={56} height={18} />
+              {(() => {
+                const pts = observedValues(m, 'trades');
+                return (
+                  <span role="img" aria-label={sparklineLabel(pts, SERIES_UNITS.trades)}>
+                    <Sparkline data={pts} width={56} height={18} />
+                  </span>
+                );
+              })()}
             </span>
           ) : (
             <EdgeValue market={m} field={field} years={data.years} />

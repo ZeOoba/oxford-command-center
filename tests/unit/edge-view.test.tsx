@@ -6,7 +6,7 @@ import type { EdgeMarketsResponse, EdgePullQueueResponse } from '@contracts/edge
 import { EdgeView } from '../../src/modules/acquisitions/EdgeView';
 import { EdgeMarketReadout } from '../../src/modules/acquisitions/EdgeMarketReadout';
 import { EDGE_BOARD_DEFAULT_STATE, EDGE_KEYS, EDGE_PULL_SERIES } from '../../src/modules/acquisitions/edge-hooks';
-import { fourMarkets, mkMarketsResponse } from './edge-test-helpers';
+import { cell, fourMarkets, mkMarketsResponse } from './edge-test-helpers';
 
 function client(markets?: EdgeMarketsResponse): QueryClient {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
@@ -74,20 +74,31 @@ describe('EdgeView', () => {
     renderView({ ...data, freshness: { metaPulled: '2026-09-30', fileMtime: 'unknown', asOf: '2026-09-30', ageDays: 2, staleAfterDays: 7, stale: true } });
     expect(screen.getByText('STALE')).toBeTruthy();
     expect(screen.getByText('data pulled 2026-09-30')).toBeTruthy();
-    expect(screen.getByText(/Date could not be verified \(file timestamp in the future or unreadable\) — treated as stale\./)).toBeTruthy();
+    expect(screen.getByText(/Date could not be verified \(file modified time is in the future or unreadable\) — treated as stale\./)).toBeTruthy();
     expect(screen.queryByText(/2 days old/)).toBeNull();
+  });
+
+  it('unverified banner names WHICH date failed (pulled / mtime / both)', () => {
+    const data = mkMarketsResponse(fourMarkets());
+    const base = { asOf: '2026-09-30', ageDays: 2, staleAfterDays: 7, stale: true };
+    renderView({ ...data, freshness: { ...base, metaPulled: '2099-01-01', fileMtime: '2026-09-30T10:00:00.000Z' } });
+    expect(screen.getByText(/Date could not be verified \(data pulled date is in the future or invalid\) — treated as stale\./)).toBeTruthy();
+    cleanup();
+    renderView({ ...data, freshness: { ...base, metaPulled: 'garbage', fileMtime: 'unknown' } });
+    expect(screen.getByText(/Date could not be verified \(data pulled date is in the future or invalid; file modified time is in the future or unreadable\) — treated as stale\./)).toBeTruthy();
   });
 
   it('readError with no freshness still shows the readError line', () => {
     const data = mkMarketsResponse(fourMarkets(), { readError: 'EBUSY: gone', lastGoodLoadedAt: null });
     renderView({ ...data, freshness: null });
-    expect(screen.getByText('Last re-read failed (EBUSY: gone); showing the copy loaded at an earlier load.')).toBeTruthy();
+    expect(screen.getByText('Showing the last good copy loaded earlier. Last re-read failed: EBUSY: gone.')).toBeTruthy();
     expect(screen.queryByText('STALE')).toBeNull();
   });
 
   it('readError → red last-good line', () => {
     renderView(mkMarketsResponse(fourMarkets(), { readError: 'EBUSY: simulated', lastGoodLoadedAt: '2026-10-02T12:00:00.000Z' }));
-    expect(screen.getByText('Last re-read failed (EBUSY: simulated); showing the copy loaded at 2026-10-02T12:00:00.000Z.')).toBeTruthy();
+    const when = new Date('2026-10-02T12:00:00.000Z').toLocaleString();
+    expect(screen.getByText(`Showing the last good copy loaded ${when}. Last re-read failed: EBUSY: simulated.`)).toBeTruthy();
   });
 
   it('missing → names the dir and the env var', () => {
@@ -131,9 +142,10 @@ describe('EdgeView', () => {
   it('data health: proxy badges, manual-pull links, subs line, out-of-scope states', () => {
     renderView(mkMarketsResponse(fourMarkets(), { outsidePullScope: { truck: ['DC', 'ND', 'SD', 'TN'], mfgInvest: ['DC', 'ND', 'SD', 'TN'] } }));
     expect(screen.getAllByText('[PROXY]')).toHaveLength(3);
-    const links = screen.getAllByRole('link', { name: 'Manual pull required' }).map((a) => a.getAttribute('href'));
-    expect(links.sort()).toEqual(['#edge-pull-ios', '#edge-pull-mfgInvest', '#edge-pull-storage']);
-    expect(screen.getByText('3/4 markets — 1 metro-only markets have no CoStar submarket breakdown (permanent).')).toBeTruthy();
+    const links = screen.getAllByRole('link', { name: /^Manual pull required for / });
+    expect(links.map((a) => a.getAttribute('href')).sort()).toEqual(['#edge-pull-ios', '#edge-pull-mfgInvest', '#edge-pull-storage']);
+    expect(new Set(links.map((a) => a.getAttribute('aria-label'))).size).toBe(3);
+    expect(screen.getByText('3/4 markets — 1 metro-only market has no CoStar submarket breakdown (permanent).')).toBeTruthy();
     expect(screen.getByText('Outside pull scope — truck: DC, ND, SD, TN · mfgInvest: DC, ND, SD, TN')).toBeTruthy();
   });
 });
@@ -266,5 +278,15 @@ describe('EdgeMarketReadout', () => {
     renderReadout({ market: 'Columbus OH', location: 'Columbus, OH' }, mkMarketsResponse(ms));
     expect(screen.getByText(/Pending manual pull/)).toBeTruthy();
     expect(screen.queryByText(/^0$/)).toBeNull();
+  });
+});
+
+describe('EdgeMarketReadout estimated marker (R3f)', () => {
+  it('shows Est. as visible text, not only a title', () => {
+    const ms = fourMarkets();
+    const col = ms.find((m) => m.id === 'columbus')!;
+    col.series = { ...col.series, vac: cell([5, 4.5, 4, 3.5, 3], ['actual', 'actual', 'actual', 'actual', 'estimated']) };
+    render(<QueryClientProvider client={client(mkMarketsResponse(ms))}><EdgeMarketReadout deal={{ market: 'Columbus OH', location: 'Columbus, OH' }} /></QueryClientProvider>);
+    expect(screen.getByText('Est.')).toBeTruthy();
   });
 });

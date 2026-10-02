@@ -46,6 +46,27 @@ function asOfSource(f: NonNullable<EdgeMarketsResponse['freshness']>): string | 
   return null;
 }
 
+const isRealDay = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+
+/** Which date made the dataset unverifiable: pulled date invalid/future, file mtime unreadable/future. */
+function unverifiedReason(f: NonNullable<EdgeMarketsResponse['freshness']>): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const pulledBad = !isRealDay(f.metaPulled) || f.metaPulled > today;
+  const mtimeMs = f.fileMtime === 'unknown' ? NaN : Date.parse(f.fileMtime);
+  const mtimeBad = !Number.isFinite(mtimeMs) || mtimeMs > Date.now();
+  const pulledMsg = 'data pulled date is in the future or invalid';
+  const mtimeMsg = 'file modified time is in the future or unreadable';
+  if (pulledBad && !mtimeBad) return pulledMsg;
+  if (mtimeBad && !pulledBad) return mtimeMsg;
+  return `${pulledMsg}; ${mtimeMsg}`; // both bad, or neither detectable client-side (clock difference)
+}
+
+function formatLoadedAt(iso: string | null): string {
+  if (iso === null) return 'earlier';
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? iso : t.toLocaleString();
+}
+
 function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
   const f = data.freshness;
   if (!f && !data.readError) return null;
@@ -61,7 +82,7 @@ function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
             <Badge tone="amber">STALE</Badge>
             <span className="text-xs" style={{ color: 'var(--text-warn)' }}>
               {unverified
-                ? `Edge dataset as of ${f.asOf} — Date could not be verified (file timestamp in the future or unreadable) — treated as stale. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`
+                ? `Edge dataset as of ${f.asOf} — Date could not be verified (${unverifiedReason(f)}) — treated as stale. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`
                 : `Edge dataset as of ${f.asOf} — ${f.ageDays} days old. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`}
             </span>
           </>
@@ -72,7 +93,7 @@ function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
       </div>
       {data.readError && (
         <p className="text-xs" style={{ color: 'var(--text-neg)' }}>
-          {`Last re-read failed (${data.readError}); showing the copy loaded at ${data.lastGoodLoadedAt ?? 'an earlier load'}.`}
+          {`Showing the last good copy loaded ${formatLoadedAt(data.lastGoodLoadedAt)}. Last re-read failed: ${data.readError}.`}
         </p>
       )}
     </div>
@@ -107,7 +128,7 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
           <span>{data.fieldMeta[r.field]?.trueLabel ?? 'Unlabelled series'}</span>
           {data.fieldMeta[r.field]?.isProxy && <Badge tone="purple">[PROXY]</Badge>}
           {r.allPlaceholder && EDGE_PULL_SERIES.has(r.field) && (
-            <a href={`#edge-pull-${r.field}`} aria-label="Manual pull required">
+            <a href={`#edge-pull-${r.field}`} aria-label={`Manual pull required for ${data.fieldMeta[r.field]?.trueLabel ?? r.field}`}>
               <Badge tone="amber">Manual pull required</Badge>
             </a>
           )}
@@ -145,7 +166,7 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
         <DataTable columns={columns} rows={data.coverage} getRowId={(r) => r.field} minWidth={960} />
       </div>
       <div className="flex flex-col gap-1 px-3 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-        <p>{`${withSubs}/${data.marketCount} markets — ${data.marketCount - withSubs} metro-only markets have no CoStar submarket breakdown (permanent).`}</p>
+        <p>{`${withSubs}/${data.marketCount} markets — ${data.marketCount - withSubs} metro-only ${data.marketCount - withSubs === 1 ? 'market has' : 'markets have'} no CoStar submarket breakdown (permanent).`}</p>
         <p>{`Outside pull scope — truck: ${outside.truck.join(', ') || 'none'} · mfgInvest: ${outside.mfgInvest.join(', ') || 'none'}`}</p>
       </div>
     </Card>

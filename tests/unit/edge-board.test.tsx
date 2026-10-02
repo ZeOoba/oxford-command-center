@@ -134,6 +134,15 @@ describe('EdgeRankingBoard', () => {
     expect(within(panel).getByText('Nowcast')).toBeTruthy();
   });
 
+  it('trades sparkline plots observed points only and carries a text alternative', () => {
+    const markets = fourMarkets();
+    const col = markets.find((m) => m.id === 'columbus')!;
+    col.series = { ...col.series, trades: cell([2, 9.9, 3, 3.5, 4], ['actual', 'guide_only', 'actual', 'actual', 'actual']) };
+    render(<Harness data={mkMarketsResponse(markets)} />);
+    const row = bodyRows().find((r) => r.textContent?.includes('Columbus, OH'))!;
+    expect(within(row).getByRole('img', { name: 'Trend: +2.0% to +4.0% over 4 observed years' })).toBeTruthy();
+  });
+
   it('detail grid gates on status: non-null value with guide_only/null status shows the placeholder, never the number', () => {
     const markets = fourMarkets();
     const col = markets.find((m) => m.id === 'columbus')!;
