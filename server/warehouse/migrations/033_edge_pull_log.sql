@@ -1,0 +1,25 @@
+-- 033_edge_pull_log.sql — Oxford Edge manual-pull done-state (append-only log).
+-- User state only; holds no market data. Scope/cadence live in server/edge/pull-queue.ts.
+-- Spec: docs/superpowers/specs/2026-10-02-oxford-edge-tab-design.md §7.
+--
+-- Append-only: there is no DELETE path. "Undo" sets voided_at (never-delete rule; history kept).
+-- Current state per (pull_kind, scope_key) = the latest row with voided_at IS NULL, ordered
+-- done_on DESC, id DESC. scope_key membership is enforced in the route against PULL_ITEMS, not
+-- here, so the scope list can change without a migration.
+--
+-- done_on CHECK: `date(done_on) IS NOT NULL` is added to the spec's `done_on = date(done_on)`.
+-- SQLite treats a CHECK whose expression evaluates to NULL as satisfied, and date('not-a-date')
+-- is NULL, so the bare equality alone would admit garbage. The equality still rejects overflow
+-- dates such as '2026-02-30' (date() normalizes it to a different string).
+CREATE TABLE IF NOT EXISTS edge_pull_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pull_kind   TEXT NOT NULL CHECK (pull_kind IN ('storage', 'ios', 'mfgInvest', 'truck')),
+  scope_key   TEXT NOT NULL CHECK (length(scope_key) BETWEEN 2 AND 64),
+  done_on     TEXT NOT NULL CHECK (date(done_on) IS NOT NULL AND done_on = date(done_on)),
+  note        TEXT CHECK (note IS NULL OR length(note) <= 2000),
+  recorded_by TEXT NOT NULL DEFAULT 'ui',
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  voided_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_edge_pull_log_kind_scope
+  ON edge_pull_log (pull_kind, scope_key, done_on DESC, id DESC);
