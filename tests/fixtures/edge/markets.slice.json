@@ -1,0 +1,122 @@
+{
+  "_synthetic": true,
+  "_comment": "SYNTHETIC Oxford Edge fixture (spec F14). Real field shape and status patterns; every number is made up. Never paste real markets.json values here — rent/vac/per/loss/subs are CoStar-licensed.",
+  "meta": {
+    "pulled": "2026-07-14",
+    "years": [2021, 2022, 2023, 2024, 2025],
+    "sources": {
+      "pop": ["SYNTH_PEP"], "job": ["SYNTH_SAE"], "inc": ["SYNTH_ACS5"], "trades": ["SYNTH_QCEW_238"],
+      "biz": ["SYNTH_CBP"], "hvacPermits": ["SYNTH_BPS"], "per": ["SYNTH_COSTAR_FLEX"], "loss": ["SYNTH_COSTAR_FLEX"],
+      "truck": ["SYNTH_VDOT", "SYNTH_ODOT_TIMS_decommissioned"], "storage": ["SYNTH_GUIDE_ONLY"], "rent": ["SYNTH_COSTAR_FLEX"],
+      "vac": ["SYNTH_COSTAR_FLEX"], "carriers": ["SYNTH_FMCSA"], "mfgInvest": ["SYNTH_GUIDE_ONLY"], "ios": ["SYNTH_GUIDE_ONLY"],
+      "migration": ["SYNTH_IRS_SOI"], "eGrocery": ["SYNTH_CBP_492"], "incLevel": ["SYNTH_ACS5"]
+    },
+    "statusEnum": ["actual", "estimated", "nowcast", "guide_only", "null"],
+    "fieldMeta": {
+      "pop": { "trueLabel": "Population growth (Census PEP)", "isProxy": false },
+      "job": { "trueLabel": "Total nonfarm employment growth (BLS SAE)", "isProxy": false },
+      "inc": { "trueLabel": "Median household income growth (ACS5)", "isProxy": false },
+      "trades": { "trueLabel": "Specialty trade contractor employment growth, NAICS 238 (QCEW)", "isProxy": false },
+      "biz": { "trueLabel": "Total business establishment count growth (Census CBP)", "isProxy": true },
+      "hvacPermits": { "trueLabel": "Residential building permits authorized, growth (Census BPS)", "isProxy": true },
+      "per": { "trueLabel": "Industrial (Flex) construction pipeline, kSF (CoStar)", "isProxy": false },
+      "loss": { "trueLabel": "Demolished SF as % of prior-year inventory (CoStar)", "isProxy": false },
+      "truck": { "trueLabel": "Truck AADT growth on primary corridors (state DOT)", "isProxy": false },
+      "storage": { "trueLabel": "Self-storage asking rate growth", "isProxy": false },
+      "rent": { "trueLabel": "Industrial (Flex) asking rent growth (CoStar)", "isProxy": false },
+      "vac": { "trueLabel": "Industrial (Flex) vacancy rate (CoStar)", "isProxy": false },
+      "carriers": { "trueLabel": "New motor-carrier registrations per 10k population (FMCSA)", "isProxy": false },
+      "mfgInvest": { "trueLabel": "Announced manufacturing investment $", "isProxy": false },
+      "ios": { "trueLabel": "IOS/contractor-yard listing signal", "isProxy": false },
+      "migration": { "trueLabel": "Net domestic migration, persons (IRS SOI)", "isProxy": false },
+      "eGrocery": { "trueLabel": "Courier/messenger establishment count growth, NAICS 492 (Census CBP)", "isProxy": true },
+      "incLevel": { "trueLabel": "Median household income, $ level (ACS5)", "isProxy": false }
+    }
+  },
+  "markets": [
+    {
+      "id": "columbus", "name": "Columbus", "state": "OH", "cbsa": "18140", "lat": 40.0, "lon": -83.0, "type": "named", "trajectory": null,
+      "pop": [0.6, 0.7, 0.8, 0.9, 1.0], "job": [1.0, 1.1, 1.2, 1.3, 1.4], "inc": [null, 2.0, 2.1, 2.2, null],
+      "trades": [2.0, 2.5, 3.0, 3.5, 4.0], "biz": [null, null, 1.0, 1.1, null], "hvacPermits": [5.0, -3.0, 4.0, 2.0, null],
+      "per": [100.0, 120.0, 140.0, 160.0, 180.0], "loss": [0.0, 0.1, 0.0, 0.0, 0.1], "truck": [null, null, null, null, null],
+      "storage": [null, null, null, null, null], "rent": [1.0, 1.2, 1.4, 1.6, 1.8], "vac": [5.0, 4.5, 4.0, 3.5, 3.0],
+      "carriers": [3.0, 3.1, 3.2, 3.3, 3.4], "mfgInvest": [null, null, null, null, null], "ios": [null, null, null, null, null],
+      "migration": [1000, 1100, 1200, null, null], "eGrocery": [null, null, 2.0, 2.2, null], "incLevel": [60000, 61000, 62000, 63000, null],
+      "status": {
+        "pop": ["actual", "actual", "actual", "actual", "actual"], "job": ["actual", "actual", "actual", "actual", "actual"],
+        "inc": ["null", "actual", "actual", "actual", "null"], "trades": ["actual", "actual", "actual", "actual", "actual"],
+        "biz": ["null", "null", "actual", "actual", "null"], "hvacPermits": ["actual", "actual", "actual", "actual", "null"],
+        "per": ["actual", "actual", "actual", "actual", "actual"], "loss": ["actual", "actual", "actual", "actual", "actual"],
+        "truck": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "storage": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "rent": ["actual", "actual", "actual", "actual", "actual"], "vac": ["actual", "actual", "actual", "actual", "actual"],
+        "carriers": ["actual", "actual", "actual", "actual", "actual"], "mfgInvest": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "ios": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "migration": ["actual", "actual", "actual", "null", "null"],
+        "eGrocery": ["null", "null", "actual", "actual", "null"], "incLevel": ["actual", "actual", "actual", "actual", "null"]
+      },
+      "subs": [{ "name": "Synthetic Sub A", "vac": 3.3, "rentGrowth": 1.1, "invKsf": 1000.0 }, { "name": "Synthetic Sub B", "vac": 6.1, "rentGrowth": 0.4, "invKsf": 750.0 }]
+    },
+    {
+      "id": "indianapolis_south", "name": "Indianapolis (South Metro)", "state": "IN", "cbsa": "26900S", "lat": 39.5, "lon": -86.1, "type": "named_custom", "trajectory": null,
+      "pop": [0.9, 1.0, 1.1, 1.2, 1.3], "job": [1.5, 1.4, 1.3, 1.2, 1.1], "inc": [null, 3.0, 3.1, 3.2, null],
+      "trades": [1.0, 1.5, 2.0, 2.5, 6.0], "biz": [null, null, 0.5, 0.6, null], "hvacPermits": [8.0, 2.0, -1.0, 3.0, null],
+      "per": [50.0, 60.0, 70.0, 80.0, 90.0], "loss": [0.0, 0.0, 0.0, 0.2, 0.0], "truck": [null, null, null, null, null],
+      "storage": [null, null, null, null, null], "rent": [0.8, 0.9, 1.0, 1.1, 1.2], "vac": [3.0, 2.8, 2.6, 2.4, 2.2],
+      "carriers": [2.0, 2.1, 2.2, 2.3, 2.4], "mfgInvest": [null, null, null, null, null], "ios": [null, null, null, null, null],
+      "migration": [2000, 2100, 2200, null, null], "eGrocery": [null, null, 1.0, 1.5, null], "incLevel": [70000, 71000, 72000, 73000, null],
+      "status": {
+        "pop": ["actual", "actual", "actual", "actual", "actual"], "job": ["actual", "actual", "actual", "actual", "actual"],
+        "inc": ["null", "actual", "actual", "actual", "null"], "trades": ["actual", "actual", "actual", "actual", "actual"],
+        "biz": ["null", "null", "actual", "actual", "null"], "hvacPermits": ["actual", "actual", "actual", "actual", "null"],
+        "per": ["actual", "actual", "actual", "actual", "actual"], "loss": ["actual", "actual", "actual", "actual", "actual"],
+        "truck": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "storage": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "rent": ["actual", "actual", "actual", "actual", "actual"], "vac": ["actual", "actual", "actual", "actual", "actual"],
+        "carriers": ["actual", "actual", "actual", "actual", "actual"], "mfgInvest": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "ios": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "migration": ["actual", "actual", "actual", "null", "null"],
+        "eGrocery": ["null", "null", "actual", "actual", "null"], "incLevel": ["actual", "actual", "actual", "actual", "null"]
+      },
+      "subs": [{ "name": "Synthetic Sub C", "vac": 2.0, "rentGrowth": 0.5, "invKsf": 500.0 }]
+    },
+    {
+      "id": "cedar_rapids", "name": "Cedar Rapids", "state": "IA", "cbsa": "16300", "lat": 42.0, "lon": -91.7, "type": "auto", "trajectory": "a_growing",
+      "pop": [0.1, 0.2, 0.3, 0.4, 0.5], "job": [0.5, 0.6, 0.7, 0.8, 0.9], "inc": [null, 1.0, 1.1, 1.2, null],
+      "trades": [1.0, 1.0, 1.0, 1.0, 9.0], "biz": [null, null, 0.2, 0.3, null], "hvacPermits": [1.0, 1.0, 1.0, 1.0, null],
+      "per": [10.0, 20.0, 30.0, 40.0, 50.0], "loss": [0.0, 0.0, 0.0, 0.0, 0.0], "truck": [null, null, null, null, null],
+      "storage": [null, null, null, null, null], "rent": [0.1, 0.2, 0.3, 0.4, 0.5], "vac": [7.0, 6.5, 6.0, 5.5, 5.0],
+      "carriers": [1.0, 1.1, 1.2, 1.3, 1.4], "mfgInvest": [null, null, null, null, null], "ios": [null, null, null, null, null],
+      "migration": [-100, -200, -300, null, null], "eGrocery": [null, null, 0.1, 0.2, null], "incLevel": [55000, 56000, 57000, 58000, null],
+      "status": {
+        "pop": ["actual", "actual", "actual", "actual", "actual"], "job": ["actual", "actual", "actual", "actual", "actual"],
+        "inc": ["null", "actual", "actual", "actual", "null"], "trades": ["actual", "actual", "actual", "actual", "estimated"],
+        "biz": ["null", "null", "actual", "actual", "null"], "hvacPermits": ["actual", "actual", "actual", "actual", "null"],
+        "per": ["actual", "actual", "actual", "actual", "actual"], "loss": ["actual", "actual", "actual", "actual", "actual"],
+        "truck": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "storage": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "rent": ["actual", "actual", "actual", "actual", "actual"], "vac": ["actual", "actual", "actual", "actual", "actual"],
+        "carriers": ["actual", "actual", "actual", "actual", "actual"], "mfgInvest": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "ios": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "migration": ["actual", "actual", "actual", "null", "null"],
+        "eGrocery": ["null", "null", "actual", "actual", "null"], "incLevel": ["actual", "actual", "actual", "actual", "null"]
+      },
+      "subs": []
+    },
+    {
+      "id": "richmond", "name": "Richmond", "state": "VA", "cbsa": "40060", "lat": 37.5, "lon": -77.4, "type": "named", "trajectory": null,
+      "pop": [0.4, 0.5, 0.6, 0.7, 0.8], "job": [1.2, 1.3, 1.4, 1.5, 1.6], "inc": [null, 2.5, 2.6, 2.7, null],
+      "trades": [0.5, 0.5, 0.5, 0.5, 0.5], "biz": [null, null, 0.9, 1.0, null], "hvacPermits": [3.0, 4.0, 5.0, 6.0, null],
+      "per": [200.0, 210.0, 220.0, 230.0, 240.0], "loss": [0.1, 0.1, 0.1, 0.1, 0.1], "truck": [1.5, 2.0, -0.5, 3.0, 2.2],
+      "storage": [null, null, null, null, null], "rent": [1.5, 1.6, 1.7, 1.8, 1.9], "vac": [4.0, 4.1, 4.2, 4.3, 4.4],
+      "carriers": [4.0, 4.1, 4.2, 4.3, 4.4], "mfgInvest": [null, null, null, null, null], "ios": [null, null, null, null, null],
+      "migration": [3000, 3100, 3200, null, null], "eGrocery": [null, null, 3.0, 3.1, null], "incLevel": [65000, 66000, 67000, 68000, null],
+      "status": {
+        "pop": ["actual", "actual", "actual", "actual", "actual"], "job": ["actual", "actual", "actual", "actual", "actual"],
+        "inc": ["null", "actual", "actual", "actual", "null"], "trades": ["actual", "actual", "actual", "actual", "actual"],
+        "biz": ["null", "null", "actual", "actual", "null"], "hvacPermits": ["actual", "actual", "actual", "actual", "null"],
+        "per": ["actual", "actual", "actual", "actual", "actual"], "loss": ["actual", "actual", "actual", "actual", "actual"],
+        "truck": ["actual", "actual", "actual", "actual", "actual"], "storage": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "rent": ["actual", "actual", "actual", "actual", "actual"], "vac": ["actual", "actual", "actual", "actual", "actual"],
+        "carriers": ["actual", "actual", "actual", "actual", "actual"], "mfgInvest": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"],
+        "ios": ["guide_only", "guide_only", "guide_only", "guide_only", "guide_only"], "migration": ["actual", "actual", "actual", "null", "null"],
+        "eGrocery": ["null", "null", "actual", "actual", "null"], "incLevel": ["actual", "actual", "actual", "actual", "null"]
+      },
+      "subs": [{ "name": "Synthetic Sub D", "vac": 4.0, "rentGrowth": 1.0, "invKsf": 800.0 }]
+    }
+  ]
+}
