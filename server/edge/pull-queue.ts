@@ -224,11 +224,20 @@ export function readEdgePullLatest(db: WarehouseDb): Map<string, EdgePullLogRow>
   return latest;
 }
 
+/** Thrown by recordEdgePull for a bad (non-calendar / future) doneOn. Subclass of RangeError so
+ *  existing handlers still match; the route maps ONLY this class to HTTP 400. */
+export class PullValidationError extends RangeError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PullValidationError';
+  }
+}
+
 /** Append one log row. Binds exactly kind/scopeKey/doneOn/note → pull_kind/scope_key/done_on/note
  *  (check:schema-drift cross-references these against RecordPullRequest). */
 export function recordEdgePull(db: WarehouseDb, input: RecordPullRequest, today: string = localIsoDate(new Date())): number {
-  if (!isRealIsoDate(input.doneOn)) throw new RangeError(`doneOn is not a real calendar date: ${input.doneOn}`);
-  if (input.doneOn > today) throw new RangeError(`doneOn ${input.doneOn} is in the future (server local date ${today})`);
+  if (!isRealIsoDate(input.doneOn)) throw new PullValidationError(`doneOn is not a real calendar date: ${input.doneOn}`);
+  if (input.doneOn > today) throw new PullValidationError(`doneOn ${input.doneOn} is in the future (server local date ${today})`);
   const result = db
     .prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on, note) VALUES (?, ?, ?, ?)')
     .run(input.kind, input.scopeKey, input.doneOn, input.note ?? null);

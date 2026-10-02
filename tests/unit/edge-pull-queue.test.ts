@@ -9,7 +9,7 @@ import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import {
   EDGE_BUY_BOX_FALLBACK, MFG_INVEST_STATES, TRUCK_STATES, automatedTruckStates, buildEdgePullItem, buildEdgePullQueue,
   computeOutsidePullScope, deriveBuyBoxIds, isRealIsoDate, localIsoDate, pullScopeKeys, readEdgePullLatest,
-  recordEdgePull, scopeStateFor, voidEdgePull,
+  PullValidationError, recordEdgePull, scopeStateFor, voidEdgePull,
 } from '../../server/edge/pull-queue';
 import * as pullQueue from '../../server/edge/pull-queue';
 import { fourMarkets, mkMarket, obs } from './edge-test-helpers';
@@ -136,6 +136,21 @@ describe('recordEdgePull validation and append-only guarantees', () => {
       expect(() => recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn })).toThrow(/real calendar date/);
     }
     expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
+  });
+
+  it('throws PullValidationError (a RangeError subclass) for bad and future dates', () => {
+    const db = freshDb();
+    for (const [doneOn, today] of [['2026-02-30', '2026-10-02'], ['2026-10-03', '2026-10-02']] as const) {
+      let caught: unknown;
+      try {
+        recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn }, today);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(PullValidationError);
+      expect(caught).toBeInstanceOf(RangeError);
+      expect((caught as Error).name).toBe('PullValidationError');
+    }
   });
 
   it('rejects future dates relative to server local date; accepts today', () => {
