@@ -2,10 +2,10 @@
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { EdgeMarketsResponse } from '@contracts/edge';
+import type { EdgeMarketsResponse, EdgeSeriesCell } from '@contracts/edge';
 import { EdgeRankingBoard } from '../../src/modules/acquisitions/EdgeRankingBoard';
 import { EDGE_BOARD_DEFAULT_STATE, type EdgeBoardState } from '../../src/modules/acquisitions/edge-hooks';
-import { fourMarkets, mkMarketsResponse } from './edge-test-helpers';
+import { cell, fourMarkets, mkMarketsResponse } from './edge-test-helpers';
 
 function Harness({ data }: { data: EdgeMarketsResponse }) {
   const [board, setBoard] = useState<EdgeBoardState>(EDGE_BOARD_DEFAULT_STATE);
@@ -54,11 +54,20 @@ describe('EdgeRankingBoard', () => {
   });
 
   it('F3: picker labels for the three proxies are trueLabel + [PROXY], never the raw key', () => {
-    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    const { container } = render(<Harness data={mkMarketsResponse(fourMarkets())} />);
     expect(screen.getByLabelText('Residential building permits authorized, growth (Census BPS) [PROXY]')).toBeTruthy();
     expect(screen.getByLabelText('Total business establishment count growth (Census CBP) [PROXY]')).toBeTruthy();
     expect(screen.getByLabelText('Courier/messenger establishment count growth, NAICS 492 (Census CBP) [PROXY]')).toBeTruthy();
     expect(screen.queryByLabelText('hvacPermits')).toBeNull();
+    expect(container.textContent ?? '').not.toMatch(/hvacPermits|eGrocery/);
+    expect(within(container).queryByText(/\bbiz\b/)).toBeNull();
+    fireEvent.click(screen.getByLabelText('Residential building permits authorized, growth (Census BPS) [PROXY]'));
+    const proxyHeader = screen
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent ?? '')
+      .find((h) => h.includes('Residential building permits'));
+    expect(proxyHeader).toContain('[PROXY]');
+    expect(container.textContent ?? '').not.toMatch(/hvacPermits|eGrocery/);
   });
 
   it('F4: adding the storage column renders Pending manual pull in every row, never 0', () => {
@@ -83,6 +92,84 @@ describe('EdgeRankingBoard', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Auto (1)' }));
     fireEvent.click(screen.getByText('Cedar Rapids, IA'));
     expect(screen.getByText('CoStar publishes no submarket breakdown for this metro.')).toBeTruthy();
+  });
+
+  it('Details button is a real focusable button, toggles aria-expanded and opens that market', () => {
+    // @testing-library/user-event is not a dependency (package.json is architect-owned), so Enter/Space
+    // activation is exercised as the click a native <button> synthesizes; the test pins that it IS a native,
+    // tabbable <button type=button> (no tabindex=-1), which is what makes Enter/Space work in a browser.
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    const btn = screen.getByRole('button', { name: 'Show details for Columbus, OH' }) as HTMLButtonElement;
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn.type).toBe('button');
+    expect(btn.tabIndex).toBe(0);
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    fireEvent.click(btn);
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    const panel = screen.getByRole('region', { name: 'Columbus detail' });
+    expect(panel.id).not.toBe('');
+    expect(btn.getAttribute('aria-controls')).toBe(panel.id);
+    expect(screen.getByText('Synthetic Sub A')).toBeTruthy();
+    fireEvent.click(btn);
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Columbus detail' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /details for/i })).toHaveLength(3);
+  });
+
+  it('estimated and nowcast cells expose Est. / Nowcast as text, not only title (board + detail)', () => {
+    const markets = fourMarkets();
+    const cedar = markets.find((m) => m.id === 'cedar_rapids')!;
+    cedar.series = { ...cedar.series, vac: cell([5, 4.5, 4, 3.5, 3], ['actual', 'actual', 'actual', 'actual', 'nowcast']) };
+    render(<Harness data={mkMarketsResponse(markets)} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'Auto (1)' }));
+    const row = bodyRows()[0]!;
+    expect(within(row).getByText('Est.')).toBeTruthy();
+    expect(within(row).getByText('Nowcast')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show details for Cedar Rapids, IA' }));
+    const panel = screen.getByRole('region', { name: 'Cedar Rapids detail' });
+    expect(within(panel).getByText('Est.')).toBeTruthy();
+    expect(within(panel).getByText('Nowcast')).toBeTruthy();
+  });
+
+  it('detail grid gates on status: non-null value with guide_only/null status shows the placeholder, never the number', () => {
+    const markets = fourMarkets();
+    const col = markets.find((m) => m.id === 'columbus')!;
+    const bad: EdgeSeriesCell = cell([7.77, 8.88, null, null, null], ['guide_only', 'null', 'null', 'null', 'null']);
+    col.series = { ...col.series, pop: bad };
+    render(<Harness data={mkMarketsResponse(markets)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Show details for Columbus, OH' }));
+    const panel = screen.getByRole('region', { name: 'Columbus detail' });
+    expect(within(panel).queryByText(/7\.8|7\.77|8\.9|8\.88/)).toBeNull();
+    expect(within(panel).getAllByText('Pending manual pull').length).toBeGreaterThan(0);
+    expect(within(panel).getAllByText('Not published').length).toBeGreaterThan(0);
+  });
+
+  it('selection clears when the set filter hides the selected market', () => {
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'Auto (1)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show details for Cedar Rapids, IA' }));
+    expect(screen.getByRole('region', { name: 'Cedar Rapids detail' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'Buy-box (3)' }));
+    expect(screen.queryByRole('region')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Auto (1)' }));
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show details for Cedar Rapids, IA' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('Pin buy-box is disabled unless the set is All', () => {
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    const pin = screen.getByLabelText('Pin buy-box') as HTMLInputElement;
+    expect(pin.disabled).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'All (4)' }));
+    expect(pin.disabled).toBe(false);
+  });
+
+  it('sort direction button exposes its current direction', () => {
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    fireEvent.click(screen.getByRole('button', { name: /Sort direction: descending/ }));
+    expect(screen.getByRole('button', { name: /Sort direction: ascending/ })).toBeTruthy();
   });
 
   it('always shows the CoStar Flex footnote', () => {

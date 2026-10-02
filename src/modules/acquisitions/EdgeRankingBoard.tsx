@@ -10,8 +10,8 @@
 // the pinned two-group order and does not report its internal sort for lifting. DataTable has no
 // expandable rows, so a row click opens the detail panel directly beneath the table; its headers are
 // plain strings, so header tooltips are replaced by the always-visible "Column definitions" list.
-import { useState } from 'react';
-import { SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeSeriesKey } from '@contracts/edge';
+import { useId, useState } from 'react';
+import { EDGE_OBSERVED_STATUSES, SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeSeriesKey } from '@contracts/edge';
 import { Card, CardHeader } from '@/primitives/Card';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge } from '@/primitives/Badge';
@@ -40,6 +40,22 @@ const CONTROL_STYLE = {
 
 const MUTED = { color: 'var(--text-tertiary)' } as const;
 
+// Mirrors the sync-button convention in AcquisitionsModule; :focus-visible is global (tokens/theme.css).
+const DETAILS_BUTTON_STYLE = {
+  ...CONTROL_STYLE,
+  fontFamily: 'var(--font-mono)',
+  fontWeight: 600,
+  letterSpacing: '0.05em',
+  textTransform: 'uppercase',
+  cursor: 'pointer',
+} as const;
+
+/** Visible Est./Nowcast marker; wording comes from edgeStatusLabel (via edgeCellDisplay) so it stays single-sourced. */
+function StatusMarker({ label }: { label: string | null }) {
+  if (!label) return null;
+  return <span className="text-2xs" style={{ ...MUTED, marginLeft: '0.25rem' }}>{label}</span>;
+}
+
 interface Props {
   data: EdgeMarketsResponse;
   board: EdgeBoardState;
@@ -50,8 +66,11 @@ function EdgeValue({ market, field, years }: { market: EdgeMarket; field: EdgeSe
   const d = edgeCellDisplay(market.series[field], SERIES_UNITS[field], years, field);
   const style = d.dotted ? { borderBottom: '1px dotted var(--text-tertiary)' } : d.observed ? undefined : MUTED;
   return (
-    <span title={d.title ?? undefined} style={style}>
-      {d.text}
+    <span>
+      <span title={d.title ?? undefined} style={style}>
+        {d.text}
+      </span>
+      {d.dotted && <StatusMarker label={d.title} />}
     </span>
   );
 }
@@ -61,18 +80,19 @@ function observedValues(market: EdgeMarket, field: EdgeSeriesKey): number[] {
   return market.series[field].values.filter((v): v is number => v !== null);
 }
 
-function EdgeMarketDetail({ market, data, onClose }: { market: EdgeMarket; data: EdgeMarketsResponse; onClose: () => void }) {
+function EdgeMarketDetail({ id, market, data, onClose }: { id: string; market: EdgeMarket; data: EdgeMarketsResponse; onClose: () => void }) {
   return (
     <div
+      id={id}
       role="region"
       aria-label={`${market.name} detail`}
       className="mx-3 mb-3 rounded-[var(--radius-md)] p-3"
       style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}
     >
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <h3 className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
           {`${market.name}, ${market.state} · CBSA ${market.cbsa}`}
-        </span>
+        </h3>
         <button type="button" onClick={onClose} style={CONTROL_STYLE}>Close</button>
       </div>
       {market.subs.length === 0 ? (
@@ -112,16 +132,20 @@ function EdgeMarketDetail({ market, data, onClose }: { market: EdgeMarket; data:
               <td>{header}</td>
               {data.years.map((y, i) => {
                 const value = market.series[field].values[i] ?? null;
-                const label = edgeStatusLabel(market.series[field].status[i] ?? 'null');
-                const text = value !== null ? (formatEdgeValue(value, SERIES_UNITS[field]) ?? '—') : (label.text ?? 'Not published');
+                const status = market.series[field].status[i] ?? 'null';
+                const label = edgeStatusLabel(status);
+                // Gate on the observed statuses: a non-null value under guide_only/null never renders as a number.
+                const observed = value !== null && EDGE_OBSERVED_STATUSES.includes(status);
+                const text = observed ? (formatEdgeValue(value, SERIES_UNITS[field]) ?? '—') : (label.text ?? 'Not published');
                 return (
                   <td
                     key={y}
                     className="num text-right"
                     title={label.title ?? undefined}
-                    style={label.dotted ? { borderBottom: '1px dotted var(--text-tertiary)' } : value === null ? MUTED : undefined}
+                    style={observed && label.dotted ? { borderBottom: '1px dotted var(--text-tertiary)' } : observed ? undefined : MUTED}
                   >
                     {text}
+                    {observed && label.dotted && <StatusMarker label={label.title} />}
                   </td>
                 );
               })}
@@ -135,6 +159,7 @@ function EdgeMarketDetail({ market, data, onClose }: { market: EdgeMarket; data:
 
 export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailId = useId();
   const patch = (next: Partial<EdgeBoardState>) => onBoardChange({ ...board, ...next });
 
   const setOptions: ReadonlyArray<{ value: EdgeSetFilter; label: string }> = [
@@ -156,6 +181,13 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
     });
   };
 
+  const toggleSelected = (id: string) => setSelectedId((cur) => (cur === id ? null : id));
+  const changeSet = (set: EdgeSetFilter) => {
+    // A market hidden by the new filter must not keep its detail panel open.
+    if (selectedId !== null && !filterEdgeMarkets(data.markets, set).some((m) => m.id === selectedId)) setSelectedId(null);
+    patch({ set });
+  };
+
   const columns: Column<EdgeMarket>[] = [
     {
       key: 'market',
@@ -165,6 +197,16 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
           <span style={{ fontWeight: 600 }}>{`${m.name}, ${m.state}`}</span>
           {isBuyBox(m) ? <Badge tone="gold">Buy-box</Badge> : <Badge tone="neutral">Auto</Badge>}
           {m.trajectory && <span className="text-2xs" style={MUTED}>{TRAJECTORY_LABEL[m.trajectory]}</span>}
+          <button
+            type="button"
+            aria-label={`Show details for ${m.name}, ${m.state}`}
+            aria-expanded={selectedId === m.id}
+            aria-controls={detailId}
+            onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }}
+            style={DETAILS_BUTTON_STYLE}
+          >
+            Details
+          </button>
         </div>
       ),
     },
@@ -186,15 +228,16 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
     ),
   ];
 
-  const selected = selectedId !== null ? (data.markets.find((m) => m.id === selectedId) ?? null) : null;
+  // Derived from the visible rows too, so the panel can never show a market the table is not showing.
+  const selected = selectedId !== null ? (rows.find((m) => m.id === selectedId) ?? null) : null;
 
   return (
     <Card>
       <CardHeader title="Market board" trailing={<Badge tone="neutral">Sorted by observed values · no composite rank</Badge>} />
       <div className="flex flex-wrap items-center gap-3 px-3 pt-3">
-        <SegmentedControl aria-label="Market set" options={setOptions} value={board.set} onChange={(v) => patch({ set: v })} />
+        <SegmentedControl aria-label="Market set" options={setOptions} value={board.set} onChange={changeSet} />
         <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-          <input type="checkbox" checked={board.pinBuyBox} onChange={(e) => patch({ pinBuyBox: e.target.checked })} />
+          <input type="checkbox" checked={board.pinBuyBox} disabled={board.set !== 'all'} onChange={(e) => patch({ pinBuyBox: e.target.checked })} />
           Pin buy-box
         </label>
         <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
@@ -211,7 +254,7 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
         </label>
         <button
           type="button"
-          aria-label="Toggle sort direction"
+          aria-label={`Sort direction: ${board.sortDir === 'asc' ? 'ascending' : 'descending'} — activate to toggle`}
           onClick={() => patch({ sortDir: board.sortDir === 'asc' ? 'desc' : 'asc' })}
           style={CONTROL_STYLE}
         >
@@ -234,11 +277,11 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
           columns={columns}
           rows={rows}
           getRowId={(m) => m.id}
-          onRowClick={(m) => setSelectedId((cur) => (cur === m.id ? null : m.id))}
+          onRowClick={(m) => toggleSelected(m.id)}
           minWidth={900}
         />
       </div>
-      {selected && <EdgeMarketDetail market={selected} data={data} onClose={() => setSelectedId(null)} />}
+      {selected && <EdgeMarketDetail id={detailId} market={selected} data={data} onClose={() => setSelectedId(null)} />}
       <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-3 pb-2 text-2xs md:grid-cols-2" style={MUTED}>
         {EDGE_BOARD_COLUMNS.map(({ field, header }) => (
           <div key={field} className="flex gap-1.5">
