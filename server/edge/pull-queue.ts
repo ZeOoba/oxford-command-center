@@ -11,6 +11,7 @@ import type {
   EdgeMarket, EdgeOutsidePullScope, EdgePullItem, EdgePullKind, EdgePullLink, EdgePullQueueResponse,
   EdgePullScopeState, EdgePullState, RecordPullRequest,
 } from '../../src/contracts/edge';
+import { isRealIsoDate } from './freshness';
 import { BUY_BOX_TYPES } from './series';
 
 export interface EdgeBuyBoxScope {
@@ -177,15 +178,7 @@ export function localIsoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export function isRealIsoDate(s: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return false;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  const dt = new Date(Date.UTC(y, mo - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
-}
+export { isRealIsoDate };
 
 export function scopeStateFor(
   lastDoneOn: string | null,

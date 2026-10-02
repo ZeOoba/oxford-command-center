@@ -15,7 +15,8 @@ import { EDGE_STALE_DAYS } from './config';
 
 const DAY_MS = 86_400_000;
 
-function isRealDate(s: unknown): s is string {
+/** Real calendar YYYY-MM-DD (rejects overflow like 2026-02-30). The single copy; pull-queue re-exports it. */
+export function isRealIsoDate(s: unknown): s is string {
   if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const t = Date.parse(`${s}T00:00:00Z`); // NaN for out-of-range input (toISOString would throw)
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
@@ -23,7 +24,7 @@ function isRealDate(s: unknown): s is string {
 
 export function edgeFreshness(metaPulled: string, mtimeMs: number, now: Date): EdgeFreshness {
   const mtimeOk = Number.isFinite(mtimeMs);
-  const pulledOk = isRealDate(metaPulled);
+  const pulledOk = isRealIsoDate(metaPulled);
   const fileMtime = mtimeOk ? new Date(mtimeMs).toISOString() : 'unknown';
   const mtimeDate = mtimeOk ? fileMtime.slice(0, 10) : null;
   const today = now.toISOString().slice(0, 10);
