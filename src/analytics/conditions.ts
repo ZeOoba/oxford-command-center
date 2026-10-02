@@ -8,6 +8,7 @@ import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
 import { addMonths, type MonthKey } from './portfolio-trends';
+import { isInvestmentProperty } from './property-basis';
 import { varianceVsTrailing, type PropertyExpenseSeries } from './expense-trends';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -911,6 +912,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // (month-end data lands after the month closes); a stale or forward-dated feed emits nothing.
   const refMonth: MonthKey = asOf.slice(0, 7);
   const recent = (m: MonthKey): boolean => m === refMonth || m === addMonths(refMonth, -1);
+  // Residence / non-investment rows never alert (ids absent from s.properties are NOT skipped).
+  const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
   const nameOf = (id: string): string => s.properties.find((p) => p.id === id)?.name ?? id;
   if (opts.monthSnapshots && opts.monthSnapshots.length > 0) {
     const byProp = new Map<string, Map<MonthKey, MonthSnapshotInput>>();
@@ -920,6 +923,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       m.set(r.month, r);
     }
     for (const [propertyId, months] of byProp) {
+      if (nonInvestmentIds.has(propertyId)) continue;
       const latest = [...months.keys()].sort().pop()!;
       if (!recent(latest)) continue;
       const m1 = addMonths(latest, -1);
@@ -929,10 +933,14 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       const r2 = months.get(m2);
 
       // Vacancy rising: three consecutive recorded months, strictly rising, >= floor points.
-      if (r1 && r2 && r0.totalSf > 0 && r1.totalSf > 0 && r2.totalSf > 0) {
-        const v0 = 1 - r0.leasedSf / r0.totalSf;
-        const v1 = 1 - r1.leasedSf / r1.totalSf;
-        const v2 = 1 - r2.leasedSf / r2.totalSf;
+      if (r1 && r2) {
+        // Same definition as the Trends tab (modules/portfolio/trends-history.ts): leasedSf is a raw
+        // active-lease SF sum and can exceed totalSf, so vacant SF clamps at 0.
+        const vacancyOf = (r: MonthSnapshotInput): number =>
+          r.totalSf > 0 ? Math.max(0, r.totalSf - r.leasedSf) / r.totalSf : 0;
+        const v0 = vacancyOf(r0);
+        const v1 = vacancyOf(r1);
+        const v2 = vacancyOf(r2);
         if (v1 > v2 && v0 > v1 && (v0 - v2) * 100 >= T.vacancyRiseMinPts - EPS) {
           out.push({
             id: `vacancy-rising-${propertyId}-${latest}`, severity: 'warning', category: 'occupancy',
@@ -961,7 +969,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
   if (opts.expenseSeries) {
     for (const series of opts.expenseSeries) {
-      if (series.months.length === 0) continue;
+      if (series.months.length === 0 || nonInvestmentIds.has(series.propertyId)) continue;
       const latest = series.months.reduce((mx, r) => (r.month > mx ? r.month : mx), series.months[0]!.month);
       // varianceVsTrailing returns null without a full 12-month window; deltaPct is null on a
       // zero baseline. A negative (credit) baseline yields a negative deltaPct for a positive

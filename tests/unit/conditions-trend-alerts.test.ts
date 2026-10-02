@@ -240,3 +240,32 @@ describe('titles / extra cases', () => {
     expect(rent(out)).toHaveLength(0);
   });
 });
+
+describe('vacancy clamp (matches Trends tab) and non-investment filter', () => {
+  it('over-leased months clamp to 0% and cannot form a strict rise (105% -> 101% -> 98%)', () => {
+    expect(vac(run([ms('p1', '2026-10', 10500), ms('p1', '2026-11', 10100), ms('p1', '2026-12', 9800)]))).toHaveLength(0);
+  });
+  it('clamped months still allow a genuine strict rise; detail shows clamped values', () => {
+    // 101% -> 99% -> 97%: clamped 0.0% / 1.0% / 3.0% -> +3.0 pts, strictly rising
+    const v = vac(run([ms('p1', '2026-10', 10100), ms('p1', '2026-11', 9900), ms('p1', '2026-12', 9700)]));
+    expect(v).toHaveLength(1);
+    expect(v[0]!.detail).toBe('Vacancy 0.0% → 1.0% → 3.0% (Oct–Dec 2026, recorded, lease-SF basis)');
+  });
+  const resSnap = () => snap({ properties: [...props, { id: 'res', name: '9510 Persimmon Tree', type: 'Residence' }] } as unknown as Partial<PortfolioSnapshot>);
+  it('residence ids emit nothing for all three rules; investment and unknown ids still fire', () => {
+    const rows = ['p1', 'res', 'zz9'].flatMap((id) => [
+      ms(id, '2026-10', 9500, 1000), ms(id, '2026-11', 9350, 1000), ms(id, '2026-12', 9180, 900),
+    ]);
+    const out = evaluateConditions(resSnap(), {
+      ...base, monthSnapshots: rows,
+      expenseSeries: ['p1', 'res', 'zz9'].map((id) => expSeries({ propertyId: id }, 1250, 12, 1000, '2026-12')),
+    });
+    const ids = out.map((i) => i.id).filter((i) => /^(vacancy-rising|rent-drop|opex-spike)-/.test(i)).sort();
+    expect(ids).toEqual([
+      'opex-spike-p1-2026-12', 'opex-spike-zz9-2026-12',
+      'rent-drop-p1-2026-12', 'rent-drop-zz9-2026-12',
+      'vacancy-rising-p1-2026-12', 'vacancy-rising-zz9-2026-12',
+    ]);
+    expect(out.find((i) => i.id === 'vacancy-rising-zz9-2026-12')!.title).toBe('Vacancy rising — zz9');
+  });
+});
