@@ -33,7 +33,7 @@ Phase 1 is **display only**. It does not change the Oxford Acquisition Score. Fe
 - No writes to `markets.json` or anything else in the OneDrive `oxford-edge` folder. No re-running of the upstream pull pipeline.
 - No structured capture of manual-pull values, such as a storage $/SF baseline. The queue records only done-date and a note (§11 Q3).
 - No exposure on the Cloudflare mirror, to the AI agent tools (`server/ai/tools.ts`), or in briefings or PDF export.
-- No county→CBSA crosswalk. Parcel-screen candidates with no linked deal show "no Edge market" (§11 Q2).
+- No county→CBSA crosswalk. Parcel-screen candidates with no linked deal show "no Edge market" (§12 Q2).
 
 ## 3. Source data contract
 
@@ -476,7 +476,7 @@ Assume Phase 1 ships and is wrong. These are the most likely ways, with the cont
 **Rollout**
 1. PR 1 (one PR, squash-merge): contracts, migration, `server/edge/*`, the sub-router entry, UI, tests, and the `env.example` doc line.
 2. After merge, Gabriel restarts the dev server on `main`, which applies `033` to the live warehouse. Then confirm `GET /api/warehouse/edge/pull-queue` returns 70 open scopes.
-3. Artifact retirement happens only after step 2 is verified. Republish the artifact with a top banner: "Retired — live in Command Center › Acquisitions › Edge (local). This page is frozen at 2026-07-14." Do not delete it. Gabriel decides (Q1).
+3. Artifact retirement happens only after step 2 is verified. Republish the artifact with a top banner: "Retired — live in Command Center › Acquisitions › Edge (local). This page is frozen at 2026-07-14." Do not delete it. Decided: Q1, §12.
 
 **Rollback**
 - UI: revert the squash commit (`git revert -m 1` per CLAUDE.md §8). The tab, overlay column and drawer card disappear. `markets.json` is untouched by construction.
