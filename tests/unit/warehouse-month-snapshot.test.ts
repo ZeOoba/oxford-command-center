@@ -11,6 +11,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import {
   captureMonthSnapshot,
+  describeCaptureOutcome,
   monthSnapshotSeries,
   type MonthSnapshotView,
 } from '../../server/warehouse/month-snapshot';
@@ -216,5 +217,16 @@ describe('captureMonthSnapshot', () => {
       expect(rows[0]!.month).toBe(easternCalendarDay(iso)!.slice(0, 7));
       expect(rows[0]!.month).toBe(month);
     }
+  });
+});
+
+describe('describeCaptureOutcome', () => {
+  it('is null when rows were recorded or nothing was skipped', () => {
+    expect(describeCaptureOutcome({ recorded: 2, skipped: 3, frozen: 0 })).toBeNull();
+    expect(describeCaptureOutcome({ recorded: 0, skipped: 0, frozen: 0 })).toBeNull();
+  });
+  it('warns with the skipped count when nothing was recorded but rows were skipped', () => {
+    const m = describeCaptureOutcome({ recorded: 0, skipped: 4, frozen: 0 });
+    expect(m).toBe('⚠ Month-snapshot capture recorded 0 rows (skipped 4) — a later month may already exist for these properties');
   });
 });

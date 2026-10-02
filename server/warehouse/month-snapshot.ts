@@ -45,6 +45,14 @@ const UPSERT = `
 const HAS_LATER = `SELECT 1 FROM portfolio_month_snapshot WHERE property_id = ? AND month > ? LIMIT 1`;
 const FREEZE = `UPDATE portfolio_month_snapshot SET frozen = 1 WHERE property_id = ? AND month < ? AND frozen = 0`;
 
+/** Warn text when a capture recorded nothing yet skipped rows (e.g. a later month already exists); else null. */
+export function describeCaptureOutcome(result: { recorded: number; skipped: number; frozen: number }): string | null {
+  if (result.recorded === 0 && result.skipped > 0) {
+    return `⚠ Month-snapshot capture recorded 0 rows (skipped ${result.skipped}) — a later month may already exist for these properties`;
+  }
+  return null;
+}
+
 /**
  * Record the current ET month's per-property snapshot and freeze each property's earlier months.
  * Safe no-op ({0,0,0}) for a null snapshot or unparseable generatedAt. Throws when property_master is
