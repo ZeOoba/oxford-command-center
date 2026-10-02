@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ExpenseMonthPoint } from '@contracts/expenses-monthly';
 import { monthRange } from '../../src/analytics/portfolio-trends';
 import {
+  MixedBasisError,
   buildPortfolioSeries,
   buildPropertySeries,
   sameMonthLastYear,
@@ -24,6 +25,8 @@ const aPoints = (): ExpenseMonthPoint[] =>
 const bPoints = (): ExpenseMonthPoint[] =>
   monthRange('2026-01', '2026-02').map((m) => pt('B', m, 'Utilities', 40, 'accrual'));
 const fixture = (): ExpenseMonthPoint[] => [...aPoints(), ...bPoints()];
+
+const a = () => buildPropertySeries(fixture(), 'A')!.months;
 
 const mixedM = (): ExpenseMonthPoint[] => [
   pt('M', '2026-01', 'Utilities', 10, 'cash'),
@@ -92,7 +95,6 @@ describe('buildPortfolioSeries', () => {
 });
 
 describe('trailingAverage', () => {
-  const a = () => buildPropertySeries(fixture(), 'A')!.months;
   it('(c) mean of the 12 months before endMonth', () => {
     expect(trailingAverage(a(), '2026-02', 12)).toBe(150); // 2025-02..2026-01, each 100+50
   });
@@ -111,7 +113,6 @@ describe('trailingAverage', () => {
 });
 
 describe('varianceVsTrailing', () => {
-  const a = () => buildPropertySeries(fixture(), 'A')!.months;
   it('(d) 210 vs 150 -> delta 60, 40%', () => {
     expect(varianceVsTrailing(a(), '2026-02')).toEqual({ amount: 210, baseline: 150, delta: 60, deltaPct: 0.4 });
   });
@@ -172,7 +173,6 @@ describe('topMovers', () => {
 });
 
 describe('sameMonthLastYear', () => {
-  const a = () => buildPropertySeries(fixture(), 'A')!.months;
   it('(f) returns the 2025-02 total (150)', () => {
     const r = sameMonthLastYear(a(), '2026-02')!;
     expect(r.month).toBe('2025-02');
@@ -180,5 +180,55 @@ describe('sameMonthLastYear', () => {
   });
   it('(f) null when absent', () => {
     expect(sameMonthLastYear(a(), '2025-06')).toBeNull();
+  });
+});
+
+describe('topMovers mixed basis', () => {
+  // M: would be the top mover (delta 900) but carries both bases in one month.
+  const mRows = (): ExpenseMonthPoint[] => [
+    ...monthRange('2025-01', '2026-01').map((mo) => pt('M', mo, 'Utilities', 100, 'cash')),
+    pt('M', '2026-02', 'Utilities', 1000, 'accrual'),
+  ];
+  it('excludes a mixed-basis property without throwing; clean property still appears', () => {
+    const m = topMovers([...fixture(), ...mRows()], ['A', 'B', 'M'], '2026-02');
+    expect(m.map((x) => x.propertyId)).not.toContain('M');
+    expect(m[0]).toMatchObject({ propertyId: 'A', category: 'Utilities', delta: 60 });
+  });
+  it('clean-property result is identical with and without the mixed property rows', () => {
+    expect(topMovers([...fixture(), ...mRows()], ['A', 'B', 'M'], '2026-02')).toEqual(
+      topMovers(fixture(), ['A', 'B'], '2026-02'),
+    );
+  });
+});
+
+describe('MixedBasisError', () => {
+  it('is thrown by buildPropertySeries with the property id', () => {
+    try {
+      buildPropertySeries(mixedM(), 'M');
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(MixedBasisError);
+      expect((e as MixedBasisError).propertyId).toBe('M');
+    }
+  });
+  it('skipMixedBasis does not swallow other errors', () => {
+    const bad = { propertyId: 'X', month: '2026-01', category: 'U', amount: 1, sourceSystem: 'unknown' } as unknown as ExpenseMonthPoint;
+    Object.defineProperty(bad, 'basis', { get() { throw new TypeError('boom'); } });
+    expect(() => buildPortfolioSeries([bad], ['X'], { skipMixedBasis: true })).toThrow('boom');
+  });
+});
+
+describe('January wrap', () => {
+  // 2025-01..2026-01, total 10 in 2025-01..2025-12 and 99 in 2026-01
+  const pts = monthRange('2025-01', '2026-01').map((mo) => pt('W', mo, 'U', mo === '2026-01' ? 99 : 10, 'cash'));
+  const w = () => buildPropertySeries(pts, 'W')!.months;
+  it('sameMonthLastYear 2026-01 -> 2025-01 total (10)', () => {
+    const r = sameMonthLastYear(w(), '2026-01')!;
+    expect(r.month).toBe('2025-01');
+    expect(r.total).toBe(10);
+  });
+  it('trailingAverage at 2026-01 window 12 uses 2025-01..2025-12 (mean 10)', () => {
+    expect(trailingAverage(w(), '2026-01', 12)).toBe(10);
+    expect(varianceVsTrailing(w(), '2026-01')).toEqual({ amount: 99, baseline: 10, delta: 89, deltaPct: 8.9 });
   });
 });

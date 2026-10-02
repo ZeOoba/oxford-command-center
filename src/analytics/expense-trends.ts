@@ -53,12 +53,24 @@ function aggregate(points: ExpenseMonthPoint[]): ExpenseMonthTotal[] {
   return [...byMonth.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
 }
 
+export class MixedBasisError extends Error {
+  constructor(readonly propertyId: string) {
+    super(`mixed basis within property ${propertyId}`);
+    this.name = 'MixedBasisError';
+  }
+}
+
+/** The single basis of one property's points; throws MixedBasisError if both bases are present. */
+function singleBasis(own: ExpenseMonthPoint[], propertyId: string): 'cash' | 'accrual' {
+  const bases = new Set(own.map((p) => p.basis));
+  if (bases.size > 1) throw new MixedBasisError(propertyId);
+  return own[0]!.basis;
+}
+
 export function buildPropertySeries(points: ExpenseMonthPoint[], propertyId: string): PropertyExpenseSeries | null {
   const own = points.filter((p) => p.propertyId === propertyId);
   if (own.length === 0) return null;
-  const bases = new Set(own.map((p) => p.basis));
-  if (bases.size > 1) throw new Error(`mixed basis within property ${propertyId}`);
-  return { propertyId, basis: own[0]!.basis, months: aggregate(own) };
+  return { propertyId, basis: singleBasis(own, propertyId), months: aggregate(own) };
 }
 
 export function buildPortfolioSeries(
@@ -74,7 +86,7 @@ export function buildPortfolioSeries(
     try {
       series = buildPropertySeries(points, id);
     } catch (err) {
-      if (opts?.skipMixedBasis) {
+      if (opts?.skipMixedBasis && err instanceof MixedBasisError) {
         excluded.push(id);
         continue;
       }
@@ -130,6 +142,13 @@ export function topMovers(
   const movers: ExpenseMover[] = [];
   for (const propertyId of new Set(propertyIds)) {
     const own = points.filter((p) => p.propertyId === propertyId);
+    if (own.length === 0) continue;
+    try {
+      singleBasis(own, propertyId);
+    } catch (err) {
+      if (err instanceof MixedBasisError) continue; // shown as unavailable; never summed across bases
+      throw err;
+    }
     const categories = new Set(own.filter((p) => p.month === month).map((p) => p.category));
     for (const category of categories) {
       const catSeries = aggregate(own.filter((p) => p.category === category));
