@@ -11,6 +11,7 @@ import { replacementCostAnalysis } from './replacement-cost';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { GaugeRing } from '@/primitives/GaugeRing';
 import { useAcqIntel } from '@/modules/acquisitions/grader-hooks';
+import { EdgeMarketReadout } from '@/modules/acquisitions/EdgeMarketReadout';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -124,6 +125,10 @@ export function DealDrawer({
                     <Row label="Target Close" value={fmtDate(deal.targetCloseDate)} />
                     <Row label="Next Action" value={deal.nextAction ?? '—'} />
                     <Row label="Status" value={deal.status ?? '—'} />
+                  </CardBox>
+
+                  <CardBox title="Edge Market">
+                    <EdgeMarketReadout deal={deal} onNavigate={onClose} />
                   </CardBox>
 
                   <CardBox title="Returns">
@@ -294,10 +299,10 @@ function StageTrack({ stage }: { stage: DealStage }) {
 
 function CardBox({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-[var(--radius-md)] p-3" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
+    <section aria-label={title} className="rounded-[var(--radius-md)] p-3" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
       <div className="mb-2 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>{title}</div>
       <div className="flex flex-col gap-0.5">{children}</div>
-    </div>
+    </section>
   );
 }
 

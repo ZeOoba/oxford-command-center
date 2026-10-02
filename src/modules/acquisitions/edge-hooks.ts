@@ -393,10 +393,13 @@ export function edgeCandidateCell(
 ): { text: string; title: string | null } {
   const deal = findDealForCandidate(deals, notionDealId);
   if (!deal) return { text: 'No Edge market (no linked deal)', title: null };
-  if (state === 'idle' || state === 'loading') return { text: '—', title: null };
-  if (state === 'error' || !data || data.availability !== 'ok') {
-    return { text: 'Edge unavailable', title: data ? `Edge dataset ${data.availability}` : 'Edge is local-only (Brain Server)' };
-  }
+  // Never claim data we do not have: idle (Edge tab not opened), loading and error are neutral
+  // placeholders. An errored query can still carry cached data, so error is checked before data.
+  if (state === 'idle') return { text: '—', title: 'Edge market data loads once the Edge tab has been opened' };
+  if (state === 'loading') return { text: '—', title: 'Loading Edge market data' };
+  if (state === 'error') return { text: 'Edge unavailable', title: 'Edge data could not be loaded' };
+  if (!data) return { text: 'Edge unavailable', title: 'Edge is local-only (Brain Server)' };
+  if (data.availability !== 'ok') return { text: 'Edge unavailable', title: `Edge dataset ${data.availability}` };
   const res = resolveEdgeMarket(deal, data.markets);
   if (res.kind === 'unmatched') return { text: 'No Edge market', title: EDGE_UNMATCHED_TEXT[res.reason] };
   const vac = edgeCellDisplay(res.market.series.vac, SERIES_UNIT_OF('vac', data), data.years, 'vac').text;

@@ -117,6 +117,12 @@ describe('Sourcing candidate join', () => {
     expect(ok.text).toBe('3.0% · +1.8% · STALE');
     expect(ok.title).toContain('Columbus, OH — Flex vacancy: 3.0%');
     expect(ok.title).toContain('STALE (as of 2026-07-14)');
+    const errored = edgeCandidateCell('page-1', [columbusDeal], data, 'error');
+    expect(errored.text).toBe('Edge unavailable');
+    expect(errored.title).toBe('Edge data could not be loaded');
+    expect(errored.title).not.toContain('Edge dataset ok');
+    expect(edgeCandidateCell('page-1', [columbusDeal], data, 'loading').title).toBe('Loading Edge market data');
+    expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'idle').title).toMatch(/Edge tab/);
     const tbd = { ...columbusDeal, market: null, location: 'TBD' };
     expect(edgeCandidateCell('page-1', [tbd], data, 'ready')).toEqual({ text: 'No Edge market', title: EDGE_UNMATCHED_TEXT.no_location });
   });
