@@ -42,6 +42,7 @@ const UPSERT = `
     lease_count = excluded.lease_count, occ_pct = excluded.occ_pct,
     recorded_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
   WHERE portfolio_month_snapshot.frozen = 0`;
+const HAS_LATER = `SELECT 1 FROM portfolio_month_snapshot WHERE property_id = ? AND month > ? LIMIT 1`;
 const FREEZE = `UPDATE portfolio_month_snapshot SET frozen = 1 WHERE property_id = ? AND month < ? AND frozen = 0`;
 
 /**
@@ -76,10 +77,10 @@ export function captureMonthSnapshot(
   const seen = new Set<string>();
   const accepted: Array<{ id: string; sf: number; occPct: number }> = [];
   for (const p of relevant) {
-    if (!Number.isFinite(p.sf) || !Number.isFinite(p.occPct)) { skipped++; continue; }
     if (!validIds.has(p.id)) { skipped++; orphanIds.push(p.id); continue; }
     if (seen.has(p.id)) { skipped++; continue; } // duplicate id — first occurrence wins
-    seen.add(p.id);
+    seen.add(p.id); // claim the id even if this occurrence is unusable, so a later duplicate cannot sneak in
+    if (!Number.isFinite(p.sf) || !Number.isFinite(p.occPct)) { skipped++; continue; }
     accepted.push(p);
   }
 
@@ -91,12 +92,15 @@ export function captureMonthSnapshot(
 
   const upsert = db.prepare(UPSERT);
   const freeze = db.prepare(FREEZE);
+  const hasLater = db.prepare(HAS_LATER);
   let recorded = 0;
   let frozen = 0;
   db.transaction(() => {
     for (const p of accepted) {
       const point = trend.byProperty[p.id]?.[0];
       if (!point) { skipped++; continue; }
+      // Never write a back-dated month: that would be reconstructed history, which this table never holds.
+      if (hasLater.get(p.id, month)) { skipped++; continue; }
       const res = upsert.run({
         propertyId: p.id,
         month,

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Lease } from '@contracts/index';
+import { easternCalendarDay } from '../../server/warehouse/occupancy';
 import { openWarehouse } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import {
@@ -85,6 +86,7 @@ describe('captureMonthSnapshot', () => {
     const again = captureMonthSnapshot(db, view('2026-10-20T15:00:00.000Z', 99999));
     expect(again.recorded).toBe(0);
     expect(again.skipped).toBe(2);
+    expect(again.frozen).toBe(0);
     const after = monthSnapshotSeries(db, A);
     expect(after[0]).toMatchObject({ month: '2026-10', inPlaceRent: 12000, capturedThrough: '2026-10-02', frozen: true });
     expect(after[1]).toMatchObject({ month: '2026-11', inPlaceRent: 13000 });
@@ -165,5 +167,54 @@ describe('captureMonthSnapshot', () => {
     const v = view('2026-10-02T15:00:00.000Z');
     v.properties = [{ id: A, sf: 20000, occPct: Number.NaN, type: 'Flex' }];
     expect(captureMonthSnapshot(db, v)).toEqual({ recorded: 0, skipped: 1, frozen: 0 });
+  });
+
+  it('(i) never writes a back-dated month: older capture is skipped when a later month exists', () => {
+    const db = freshDb();
+    captureMonthSnapshot(db, view('2026-11-02T15:00:00.000Z'));
+    const r = captureMonthSnapshot(db, view('2026-10-20T15:00:00.000Z', 99999));
+    expect(r).toEqual({ recorded: 0, skipped: 2, frozen: 0 });
+    const rows = monthSnapshotSeries(db, A);
+    expect(rows.map((x) => x.month)).toEqual(['2026-11']);
+    expect(rows[0]).toMatchObject({ inPlaceRent: 12000, frozen: false });
+  });
+
+  it('(ii) a property with no rows still records while another is skipped as back-dated', () => {
+    const db = freshDb();
+    const novOnlyA = view('2026-11-02T15:00:00.000Z');
+    novOnlyA.properties = [{ id: A, sf: 20000, occPct: 0.6, type: 'Flex' }];
+    captureMonthSnapshot(db, novOnlyA);
+    const r = captureMonthSnapshot(db, view('2026-10-20T15:00:00.000Z'));
+    expect(r).toEqual({ recorded: 1, skipped: 1, frozen: 0 });
+    expect(monthSnapshotSeries(db, A).map((x) => x.month)).toEqual(['2026-11']);
+    expect(monthSnapshotSeries(db, B).map((x) => x.month)).toEqual(['2026-10']);
+  });
+
+  it('guard order: NaN-sf first duplicate still wins the id; NaN-sf orphan is warned', () => {
+    const db = freshDb();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const v = view('2026-10-02T15:00:00.000Z');
+    v.properties = [
+      { id: 'ghost-nan', sf: Number.NaN, occPct: 0.5, type: 'Flex' },
+      { id: A, sf: Number.NaN, occPct: 0.6, type: 'Flex' },
+      { id: A, sf: 20000, occPct: 0.6, type: 'Flex' },
+      { id: B, sf: 10000, occPct: 0.6, type: 'Flex' },
+    ];
+    const r = captureMonthSnapshot(db, v);
+    expect(r).toEqual({ recorded: 1, skipped: 3, frozen: 0 });
+    expect(monthSnapshotSeries(db).map((x) => x.propertyId)).toEqual([B]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain('ghost-nan');
+  });
+
+  it('DST/month boundary: instants straddling ET midnight Oct 31 -> Nov 1 book to the helper-derived month', () => {
+    for (const [iso, month] of [['2026-11-01T03:59:00.000Z', '2026-10'], ['2026-11-01T04:00:00.000Z', '2026-11']] as const) {
+      const db = freshDb();
+      captureMonthSnapshot(db, view(iso));
+      const rows = monthSnapshotSeries(db, A);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.month).toBe(easternCalendarDay(iso)!.slice(0, 7));
+      expect(rows[0]!.month).toBe(month);
+    }
   });
 });
