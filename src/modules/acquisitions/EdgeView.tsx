@@ -27,6 +27,8 @@ const AMBER_BOX = {
   color: 'var(--text-warn)',
 } as const;
 
+const STATUS_LEGEND = 'actual · estimated · nowcast · guide only · not published';
+
 const UNIT_LABEL: Record<EdgeUnit, string> = {
   pct_yoy: '% YoY',
   pct_level: '% level',
@@ -37,9 +39,20 @@ const UNIT_LABEL: Record<EdgeUnit, string> = {
   signal: 'signal (no unit)',
 };
 
+/** Where asOf came from: the meta.pulled date or the file mtime date; null when neither matches. */
+function asOfSource(f: NonNullable<EdgeMarketsResponse['freshness']>): string | null {
+  if (f.asOf === f.metaPulled) return `data pulled ${f.asOf}`;
+  if (f.fileMtime !== 'unknown' && f.asOf === f.fileMtime.slice(0, 10)) return `file modified ${f.asOf}`;
+  return null;
+}
+
 function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
   const f = data.freshness;
   if (!f && !data.readError) return null;
+  const source = f ? asOfSource(f) : null;
+  // Stale without being old: clock skew, an invalid pulled date or an unknown mtime (ageDays is
+  // clamped to 0). Say so instead of claiming an age the data does not support.
+  const unverified = f !== null && f.stale && f.ageDays <= f.staleAfterDays;
   return (
     <div role="status" className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-2">
@@ -47,12 +60,15 @@ function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
           <>
             <Badge tone="amber">STALE</Badge>
             <span className="text-xs" style={{ color: 'var(--text-warn)' }}>
-              {`Edge dataset as of ${f.asOf} — ${f.ageDays} days old. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`}
+              {unverified
+                ? `Edge dataset as of ${f.asOf} — Date could not be verified (file timestamp in the future or unreadable) — treated as stale. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`
+                : `Edge dataset as of ${f.asOf} — ${f.ageDays} days old. Firm rule: a mirror more than ${f.staleAfterDays} days behind is never presented as current.`}
             </span>
           </>
         ) : (
           <Badge tone="neutral">{`As of ${f.asOf}`}</Badge>
         )}
+        {source && <span className="text-2xs" style={NOTE}>{source}</span>}
       </div>
       {data.readError && (
         <p className="text-xs" style={{ color: 'var(--text-neg)' }}>
@@ -106,8 +122,8 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
       key: 'mix',
       header: 'Status mix',
       render: (r) => (
-        <span className="num text-2xs">
-          {`A ${r.statusCounts.actual} · E ${r.statusCounts.estimated} · N ${r.statusCounts.nowcast} · G ${r.statusCounts.guide_only} · — ${r.statusCounts.null}`}
+        <span className="num text-2xs" title={STATUS_LEGEND} aria-label={STATUS_LEGEND}>
+          {`A${r.statusCounts.actual} · E ${r.statusCounts.estimated} · N ${r.statusCounts.nowcast} · G ${r.statusCounts.guide_only} · — ${r.statusCounts.null}`}
         </span>
       ),
     },
@@ -137,19 +153,20 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
 }
 
 function EdgeBody({
-  data, openPulls, board, onBoardChange,
+  data, openPulls, queueState, board, onBoardChange,
 }: {
   data: EdgeMarketsResponse;
   openPulls: number | null;
+  queueState: 'loading' | 'error' | 'ready';
   board: EdgeBoardState;
   onBoardChange: (next: EdgeBoardState) => void;
 }) {
   if (data.availability === 'missing') {
-    return <p style={NOTE}>{`markets.json not found at ${data.dir}. Set OXFORD_EDGE_DIR in .env on this machine.`}</p>;
+    return <p role="status" style={NOTE}>{`markets.json not found at ${data.dir}. Set OXFORD_EDGE_DIR in .env on this machine.`}</p>;
   }
   if (data.availability === 'unreadable') {
     return (
-      <p style={NOTE}>
+      <p role="status" style={NOTE}>
         {`markets.json could not be read (OneDrive lock or sync in progress?): ${data.issues[0] ?? 'unknown error'}. Retrying on next load.`}
       </p>
     );
@@ -159,7 +176,7 @@ function EdgeBody({
       <div role="alert" className="flex flex-col gap-1" style={AMBER_BOX}>
         <p>markets.json failed schema validation — the upstream file changed shape.</p>
         <ul className="list-disc pl-5">
-          {data.issues.slice(0, 5).map((issue) => <li key={issue}><code>{issue}</code></li>)}
+          {data.issues.slice(0, 5).map((issue, i) => <li key={`${i}-${issue}`}><code>{issue}</code></li>)}
         </ul>
       </div>
     );
@@ -178,14 +195,18 @@ function EdgeBody({
           label="Open manual pulls"
           value={openPulls}
           format={fmtNum}
-          sublabel={openPulls === null ? 'queue unavailable' : 'across the 4 manual pulls'}
-          accentColor="var(--color-neg)"
+          sublabel={
+            queueState === 'loading' ? 'loading queue…'
+              : queueState === 'error' ? 'queue unavailable'
+                : `across the ${EDGE_PULL_SERIES.size} manual pulls`
+          }
+          accentColor={openPulls !== null && openPulls > 0 ? 'var(--color-warn)' : 'var(--color-pos)'}
         />
       </div>
       {data.rejectedMarkets.length > 0 && (
         <div role="alert" style={AMBER_BOX}>
-          {data.rejectedMarkets.map((r) => (
-            <p key={`${r.id ?? 'no-id'}-${r.reason}`}>{`Rejected from markets.json: ${r.id ?? '(no id)'} — ${r.reason}`}</p>
+          {data.rejectedMarkets.map((r, i) => (
+            <p key={`${i}-${r.id ?? 'no-id'}-${r.reason}`}>{`Rejected from markets.json: ${r.id ?? '(no id)'} — ${r.reason}`}</p>
           ))}
         </div>
       )}
@@ -200,6 +221,7 @@ export function EdgeView({ board, onBoardChange }: { board: EdgeBoardState; onBo
   const { data, isLoading, error } = useEdgeMarkets();
   const queue = useEdgePullQueue();
   const openPulls = queue.data ? queue.data.items.reduce((sum, item) => sum + item.counts.open, 0) : null;
+  const queueState = queue.data ? 'ready' : queue.error ? 'error' : 'loading';
 
   return (
     <section className="flex flex-col gap-4">
@@ -211,7 +233,7 @@ export function EdgeView({ board, onBoardChange }: { board: EdgeBoardState; onBo
       ) : error || !data ? (
         <p role="alert" style={NOTE}>Edge market data could not be loaded. Try again shortly.</p>
       ) : (
-        <EdgeBody data={data} openPulls={openPulls} board={board} onBoardChange={onBoardChange} />
+        <EdgeBody data={data} openPulls={openPulls} queueState={queueState} board={board} onBoardChange={onBoardChange} />
       )}
     </section>
   );
