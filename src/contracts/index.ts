@@ -45,6 +45,7 @@ export * from './insurance-analysis';
 export * from './brain-report';
 export * from './trends';
 export * from './edge';
+export * from './expenses-monthly';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),

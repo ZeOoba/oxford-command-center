@@ -798,5 +798,14 @@
     "review_needed": true,
     "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/034_edge_pull_log.sql (renumbered from 033 after PR 425 took 033; one isolated append-only table edge_pull_log; no existing table touched). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Architect ack: Gabriel, in-session 2026-10-02 (AskUserQuestion: Acknowledge and proceed; sentinel placed by Gabriel).",
     "last_updated": "2026-10-02T17:55:39Z"
+  },
+  "trends-wave3b": {
+    "agent_role": "Integration Agent + UX Agent — Claude Code",
+    "phase": "Portfolio Trends Wave 3B: Expenses tab (stacked monthly opex, heatmap, small-multiples, movers) + health alerts, built against a typed contract (plan: docs/superpowers/plans/2026-10-02-portfolio-trends-wave3b-expense-ui-alerts.md). Data feed is Wave 3A.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned surfaces planned: src/contracts/expenses-monthly.ts (+ index export). src/analytics/ (expense-trends.ts, conditions.ts alert rules) is financial-decision source for check:refute. Additive; no existing table or contract altered. Wave 2 (PR #425) merged 2026-10-02.",
+    "last_updated": "2026-10-02T19:41:02Z"
   }
 }
