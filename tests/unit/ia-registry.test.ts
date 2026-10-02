@@ -316,14 +316,15 @@ describe('every rail destination declares its tab strip in the registry', () => 
     leasing: ['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants'],
     capital: ['allocation', 'pipeline', 'debt', 'cash', 'close'],
     obligations: ['insurance', 'taxes'],
+    portfolio: ['properties', 'trends'],
     market: ['macro', 'scorecards', 'comps', 'demand'],
     'lease-market': ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'],
     data: ['imports', 'quality', 'mappings', 'calibration', 'documents'],
   };
   /** The only rail destinations that legitimately render no strip. */
-  const TABLESS = ['overview', 'portfolio'];
+  const TABLESS = ['overview'];
 
-  it('the 12 rail destinations split exactly into the tabbed ones and the two tabless ones', () => {
+  it('the 12 rail destinations split exactly into the tabbed ones and the tabless one', () => {
     expect(railModules('acquisitions').map((m) => m.id).sort()).toEqual(
       [...Object.keys(DESTINATION_TABS), ...TABLESS].sort(),
     );
