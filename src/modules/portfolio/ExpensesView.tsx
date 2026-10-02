@@ -111,12 +111,24 @@ export function ExpensesView() {
     const hasPoints = new Set(points.map((p) => p.propertyId));
     const loadedIds = investment.filter((p) => hasPoints.has(p.id)).map((p) => p.id);
     const effectiveScope = scope !== ALL && names[scope] !== undefined ? scope : ALL;
+    // Points exist but none belong to an investment property: same state as an empty feed.
+    if (effectiveScope === ALL && loadedIds.length === 0) return null;
     const scopeIds = effectiveScope === ALL ? loadedIds : [effectiveScope];
 
     const port = buildPortfolioSeries(points, scopeIds, { skipMixedBasis: true });
     const unavailable = [...new Set([...port.excluded, ...unavailablePropertyIds(points, scopeIds)])];
-    const latest = port.months.at(-1)?.month ?? null;
-    return { points, investment, names, loadedIds, effectiveScope, scopeIds, port, unavailable, latest };
+    // Portfolio-wide count of mixed-basis entities (for the coverage badge, whatever the scope).
+    const excludedAll = unavailablePropertyIds(points, loadedIds).length;
+    // "Latest month" = latest month EVERY contributing (in-scope, non-excluded, with data) entity has.
+    const feedLast = port.months.at(-1)?.month ?? null;
+    const contributing = scopeIds.filter((id) => hasPoints.has(id) && !unavailable.includes(id));
+    let common: MonthKey[] | null = null;
+    for (const id of contributing) {
+      const months = new Set(points.filter((p) => p.propertyId === id).map((p) => p.month));
+      common = common === null ? [...months] : common.filter((m: MonthKey) => months.has(m));
+    }
+    const latest: MonthKey | null = common && common.length > 0 ? [...common].sort().at(-1)! : null;
+    return { points, investment, names, loadedIds, effectiveScope, scopeIds, port, unavailable, latest, feedLast, excludedAll };
   }, [snap, feed, scope]);
 
   if (gate) return gate;
@@ -158,10 +170,12 @@ export function ExpensesView() {
     );
   }
 
-  const { points, investment, names, loadedIds, effectiveScope, scopeIds, port, unavailable, latest } = model;
+  const { points, investment, names, loadedIds, effectiveScope, scopeIds, port, unavailable, latest, feedLast, excludedAll } = model;
   const isAll = effectiveScope === ALL;
   const coverage = feed!.coverage;
   const partial = coverage.propertiesLoaded < coverage.propertiesExpected;
+  // Badge counts entities actually contributing to totals (mixed-basis ones are excluded).
+  const contributingCount = Math.max(0, coverage.propertiesLoaded - excludedAll);
   const mixedAcross = isAll && port.mixedBasis;
 
   const header = (
@@ -170,12 +184,17 @@ export function ExpensesView() {
         <option value={ALL}>Entire portfolio</option>
         {investment.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
-      {partial && <Badge tone="amber">{coverage.propertiesLoaded} of {coverage.propertiesExpected} entities loaded</Badge>}
+      {partial && <Badge tone="amber">{contributingCount} of {coverage.propertiesExpected} entities loaded</Badge>}
     </div>
   );
   const notes = (
     <div className="flex flex-col gap-1">
-      {partial && <Caption>Totals cover loaded entities only.</Caption>}
+      {partial && <Caption>Totals cover loaded entities only.{excludedAll > 0 ? ` (plus ${excludedAll} excluded (mixed basis))` : ''}</Caption>}
+      {unavailable.length > 0 && (
+        <Caption>
+          {unavailable.length} {unavailable.length === 1 ? 'entity' : 'entities'} excluded from totals — mixed cash/accrual basis
+        </Caption>
+      )}
       {mixedAcross && (
         <Caption>
           {port.basisMix.cash} {port.basisMix.cash === 1 ? 'entity' : 'entities'} on cash, {port.basisMix.accrual} on accrual — totals add figures from both bases.
@@ -185,7 +204,7 @@ export function ExpensesView() {
   );
 
   // Nothing summable for this scope (e.g. the single selected entity is mixed-basis, or has no points).
-  if (latest === null) {
+  if (feedLast === null) {
     const msg = unavailable.length > 0 ? 'unavailable — mixed basis' : 'No monthly P&L loaded for this entity';
     return (
       <div className="flex flex-col gap-4">
@@ -195,6 +214,21 @@ export function ExpensesView() {
           <CardHeader title={isAll ? 'Expenses' : (names[effectiveScope] ?? 'Expenses')} />
           <p className="p-4 text-sm" style={{ color: 'var(--text-tertiary)' }}>{msg}</p>
         </Card>
+      </div>
+    );
+  }
+
+  if (latest === null) {
+    return (
+      <div className="flex flex-col gap-4">
+        {header}
+        {notes}
+        <div data-testid="kpi-grid" className="grid grid-cols-2 items-start gap-3 md:grid-cols-4">
+          {['Latest opex', 'MoM change', 'YoY (same month)', 'Trailing-12 avg'].map((label) => (
+            <div key={label} className="flex flex-col gap-1"><KpiStat label={label} value={null} format={fmtUsdCompact} /></div>
+          ))}
+        </div>
+        <Caption>Entities have no common month yet</Caption>
       </div>
     );
   }
@@ -296,6 +330,9 @@ export function ExpensesView() {
           <Caption>{t12 === null ? 'needs 12 consecutive months' : `mean of 12 months to ${latestLabel}`}</Caption>
         </div>
       </div>
+      {feedLast !== null && feedLast > latest && (
+        <Caption>Latest complete month: {latestLabel} (some entities report through {monthLabel(feedLast)})</Caption>
+      )}
 
       <Card>
         <CardHeader

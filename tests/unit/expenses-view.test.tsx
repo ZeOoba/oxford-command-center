@@ -4,7 +4,7 @@
 // tests/unit/portfolio-trends-view.test.tsx. Heatmap / StackedBarChart are stubbed to expose their props
 // (jsdom has no layout, so the real SVG charts draw nothing).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ExpenseMonthPoint, ExpensesMonthlyResponse } from '../../src/contracts/expenses-monthly';
 import type { Property, PortfolioSnapshot } from '../../src/contracts/index';
@@ -18,6 +18,7 @@ const hook = vi.hoisted(() => ({
   },
 }));
 vi.mock('../../src/modules/portfolio/expenses-hooks', () => ({ useExpensesMonthly: () => hook.result }));
+vi.mock('../../src/lib/useCountUp', () => ({ useCountUp: (t: number | null) => t ?? 0 }));
 vi.mock('../../src/charts/Heatmap', () => ({
   Heatmap: (p: { rows: string[]; cols: string[]; cells: unknown[]; ariaLabel?: string }) => (
     <div data-testid="heatmap" aria-label={p.ariaLabel} data-rows={JSON.stringify(p.rows)} data-cols={JSON.stringify(p.cols)} data-cells={JSON.stringify(p.cells)} />
@@ -176,7 +177,9 @@ describe('ExpensesView empty / error states', () => {
 describe('ExpensesView coverage and basis badges', () => {
   it('partial coverage shows "N of M entities loaded" and the loaded-only caption', () => {
     renderView();
-    expect(screen.getByText('4 of 6 entities loaded')).toBeTruthy();
+    // d is mixed-basis: 4 loaded - 1 excluded = 3 contributing.
+    expect(screen.getByText('3 of 6 entities loaded')).toBeTruthy();
+    expect(screen.getByText(/plus 1 excluded \(mixed basis\)/)).toBeTruthy();
     expect(screen.getAllByText(/Totals cover loaded entities only/).length).toBeGreaterThanOrEqual(1);
   });
 
@@ -276,7 +279,7 @@ describe('ExpensesView charts', () => {
     expect(cards.map((c) => c.getAttribute('data-property'))).toEqual(['a', 'b', 'c', 'd']);
     expect(within(cards[0]!).getByText('Alpha Commons')).toBeTruthy();
     expect(within(cards[0]!).getByText('$360')).toBeTruthy();
-    expect(within(cards[0]!).getByText(/\+2[0-9]\.[0-9]%|\+20\.0%/)).toBeTruthy();
+    expect(within(cards[0]!).getByText("Sep '26 · YoY +20.0%")).toBeTruthy();
     expect(within(cards[3]!).getByText(/unavailable — mixed basis/)).toBeTruthy();
     expect(within(cards[3]!).queryByText(/\$/)).toBeNull();
   });
@@ -315,12 +318,12 @@ describe('ExpensesView scope selector', () => {
     expect(screen.queryByRole('option', { name: 'Home Residence' })).toBeNull();
   });
 
-  it('a single property hides heatmap and small-multiples and shows its own KPIs, categories and movers', async () => {
+  it('a single property hides heatmap and small-multiples and shows its own KPIs, categories and movers', () => {
     renderView();
     fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'a' } });
     expect(screen.queryByTestId('heatmap')).toBeNull();
     expect(screen.queryAllByTestId('spark-card')).toHaveLength(0);
-    await waitFor(() => expect(within(tile('Latest opex')).getByText('$360')).toBeTruthy(), { timeout: 10000 });
+    expect(within(tile('Latest opex')).getByText('$360')).toBeTruthy();
     expect(attr('stacked', 'data-keys')).toEqual(['Taxes', 'Utilities']); // no Other when nothing falls outside the top 5
     const items = within(screen.getByTestId('movers')).getAllByRole('listitem');
     expect(items.map((i) => i.textContent)).toEqual(['Utilities at Alpha Commons +$60 (+60.0%) vs trailing 12 mo']);
@@ -344,5 +347,117 @@ describe('ExpensesView scope selector', () => {
     view.rerender(tree(qc));
     expect((screen.getByLabelText('Scope') as HTMLSelectElement).value).toBe('__portfolio__');
     expect(screen.getByTestId('heatmap')).toBeTruthy();
+  });
+});
+
+describe('ExpensesView complete-month KPIs', () => {
+  const lagFixture = () => {
+    const f = fixture({ withAccrual: false, withMixedProperty: false });
+    f.points = f.points
+      .filter((p) => p.propertyId !== 'r' && !(p.propertyId === 'b' && p.month === LATEST))
+      .map((p) => (p.propertyId === 'a' && p.month === '2026-08' && p.category === 'Utilities' ? { ...p, amount: 130 } : p));
+    return f;
+  };
+
+  it('uses the latest month every contributing entity has, and names it in a caption', () => {
+    setData(lagFixture());
+    renderView();
+    expect(within(tile('Latest opex')).getByText('$380')).toBeTruthy(); // Aug: a 330 + b 50
+    expect(within(tile('MoM change')).getByText('+8.6%')).toBeTruthy(); // 30 / 350
+    expect(within(tile('YoY (same month)')).getByText('+8.6%')).toBeTruthy(); // vs 2025-08 = 350
+    expect(screen.getByText("Latest complete month: Aug '26 (some entities report through Sep '26)")).toBeTruthy();
+    expect(screen.getByText("Top movers · Aug '26")).toBeTruthy();
+  });
+
+  it('no lag caption when every entity reports the same last month', () => {
+    setData(fixture({ withAccrual: false, withMixedProperty: false }));
+    renderView();
+    expect(screen.queryByText(/Latest complete month/)).toBeNull();
+  });
+
+  it('a single entity is unaffected by another entity lagging', () => {
+    setData(lagFixture());
+    renderView();
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'a' } });
+    expect(within(tile('Latest opex')).getByText('$360')).toBeTruthy();
+    expect(screen.queryByText(/Latest complete month/)).toBeNull();
+  });
+
+  it('no common month renders em dashes and an explanatory caption', () => {
+    const f = fixture({ withAccrual: false, withMixedProperty: false });
+    f.points = f.points.filter((p) => p.propertyId !== 'r' && (p.propertyId === 'a' ? p.month <= '2025-12' : p.month >= '2026-01'));
+    setData(f);
+    renderView();
+    expect(screen.getByText('Entities have no common month yet')).toBeTruthy();
+    for (const label of ['Latest opex', 'MoM change', 'YoY (same month)', 'Trailing-12 avg']) {
+      expect(within(tile(label)).getByText('—')).toBeTruthy();
+    }
+    expect(screen.queryByTestId('heatmap')).toBeNull();
+  });
+});
+
+describe('ExpensesView excluded-entity disclosure', () => {
+  it('says how many entities are excluded from totals when mixed-basis ones exist', () => {
+    renderView();
+    expect(screen.getByText('1 entity excluded from totals — mixed cash/accrual basis')).toBeTruthy();
+  });
+  it('pluralises, and hides the line when nothing is excluded', () => {
+    const f = fixture();
+    for (const p of [...f.points]) if (p.propertyId === 'b' && p.month === '2026-09') f.points.push({ ...p, basis: 'accrual' });
+    setData(f);
+    renderView();
+    expect(screen.getByText('2 entities excluded from totals — mixed cash/accrual basis')).toBeTruthy();
+    cleanup();
+    setData(fixture({ withMixedProperty: false }));
+    renderView();
+    expect(screen.queryByText(/excluded from totals/)).toBeNull();
+    expect(screen.queryByText(/plus .* excluded/)).toBeNull();
+  });
+  it('keeps the plain badge wording when none are excluded', () => {
+    setData(fixture({ withMixedProperty: false }));
+    renderView();
+    expect(screen.getByText('4 of 6 entities loaded')).toBeTruthy();
+  });
+});
+
+describe('ExpensesView empty message for non-investment feeds', () => {
+  it('portfolio scope with points only for non-investment entities shows the not-loaded Card', () => {
+    const f = fixture();
+    f.points = f.points.filter((p) => p.propertyId === 'r');
+    setData(f);
+    renderView();
+    expect(screen.getAllByText(/Monthly P&L data has not been loaded yet/)).toHaveLength(1);
+    expect(screen.queryByText(/No monthly P&L loaded for this entity/)).toBeNull();
+  });
+  it('single-property scope with no points keeps the per-entity message', () => {
+    const f = fixture();
+    f.points = f.points.filter((p) => p.propertyId !== 'c');
+    setData(f);
+    renderView();
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'c' } });
+    expect(screen.getByText('No monthly P&L loaded for this entity')).toBeTruthy();
+  });
+});
+
+describe('ExpensesView movers and ordering robustness', () => {
+  it('a mixed-basis property that would be the top mover is absent; a clean property sentence appears', () => {
+    const f = fixture();
+    f.points = f.points.map((p) => (p.propertyId === 'd' && p.month === LATEST ? { ...p, amount: 90000 } : p));
+    setData(f);
+    renderView();
+    const movers = screen.getByTestId('movers');
+    expect(within(movers).queryByText(/Delta Mix/)).toBeNull();
+    expect(within(movers).getByText('Utilities at Alpha Commons +$60 (+60.0%) vs trailing 12 mo')).toBeTruthy();
+  });
+
+  it('identical variance ties break by name ascending; null-variance and unavailable entities come last', () => {
+    const points: ExpenseMonthPoint[] = [];
+    for (const m of MONTHS) for (const id of ['a', 'b']) points.push(pt(id, m, 'Utilities', m === LATEST ? 120 : 100));
+    for (const m of MONTHS) points.push(pt('d', m, 'Taxes', 5, 'cash'), pt('d', m, 'Utilities', 5, 'accrual'));
+    for (const m of ['2026-08', LATEST]) points.push(pt('c', m, 'Utilities', 10));
+    setData({ points, coverage: { propertiesLoaded: 4, propertiesExpected: 4, firstMonth: '2025-08', lastMonth: LATEST } });
+    renderView();
+    expect(screen.getAllByTestId('spark-card').map((c) => c.getAttribute('data-property'))).toEqual(['a', 'b', 'c', 'd']);
+    expect(attr('heatmap', 'data-rows')).toEqual(['Alpha Commons', 'Beta Park', 'Gamma Yard']);
   });
 });
