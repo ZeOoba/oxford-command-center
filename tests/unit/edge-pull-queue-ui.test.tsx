@@ -1,7 +1,7 @@
 // tests/unit/edge-pull-queue-ui.test.tsx — spec §8.6: write controls only when the warehouse is live;
 // Mark done → POST with ORA_JSON_MUTATION_HEADERS; Undo → confirm → POST /:id/void; 503 → offline note.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { EdgePullQueueResponse } from '@contracts/edge';
 import { localIsoToday } from '../../src/modules/acquisitions/edge-hooks';
@@ -242,5 +242,62 @@ describe('EdgePullQueue', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
     const { container } = renderQueue({ live: false, seed: false });
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+});
+
+describe('fix-pass 3 - mutation plumbing (B5) and busy guard (B7)', () => {
+  const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+  const queueGets = () =>
+    vi.mocked(fetch).mock.calls.filter(([u, init]) => String(u) === '/api/warehouse/edge/pull-queue' && (init?.method ?? 'GET') === 'GET');
+
+  it('record POST sends content-type application/json AND X-ORA-Client, then invalidates (a second GET fires)', async () => {
+    renderQueue({ live: true });
+    expect(queueGets()).toHaveLength(0); // seeded: nothing fetched yet
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    fireEvent.change(screen.getByLabelText('Done on'), { target: { value: '2026-09-30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    const headers = posts()[0]![1]?.headers as Record<string, string>;
+    expect(headers['content-type']).toBe('application/json');
+    expect(headers['X-ORA-Client']).toBe('1');
+    await waitFor(() => expect(queueGets()).toHaveLength(1)); // invalidation refetched the queue
+  });
+
+  it('void POST sends X-ORA-Client, then invalidates (a second GET fires)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Undo Richmond, VA' }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((posts()[0]![1]?.headers as Record<string, string>)['X-ORA-Client']).toBe('1');
+    await waitFor(() => expect(queueGets()).toHaveLength(1));
+  });
+
+  it('while a save is pending: Save and the row actions are disabled, and a repeat submit posts nothing', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    const form = screen.getByLabelText('Done on').closest('form')!;
+    fireEvent.submit(form);
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true));
+    expect((screen.getByRole('button', { name: 'Mark Columbus, OH done' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Undo Richmond, VA' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(form);
+    await settle(); // a mutation invokes fetch asynchronously: wait before asserting nothing was posted
+    expect(posts()).toHaveLength(1);
+  });
+
+  it('a pending void blocks a save submit (the guard covers both mutations)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    const form = screen.getByLabelText('Done on').closest('form')!;
+    // start a void on another row, then try to submit the open form
+    fireEvent.click(screen.getByRole('button', { name: 'Undo Richmond, VA' }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    fireEvent.submit(form);
+    await settle(); // a mutation invokes fetch asynchronously: wait before asserting nothing was posted
+    expect(posts()).toHaveLength(1);
   });
 });

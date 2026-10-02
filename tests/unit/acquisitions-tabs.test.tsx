@@ -11,6 +11,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
 import { AcquisitionsModule } from '../../src/modules/acquisitions/AcquisitionsModule';
+import { ACQUISITIONS_TABS } from '../../src/modules/acquisitions/tabs';
+import type { AcqIntelResponse } from '../../src/contracts/acquisition';
+import { fourMarkets, mkMarketsResponse } from './edge-test-helpers';
 import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
 
 function makeDeal(partial: Partial<Deal> & Pick<Deal, 'id' | 'name' | 'stage'>): Deal {
@@ -25,16 +28,16 @@ function makeDeal(partial: Partial<Deal> & Pick<Deal, 'id' | 'name' | 'stage'>):
 
 const DEALS = [makeDeal({ id: 'a1', name: 'Test Deal', stage: 'Candidate', capRate: 0.08, sf: 40000 })];
 
-function seededClient(): QueryClient {
+function seededClient(deals: Deal[] = DEALS): QueryClient {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
-  qc.setQueryData(['snapshot'], { snapshot: { deals: DEALS, acquisitionInputs: {} } as never, state: {} as never });
+  qc.setQueryData(['snapshot'], { snapshot: { deals, acquisitionInputs: {} } as never, state: {} as never });
   return qc;
 }
 
-function renderAcq(entry = '/') {
+function renderAcq(entry = '/', deals: Deal[] = DEALS) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={seededClient()}>
+      <QueryClientProvider client={seededClient(deals)}>
         <AcquisitionsModule />
       </QueryClientProvider>
     </MemoryRouter>,
@@ -95,14 +98,60 @@ describe('AcquisitionsModule — Phase 3 tab split', () => {
     expect(screen.getByText('Oxford Edge')).toBeTruthy();
   });
 
+  // The Edge query's only consumer on these tabs is RankedCandidateList (force-mounted inside the
+  // Sourcing panel). The fetch stub must therefore SERVE a ranked candidate linked to a deal, or that
+  // list never mounts and the F11 assertion passes vacuously.
+  const COLUMBUS_DEAL = makeDeal({ id: 'a1', name: 'Test Deal', stage: 'Candidate', market: 'Columbus OH', location: 'Columbus, OH' });
+  const jsonRes = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  const INTEL: AcqIntelResponse = {
+    rankedCandidates: [{
+      candidate: {
+        id: 'cand-1', source: 'manual', sourceBatchId: null, address: '100 Fixture Ave', county: null, state: null, market: null,
+        rentableSf: null, yearBuilt: null, ownerName: null, parcelScreenScore: null, status: 'active', notionDealId: 'a1',
+        createdAt: '2026-06-01T00:00:00Z', updatedAt: '2026-06-01T00:00:00Z',
+      },
+      latestScore: null, governorDscrCleared: null, governorLtvCleared: null, calibrationHitRate: null, scoredAt: null,
+    }],
+    calibrationSummary: { totalVerdicts: 0, resolvedVerdicts: 0, overallHitRate: null, wilsonLow: null, wilsonHigh: null },
+    advisoryOnly: false, rulesetVersion: '1.1.0', asOf: '2026-06-14T00:00:00Z',
+  };
+  function stubServingCandidate() {
+    vi.stubGlobal('fetch', vi.fn(async (u: unknown) => {
+      const url = String(u);
+      if (url.includes('/api/warehouse/acq/intel')) return jsonRes(INTEL);
+      if (url.includes('/api/warehouse/edge/markets')) return jsonRes(mkMarketsResponse(fourMarkets()));
+      return new Response('{}', { status: 500 });
+    }));
+  }
+  const edgeCalls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u)).filter((u) => u.includes('/edge/'));
+  const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
   it.each(['pipeline', 'workbench', 'grader'])('F11: Acquisitions on ?tab=%s fires no /edge/ request', async (tab) => {
-    renderAcq(`/?tab=${tab}`);
-    await waitFor(() => expect(fetch).toHaveBeenCalled());
-    // Flush pending effects/queries so a late-mounting Edge fetch would have fired before we assert.
-    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
-    const urls = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
-    expect(urls.length).toBeGreaterThan(0);
-    expect(urls.some((u) => u.includes('/edge/'))).toBe(false);
+    stubServingCandidate();
+    renderAcq(`/?tab=${tab}`, [COLUMBUS_DEAL]);
+    // Proof the consumer is mounted: the ranked list rendered the candidate (force-mounted, so present in the DOM).
+    expect(await screen.findByText('100 Fixture Ave')).toBeTruthy();
+    await flush(); // a late-mounting Edge fetch would have fired by now
+    expect(edgeCalls()).toEqual([]);
+  });
+
+  it('arming is sticky: one /edge/markets call after Sourcing, no duplicate and no regression after returning to Pipeline', async () => {
+    stubServingCandidate();
+    renderAcq('/', [COLUMBUS_DEAL]);
+    expect(await screen.findByText('100 Fixture Ave')).toBeTruthy();
+    await flush();
+    expect(edgeCalls()).toEqual([]);
+
+    selectTab('Sourcing');
+    await waitFor(() => expect(edgeCalls()).toHaveLength(1));
+    expect(edgeCalls()[0]).toContain('/api/warehouse/edge/markets');
+    await waitFor(() => expect(screen.getByText('3.0% · +1.8% · STALE')).toBeTruthy());
+
+    selectTab('Pipeline');
+    await flush();
+    expect(edgeCalls()).toHaveLength(1); // still exactly one: no duplicate fetch
+    // sticky: the column keeps its data instead of falling back to the idle placeholder
+    expect(screen.getByText('3.0% · +1.8% · STALE')).toBeTruthy();
   });
 
   it('selecting Edge fetches the markets endpoint', async () => {
@@ -148,5 +197,13 @@ describe('AcquisitionsModule — Phase 3 tab split', () => {
     expect((screen.getAllByRole('spinbutton')[0] as HTMLInputElement).value).toBe('4200000');
     selectTab('Sourcing');
     expect((screen.getByDisplayValue('Passed') as HTMLSelectElement).value).toBe('passed');
+  });
+});
+
+describe('fix-pass 3 - Edge tab registration', () => {
+  it('the edge tab declares its palette aliases', () => {
+    const edge = ACQUISITIONS_TABS.find((t) => t.id === 'edge');
+    expect(edge?.label).toBe('Edge');
+    expect(edge?.aliases).toEqual(expect.arrayContaining(['oxford edge', 'market board', 'markets', 'pull queue', 'data health']));
   });
 });

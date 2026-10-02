@@ -1,8 +1,9 @@
 // tests/unit/edge-view.test.tsx — spec §8.2 banner + error/empty states, §8.5 data health, readout.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { EdgeMarketsResponse, EdgePullQueueResponse } from '@contracts/edge';
+import { UiContext, type UiState } from '../../src/brain/ui-context';
 import { EdgeView } from '../../src/modules/acquisitions/EdgeView';
 import { EdgeMarketReadout } from '../../src/modules/acquisitions/EdgeMarketReadout';
 import { EDGE_BOARD_DEFAULT_STATE, EDGE_KEYS, EDGE_PULL_SERIES } from '../../src/modules/acquisitions/edge-hooks';
@@ -288,5 +289,48 @@ describe('EdgeMarketReadout estimated marker (R3f)', () => {
     col.series = { ...col.series, vac: cell([5, 4.5, 4, 3.5, 3], ['actual', 'actual', 'actual', 'actual', 'estimated']) };
     render(<QueryClientProvider client={client(mkMarketsResponse(ms))}><EdgeMarketReadout deal={{ market: 'Columbus OH', location: 'Columbus, OH' }} /></QueryClientProvider>);
     expect(screen.getByText('Est.')).toBeTruthy();
+  });
+});
+
+describe('fix-pass 3 - B7 view/readout gaps', () => {
+  it("Data health shows an 'N inconsistent' badge when coverage has inconsistent cells", () => {
+    const base = mkMarketsResponse(fourMarkets());
+    const coverage = base.coverage.map((r, i) =>
+      i === 0 ? { ...r, inconsistent: [{ marketId: 'columbus', year: 2021 }, { marketId: 'richmond', year: 2022 }] } : r);
+    renderView({ ...base, coverage });
+    expect(screen.getByText('2 inconsistent')).toBeTruthy();
+  });
+
+  it("no 'inconsistent' badge when no cell is inconsistent", () => {
+    renderView(mkMarketsResponse(fourMarkets()));
+    expect(screen.queryByText(/inconsistent/)).toBeNull();
+  });
+
+  it("EdgeMarketReadout 'View in Edge' navigates to the edge tab and closes the drawer", () => {
+    const openTab = vi.fn();
+    const onNavigate = vi.fn();
+    const ui = { openTab } as unknown as UiState;
+    render(
+      <UiContext.Provider value={ui}>
+        <QueryClientProvider client={client(mkMarketsResponse(fourMarkets()))}>
+          <EdgeMarketReadout deal={{ market: 'Columbus OH', location: 'Columbus, OH' }} onNavigate={onNavigate} />
+        </QueryClientProvider>
+      </UiContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'View in Edge' }));
+    expect(openTab).toHaveBeenCalledTimes(1);
+    expect(openTab).toHaveBeenCalledWith('pipeline', 'edge');
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("EdgeMarketReadout shows 'Edge is local-only' when the markets query fails as WarehouseUnavailable", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(
+      <QueryClientProvider client={client()}>
+        <EdgeMarketReadout deal={{ market: 'Columbus OH', location: 'Columbus, OH' }} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Edge is local-only — start the Brain Server on the workstation.')).toBeTruthy();
+    expect(screen.queryByText(/could not be loaded/)).toBeNull();
   });
 });
