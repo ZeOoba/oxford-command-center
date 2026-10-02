@@ -359,7 +359,8 @@ export function edgeUnmatchedHeadline(reason: EdgeUnmatchedReason): string {
 export function parseCityState(location: string | null): { city: string; state: string } | null {
   if (!location) return null;
   const stripped = location.slice(0, 200).replace(/\([^)]*\)/g, ' ');
-  const re = /([A-Za-z][A-Za-z.'-]*(?: +[A-Za-z.'-]+)*)\s*,\s*([A-Z]{2})\b/g;
+  // \p{L}: Unicode letters, so "Montréal" / "Española" / "Cañon City" keep their full names.
+  const re = /(\p{L}[\p{L}.'-]*(?: +[\p{L}.'-]+)*)\s*,\s*([A-Z]{2})\b/gu;
   let last: { city: string; state: string } | null = null;
   let m: RegExpExecArray | null;
   while ((m = re.exec(stripped)) !== null) {
