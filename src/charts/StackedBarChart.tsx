@@ -1,3 +1,7 @@
+// Colour: segment fill is `colorAt(index of key in keys)` from theme.ts, which WRAPS after 6 keys.
+// Callers should cap at 5 categories plus an 'Other' bucket (index 5 is the grey text-tertiary
+// token, which suits 'Other'). The chart draws no legend; callers supply one.
+// Labels: `data` labels must be unique (duplicates share a React key and collapse into one band).
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Group } from '@visx/group';
@@ -13,8 +17,9 @@ export interface StackedBarDatum {
 
 interface Props {
   data: StackedBarDatum[];
-  /** Ordered category keys. Colour is assigned from the shared SERIES palette by index in this
-   *  list, so a category keeps its colour across charts that pass the same `keys`. Segments whose
+  /** Ordered category keys. Colour is `colorAt(index)` from the shared SERIES palette, so a
+   *  category keeps its colour across charts that pass the same `keys`. It WRAPS after 6 keys:
+   *  cap at 5 + an 'Other' bucket (index 5 = grey text-tertiary). No legend is drawn. Segments whose
    *  key is NOT listed here are ignored (not drawn, not counted in totals or the y domain). */
   keys: string[];
   height?: number;

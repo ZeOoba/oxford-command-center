@@ -196,11 +196,47 @@ describe('StackedBarChart', () => {
     fireEvent.mouseMove(rects(container)[0]!.el);
     const tip = container.querySelector('[data-testid="stacked-tooltip"]')!;
     expect(tip).not.toBeNull();
-    expect(tip.textContent).toContain('Jan');
-    expect(tip.textContent).toContain('a');
-    expect(tip.textContent).toContain('$30');
-    expect(tip.textContent).toContain('-$10');
-    expect(tip.textContent).toContain('Total');
-    expect(tip.textContent).toContain('$20');
+    // Header, then each segment as key + signed value (credit shown as -$10), then the net total.
+    expect(tip.textContent).toBe('Jana$30b-$10Total$20');
+  });
+});
+
+describe('StackedBarChart domain edge cases', () => {
+  const PLOT = 250 - 22 - 36;
+  it('an overlay value above the tallest stack widens the y domain', () => {
+    const data = [{ label: 'Jan', segments: [{ key: 'a', value: 10 }] }];
+    const without = rects(render(<StackedBarChart keys={KEYS} data={data} />).container);
+    expect(without[0]!.h).toBeCloseTo(PLOT, 5); // lone stack fills the plot
+    cleanup();
+    const { container } = render(<StackedBarChart keys={KEYS} data={data} overlay={[{ label: 'Jan', value: 20 }]} />);
+    const g = rects(container);
+    expect(g[0]!.h).toBeCloseTo(PLOT / 2, 5); // domain [0,20] halves the bar
+    const d = container.querySelector('svg path.overlay-line')!.getAttribute('d')!;
+    const py = Number(d.match(/M[\d.-]+,([\d.-]+)/)![1]);
+    expect(py).toBeGreaterThanOrEqual(0); // inside the plot, not clipped above it
+    expect(py).toBeCloseTo(0, 5);
+  });
+
+  it('all-negative data hangs rects downward from the top baseline, none above it', () => {
+    const { container } = render(
+      <StackedBarChart
+        keys={KEYS}
+        data={[
+          { label: 'Jan', segments: [{ key: 'a', value: -10 }] },
+          { label: 'Feb', segments: [{ key: 'a', value: -10 }, { key: 'b', value: -20 }] },
+        ]}
+      />,
+    );
+    const g = rects(container);
+    expect(g).toHaveLength(3);
+    for (const r of g) {
+      expect(r.h).toBeGreaterThan(0);
+      expect(r.y).toBeGreaterThanOrEqual(0 - 1e-9); // baseline (domain max 0) is the plot top
+    }
+    const feb = g.filter((r) => r.x !== g[0]!.x);
+    expect(feb[0]!.y).toBeCloseTo(0, 5);
+    expect(feb[0]!.h + feb[1]!.h).toBeCloseTo(PLOT - 18, 5); // domain [-30,0], range stops 18px short
+    expect(g[0]!.h).toBeCloseTo((PLOT - 18) / 3, 5);
+    expect(container.innerHTML).not.toMatch(/NaN/);
   });
 });
