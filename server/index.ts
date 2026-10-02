@@ -35,6 +35,7 @@ import { MarketRentInput } from '../src/contracts/lease-forecast';
 import { writeDebtSnapshot } from './warehouse/debt-snapshot';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
 import { captureOccupancy } from './warehouse/occupancy';
+import { captureMonthSnapshot } from './warehouse/month-snapshot';
 import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insurance';
 import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
@@ -157,6 +158,15 @@ brain.on('snapshot', (info: unknown) => {
     // Warehouse unavailable (cold/mirror env) — capture is best-effort, but do not fail SILENTLY:
     // a total capture failure must be observable in the server log, not invisible.
     console.warn('⚠ Occupancy capture skipped:', err instanceof Error ? err.message : String(err));
+  }
+  // Month snapshot (Portfolio Trends W2): per-property per-month SF / in-place rent / lease count,
+  // built from the same workbook snapshot. Independently guarded like its siblings; sits under the
+  // same action:/:fallback early-return so overlay edits and failed-parse fallbacks never write a row.
+  try {
+    captureMonthSnapshot(getWarehouse(), brain.getSnapshot());
+  } catch (err) {
+    // Best-effort like its siblings — but never silent: a total capture failure must be visible in the log.
+    console.warn('⚠ Month-snapshot capture skipped:', err instanceof Error ? err.message : String(err));
   }
   try {
     const snapshot = brain.getSnapshot();
