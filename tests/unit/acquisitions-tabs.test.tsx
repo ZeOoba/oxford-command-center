@@ -6,7 +6,7 @@
 // and Edge stay lazy (each fires its own queries), and Acquisitions on ?tab=pipeline fires no /edge/
 // request (spec F11).
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
@@ -98,7 +98,10 @@ describe('AcquisitionsModule — Phase 3 tab split', () => {
   it.each(['pipeline', 'workbench', 'grader'])('F11: Acquisitions on ?tab=%s fires no /edge/ request', async (tab) => {
     renderAcq(`/?tab=${tab}`);
     await waitFor(() => expect(fetch).toHaveBeenCalled());
+    // Flush pending effects/queries so a late-mounting Edge fetch would have fired before we assert.
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
     const urls = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+    expect(urls.length).toBeGreaterThan(0);
     expect(urls.some((u) => u.includes('/edge/'))).toBe(false);
   });
 

@@ -38,18 +38,21 @@ export const TEST_FIELD_META: EdgeMarketsResponse['fieldMeta'] = Object.fromEntr
 );
 
 export function cell(values: Array<number | null>, status: EdgeSeriesCell['status']): EdgeSeriesCell {
+  if (values.length !== status.length) {
+    throw new Error(`cell(): values (${values.length}) and status (${status.length}) must have equal length`);
+  }
   return { values, status };
 }
 
 /** Observed where non-null, "Not published" ('null' status) where null. */
 export function obs(values: Array<number | null>): EdgeSeriesCell {
+  // status is derived from values, so the lengths are equal by construction.
   return { values, status: values.map((v) => (v === null ? 'null' : 'actual')) };
 }
 
-const PLACEHOLDER: EdgeSeriesCell = cell(
-  [null, null, null, null, null],
-  ['guide_only', 'guide_only', 'guide_only', 'guide_only', 'guide_only'],
-);
+/** A factory, never a shared constant: callers may mutate the cells they get. */
+const placeholder = (): EdgeSeriesCell =>
+  cell([null, null, null, null, null], ['guide_only', 'guide_only', 'guide_only', 'guide_only', 'guide_only']);
 
 export function mkMarket(
   id: string,
@@ -59,7 +62,7 @@ export function mkMarket(
   overrides: Partial<Record<EdgeSeriesKey, EdgeSeriesCell>> = {},
   subs: EdgeMarket['subs'] = [],
 ): EdgeMarket {
-  const series = Object.fromEntries(EDGE_SERIES.map((k) => [k, overrides[k] ?? PLACEHOLDER])) as EdgeMarket['series'];
+  const series = Object.fromEntries(EDGE_SERIES.map((k) => [k, structuredClone(overrides[k] ?? placeholder())])) as EdgeMarket['series'];
   return { id, name, state, cbsa: '00000', lat: 0, lon: 0, type, trajectory: type === 'auto' ? 'a_growing' : null, subs, series };
 }
 
@@ -89,6 +92,11 @@ export function fourMarkets(): EdgeMarket[] {
   ];
 }
 
+/**
+ * `overrides` are spread last and win verbatim. Overriding `markets` does NOT recompute `coverage`
+ * or `marketCount` (both stay derived from the `markets` argument); override those too when a test
+ * needs them consistent with a different market list.
+ */
 export function mkMarketsResponse(markets: EdgeMarket[], overrides: Partial<EdgeMarketsResponse> = {}): EdgeMarketsResponse {
   return {
     availability: 'ok',
