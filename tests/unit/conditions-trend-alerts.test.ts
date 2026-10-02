@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease } from '@contracts/index';
 import { evaluateConditions, ALERT_THRESHOLDS, type MonthSnapshotInput } from '@analytics/conditions';
 import type { PropertyExpenseSeries } from '@analytics/expense-trends';
+import { addMonths } from '@analytics/portfolio-trends';
 
 const ASOF = '2026-12-20';
 const NOW = Date.parse('2026-12-20T12:00:00.000Z');
@@ -22,7 +23,10 @@ function snap(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
 const ms = (propertyId: string, month: string, leasedSf: number, inPlaceRent = 1000, totalSf = 10000): MonthSnapshotInput =>
   ({ propertyId, month, leasedSf, totalSf, inPlaceRent });
 
-const run = (monthSnapshots: MonthSnapshotInput[]) => evaluateConditions(snap(), { ...base, monthSnapshots });
+const props = [{ id: 'p1', name: '1100 Rarig Ave' }, { id: 'p2', name: '200 Oak St' }];
+const withProps = () => snap({ properties: props } as unknown as Partial<PortfolioSnapshot>);
+const run = (monthSnapshots: MonthSnapshotInput[], referenceDate?: string) =>
+  evaluateConditions(withProps(), { ...base, monthSnapshots, ...(referenceDate ? { referenceDate } : {}) });
 const vac = (out: ReturnType<typeof run>) => out.filter((i) => i.id.startsWith('vacancy-rising-'));
 const rent = (out: ReturnType<typeof run>) => out.filter((i) => i.id.startsWith('rent-drop-'));
 
@@ -43,6 +47,7 @@ describe('vacancy-rising', () => {
     expect(v).toHaveLength(1);
     const i = v[0]!;
     expect(i.id).toBe('vacancy-rising-p1-2026-12');
+    expect(i.title).toBe('Vacancy rising — 1100 Rarig Ave');
     expect(i.severity).toBe('warning');
     expect(i.entityType).toBe('property');
     expect(i.entityId).toBe('p1');
@@ -81,7 +86,7 @@ describe('vacancy-rising', () => {
     expect(v.map((i) => i.id)).toEqual(['vacancy-rising-p1-2026-12']);
   });
   it('crosses a year boundary', () => {
-    const v = vac(run([ms('p1', '2026-11', 9500), ms('p1', '2026-12', 9350), ms('p1', '2027-01', 9180)]));
+    const v = vac(run([ms('p1', '2026-11', 9500), ms('p1', '2026-12', 9350), ms('p1', '2027-01', 9180)], '2027-01-20'));
     expect(v[0]!.id).toBe('vacancy-rising-p1-2027-01');
     expect(v[0]!.detail).toContain('Nov 2026–Jan 2027');
   });
@@ -93,6 +98,7 @@ describe('rent-drop', () => {
     expect(r).toHaveLength(1);
     const i = r[0]!;
     expect(i.id).toBe('rent-drop-p1-2026-12');
+    expect(i.title).toBe('In-place rent down — 1100 Rarig Ave');
     expect(i.severity).toBe('warning');
     expect(i.impactAnnualUsd).toBeNull();
     expect(i.entityId).toBe('p1');
@@ -116,16 +122,15 @@ describe('rent-drop', () => {
   });
 });
 
-function expSeries(over: Partial<PropertyExpenseSeries> = {}, latest = 1250, nBase = 12, base0 = 1000): PropertyExpenseSeries {
-  // baseline months 2025-10 .. 2026-09 (12), latest 2026-10
+function expSeries(over: Partial<PropertyExpenseSeries> = {}, latest = 1250, nBase = 12, base0 = 1000, latestMonth = '2026-10'): PropertyExpenseSeries {
+  // baseline = the nBase months immediately before latestMonth
   const months = [];
-  const all = ['2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
-  for (const m of all.slice(12 - nBase)) months.push({ month: m, total: base0, byCategory: {} });
-  months.push({ month: '2026-10', total: latest, byCategory: {} });
+  for (let k = nBase; k >= 1; k--) months.push({ month: addMonths(latestMonth, -k), total: base0, byCategory: {} });
+  months.push({ month: latestMonth, total: latest, byCategory: {} });
   return { propertyId: 'p1', basis: 'accrual', months, ...over };
 }
-const opex = (series: PropertyExpenseSeries[]) =>
-  evaluateConditions(snap(), { ...base, expenseSeries: series }).filter((i) => i.id.startsWith('opex-spike-'));
+const opex = (series: PropertyExpenseSeries[], referenceDate = '2026-11-15') =>
+  evaluateConditions(withProps(), { ...base, referenceDate, expenseSeries: series }).filter((i) => i.id.startsWith('opex-spike-'));
 
 describe('opex-spike', () => {
   it('fires at exactly +25% with exact detail', () => {
@@ -133,6 +138,7 @@ describe('opex-spike', () => {
     expect(o).toHaveLength(1);
     const i = o[0]!;
     expect(i.id).toBe('opex-spike-p1-2026-10');
+    expect(i.title).toBe('Opex spike — 1100 Rarig Ave');
     expect(i.severity).toBe('warning');
     expect(i.impactAnnualUsd).toBeNull();
     expect(i.entityType).toBe('property');
@@ -160,11 +166,11 @@ describe('cross-cutting', () => {
       ms('p1', '2026-10', 9500, 1000), ms('p1', '2026-11', 9350, 1000), ms('p1', '2026-12', 9180, 900),
       ms('p2', '2026-10', 9500, 1000), ms('p2', '2026-11', 9350, 1000), ms('p2', '2026-12', 9180, 900),
     ],
-    expenseSeries: [expSeries(), expSeries({ propertyId: 'p2' })],
+    expenseSeries: [expSeries({}, 1250, 12, 1000, '2026-12'), expSeries({ propertyId: 'p2' }, 1250, 12, 1000, '2026-12')],
   };
   it('ids stable across evaluations, unique across properties/rules; impact always null', () => {
-    const a = evaluateConditions(snap(), { ...base, ...inputs });
-    const b = evaluateConditions(snap(), { ...base, ...inputs });
+    const a = evaluateConditions(withProps(), { ...base, ...inputs });
+    const b = evaluateConditions(withProps(), { ...base, ...inputs });
     expect(a.map((i) => i.id)).toEqual(b.map((i) => i.id));
     expect(new Set(a.map((i) => i.id)).size).toBe(a.length);
     expect(a).toHaveLength(6); // 2 props x (vacancy, rent, opex)
@@ -181,5 +187,56 @@ describe('cross-cutting', () => {
     expect(before).toContain('expir'); // fixture actually produces alerts
     expect(JSON.stringify(evaluateConditions(s, { ...base, monthSnapshots: undefined, expenseSeries: undefined }))).toBe(before);
     expect(JSON.stringify(evaluateConditions(s, { ...base, monthSnapshots: [], expenseSeries: [] }))).toBe(before);
+  });
+});
+
+describe('recency guard (reference month = asOf month)', () => {
+  const rising = [ms('p1', '2026-10', 9500), ms('p1', '2026-11', 9350), ms('p1', '2026-12', 9180)];
+  const drop = [ms('p1', '2026-11', 9000, 1000), ms('p1', '2026-12', 9000, 900)];
+  // latest data month = 2026-12
+  it.each([
+    ['stale (ref 3 months after latest)', '2027-03-15', 0],
+    ['ref = latest + 2 months', '2027-02-15', 0],
+    ['ref = latest + 1 month', '2027-01-15', 1],
+    ['ref = latest month', '2026-12-15', 1],
+    ['future-dated latest (ref = latest - 1)', '2026-11-15', 0],
+  ])('vacancy-rising and rent-drop: %s', (_n, ref, expected) => {
+    expect(vac(run(rising, ref))).toHaveLength(expected);
+    expect(rent(run(drop, ref))).toHaveLength(expected);
+  });
+  // opex latest month = 2026-10
+  it.each([
+    ['stale (ref 3 months after latest)', '2027-01-15', 0],
+    ['ref = latest + 2 months', '2026-12-15', 0],
+    ['ref = latest + 1 month', '2026-11-15', 1],
+    ['ref = latest month', '2026-10-15', 1],
+    ['future-dated latest (ref = latest - 1)', '2026-09-15', 0],
+  ])('opex-spike: %s', (_n, ref, expected) => {
+    expect(opex([expSeries()], ref)).toHaveLength(expected);
+  });
+});
+
+describe('titles / extra cases', () => {
+  it('falls back to the raw id when the property is not in the snapshot', () => {
+    const out = evaluateConditions(snap(), { ...base, monthSnapshots: [ms('zz9', '2026-10', 9500), ms('zz9', '2026-11', 9350), ms('zz9', '2026-12', 9180)] });
+    expect(out.find((i) => i.id === 'vacancy-rising-zz9-2026-12')!.title).toBe('Vacancy rising — zz9');
+  });
+  it('vacancy rise of 1.99 points does not fire', () => {
+    // leased 9500 / 9400 / 9301 -> 5.00 / 6.00 / 6.99% => 1.99 pts
+    expect(vac(run([ms('p1', '2026-10', 9500), ms('p1', '2026-11', 9400), ms('p1', '2026-12', 9301)]))).toHaveLength(0);
+  });
+  it('rent-drop across a Dec -> Jan year boundary', () => {
+    const r = rent(run([ms('p1', '2026-12', 9000, 1000), ms('p1', '2027-01', 9000, 900)], '2027-01-20'));
+    expect(r).toHaveLength(1);
+    expect(r[0]!.id).toBe('rent-drop-p1-2027-01');
+    expect(r[0]!.detail).toBe('In-place rent $1,000 → $900 (-10.0%), Dec 2026–Jan 2027, recorded');
+  });
+  it('two properties with different data are isolated', () => {
+    const out = run([
+      ms('p1', '2026-10', 9500, 1000), ms('p1', '2026-11', 9350, 1000), ms('p1', '2026-12', 9180, 1000),
+      ms('p2', '2026-10', 9500, 1000), ms('p2', '2026-11', 9600, 1000), ms('p2', '2026-12', 9700, 1000),
+    ]);
+    expect(vac(out).map((i) => i.id)).toEqual(['vacancy-rising-p1-2026-12']);
+    expect(rent(out)).toHaveLength(0);
   });
 });

@@ -904,7 +904,14 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
 
   // ── Portfolio Trends health alerts (Wave 3B) ────────────────────────────────
   // Run only when their opts field is supplied. Health signals, not risk-$: impactAnnualUsd is
-  // null so no revenue-at-risk / risk total moves. Ids are stable per (rule, property, month).
+  // null so no revenue-at-risk / risk total moves. Ids are stable per (rule, property, month) and
+  // embed the month, so a persisting condition re-fires under a NEW id each month (alert-state/ack
+  // keying to be confirmed when callers are wired).
+  // Recency guard: a property's latest month must be the reference month or the one before it
+  // (month-end data lands after the month closes); a stale or forward-dated feed emits nothing.
+  const refMonth: MonthKey = asOf.slice(0, 7);
+  const recent = (m: MonthKey): boolean => m === refMonth || m === addMonths(refMonth, -1);
+  const nameOf = (id: string): string => s.properties.find((p) => p.id === id)?.name ?? id;
   if (opts.monthSnapshots && opts.monthSnapshots.length > 0) {
     const byProp = new Map<string, Map<MonthKey, MonthSnapshotInput>>();
     for (const r of opts.monthSnapshots) {
@@ -914,6 +921,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     }
     for (const [propertyId, months] of byProp) {
       const latest = [...months.keys()].sort().pop()!;
+      if (!recent(latest)) continue;
       const m1 = addMonths(latest, -1);
       const m2 = addMonths(latest, -2);
       const r0 = months.get(latest)!;
@@ -928,7 +936,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         if (v1 > v2 && v0 > v1 && (v0 - v2) * 100 >= T.vacancyRiseMinPts - EPS) {
           out.push({
             id: `vacancy-rising-${propertyId}-${latest}`, severity: 'warning', category: 'occupancy',
-            title: `Vacancy rising — ${propertyId}`,
+            title: `Vacancy rising — ${nameOf(propertyId)}`,
             detail: `Vacancy ${fmtPct(v2)} → ${fmtPct(v1)} → ${fmtPct(v0)} (${monthSpan(m2, latest)}, recorded, lease-SF basis)`,
             metric: fmtPct(v0), entityType: 'property', entityId: propertyId,
             impactAnnualUsd: null, spine: 'A', provenance: 'derived',
@@ -942,7 +950,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         if (drop >= T.rentDropWarnPct - EPS) {
           out.push({
             id: `rent-drop-${propertyId}-${latest}`, severity: 'warning', category: 'occupancy',
-            title: `In-place rent down — ${propertyId}`,
+            title: `In-place rent down — ${nameOf(propertyId)}`,
             detail: `In-place rent ${fmtUsd(r1.inPlaceRent)} → ${fmtUsd(r0.inPlaceRent)} (-${(drop * 100).toFixed(1)}%), ${monthSpan(m1, latest)}, recorded`,
             metric: `-${(drop * 100).toFixed(1)}%`, entityType: 'property', entityId: propertyId,
             impactAnnualUsd: null, spine: 'A', provenance: 'derived',
@@ -958,12 +966,13 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       // varianceVsTrailing returns null without a full 12-month window; deltaPct is null on a
       // zero baseline. A negative (credit) baseline yields a negative deltaPct for a positive
       // latest month → also silent unless the ratio genuinely clears the floor.
+      if (!recent(latest)) continue;
       const v = varianceVsTrailing(series.months, latest);
       if (!v || v.deltaPct === null || v.baseline <= 0) continue;
       if (v.deltaPct >= T.opexSpikeWarnPct - EPS) {
         out.push({
           id: `opex-spike-${series.propertyId}-${latest}`, severity: 'warning', category: 'anomaly',
-          title: `Opex spike — ${series.propertyId}`,
+          title: `Opex spike — ${nameOf(series.propertyId)}`,
           detail: `Opex ${fmtUsd(v.amount)} in ${monthLabel(latest)} vs trailing-12 average ${fmtUsd(v.baseline)} (+${(v.deltaPct * 100).toFixed(1)}%), ${series.basis} basis`,
           metric: `+${(v.deltaPct * 100).toFixed(1)}%`, entityType: 'property', entityId: series.propertyId,
           impactAnnualUsd: null, spine: 'B', provenance: 'derived',
