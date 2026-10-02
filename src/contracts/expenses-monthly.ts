@@ -19,6 +19,8 @@ export const ExpenseMonthPointSchema = z.object({
 });
 export type ExpenseMonthPoint = z.infer<typeof ExpenseMonthPointSchema>;
 
+// Wire contract: exactly one row per (propertyId, month, category). The engine SUMS rows, so a
+// duplicate would silently double a total; reject the payload instead.
 export const ExpensesMonthlyResponseSchema = z.object({
   points: z.array(ExpenseMonthPointSchema),
   coverage: z.object({
@@ -27,5 +29,15 @@ export const ExpensesMonthlyResponseSchema = z.object({
     firstMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).nullable(),
     lastMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).nullable(),
   }),
+}).superRefine((val, ctx) => {
+  const seen = new Set<string>();
+  val.points.forEach((p, i) => {
+    const key = `${p.propertyId}|${p.month}|${p.category}`;
+    if (seen.has(key)) {
+      ctx.addIssue({ code: 'custom', message: `duplicate expense row for ${key}`, path: ['points', i] });
+    } else {
+      seen.add(key);
+    }
+  });
 });
 export type ExpensesMonthlyResponse = z.infer<typeof ExpensesMonthlyResponseSchema>;

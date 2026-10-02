@@ -59,3 +59,32 @@ describe('expenses-monthly contract', () => {
     }
   });
 });
+
+describe('expenses-monthly uniqueness (one row per property, month, category)', () => {
+  const resp = (points: unknown[]) => ({ points, coverage: zeroCoverage });
+
+  it('fails the parse on a duplicate triple, naming the key and pointing at the duplicate index', () => {
+    const r = ExpensesMonthlyResponseSchema.safeParse(resp([point, { ...point, category: 'Taxes' }, { ...point }]));
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const issue = r.error.issues[0]!;
+      expect(issue.message).toContain('p1|2026-09|Repairs & Maintenance');
+      expect(issue.path).toEqual(['points', 2]);
+    }
+  });
+
+  it('allows same property/month with a different category, and same category in a different month', () => {
+    expect(ExpensesMonthlyResponseSchema.safeParse(resp([point, { ...point, category: 'Taxes' }])).success).toBe(true);
+    expect(ExpensesMonthlyResponseSchema.safeParse(resp([point, { ...point, month: '2026-08' }])).success).toBe(true);
+    expect(ExpensesMonthlyResponseSchema.safeParse(resp([point, { ...point, propertyId: 'p2' }])).success).toBe(true);
+  });
+
+  it('finds a duplicate inside a large payload', () => {
+    const unique = Array.from({ length: 3000 }, (_, i) => ({ ...point, propertyId: `p${i}` }));
+    expect(ExpensesMonthlyResponseSchema.safeParse(resp(unique)).success).toBe(true);
+    const dup = [...unique, { ...unique[1234] }];
+    const r = ExpensesMonthlyResponseSchema.safeParse(resp(dup));
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.path).toEqual(['points', 3000]);
+  });
+});
