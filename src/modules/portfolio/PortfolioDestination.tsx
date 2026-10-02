@@ -6,6 +6,7 @@ import { PORTFOLIO_TABS, type PortfolioTab } from './tabs';
 const PANELS: Record<PortfolioTab, ComponentType> = {
   properties: lazy(() => import('./PortfolioModule').then((m) => ({ default: m.PortfolioModule }))),
   trends: lazy(() => import('./TrendsView').then((m) => ({ default: m.TrendsView }))),
+  expenses: lazy(() => import('./ExpensesView').then((m) => ({ default: m.ExpensesView }))),
 };
 
 const TABS: readonly ModuleTabDef[] = PORTFOLIO_TABS.map((t) => ({ ...t, Component: PANELS[t.id as PortfolioTab] }));

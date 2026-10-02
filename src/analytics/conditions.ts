@@ -7,6 +7,9 @@ import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
+import { addMonths, type MonthKey } from './portfolio-trends';
+import { isInvestmentProperty } from './property-basis';
+import { varianceVsTrailing, type PropertyExpenseSeries } from './expense-trends';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -66,7 +69,34 @@ export const ALERT_THRESHOLDS = {
   lapsedHoldoverGraceDays: 0,
   // velocitySlowDays: median time-to-lease above this threshold → slowLeasing flag [RATIFIED 60].
   velocitySlowDays: 60,
+  // Portfolio Trends health alerts (Wave 3B) — alert-specific, NOT governors.
+  /** Vacancy-rising: latest recorded vacancy must be >= this many percentage POINTS above two months earlier. */
+  vacancyRiseMinPts: 2.0,
+  /** Rent-down MoM: recorded in-place rent falling >= this fraction month over month (3%). */
+  rentDropWarnPct: 0.03,
+  /** Opex-spike: latest month opex >= this fraction above its own trailing-12 mean (25%). */
+  opexSpikeWarnPct: 0.25,
 } as const;
+
+/** One recorded month-end snapshot per property (subset of the Wave 2 TrendsHistoryPoint). */
+export interface MonthSnapshotInput {
+  propertyId: string;
+  month: string;
+  leasedSf: number;
+  totalSf: number;
+  inPlaceRent: number;
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthLabel = (m: MonthKey): string => `${MONTH_NAMES[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
+/** "Oct–Dec 2026" within a year; "Nov 2026–Jan 2027" across years. */
+function monthSpan(from: MonthKey, to: MonthKey): string {
+  return from.slice(0, 4) === to.slice(0, 4)
+    ? `${monthLabel(from).slice(0, 3)}–${monthLabel(to)}`
+    : `${monthLabel(from)}–${monthLabel(to)}`;
+}
+/** Floating-point slack for inclusive threshold comparisons. */
+const EPS = 1e-9;
 
 /**
  * Extract the effective market rate for the refi-spread signal from a MacroSnapshot.
@@ -191,6 +221,14 @@ export interface EvaluateOpts {
    * `s.meta.asOf` for backward compatibility with UI/tool callers.
    */
   referenceDate?: string;
+  /**
+   * Wave 2 recorded month-end series (vacancy-rising and rent-down alerts). Recorded months only —
+   * never reconstructed. Absent = those rules do not run. Both rules need consecutive recorded
+   * months and stay silent otherwise.
+   */
+  monthSnapshots?: ReadonlyArray<MonthSnapshotInput>;
+  /** Per-property monthly opex series (opex-spike alert). Absent = the rule does not run. */
+  expenseSeries?: ReadonlyArray<PropertyExpenseSeries>;
 }
 
 /**
@@ -860,6 +898,92 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           detail: `${from} → ${d.stage}. ${d.nextAction ?? ''}`.trim(),
           entityType: 'deal', entityId: d.id,
           impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+        });
+      }
+    }
+  }
+
+  // ── Portfolio Trends health alerts (Wave 3B) ────────────────────────────────
+  // Run only when their opts field is supplied. Health signals, not risk-$: impactAnnualUsd is
+  // null so no revenue-at-risk / risk total moves. Ids are stable per (rule, property, month) and
+  // embed the month, so a persisting condition re-fires under a NEW id each month (alert-state/ack
+  // keying to be confirmed when callers are wired).
+  // Recency guard: a property's latest month must be the reference month or the one before it
+  // (month-end data lands after the month closes); a stale or forward-dated feed emits nothing.
+  const refMonth: MonthKey = asOf.slice(0, 7);
+  const recent = (m: MonthKey): boolean => m === refMonth || m === addMonths(refMonth, -1);
+  // Residence / non-investment rows never alert (ids absent from s.properties are NOT skipped).
+  const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
+  const nameOf = (id: string): string => s.properties.find((p) => p.id === id)?.name ?? id;
+  if (opts.monthSnapshots && opts.monthSnapshots.length > 0) {
+    const byProp = new Map<string, Map<MonthKey, MonthSnapshotInput>>();
+    for (const r of opts.monthSnapshots) {
+      let m = byProp.get(r.propertyId);
+      if (!m) byProp.set(r.propertyId, (m = new Map()));
+      m.set(r.month, r);
+    }
+    for (const [propertyId, months] of byProp) {
+      if (nonInvestmentIds.has(propertyId)) continue;
+      const latest = [...months.keys()].sort().pop()!;
+      if (!recent(latest)) continue;
+      const m1 = addMonths(latest, -1);
+      const m2 = addMonths(latest, -2);
+      const r0 = months.get(latest)!;
+      const r1 = months.get(m1);
+      const r2 = months.get(m2);
+
+      // Vacancy rising: three consecutive recorded months, strictly rising, >= floor points.
+      if (r1 && r2) {
+        // Same definition as the Trends tab (modules/portfolio/trends-history.ts): leasedSf is a raw
+        // active-lease SF sum and can exceed totalSf, so vacant SF clamps at 0.
+        const vacancyOf = (r: MonthSnapshotInput): number =>
+          r.totalSf > 0 ? Math.max(0, r.totalSf - r.leasedSf) / r.totalSf : 0;
+        const v0 = vacancyOf(r0);
+        const v1 = vacancyOf(r1);
+        const v2 = vacancyOf(r2);
+        if (v1 > v2 && v0 > v1 && (v0 - v2) * 100 >= T.vacancyRiseMinPts - EPS) {
+          out.push({
+            id: `vacancy-rising-${propertyId}-${latest}`, severity: 'warning', category: 'occupancy',
+            title: `Vacancy rising — ${nameOf(propertyId)}`,
+            detail: `Vacancy ${fmtPct(v2)} → ${fmtPct(v1)} → ${fmtPct(v0)} (${monthSpan(m2, latest)}, recorded, lease-SF basis)`,
+            metric: fmtPct(v0), entityType: 'property', entityId: propertyId,
+            impactAnnualUsd: null, spine: 'A', provenance: 'derived',
+          });
+        }
+      }
+
+      // Rent down MoM: both months recorded and consecutive, prior rent > 0.
+      if (r1 && r1.inPlaceRent > 0) {
+        const drop = (r1.inPlaceRent - r0.inPlaceRent) / r1.inPlaceRent;
+        if (drop >= T.rentDropWarnPct - EPS) {
+          out.push({
+            id: `rent-drop-${propertyId}-${latest}`, severity: 'warning', category: 'occupancy',
+            title: `In-place rent down — ${nameOf(propertyId)}`,
+            detail: `In-place rent ${fmtUsd(r1.inPlaceRent)} → ${fmtUsd(r0.inPlaceRent)} (-${(drop * 100).toFixed(1)}%), ${monthSpan(m1, latest)}, recorded`,
+            metric: `-${(drop * 100).toFixed(1)}%`, entityType: 'property', entityId: propertyId,
+            impactAnnualUsd: null, spine: 'A', provenance: 'derived',
+          });
+        }
+      }
+    }
+  }
+  if (opts.expenseSeries) {
+    for (const series of opts.expenseSeries) {
+      if (series.months.length === 0 || nonInvestmentIds.has(series.propertyId)) continue;
+      const latest = series.months.reduce((mx, r) => (r.month > mx ? r.month : mx), series.months[0]!.month);
+      // varianceVsTrailing returns null without a full 12-month window; deltaPct is null on a
+      // zero baseline. A negative (credit) baseline yields a negative deltaPct for a positive
+      // latest month → also silent unless the ratio genuinely clears the floor.
+      if (!recent(latest)) continue;
+      const v = varianceVsTrailing(series.months, latest);
+      if (!v || v.deltaPct === null || v.baseline <= 0) continue;
+      if (v.deltaPct >= T.opexSpikeWarnPct - EPS) {
+        out.push({
+          id: `opex-spike-${series.propertyId}-${latest}`, severity: 'warning', category: 'anomaly',
+          title: `Opex spike — ${nameOf(series.propertyId)}`,
+          detail: `Opex ${fmtUsd(v.amount)} in ${monthLabel(latest)} vs trailing-12 average ${fmtUsd(v.baseline)} (+${(v.deltaPct * 100).toFixed(1)}%), ${series.basis} basis`,
+          metric: `+${(v.deltaPct * 100).toFixed(1)}%`, entityType: 'property', entityId: series.propertyId,
+          impactAnnualUsd: null, spine: 'B', provenance: 'derived',
         });
       }
     }
