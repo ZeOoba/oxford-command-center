@@ -508,7 +508,8 @@ Ratification flips the constant, with Gabriel's name and date, and is recorded i
 - **Freshness:** the ruleset's 90-day `marketFundamentalsWindowDays` governs zeroing the Edge-derived adj; the 7-day Edge flag remains a display warning only.
 - **Proxy series** (`isProxy: true`: `hvacPermits`, `biz`, and `eGrocery`) are excluded from the mapping outright.
 - **Confidence:** an input with `estimated` or `nowcast` status caps the adj's Confidence at "medium"; only all-`actual` inputs can reach "high".
-- **Still open:** whether `indianapolis_south` or the full CBSA feeds a deal in Johnson/Morgan/Shelby County. This depends on the county crosswalk (Q2 follow-up).
+- **Indianapolis South:** a deal in Johnson, Morgan or Shelby County resolves to `indianapolis_south`; any other Indianapolis deal resolves to the full CBSA. This requires the county crosswalk (Q2 follow-up) to land before Phase 2. Phase 1 keeps the full-metro mapping for "Indianapolis IN".
+- **Open questions:** none remaining.
 
 ---
 
