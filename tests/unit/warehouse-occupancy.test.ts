@@ -10,6 +10,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import {
   captureOccupancy,
+  easternCalendarDay,
   latestOccupancyByProperty,
   occupancySeries,
   recordOccupancy,
@@ -314,5 +315,12 @@ describe('captureOccupancy — snapshot → warehouse occupancy bridge (brain.re
     const series = occupancySeries(db, '1100-rarig-ave-columbus-oh');
     expect(series).toHaveLength(1);
     expect(series[0]!.asOf).toBe('2026-06-12'); // Eastern day, not UTC '2026-06-13'
+  });
+});
+
+describe('easternCalendarDay export', () => {
+  it('books an evening-ET UTC instant onto the ET day', () => {
+    expect(easternCalendarDay('2026-11-01T02:00:00.000Z')).toBe('2026-10-31');
+    expect(easternCalendarDay('garbage')).toBeNull();
   });
 });

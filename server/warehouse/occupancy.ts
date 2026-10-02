@@ -145,7 +145,7 @@ export interface OccupancySnapshotView {
  * same-day idempotency near UTC midnight. Formatting in America/New_York fixes the attribution
  * (handles EDT/EST automatically). Returns null for an unparseable timestamp.
  */
-function easternCalendarDay(iso: string | undefined | null): string | null {
+export function easternCalendarDay(iso: string | undefined | null): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
