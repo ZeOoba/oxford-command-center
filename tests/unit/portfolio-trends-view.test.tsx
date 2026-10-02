@@ -106,7 +106,12 @@ function renderView() {
 /** The KPI tile whose label is `label` — scopes value assertions away from chart axis ticks. */
 const tile = (label: string | RegExp) => screen.getByText(label).closest('[class*="rounded"]') as HTMLElement;
 
-const vacTile = () => screen.getAllByText('Vacancy (lease-SF basis)').map((e) => e.closest('[class*="rounded"]') as HTMLElement).find((t) => t.textContent?.includes('workbook occupancy'))!;
+const vacTile = () => screen.getAllByText('Vacancy (lease-SF basis)').map((e) => e.closest('[class*="rounded"]') as HTMLElement).find((t) => t.textContent?.includes('pts MoM'))!;
+/** Captions must sit beneath the KpiStat card, never inside it (its sublabel is a nowrap/truncate flex row). */
+const outsideCards = (el: HTMLElement) => {
+  expect(el.closest('.truncate')).toBeNull();
+  expect(el.closest('[class*="rounded"]')).toBeNull();
+};
 
 describe('TrendsView', () => {
   it('renders the KPI labels and the reconstructed-history badge', () => {
@@ -140,8 +145,9 @@ describe('TrendsView', () => {
   it('drops the YoY tile and annotates the rent and vacancy tiles', () => {
     renderView();
     expect(screen.queryByText(/YoY/)).toBeNull();
-    expect(within(tile(/In-place rent \/ mo/)).getByText('reconstructed · excludes departed tenants')).toBeTruthy();
-    expect(within(vacTile()).getByText(/may differ from workbook occupancy/)).toBeTruthy();
+    outsideCards(screen.getByText('reconstructed · excludes departed tenants'));
+    outsideCards(screen.getByText('lease-SF basis · may differ from workbook occupancy'));
+    expect(within(vacTile()).getByText(/pts MoM/)).toBeTruthy();
   });
 
   it('renders an empty state, not zero KPIs, when the as-of month is absent from the series', () => {
@@ -284,7 +290,7 @@ describe('TrendsView source labels (Wave 2 follow-up)', () => {
     renderView();
     expect(screen.queryByText(/history is reconstructed from current leases only/)).toBeNull();
     expect(screen.getByText(/Months before 2026-09 are reconstructed from current leases; 2026-09 onward are recorded\./)).toBeTruthy();
-    expect(within(tile(/In-place rent \/ mo/)).getByText('reconstructed history excludes departed tenants')).toBeTruthy();
+    outsideCards(screen.getByText('reconstructed history excludes departed tenants'));
     expect(screen.queryByText('reconstructed · excludes departed tenants')).toBeNull();
     expect(screen.getByText(/NO renewals or re-leasing/)).toBeTruthy();
   });
@@ -305,8 +311,10 @@ describe('TrendsView source labels (Wave 2 follow-up)', () => {
   it('workbook occupancy renders in full, outside any truncating element', () => {
     setHist([rec('a', '2026-09'), recB('2026-09')]);
     renderView();
-    const el = screen.getByText('Workbook occupancy: 75.0%');
-    expect(el.closest('.truncate')).toBeNull();
+    outsideCards(screen.getByText('Workbook occupancy: 75.0%'));
     expect(within(vacTile()).queryByText(/Workbook occupancy:/)).toBeNull();
+    // Caption order: basis note first, then the occupancy value.
+    const note = screen.getByText('lease-SF basis · may differ from workbook occupancy');
+    expect(note.compareDocumentPosition(screen.getByText('Workbook occupancy: 75.0%')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

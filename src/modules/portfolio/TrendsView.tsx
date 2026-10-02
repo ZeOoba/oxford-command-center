@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useSnapshot } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -100,10 +100,13 @@ export function TrendsView() {
       : reconstructedLeft
         ? `${rollOff}. Months before ${sinceMonth} are reconstructed from current leases; ${sinceMonth} onward are recorded.`
         : `${rollOff}.`;
-  const rentSub = recordedMonths.length === 0 ? 'reconstructed · excludes departed tenants' : reconstructedLeft ? 'reconstructed history excludes departed tenants' : undefined;
-  // KpiStat clamps sublabel to one nowrap/truncate line; this inner span re-enables wrapping.
-  const wrap = (t: string) => <span className="block whitespace-normal break-words">{t}</span>;
-  const vacSub = `${k.vacancyMoMPts === null ? '' : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM · `}may differ from workbook occupancy`;
+  const rentNote = recordedMonths.length === 0 ? 'reconstructed · excludes departed tenants' : reconstructedLeft ? 'reconstructed history excludes departed tenants' : undefined;
+  // KpiStat's sublabel is a one-line nowrap/truncate flex row beside the delta: keep it to SHORT values only.
+  // Explanatory notes render as full-width captions beneath their card instead.
+  const vacSub = k.vacancyMoMPts === null ? undefined : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM`;
+  const Caption = ({ children }: { children: ReactNode }) => (
+    <div className="num whitespace-normal px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{children}</div>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -125,22 +128,31 @@ export function TrendsView() {
         </span>
       </div>
 
-      <div className={`grid grid-cols-2 gap-3 ${yoy === null ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
-        <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" sublabel={rentSub === undefined ? undefined : wrap(rentSub)} spark={histPoints.map((p) => p.inPlaceRent)} />
+      <div className={`grid grid-cols-2 items-start gap-3 ${yoy === null ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
+        <div className="flex flex-col gap-1">
+          <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" spark={histPoints.map((p) => p.inPlaceRent)} />
+          {rentNote !== undefined && <Caption>{rentNote}</Caption>}
+        </div>
         <div className="flex flex-col gap-1">
           <KpiStat
             label="Vacancy (lease-SF basis)"
             value={k.vacancyPct * 100}
             format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)}
-            sublabel={wrap(vacSub)}
+            sublabel={vacSub}
             spark={histPoints.map((p) => p.vacancyPct)}
           />
-          {workbookOcc !== null && (
-            <div className="num px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Workbook occupancy: {(workbookOcc * 100).toFixed(1)}%</div>
-          )}
+          <Caption>lease-SF basis · may differ from workbook occupancy</Caption>
+          {workbookOcc !== null && <Caption>Workbook occupancy: {(workbookOcc * 100).toFixed(1)}%</Caption>}
         </div>
-        <KpiStat label="Vacant SF" value={k.vacantSf} format={fmtSf} />
-        {yoy !== null && <KpiStat label="YoY (recorded)" value={yoy * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel={wrap('in-place rent · both months recorded')} />}
+        <div className="flex flex-col gap-1">
+          <KpiStat label="Vacant SF" value={k.vacantSf} format={fmtSf} />
+        </div>
+        {yoy !== null && (
+          <div className="flex flex-col gap-1">
+            <KpiStat label="YoY (recorded)" value={yoy * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} />
+            <Caption>in-place rent · both months recorded</Caption>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
