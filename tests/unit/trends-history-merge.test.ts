@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import type { MonthPoint } from '../../src/analytics/portfolio-trends';
+import type { MonthPoint, RentBridgeStep } from '../../src/analytics/portfolio-trends';
 import type { TrendsHistoryPoint } from '../../src/contracts/trends';
 import {
   recordedToMonthPoint,
   mergeRecorded,
   recordedYoY,
+  mergedRentChangeBars,
   type SourcedMonthPoint,
 } from '../../src/modules/portfolio/trends-history';
 
@@ -141,5 +142,49 @@ describe('recordedYoY', () => {
   });
   it('null for zero prior rent', () => {
     expect(recordedYoY([pt('2025-03', 0, 'recorded'), pt('2026-03', 1100, 'recorded')], '2026-03')).toBeNull();
+  });
+});
+
+describe('mergedRentChangeBars', () => {
+  const sp = (month: string, rent: number, source: 'recorded' | 'reconstructed', isForecast = false): SourcedMonthPoint => ({
+    ...recon(month, isForecast), inPlaceRent: rent, source,
+  });
+  const step = (month: string, opening: number, closing: number, isForecast = false): RentBridgeStep => ({
+    month, isForecast, opening, escalations: 0, newLeases: 0, expirations: 0, closing,
+  });
+
+  it('uses the recorded diff and labels the bar recorded when both months are recorded', () => {
+    const out = mergedRentChangeBars([step('2026-02', 100, 100)], [sp('2026-01', 100, 'recorded'), sp('2026-02', 130, 'recorded')]);
+    expect(out).toEqual([{ label: '2026-02', value: 30, source: 'recorded' }]);
+  });
+
+  it('never mixes a recorded point with a reconstructed neighbour', () => {
+    const out = mergedRentChangeBars(
+      [step('2026-02', 100, 110), step('2026-03', 110, 112)],
+      [sp('2026-01', 100, 'reconstructed'), sp('2026-02', 500, 'recorded'), sp('2026-03', 520, 'recorded')],
+    );
+    expect(out[0]).toEqual({ label: '2026-02', value: 10, source: 'reconstructed' });
+    expect(out[1]).toEqual({ label: '2026-03', value: 20, source: 'recorded' });
+  });
+
+  it('a tenant leaving in a recorded month yields a negative recorded bar, not the reconstructed 0', () => {
+    const out = mergedRentChangeBars([step('2026-02', 100, 100)], [sp('2026-01', 100, 'recorded'), sp('2026-02', 60, 'recorded')]);
+    expect(out[0]).toEqual({ label: '2026-02', value: -40, source: 'recorded' });
+  });
+
+  it('with no recorded points every bar is the reconstructed bridge (Wave 1)', () => {
+    const out = mergedRentChangeBars(
+      [step('2026-02', 100, 105), step('2026-03', 105, 90)],
+      [sp('2026-01', 100, 'reconstructed'), sp('2026-02', 105, 'reconstructed'), sp('2026-03', 90, 'reconstructed')],
+    );
+    expect(out.map((b) => [b.label, b.value, b.source])).toEqual([['2026-02', 5, 'reconstructed'], ['2026-03', -15, 'reconstructed']]);
+  });
+
+  it('forecast steps never become recorded', () => {
+    const out = mergedRentChangeBars(
+      [step('2026-02', 100, 90, true)],
+      [sp('2026-01', 100, 'recorded'), sp('2026-02', 999, 'recorded', true)],
+    );
+    expect(out[0]).toEqual({ label: '2026-02', value: -10, source: 'reconstructed' });
   });
 });

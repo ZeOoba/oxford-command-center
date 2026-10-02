@@ -8,8 +8,8 @@ import { AreaChart } from '@/charts/AreaChart';
 import { BarChart } from '@/charts/BarChart';
 import { fmtUsdCompact, fmtPct, fmtSf } from '@analytics/index';
 import { buildPortfolioTrend } from '@analytics/portfolio-trends';
-import { kpiAt, rentSeries, vacancySeries, rentChangeBars } from './trends-chart-data';
-import { mergeRecorded, recordedYoY, useTrendsHistory, type SourcedMonthPoint } from './trends-history';
+import { kpiAt, rentSeries, vacancySeries } from './trends-chart-data';
+import { mergeRecorded, mergedRentChangeBars, recordedYoY, useTrendsHistory, type SourcedMonthPoint } from './trends-history';
 import type { TrendsHistoryPoint } from '@contracts/trends';
 
 const ALL = '__portfolio__';
@@ -81,7 +81,16 @@ export function TrendsView() {
   }
   const k = kpiAt(points, trend.asOfMonth);
   const names = data.snapshot.properties.filter((p) => trend.byProperty[p.id]);
-  const bridge = effectiveScope === ALL ? trend.bridge : [];
+  const bars = effectiveScope === ALL ? mergedRentChangeBars(trend.bridge, points) : [];
+  // Bars are derived from recorded rent only where both ends are recorded; disclose the basis on the card.
+  const histBars = bars.filter((b) => b.label <= trend.asOfMonth);
+  const firstRecordedBar = histBars.find((b) => b.source === 'recorded')?.label;
+  const barNote =
+    firstRecordedBar === undefined
+      ? undefined
+      : histBars.some((b) => b.source === 'reconstructed')
+        ? `Bars before ${firstRecordedBar} reconstructed from current leases; recorded from ${firstRecordedBar}`
+        : 'Recorded months';
   const forecastFlag = <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>;
   // Sparklines show history + as-of only; forward months are roll-off, not a trend.
   const histPoints = points.filter((p) => !p.isForecast);
@@ -166,10 +175,11 @@ export function TrendsView() {
         </Card>
       </div>
 
-      {bridge.length > 0 && (
+      {bars.length > 0 && (
         <Card>
           <CardHeader title="Month-over-month rent change (escalations + new leases − expirations)" trailing={forecastFlag} />
-          <div className="p-3"><BarChart data={rentChangeBars(bridge)} valueFormat={fmtUsdCompact} ariaLabel="Monthly rent change" /></div>
+          {barNote !== undefined && <p className="num px-3 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{barNote}</p>}
+          <div className="p-3"><BarChart data={bars.map(({ label, value }) => ({ label, value }))} valueFormat={fmtUsdCompact} ariaLabel="Monthly rent change" /></div>
         </Card>
       )}
     </div>

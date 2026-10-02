@@ -318,3 +318,37 @@ describe('TrendsView source labels (Wave 2 follow-up)', () => {
     expect(note.compareDocumentPosition(screen.getByText('Workbook occupancy: 75.0%')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+describe('TrendsView rent-change bar provenance', () => {
+  const barNote = (re: RegExp) => screen.queryByText(re);
+
+  it('no recorded history: no bar provenance note (Wave 1)', () => {
+    renderView();
+    expect(barNote(/Bars before/)).toBeNull();
+    expect(barNote(/^Recorded months$/)).toBeNull();
+  });
+
+  it('partial recorded history discloses where bars switch from reconstructed to recorded', () => {
+    setHist([rec('a', '2026-08'), recB('2026-08'), rec('a', '2026-09'), recB('2026-09')]);
+    renderView();
+    expect(screen.getByText('Bars before 2026-09 reconstructed from current leases; recorded from 2026-09')).toBeTruthy();
+  });
+
+  it('only a single recorded month (no recorded predecessor) keeps every bar reconstructed', () => {
+    setHist([rec('a', '2026-09'), recB('2026-09')]);
+    renderView();
+    expect(barNote(/Bars before/)).toBeNull();
+  });
+
+  it('fully recorded history labels the bars "Recorded months"', () => {
+    const months: string[] = [];
+    for (let i = -12; i <= 0; i++) {
+      const d = new Date(Date.UTC(2026, 8 + i, 1));
+      months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    }
+    setHist(months.flatMap((m) => [rec('a', m), recB(m)]));
+    renderView();
+    expect(screen.getByText('Recorded months')).toBeTruthy();
+    expect(barNote(/Bars before/)).toBeNull();
+  });
+});
