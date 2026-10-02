@@ -9,24 +9,67 @@ import { BarChart } from '@/charts/BarChart';
 import { fmtUsdCompact, fmtPct, fmtSf } from '@analytics/index';
 import { buildPortfolioTrend } from '@analytics/portfolio-trends';
 import { kpiAt, rentSeries, vacancySeries, rentChangeBars } from './trends-chart-data';
+import { mergeRecorded, recordedYoY, useTrendsHistory, type SourcedMonthPoint } from './trends-history';
+import type { TrendsHistoryPoint } from '@contracts/trends';
 
 const ALL = '__portfolio__';
+
+/**
+ * Workbook occupancy for the as-of month: single property -> that row's occPct; portfolio -> SF-weighted
+ * average using totalSf. Null (line skipped) unless the as-of point is recorded and EVERY in-scope
+ * property has a recorded row with a known occPct.
+ */
+function workbookOccupancy(
+  recorded: TrendsHistoryPoint[],
+  asOfMonth: string,
+  propertyIds: string[],
+  points: SourcedMonthPoint[],
+): number | null {
+  if (points.find((p) => p.month === asOfMonth)?.source !== 'recorded' || propertyIds.length === 0) return null;
+  let sf = 0;
+  let occSf = 0;
+  for (const id of propertyIds) {
+    const row = recorded.find((r) => r.month === asOfMonth && r.propertyId === id);
+    if (!row || row.occPct === null) return null;
+    sf += row.totalSf;
+    occSf += row.totalSf * row.occPct;
+  }
+  if (propertyIds.length === 1) return recorded.find((r) => r.month === asOfMonth && r.propertyId === propertyIds[0])!.occPct;
+  return sf > 0 ? occSf / sf : null;
+}
+
 
 export function TrendsView() {
   const { data } = useSnapshot();
   const gate = useSnapshotGate();
+  const history = useTrendsHistory();
   const [scope, setScope] = useState<string>(ALL);
 
   const trend = useMemo(
     () => (data ? buildPortfolioTrend(data.snapshot.leases, data.snapshot.properties, { asOf: data.snapshot.meta.asOf }) : null),
     [data],
   );
-  if (gate) return gate;
-  if (!data || !trend) return null;
 
   // A scope whose property vanished from the trend (snapshot refresh) falls back to the portfolio.
-  const effectiveScope = scope !== ALL && trend.byProperty[scope] ? scope : ALL;
-  const points = effectiveScope === ALL ? trend.portfolio : trend.byProperty[effectiveScope]!;
+  const effectiveScope = trend && scope !== ALL && trend.byProperty[scope] ? scope : ALL;
+
+  // Any history failure (warehouse unavailable, parse error, still loading) means "no recorded history":
+  // the page stays the Wave 1 reconstruction, never an error banner.
+  const recorded = useMemo(() => (history.isError ? [] : history.data?.points ?? []), [history.isError, history.data]);
+
+  // Recorded months replace reconstructed ones; forecast months are never replaced.
+  const points = useMemo(() => {
+    if (!trend) return null;
+    const base = effectiveScope === ALL ? trend.portfolio : trend.byProperty[effectiveScope]!;
+    return mergeRecorded(base, recorded, {
+      propertyIds: Object.keys(trend.byProperty),
+      ...(effectiveScope === ALL ? {} : { propertyId: effectiveScope }),
+    });
+  }, [trend, recorded, effectiveScope]);
+
+  if (gate) return gate;
+  if (!data || !trend || !points) return null;
+
   // kpiAt falls back to 0 when the as-of month is absent — show an empty state instead of fake zeros.
   if (!points.some((p) => p.month === trend.asOfMonth)) {
     return (
@@ -43,6 +86,13 @@ export function TrendsView() {
   // Sparklines show history + as-of only; forward months are roll-off, not a trend.
   const histPoints = points.filter((p) => !p.isForecast);
 
+  const recordedMonths = histPoints.filter((p) => p.source === 'recorded');
+  const reconstructedLeft = histPoints.some((p) => p.source === 'reconstructed');
+  const yoy = recordedYoY(points, trend.asOfMonth);
+  const workbookOcc = workbookOccupancy(recorded, trend.asOfMonth, effectiveScope === ALL ? Object.keys(trend.byProperty) : [effectiveScope], points);
+
+  const vacSub = `${k.vacancyMoMPts === null ? '' : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM · `}may differ from workbook occupancy`;
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -50,16 +100,30 @@ export function TrendsView() {
           <option value={ALL}>Entire portfolio</option>
           {names.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <Badge tone="neutral">Reconstructed from current leases</Badge>
+        {recordedMonths.length > 0 && (
+          <Badge tone="neutral">
+            Recorded: {recordedMonths.length} {recordedMonths.length === 1 ? 'month' : 'months'} (since {recordedMonths[0]!.month})
+          </Badge>
+        )}
+        {(recordedMonths.length === 0 || reconstructedLeft) && (
+          <Badge tone="neutral">{recordedMonths.length > 0 ? 'Earlier months reconstructed from current leases' : 'Reconstructed from current leases'}</Badge>
+        )}
         <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
           Months after {trend.asOfMonth} show contractual roll-off assuming NO renewals or re-leasing; history is reconstructed from current leases only.
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <div className={`grid grid-cols-2 gap-3 ${yoy === null ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
         <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" sublabel="reconstructed · excludes departed tenants" spark={histPoints.map((p) => p.inPlaceRent)} />
-        <KpiStat label="Vacancy (lease-SF basis)" value={k.vacancyPct * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel={`${k.vacancyMoMPts === null ? '' : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM · `}may differ from workbook occupancy`} spark={histPoints.map((p) => p.vacancyPct)} />
+        <KpiStat
+          label="Vacancy (lease-SF basis)"
+          value={k.vacancyPct * 100}
+          format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)}
+          sublabel={workbookOcc === null ? vacSub : (<><span className="block">{vacSub}</span><span className="block">Workbook occupancy: {(workbookOcc * 100).toFixed(1)}%</span></>)}
+          spark={histPoints.map((p) => p.vacancyPct)}
+        />
         <KpiStat label="Vacant SF" value={k.vacantSf} format={fmtSf} />
+        {yoy !== null && <KpiStat label="YoY (recorded)" value={yoy * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel="in-place rent · both months recorded" />}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
