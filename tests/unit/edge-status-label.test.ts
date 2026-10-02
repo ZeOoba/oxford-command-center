@@ -30,6 +30,17 @@ describe('formatEdgeValue (F4: never a number for null)', () => {
     expect(formatEdgeValue(63000, 'usd')).toBe('$63,000');
     expect(formatEdgeValue(1200, 'persons')).toBe('+1,200');
     expect(formatEdgeValue(-92423, 'persons')).toBe('-92,423');
+    // rounding/sign come from the rounded value
+    expect(formatEdgeValue(-0.04, 'pct_yoy')).toBe('0.0%');
+    expect(formatEdgeValue(0.04, 'pct_yoy')).toBe('0.0%');
+    expect(formatEdgeValue(-0.04, 'pct_level')).toBe('0.0%');
+    expect(formatEdgeValue(-0.4, 'persons')).toBe('0');
+    expect(formatEdgeValue(0.4, 'persons')).toBe('0');
+    expect(formatEdgeValue(-5, 'usd')).toBe('-$5');
+    expect(formatEdgeValue(-0.4, 'usd')).toBe('$0');
+    expect(formatEdgeValue(-1234.6, 'usd')).toBe('-$1,235');
+    expect(formatEdgeValue(-0.004, 'signal')).toBe('0.00');
+    expect(formatEdgeValue(-0.4, 'ksf')).toBe('0 kSF');
   });
 
   it('returns null for null — the status label always wins', () => {

@@ -11,7 +11,7 @@ import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { useUi } from '@/brain/ui-context';
 import { isWarehouseUnavailable } from '../intel/hooks';
-import { EDGE_READOUT_SERIES, EDGE_UNMATCHED_TEXT, edgeCellDisplay, resolveEdgeMarket, useEdgeMarkets } from './edge-hooks';
+import { EDGE_READOUT_SERIES, EDGE_UNMATCHED_TEXT, edgeCellDisplay, edgeUnmatchedHeadline, resolveEdgeMarket, useEdgeMarkets } from './edge-hooks';
 
 const TERTIARY = { color: 'var(--text-tertiary)' } as const;
 
@@ -48,7 +48,7 @@ export function EdgeMarketReadout({ deal, onNavigate }: { deal: Pick<Deal, 'mark
   if (res.kind === 'unmatched') {
     return (
       <div className="flex flex-col gap-1">
-        <span className="text-xs" style={{ color: 'var(--text-primary)' }}>No Edge market</span>
+        <span className="text-xs" style={{ color: 'var(--text-primary)' }}>{edgeUnmatchedHeadline(res.reason)}</span>
         <span className="text-2xs" style={TERTIARY}>{EDGE_UNMATCHED_TEXT[res.reason]}</span>
         <div>{viewInEdge}</div>
       </div>

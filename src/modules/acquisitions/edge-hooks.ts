@@ -134,25 +134,41 @@ export function latestObserved(cell: EdgeSeriesCell, years: readonly number[]): 
   return null;
 }
 
+/** Rounded-then-formatted pieces: sign and zero handling come from the ROUNDED value, so a tiny
+ *  value never renders "-0.0%" / "+0.0%" / "-0". */
+function fixed(value: number, digits: number): { text: string; sign: -1 | 0 | 1 } {
+  const r = Number(value.toFixed(digits));
+  if (r === 0) return { text: (0).toFixed(digits), sign: 0 };
+  return { text: Math.abs(r).toFixed(digits), sign: r > 0 ? 1 : -1 };
+}
+function whole(value: number): { text: string; sign: -1 | 0 | 1 } {
+  const r = Math.round(value);
+  if (r === 0) return { text: '0', sign: 0 };
+  return { text: Math.abs(r).toLocaleString('en-US'), sign: r > 0 ? 1 : -1 };
+}
+const withSign = (p: { text: string; sign: -1 | 0 | 1 }, plus: boolean): string =>
+  p.sign < 0 ? `-${p.text}` : p.sign > 0 && plus ? `+${p.text}` : p.text;
+
 /** Never returns a number-looking string for null (F4): callers render the status label instead. */
 export function formatEdgeValue(value: number | null, unit: EdgeUnit): string | null {
   if (value === null || !Number.isFinite(value)) return null;
-  const signed = (s: string) => (value > 0 ? `+${s}` : s);
   switch (unit) {
     case 'pct_yoy':
-      return `${signed(value.toFixed(1))}%`;
+      return `${withSign(fixed(value, 1), true)}%`;
     case 'pct_level':
-      return `${value.toFixed(1)}%`;
+      return `${withSign(fixed(value, 1), false)}%`;
     case 'ksf':
-      return `${Math.round(value).toLocaleString('en-US')} kSF`;
+      return `${withSign(whole(value), false)} kSF`;
     case 'per_10k':
-      return `${value.toFixed(1)} /10k`;
-    case 'usd':
-      return `$${Math.round(value).toLocaleString('en-US')}`;
+      return `${withSign(fixed(value, 1), false)} /10k`;
+    case 'usd': {
+      const w = whole(value);
+      return `${w.sign < 0 ? '-' : ''}$${w.text}`;
+    }
     case 'persons':
-      return signed(Math.round(value).toLocaleString('en-US'));
+      return withSign(whole(value), true);
     case 'signal':
-      return value.toFixed(2);
+      return withSign(fixed(value, 2), false);
   }
 }
 
@@ -286,7 +302,7 @@ export function localIsoToday(now: Date = new Date()): string {
 // Pure, two tiers, no fuzzy matching, no default. Tier 1 decides whenever it applies. Runs
 // client-side against the snapshot the client already holds: no deal identity reaches the Edge API.
 
-export type EdgeUnmatchedReason = 'no_location' | 'no_market_for_location' | 'ambiguous' | 'edge_id_absent';
+export type EdgeUnmatchedReason = 'no_location' | 'no_market_for_location' | 'ambiguous' | 'edge_id_absent' | 'conflicting_location';
 
 export type EdgeResolution =
   | { kind: 'matched'; market: EdgeMarket; via: 'tier1_market' | 'tier2_location' }
@@ -318,13 +334,20 @@ export const EDGE_UNMATCHED_TEXT: Readonly<Record<EdgeUnmatchedReason, string>> 
   no_market_for_location: 'no Edge market for this city and state',
   ambiguous: 'more than one Edge market matches this city and state',
   edge_id_absent: 'the mapped Edge market is missing from markets.json',
+  conflicting_location: 'the deal market and the deal location name different states',
 };
 
-/** The LAST "City, ST" pair in a location string, after stripping parentheticals. */
+/** Headline for an unmatched deal; a state conflict is called out in the text itself (never guessed). */
+export function edgeUnmatchedHeadline(reason: EdgeUnmatchedReason): string {
+  return reason === 'conflicting_location' ? 'No Edge market (conflicting location)' : 'No Edge market';
+}
+
+/** The LAST "City, ST" pair in a location string, after stripping parentheticals. Input is capped
+ *  at 200 chars and the city pattern is unambiguous (words never contain spaces), so matching is linear. */
 export function parseCityState(location: string | null): { city: string; state: string } | null {
   if (!location) return null;
-  const stripped = location.replace(/\([^)]*\)/g, ' ');
-  const re = /([A-Za-z][A-Za-z .'-]*?)\s*,\s*([A-Z]{2})\b/g;
+  const stripped = location.slice(0, 200).replace(/\([^)]*\)/g, ' ');
+  const re = /([A-Za-z][A-Za-z.'-]*(?: +[A-Za-z.'-]+)*)\s*,\s*([A-Z]{2})\b/g;
   let last: { city: string; state: string } | null = null;
   let m: RegExpExecArray | null;
   while ((m = re.exec(stripped)) !== null) {
@@ -344,7 +367,11 @@ export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, marke
   const tier1Id = deal.market !== null ? EDGE_TIER1_TABLE[deal.market] : undefined;
   if (tier1Id !== undefined) {
     const market = markets.find((m) => m.id === tier1Id);
-    return market ? { kind: 'matched', market, via: 'tier1_market' } : { kind: 'unmatched', reason: 'edge_id_absent' };
+    if (!market) return { kind: 'unmatched', reason: 'edge_id_absent' };
+    // Never guess: a Tier-1 market whose state contradicts the Tier-2 location state is unmatched.
+    const locationState = parseCityState(deal.location)?.state;
+    if (locationState !== undefined && locationState !== market.state) return { kind: 'unmatched', reason: 'conflicting_location' };
+    return { kind: 'matched', market, via: 'tier1_market' };
   }
   const pair = parseCityState(deal.location);
   if (!pair) return { kind: 'unmatched', reason: 'no_location' };
@@ -395,13 +422,13 @@ export function edgeCandidateCell(
   if (!deal) return { text: 'No Edge market (no linked deal)', title: null };
   // Never claim data we do not have: idle (Edge tab not opened), loading and error are neutral
   // placeholders. An errored query can still carry cached data, so error is checked before data.
-  if (state === 'idle') return { text: '—', title: 'Edge market data loads once the Edge tab has been opened' };
+  if (state === 'idle') return { text: '—', title: 'Edge market data not loaded yet' };
   if (state === 'loading') return { text: '—', title: 'Loading Edge market data' };
   if (state === 'error') return { text: 'Edge unavailable', title: 'Edge data could not be loaded' };
   if (!data) return { text: 'Edge unavailable', title: 'Edge is local-only (Brain Server)' };
   if (data.availability !== 'ok') return { text: 'Edge unavailable', title: `Edge dataset ${data.availability}` };
   const res = resolveEdgeMarket(deal, data.markets);
-  if (res.kind === 'unmatched') return { text: 'No Edge market', title: EDGE_UNMATCHED_TEXT[res.reason] };
+  if (res.kind === 'unmatched') return { text: edgeUnmatchedHeadline(res.reason), title: EDGE_UNMATCHED_TEXT[res.reason] };
   const vac = edgeCellDisplay(res.market.series.vac, SERIES_UNIT_OF('vac', data), data.years, 'vac').text;
   const rent = edgeCellDisplay(res.market.series.rent, SERIES_UNIT_OF('rent', data), data.years, 'rent').text;
   return { text: `${vac} · ${rent}${data.freshness?.stale ? ' · STALE' : ''}`, title: edgeReadoutTitle(res.market, data) };

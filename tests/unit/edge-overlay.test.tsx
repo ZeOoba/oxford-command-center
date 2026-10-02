@@ -80,16 +80,25 @@ describe('DealDrawer — Edge Market card', () => {
     expect(await screen.findByText('No Edge market')).toBeTruthy();
   });
 
-  it('card is a labelled region', async () => {
+  it('conflicting market and location → No Edge market (conflicting location)', async () => {
+    renderDrawer(makeDeal({ id: 'd5', market: 'Columbus OH', location: 'Columbus, IN' }));
+    expect(await screen.findByText('No Edge market (conflicting location)')).toBeTruthy();
+  });
+
+  it('only the Edge Market card is a labelled region', async () => {
     renderDrawer(makeDeal({ id: 'd4', market: 'Columbus OH' }));
     expect(screen.getByRole('region', { name: 'Edge Market' })).toBeTruthy();
+    expect(screen.getAllByRole('region')).toHaveLength(1);
     await screen.findByText('Flex vacancy');
   });
 
   it('confidential deal gets a readout and its identity never reaches /edge/', async () => {
     renderDrawer(makeDeal({ id: 'secret-deal-7', name: 'Secret', market: 'Columbus OH', confidential: true }));
     expect(await screen.findByText('Flex vacancy')).toBeTruthy();
-    for (const [u, init] of edgeCalls()) {
+    const calls = edgeCalls();
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0]![0])).toBe('/api/warehouse/edge/markets');
+    for (const [u, init] of calls) {
       expect(String(u)).not.toContain('secret');
       expect(init?.body ?? null).toBeNull();
     }
@@ -133,7 +142,7 @@ describe('RankedCandidateList — Edge column', () => {
     renderList([makeCandidate({ id: 'c1', notionDealId: 'page-1' })], [linked], false);
     expect(screen.getByRole('columnheader', { name: 'Edge' })).toBeTruthy();
     const ph = screen.getByText('—', { selector: 'span[title]' });
-    expect(ph.getAttribute('title')).toMatch(/Edge tab/);
+    expect(ph.getAttribute('title')).toBe('Edge market data not loaded yet');
     await new Promise((r) => setTimeout(r, 20));
     expect(edgeCalls()).toHaveLength(0);
   });

@@ -16,6 +16,7 @@ const MARKETS = [
   mkMarket('indianapolis_carmel_greenwood', 'Indianapolis-Carmel-Greenwood', 'IN', 'auto'),
   mkMarket('washington_arlington_alexandria', 'Washington-Arlington-Alexandria', 'DC', 'auto'),
   mkMarket('scranton_wilkes_barre', 'Scranton--Wilkes-Barre', 'PA', 'auto'),
+  mkMarket('kansas_city', 'Kansas City', 'MO', 'named'),
 ];
 const deal = (market: Deal['market'], location: string | null) => ({ market, location });
 
@@ -37,6 +38,25 @@ describe('Tier 1 (Deal.market enum)', () => {
   it("'Twinsburg, OH (Cleveland MSA)' with market Cleveland MSA → tier 1 cleveland", () => {
     const r = resolveEdgeMarket(deal('Cleveland MSA', 'Twinsburg, OH (Cleveland MSA)'), MARKETS);
     expect(r).toMatchObject({ kind: 'matched', via: 'tier1_market', market: { id: 'cleveland' } });
+  });
+
+  it('conflicting_location: a Tier-1 market whose state contradicts the location state is unmatched, never guessed', () => {
+    expect(resolveEdgeMarket(deal('Columbus OH', 'Columbus, IN'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
+    expect(resolveEdgeMarket(deal('Kansas City MO', 'Kansas City, KS'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
+    expect(EDGE_UNMATCHED_TEXT.conflicting_location).toMatch(/different states/);
+  });
+
+  it('matching state, absent location, or unparseable location still resolves via Tier 1', () => {
+    expect(resolveEdgeMarket(deal('Columbus OH', 'Dublin, OH'), MARKETS)).toMatchObject({ kind: 'matched', via: 'tier1_market', market: { id: 'columbus' } });
+    expect(resolveEdgeMarket(deal('Columbus OH', null), MARKETS)).toMatchObject({ kind: 'matched', market: { id: 'columbus' } });
+    expect(resolveEdgeMarket(deal('Columbus OH', 'TBD'), MARKETS)).toMatchObject({ kind: 'matched', market: { id: 'columbus' } });
+  });
+
+  it('Mid-Atlantic / Other / Unknown never produce conflicting_location', () => {
+    for (const market of ['Mid-Atlantic', 'Other', 'Unknown'] as const) {
+      const r = resolveEdgeMarket(deal(market, 'Columbus, IN'), MARKETS);
+      expect(r).toEqual({ kind: 'unmatched', reason: 'no_market_for_location' });
+    }
   });
 
   it('a table id missing from markets.json → edge_id_absent, never a substitute', () => {
@@ -90,8 +110,34 @@ describe('Tier 2 (Deal.location exact City, ST)', () => {
     expect(parseCityState('Columbus, Ohio')).toBeNull();
   });
 
+  it('Kansas City: state-checked on Tier 2 (MO resolves, KS does not)', () => {
+    expect(resolveEdgeMarket(deal('Other', 'Kansas City, MO'), MARKETS)).toMatchObject({ kind: 'matched', market: { id: 'kansas_city' } });
+    expect(resolveEdgeMarket(deal('Other', 'Kansas City, KS'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'no_market_for_location' });
+  });
+
+  it('a ZIP after the state still resolves through the full resolver', () => {
+    expect(resolveEdgeMarket(deal(null, '100 Main St, Hagerstown, MD 21740'), MARKETS)).toMatchObject({
+      kind: 'matched', market: { id: 'hagerstown' },
+    });
+  });
+
+  it('multiple parentheticals are all stripped', () => {
+    expect(parseCityState('Hagerstown, MD (Washington County) (MSA)')).toEqual({ city: 'Hagerstown', state: 'MD' });
+    expect(parseCityState('(Cleveland MSA) Twinsburg, OH (Summit County)')).toEqual({ city: 'Twinsburg', state: 'OH' });
+  });
+
+  it('parseCityState caps input at 200 chars and stays fast on adversarial input', () => {
+    const hostile = `${'a '.repeat(5000)}x`;
+    const t = Date.now();
+    expect(parseCityState(hostile)).toBeNull();
+    expect(Date.now() - t).toBeLessThan(1000);
+    expect(parseCityState(`${' '.repeat(300)}Hagerstown, MD`)).toBeNull(); // the pair sits past the 200-char cap
+  });
+
   it('every reason has display text', () => {
-    expect(Object.keys(EDGE_UNMATCHED_TEXT).sort()).toEqual(['ambiguous', 'edge_id_absent', 'no_location', 'no_market_for_location']);
+    expect(Object.keys(EDGE_UNMATCHED_TEXT).sort()).toEqual([
+      'ambiguous', 'conflicting_location', 'edge_id_absent', 'no_location', 'no_market_for_location',
+    ]);
   });
 });
 
@@ -122,8 +168,12 @@ describe('Sourcing candidate join', () => {
     expect(errored.title).toBe('Edge data could not be loaded');
     expect(errored.title).not.toContain('Edge dataset ok');
     expect(edgeCandidateCell('page-1', [columbusDeal], data, 'loading').title).toBe('Loading Edge market data');
-    expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'idle').title).toMatch(/Edge tab/);
+    expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'idle').title).toBe('Edge market data not loaded yet');
     const tbd = { ...columbusDeal, market: null, location: 'TBD' };
     expect(edgeCandidateCell('page-1', [tbd], data, 'ready')).toEqual({ text: 'No Edge market', title: EDGE_UNMATCHED_TEXT.no_location });
+    const conflict = { ...columbusDeal, location: 'Columbus, IN' };
+    expect(edgeCandidateCell('page-1', [conflict], data, 'ready')).toEqual({
+      text: 'No Edge market (conflicting location)', title: EDGE_UNMATCHED_TEXT.conflicting_location,
+    });
   });
 });
