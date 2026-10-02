@@ -228,9 +228,9 @@ describe('TrendsView recorded history (Wave 2)', () => {
     setHist([rec('a', '2026-09', { totalSf: 10000, occPct: 1 }), recB('2026-09', { totalSf: 30000, occPct: 0.6 })]);
     renderView();
     // (10000*1 + 30000*0.6) / 40000 = 0.7
-    expect(within(vacTile()).getByText('Workbook occupancy: 70.0%')).toBeTruthy();
+    expect(screen.getByText('Workbook occupancy: 70.0%')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'b' } });
-    await waitFor(() => expect(within(vacTile()).getByText('Workbook occupancy: 60.0%')).toBeTruthy(), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByText('Workbook occupancy: 60.0%')).toBeTruthy(), { timeout: 3000 });
   });
 
   it('skips the workbook occupancy line when any in-scope property lacks occPct or the as-of month is not recorded', () => {
@@ -266,5 +266,47 @@ describe('TrendsView recorded history (Wave 2)', () => {
     view.rerender(tree);
     await waitFor(() => expect((screen.getByLabelText('Scope') as HTMLSelectElement).value).toBe('__portfolio__'));
     expect(screen.queryByRole('option', { name: 'Beta Park' })).toBeNull();
+  });
+});
+
+describe('TrendsView source labels (Wave 2 follow-up)', () => {
+  const allMonths = () => {
+    const out: string[] = [];
+    for (let i = -12; i <= 0; i++) {
+      const d = new Date(Date.UTC(2026, 8 + i, 1));
+      out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    }
+    return out;
+  };
+
+  it('mixed history: caption and rent sublabel are accurate for a recorded/reconstructed mix', () => {
+    setHist([rec('a', '2026-09'), recB('2026-09')]);
+    renderView();
+    expect(screen.queryByText(/history is reconstructed from current leases only/)).toBeNull();
+    expect(screen.getByText(/Months before 2026-09 are reconstructed from current leases; 2026-09 onward are recorded\./)).toBeTruthy();
+    expect(within(tile(/In-place rent \/ mo/)).getByText('reconstructed history excludes departed tenants')).toBeTruthy();
+    expect(screen.queryByText('reconstructed · excludes departed tenants')).toBeNull();
+    expect(screen.getByText(/NO renewals or re-leasing/)).toBeTruthy();
+  });
+
+  it('fully recorded history drops all reconstructed wording', () => {
+    setHist(allMonths().flatMap((m) => [rec('a', m), recB(m)]));
+    renderView();
+    expect(screen.queryByText(/reconstructed/i)).toBeNull();
+    expect(screen.getByText(/NO renewals or re-leasing/)).toBeTruthy();
+  });
+
+  it('no recorded history keeps the Wave 1 wording', () => {
+    renderView();
+    expect(screen.getByText(/history is reconstructed from current leases only/)).toBeTruthy();
+    expect(screen.getByText('reconstructed · excludes departed tenants')).toBeTruthy();
+  });
+
+  it('workbook occupancy renders in full, outside any truncating element', () => {
+    setHist([rec('a', '2026-09'), recB('2026-09')]);
+    renderView();
+    const el = screen.getByText('Workbook occupancy: 75.0%');
+    expect(el.closest('.truncate')).toBeNull();
+    expect(within(vacTile()).queryByText(/Workbook occupancy:/)).toBeNull();
   });
 });

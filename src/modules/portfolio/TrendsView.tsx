@@ -91,6 +91,18 @@ export function TrendsView() {
   const yoy = recordedYoY(points, trend.asOfMonth);
   const workbookOcc = workbookOccupancy(recorded, trend.asOfMonth, effectiveScope === ALL ? Object.keys(trend.byProperty) : [effectiveScope], points);
 
+  const sinceMonth = recordedMonths[0]?.month;
+  const rollOff = `Months after ${trend.asOfMonth} show contractual roll-off assuming NO renewals or re-leasing`;
+  // Wording follows what is actually on screen: untouched Wave 1 text when nothing is recorded.
+  const captionText =
+    recordedMonths.length === 0
+      ? `${rollOff}; history is reconstructed from current leases only.`
+      : reconstructedLeft
+        ? `${rollOff}. Months before ${sinceMonth} are reconstructed from current leases; ${sinceMonth} onward are recorded.`
+        : `${rollOff}.`;
+  const rentSub = recordedMonths.length === 0 ? 'reconstructed · excludes departed tenants' : reconstructedLeft ? 'reconstructed history excludes departed tenants' : undefined;
+  // KpiStat clamps sublabel to one nowrap/truncate line; this inner span re-enables wrapping.
+  const wrap = (t: string) => <span className="block whitespace-normal break-words">{t}</span>;
   const vacSub = `${k.vacancyMoMPts === null ? '' : `${k.vacancyMoMPts >= 0 ? '+' : ''}${k.vacancyMoMPts.toFixed(1)} pts MoM · `}may differ from workbook occupancy`;
 
   return (
@@ -109,21 +121,26 @@ export function TrendsView() {
           <Badge tone="neutral">{recordedMonths.length > 0 ? 'Earlier months reconstructed from current leases' : 'Reconstructed from current leases'}</Badge>
         )}
         <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-          Months after {trend.asOfMonth} show contractual roll-off assuming NO renewals or re-leasing; history is reconstructed from current leases only.
+          {captionText}
         </span>
       </div>
 
       <div className={`grid grid-cols-2 gap-3 ${yoy === null ? 'md:grid-cols-3' : 'md:grid-cols-4'}`}>
-        <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" sublabel="reconstructed · excludes departed tenants" spark={histPoints.map((p) => p.inPlaceRent)} />
-        <KpiStat
-          label="Vacancy (lease-SF basis)"
-          value={k.vacancyPct * 100}
-          format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)}
-          sublabel={workbookOcc === null ? vacSub : (<><span className="block">{vacSub}</span><span className="block">Workbook occupancy: {(workbookOcc * 100).toFixed(1)}%</span></>)}
-          spark={histPoints.map((p) => p.vacancyPct)}
-        />
+        <KpiStat label="In-place rent / mo" value={k.rent} format={fmtUsdCompact} delta={k.rentMoM} deltaLabel="MoM" sublabel={rentSub === undefined ? undefined : wrap(rentSub)} spark={histPoints.map((p) => p.inPlaceRent)} />
+        <div className="flex flex-col gap-1">
+          <KpiStat
+            label="Vacancy (lease-SF basis)"
+            value={k.vacancyPct * 100}
+            format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)}
+            sublabel={wrap(vacSub)}
+            spark={histPoints.map((p) => p.vacancyPct)}
+          />
+          {workbookOcc !== null && (
+            <div className="num px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Workbook occupancy: {(workbookOcc * 100).toFixed(1)}%</div>
+          )}
+        </div>
         <KpiStat label="Vacant SF" value={k.vacantSf} format={fmtSf} />
-        {yoy !== null && <KpiStat label="YoY (recorded)" value={yoy * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel="in-place rent · both months recorded" />}
+        {yoy !== null && <KpiStat label="YoY (recorded)" value={yoy * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} sublabel={wrap('in-place rent · both months recorded')} />}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
