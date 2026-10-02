@@ -67,6 +67,9 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
 
   app.post('/pull-queue', (c) =>
     withDb(async (db) => {
+      if (!(c.req.header('content-type') ?? '').toLowerCase().includes('application/json')) {
+        return c.json({ error: 'content-type must be application/json' }, 400);
+      }
       const parsed = RecordPullRequest.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) return c.json({ error: 'invalid pull record', issues: parsed.error.issues }, 400);
       const input = parsed.data;
@@ -89,12 +92,14 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
 
   app.post('/pull-queue/:id/void', (c) =>
     withDb(async (db) => {
-      const id = Number(c.req.param('id'));
-      if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'id must be a positive integer' }, 400);
+      const rawId = c.req.param('id');
+      const id = /^\d+$/.test(rawId) ? Number(rawId) : NaN;
+      if (!Number.isSafeInteger(id) || id <= 0) return c.json({ error: 'id must be a positive integer' }, 400);
+      // Load BEFORE the void commit so a dataset-read fault can never turn a committed void into a 500.
+      const { markets } = await load();
       const result = voidEdgePull(db, id);
       if (result.status === 'not_found') return c.json({ error: `pull log row ${id} not found` }, 404);
       if (result.status === 'already_voided') return c.json({ error: `pull log row ${id} is already voided` }, 409);
-      const { markets } = await load();
       return c.json(
         EdgePullItem.parse(buildEdgePullItem(result.kind, markets, readEdgePullLatest(db), localIsoDate(now()))),
         200,

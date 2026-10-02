@@ -234,7 +234,9 @@ export class PullValidationError extends RangeError {
 }
 
 /** Append one log row. Binds exactly kind/scopeKey/doneOn/note → pull_kind/scope_key/done_on/note
- *  (check:schema-drift cross-references these against RecordPullRequest). */
+ *  (check:schema-drift cross-references these against RecordPullRequest).
+ *  `today` defaults to the server local date; the parameter exists for tests only — the route
+ *  always passes its injected clock, never a request-derived value. */
 export function recordEdgePull(db: WarehouseDb, input: RecordPullRequest, today: string = localIsoDate(new Date())): number {
   if (!isRealIsoDate(input.doneOn)) throw new PullValidationError(`doneOn is not a real calendar date: ${input.doneOn}`);
   if (input.doneOn > today) throw new PullValidationError(`doneOn ${input.doneOn} is in the future (server local date ${today})`);
@@ -256,8 +258,11 @@ export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
     .get(id) as { kind: EdgePullKind; voidedAt: string | null } | undefined;
   if (!row) return { status: 'not_found' };
   if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
-  db.prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND voided_at IS NULL").run(id);
-  return { status: 'voided', kind: row.kind };
+  // result.changes (not the SELECT above) decides the race: a concurrent void leaves 0 changes.
+  const res = db
+    .prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND voided_at IS NULL")
+    .run(id);
+  return res.changes === 1 ? { status: 'voided', kind: row.kind } : { status: 'already_voided', kind: row.kind };
 }
 
 function scopeLabelFor(kind: EdgePullKind, scopeKey: string, markets: readonly EdgeMarket[]): string {

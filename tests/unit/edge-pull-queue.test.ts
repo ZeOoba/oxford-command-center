@@ -14,6 +14,8 @@ import {
 import * as pullQueue from '../../server/edge/pull-queue';
 import { fourMarkets, mkMarket, obs } from './edge-test-helpers';
 
+const pullQueueDays = (k: 'storage' | 'ios' | 'mfgInvest' | 'truck'): number => pullQueue.PULL_ITEMS[k].cadenceDays;
+
 function freshDb(): WarehouseDb {
   return openWarehouse(join(mkdtempSync(join(tmpdir(), 'edge-pq-')), 'w.sqlite'));
 }
@@ -82,6 +84,17 @@ describe('dates and state derivation', () => {
     expect(scopeStateFor(null, 90, '2026-10-02')).toEqual({ state: 'open', ageDays: null });
     expect(scopeStateFor('2026-07-04', 90, '2026-10-02')).toEqual({ state: 'current', ageDays: 90 });
     expect(scopeStateFor('2026-07-03', 90, '2026-10-02')).toEqual({ state: 'due', ageDays: 91 });
+  });
+
+  it('pins the boundary for every cadence: exactly N days = current, N+1 = due', () => {
+    // monthly 30
+    expect(scopeStateFor('2026-09-02', 30, '2026-10-02')).toEqual({ state: 'current', ageDays: 30 });
+    expect(scopeStateFor('2026-09-01', 30, '2026-10-02')).toEqual({ state: 'due', ageDays: 31 });
+    // annual 365
+    expect(scopeStateFor('2025-10-02', 365, '2026-10-02')).toEqual({ state: 'current', ageDays: 365 });
+    expect(scopeStateFor('2025-10-01', 365, '2026-10-02')).toEqual({ state: 'due', ageDays: 366 });
+    // the cadences themselves
+    expect([pullQueueDays('storage'), pullQueueDays('ios'), pullQueueDays('mfgInvest'), pullQueueDays('truck')]).toEqual([90, 90, 30, 365]);
   });
 });
 

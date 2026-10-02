@@ -361,3 +361,83 @@ describe('no-write guarantees (F8)', () => {
     expect(readFileSync(file, 'utf8')).toBe(FIXTURE_TEXT);
   });
 });
+
+describe('loadEdgeDataset — empty list, id sanitizing, last-good edge cases (fix wave)', () => {
+  const emptyText = () => {
+    const f = JSON.parse(FIXTURE_TEXT) as Record<string, unknown>;
+    return JSON.stringify({ ...f, markets: [] });
+  };
+
+  it('empty market list with no last-good → invalid, never cached as ok', async () => {
+    const { deps } = fakeFs({ text: emptyText });
+    const r = await loadEdgeDataset('mem://empty-cold', NOW, deps);
+    expect(r.availability).toBe('invalid');
+    expect(r.marketCount).toBe(0);
+    expect(r.rejectedMarkets).toEqual([]);
+    expect(r.issues.length).toBeGreaterThan(0);
+  });
+
+  it('empty market list WITH last-good → last-good served, sanitized readError, cache not overwritten', async () => {
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    const { deps } = fakeFs({ text: () => text, stat: () => ({ mtimeMs: mtime, size: text.length }) });
+    await loadEdgeDataset('mem://empty-warm', NOW, deps);
+    mtime = 2;
+    text = emptyText();
+    const later = new Date('2026-10-02T13:00:00Z');
+    const r = await loadEdgeDataset('mem://empty-warm', later, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(4);
+    expect(r.readError).toMatch(/^markets\.json degraded/);
+    expect(r.lastGoodLoadedAt).toBe(NOW.toISOString());
+    // memo not advanced: a repeat read of the same empty file is still served from last-good
+    const again = await loadEdgeDataset('mem://empty-warm', later, deps);
+    expect(again.marketCount).toBe(4);
+    expect(again.lastGoodLoadedAt).toBe(NOW.toISOString());
+  });
+
+  it('echoed market ids are truncated to 64 chars and stripped of non-printables', async () => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: unknown[] };
+    const nasty = `bad\u0000\u001b[31m${'x'.repeat(200)}`;
+    f.markets = [{ id: nasty, name: 'Broken' }];
+    const { deps } = fakeFs({ text: () => JSON.stringify(f) });
+    const r = await loadEdgeDataset('mem://id-sanitize', NOW, deps);
+    const id = r.issues.join(' ');
+    expect([...id].every((ch) => ch.charCodeAt(0) >= 0x20)).toBe(true);
+    const echoed = /market (\S+):/.exec(id)![1]!;
+    expect(echoed.length).toBeLessThanOrEqual(64);
+  });
+
+  it('last-good + <=50% rejection replaces last-good with the new (partial) set', async () => {
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    const { deps } = fakeFs({ text: () => text, stat: () => ({ mtimeMs: mtime, size: text.length }) });
+    await loadEdgeDataset('mem://partial-replace', NOW, deps);
+    mtime = 2;
+    text = withBrokenMarkets(2, 1);
+    const later = new Date('2026-10-02T13:00:00Z');
+    const r = await loadEdgeDataset('mem://partial-replace', later, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(2);
+    expect(r.rejectedMarkets).toHaveLength(1);
+    expect(r.readError).toBeNull();
+    expect(r.lastGoodLoadedAt).toBe(later.toISOString());
+  });
+
+  it('freshness is recomputed against the new clock when ENOENT serves last-good', async () => {
+    let gone = false;
+    const { deps } = fakeFs({
+      text: () => FIXTURE_TEXT,
+      stat: () => {
+        if (gone) throw errno('ENOENT');
+        return { mtimeMs: Date.parse('2026-07-14T18:38:00Z'), size: FIXTURE_TEXT.length };
+      },
+    });
+    const first = await loadEdgeDataset('mem://enoent-fresh', NOW, deps);
+    gone = true;
+    const later = new Date('2026-10-12T12:00:00.000Z');
+    const r = await loadEdgeDataset('mem://enoent-fresh', later, deps);
+    expect(r.readError).toBe('stat failed (ENOENT)');
+    expect(r.freshness!.ageDays).toBe(first.freshness!.ageDays + 10);
+  });
+});

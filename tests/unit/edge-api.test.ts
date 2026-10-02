@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
 import { EdgeMarketsResponse, EdgePullItem, EdgePullQueueResponse } from '@contracts/edge';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import { edgeApi } from '../../server/edge/edge-api';
+import { EDGE_BUY_BOX_FALLBACK } from '../../server/edge/pull-queue';
 import { buildMountPrefixMap } from '../../scripts/check-write-schema-drift';
+import { warehouseJsonError } from '../../server/warehouse/json-errors';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const FIXTURE = join(__dirname, '..', 'fixtures', 'edge', 'markets.slice.json');
@@ -179,6 +181,66 @@ describe('error mapping (carry-over 1)', () => {
     }) as WarehouseDb;
     const res = await post(makeApp(() => faulty), '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' });
     expect(res.status).toBe(500);
+  });
+
+  it('through the production JSON error handler, the 500 is JSON (the handler is the shared warehouseJsonError)', async () => {
+    const real = freshDb();
+    const faulty = new Proxy(real, {
+      get(target, prop, recv) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            if (/INSERT INTO edge_pull_log/.test(sql)) throw new Error('disk I/O error');
+            return target.prepare(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as WarehouseDb;
+    const app = makeApp(() => faulty);
+    app.onError(warehouseJsonError); // exactly what sub-routers.ts withJsonErrors applies
+    const res = await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    // NOTE: warehouseJsonError echoes err.message by design (shared warehouse behavior), so the
+    // body is asserted to be JSON with an error key; leak-hardening of the shared handler is out of scope.
+    expect(await res.json()).toHaveProperty('error');
+  });
+});
+
+describe('hardening (fix wave)', () => {
+  it.each(['0', '-1', '1e3', '0x10', '1.0', ' 1', '99999999999999999999'])('void id %j → 400, no mutation', async (badId) => {
+    const db = freshDb();
+    const app = makeApp(() => db);
+    await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' });
+    const res = await post(app, `/pull-queue/${encodeURIComponent(badId)}/void`);
+    expect(res.status).toBe(400);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log WHERE voided_at IS NOT NULL').get() as { n: number }).n).toBe(0);
+  });
+
+  it('/pull-queue with a MISSING dataset falls back to the frozen buy-box list and can record', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'edge-api-missing2-')), 'nope');
+    const db = freshDb();
+    const app = makeApp(() => db, dir);
+    const res = await app.request('/pull-queue');
+    expect(res.status).toBe(200);
+    const q = EdgePullQueueResponse.parse(await res.json());
+    expect(q.items.find((i) => i.kind === 'storage')!.scopes).toHaveLength(EDGE_BUY_BOX_FALLBACK.length);
+    const rec = await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' });
+    expect(rec.status).toBe(200);
+  });
+
+  it('malformed JSON and non-JSON content-type POST → 400, no row', async () => {
+    const db = freshDb();
+    const app = makeApp(() => db);
+    const bad = await app.request('/pull-queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' });
+    expect(bad.status).toBe(400);
+    const text = await app.request('/pull-queue', {
+      method: 'POST', headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify({ kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' }),
+    });
+    expect(text.status).toBe(400);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
   });
 });
 

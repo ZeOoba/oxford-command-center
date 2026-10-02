@@ -133,9 +133,10 @@ function formatIssues(issues: readonly z.ZodIssue[], max: number): string[] {
   return issues.slice(0, max).map((i) => `${i.path.join('.') || '(root)'}: ${i.code}`);
 }
 
+/** Market id echoed into issues: truncated and stripped of non-printables (file-derived text). */
 function idOf(raw: unknown): string | null {
   if (typeof raw === 'object' && raw !== null && typeof (raw as { id?: unknown }).id === 'string') {
-    return (raw as { id: string }).id;
+    return (raw as { id: string }).id.replace(/[^ -~]/g, '').slice(0, 64);
   }
   return null;
 }
@@ -256,6 +257,13 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
     const parsed = schema.safeParse(rawMarket);
     if (parsed.success) markets.push(toEdgeMarket(parsed.data));
     else rejectedMarkets.push({ id: idOf(rawMarket), reason: formatIssues(parsed.error.issues, 3).join('; ') });
+  }
+
+  // An empty market list is degraded when a last-good dataset has markets; with none it is `invalid`.
+  if (markets.length === 0 && rejectedMarkets.length === 0) {
+    const emptyMsg = 'markets.json contains no markets';
+    if (lastGood && lastGood.markets.length > 0) return fromParsed(dir, lastGood, now, `markets.json degraded: no markets`);
+    return emptyResult('invalid', dir, [emptyMsg]);
   }
 
   // Fail closed on a degraded file (empty or mostly-rejected, e.g. half-synced): never overwrite last-good.
