@@ -780,5 +780,14 @@
     "review_needed": true,
     "review_detail": "Architect-owned src/contracts/insurance-loss.ts gains InsuranceLossReport.coercedLossEventRows (int >= 0, .default(0)) — option (a) approved by Gabriel in-session 2026-09-27 via AskUserQuestion. Refute rounds 1-5 widened the sweep (all non-architect files): shared isIsoCalendarDate/MAX_LOSS_EVENT_USD in scripts/import-insurance-data.ts (loss + policy dates); deductible<=limit pair rule at server/workbook/parse.ts (decPairOrFlag) and server/warehouse/insurance.ts captureInsurance (Gabriel: flag at source, no blanket).",
     "last_updated": "2026-09-27T16:45:29Z"
+  },
+  "trends-wave2": {
+    "agent_role": "Integration Agent + UX Agent — Claude Code",
+    "phase": "Portfolio Trends Wave 2: portfolio_month_snapshot table + capture hook + /analytics/trends/history + Trends UI merge (plan: docs/superpowers/plans/2026-10-02-portfolio-trends-wave2.md)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned surfaces planned: server/warehouse/migrations/033_portfolio_month_snapshot.sql, src/contracts/trends.ts (+ index export), server/index.ts (one guarded captureMonthSnapshot call inside the existing brain.on('snapshot') handler), architecture/database-schema.md. Additive only; no existing table altered. Wave 1 (PR #423) merged 2026-10-02.",
+    "last_updated": "2026-10-02T17:40:37Z"
   }
 }

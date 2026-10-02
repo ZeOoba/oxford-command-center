@@ -121,6 +121,7 @@ const FIXED_ROUTES = [
   '/noi', '/imports', '/issues',
   '/analytics/metrics', '/analytics/scores', '/analytics/pm',
   '/analytics/growth', '/analytics/anomalies', '/analytics/lease-run',
+  '/analytics/trends/history',
   '/calibration/log', '/calibration/pending', '/calibration/report',
   '/brain/report',
   '/lease-market/summary', '/lease-market/positioning', '/lease-market/radar', '/lease-market/signals', '/lease-market/changes',
@@ -137,7 +138,12 @@ const FIXED_ROUTES = [
  *  warehouse.json (the Brain view reads as offline, same as before this route was wired in)
  *  instead of failing every other view too. */
 // Lease-market routes are optional: no CoStar export yet, or no snapshot in the bake process, must not block the mirror.
-const REQUIRED_ROUTES = new Set<string>(FIXED_ROUTES.filter((r) => r !== '/brain/report' && !r.startsWith('/lease-market/')));
+// /analytics/trends/history is likewise optional: new in Portfolio Trends Wave 2, it reads
+// portfolio_month_snapshot (migration 033), so a warehouse without that migration applied (or with no
+// snapshot rows yet) may 503/return empty — that must omit one endpoint (the client falls back to
+// reconstruction), never take the whole mirror down.
+const OPTIONAL_ROUTES = new Set<string>(['/brain/report', '/analytics/trends/history']);
+const REQUIRED_ROUTES = new Set<string>(FIXED_ROUTES.filter((r) => !OPTIONAL_ROUTES.has(r) && !r.startsWith('/lease-market/')));
 
 export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[]): string[] {
   const fixed = [...FIXED_ROUTES];

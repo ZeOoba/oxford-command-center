@@ -143,6 +143,7 @@ All analytics routes are GET, read-only, no side effects.
 | `/api/warehouse/analytics/rankings` | `?metric=&period=` | Property rankings by metric |
 | `/api/warehouse/analytics/pm-scorecards` | `?period=` | Property manager scorecards |
 | `/api/warehouse/analytics/scores` | — | Health/attention/capital scores |
+| `/api/warehouse/analytics/trends/history` | `?propertyId=` | Monthly occupancy/in-place-rent snapshot series (`TrendsHistoryResponse`, `src/contracts/trends.ts`); unknown id returns `{ points: [] }` |
 | `/api/warehouse/data-quality` | — | Basis coverage + DQ summary |
 
 ### Numeric Metric Keys (benchmarkable)

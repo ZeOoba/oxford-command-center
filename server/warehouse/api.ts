@@ -39,6 +39,8 @@ import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
 import type { PeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
+import { monthSnapshotSeries } from './month-snapshot';
+import { TrendsHistoryResponseSchema } from '../../src/contracts/trends';
 import { loadRatifiedRct, loadRatifiedRuleset, scoreAcquisition } from './acquisition';
 import { getLeaseTerms, listLeaseTermPropertyIds } from './lease-terms';
 import { projectLeaseRun, resolveAssumptions, computeMarkToMarket } from './lease-run';
@@ -352,6 +354,14 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   app.get('/analytics/scores', (c) =>
     withDb((db) => c.json(ScoresResponseSchema.parse({ scores: scoreProperties(db, propertyPeriodMetrics(db)) }))),
+  );
+
+  // Portfolio Trends Wave 2: monthly occupancy/rent snapshot history. Unknown propertyId -> empty list.
+  app.get('/analytics/trends/history', (c) =>
+    withDb((db) => {
+      const propertyId = c.req.query('propertyId') || undefined;
+      return c.json(TrendsHistoryResponseSchema.parse({ points: monthSnapshotSeries(db, propertyId) }));
+    }),
   );
 
   app.get('/analytics/pm', (c) =>
