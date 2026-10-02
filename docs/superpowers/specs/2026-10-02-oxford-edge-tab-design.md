@@ -376,6 +376,8 @@ The layout, top to bottom:
 
 A test asserts that every `Market` enum member is either in this table or in the Tier-2 set. Adding an enum member without a decision fails the build.
 
+**Conflicting-location rule (Gabriel ruling 2026-10-02).** Tier 1 decides unless the state parsed from `Deal.location` falls outside the market's reviewed allowed-state set. Each Tier-1 market allows its own state only, except three bi-state metros: `Kansas City MO` allows {MO, KS}, `Cincinnati OH` allows {OH, KY, IN}, `Louisville KY` allows {KY, IN}. A location state outside the set gives `unmatched:'conflicting_location'` with headline text `No Edge market (conflicting location)` (e.g. `Columbus OH` + `Columbus, IN`, or `Toledo OH` + `Detroit, MI`). `Kansas City MO` + `Lenexa, KS` resolves to the Kansas City market. A missing or unparseable location never conflicts. Mid-Atlantic, Other and Unknown are unchanged (Tier 2).
+
 2. **Tier 2, `Deal.location` exact city match.** Applies only when Tier 1 deferred. Take the last `City, ST` pair in `location` after stripping parentheticals. Example: `'3849 N Richardt, Indianapolis, IN'` → `Indianapolis, IN`. It matches iff exactly **one** Edge market has `state === ST` and either `name === City` or the first hyphen-segment of `name === City` (the CBSA principal city), compared case-insensitively. Zero matches give `unmatched:'no_market_for_location'`. Two or more give `unmatched:'ambiguous'`. Neither case ever picks one. `location: 'TBD'` or no parseable pair gives `unmatched:'no_location'`.
 
 Edge ids that the resolver references are validated against the loaded dataset. A table entry pointing at an id missing from `markets.json` gives `unmatched:'edge_id_absent'` and never a substitute.

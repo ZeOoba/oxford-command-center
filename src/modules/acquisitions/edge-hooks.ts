@@ -9,7 +9,7 @@
 // WarehouseUnavailableError and the UI says "Edge is local-only".
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  EDGE_OBSERVED_STATUSES, EDGE_SERIES, EdgeMarketsResponse, EdgePullItem, EdgePullQueueResponse,
+  EDGE_OBSERVED_STATUSES, EDGE_SERIES, SERIES_UNITS, EdgeMarketsResponse, EdgePullItem, EdgePullQueueResponse,
   type EdgeMarket, type EdgeSeriesCell, type EdgeSeriesKey, type EdgeStatus, type EdgeUnit, type RecordPullRequest,
 } from '@contracts/edge';
 import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
@@ -178,6 +178,8 @@ export interface EdgeCellDisplay {
   title: string | null;
   dotted: boolean;
   observed: boolean;
+  /** Visible "Est." / "Nowcast" marker for an observed estimated value; single-sourced from edgeStatusLabel. */
+  marker: string | null;
 }
 
 export function edgeCellDisplay(
@@ -195,13 +197,14 @@ export function edgeCellDisplay(
       title: label.title,
       dotted: label.dotted,
       observed: true,
+      marker: label.dotted ? label.title : null,
     };
   }
   // Data dictionary: truck is never hidden and never reads as zero where it is null.
-  if (field === 'truck') return { text: '— Not yet available', title: 'Not yet available', dotted: false, observed: false };
+  if (field === 'truck') return { text: '— Not yet available', title: 'Not yet available', dotted: false, observed: false, marker: null };
   const lastStatus: EdgeStatus = cell.status[cell.status.length - 1] ?? 'null';
   const text = edgeStatusLabel(lastStatus).text ?? 'Not published';
-  return { text: `— ${text}`, title: text, dotted: false, observed: false };
+  return { text: `— ${text}`, title: text, dotted: false, observed: false, marker: null };
 }
 
 /** Honest header: trueLabel from markets.json, + " [PROXY]" when isProxy. Never the raw key (F3). */
@@ -327,6 +330,14 @@ export const EDGE_TIER1_TABLE: Readonly<Partial<Record<Market, string>>> = {
   'Richmond VA': 'richmond',
 };
 
+/** Reviewed bi-state metros (Gabriel ruling 2026-10-02, spec §8.4): the location states that stay
+ *  inside the Tier-1 market. Every Tier-1 market not listed here allows only its own state. */
+export const EDGE_TIER1_ALLOWED_STATES: Readonly<Partial<Record<Market, readonly string[]>>> = {
+  'Kansas City MO': ['MO', 'KS'],
+  'Cincinnati OH': ['OH', 'KY', 'IN'],
+  'Louisville KY': ['KY', 'IN'],
+};
+
 /** Market members (plus a null market) that defer to the Tier-2 location match. */
 export const EDGE_TIER2_MARKETS: ReadonlySet<Market> = new Set<Market>(['Mid-Atlantic', 'Other', 'Unknown']);
 
@@ -335,7 +346,7 @@ export const EDGE_UNMATCHED_TEXT: Readonly<Record<EdgeUnmatchedReason, string>> 
   no_market_for_location: 'no Edge market for this city and state',
   ambiguous: 'more than one Edge market matches this city and state',
   edge_id_absent: 'the mapped Edge market is missing from markets.json',
-  conflicting_location: 'the deal market and the deal location name different states',
+  conflicting_location: 'the deal location state is outside the states allowed for the deal market (different states)',
 };
 
 /** Headline for an unmatched deal; a state conflict is called out in the text itself (never guessed). */
@@ -369,9 +380,10 @@ export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, marke
   if (tier1Id !== undefined) {
     const market = markets.find((m) => m.id === tier1Id);
     if (!market) return { kind: 'unmatched', reason: 'edge_id_absent' };
-    // Never guess: a Tier-1 market whose state contradicts the Tier-2 location state is unmatched.
+    // Never guess: a location state outside the market's reviewed allowed-state set is unmatched.
     const locationState = parseCityState(deal.location)?.state;
-    if (locationState !== undefined && locationState !== market.state) return { kind: 'unmatched', reason: 'conflicting_location' };
+    const allowed = (deal.market !== null ? EDGE_TIER1_ALLOWED_STATES[deal.market] : undefined) ?? [market.state];
+    if (locationState !== undefined && !allowed.includes(locationState)) return { kind: 'unmatched', reason: 'conflicting_location' };
     return { kind: 'matched', market, via: 'tier1_market' };
   }
   const pair = parseCityState(deal.location);
@@ -398,12 +410,9 @@ export function findDealForCandidate(deals: readonly Deal[], notionDealId: strin
   return deals.find((d) => d.id === notionDealId) ?? null;
 }
 
-const SERIES_UNIT_OF = (field: EdgeSeriesKey, data: EdgeMarketsResponse): EdgeUnit =>
-  data.fieldMeta[field]?.unit ?? 'signal';
-
 export function edgeReadoutTitle(market: EdgeMarket, data: EdgeMarketsResponse): string {
   const parts = EDGE_READOUT_SERIES.map(
-    ({ field, label }) => `${label}: ${edgeCellDisplay(market.series[field], SERIES_UNIT_OF(field, data), data.years, field).text}`,
+    ({ field, label }) => `${label}: ${edgeCellDisplay(market.series[field], SERIES_UNITS[field], data.years, field).text}`,
   );
   const f = data.freshness;
   const fresh = f ? (f.stale ? ` · STALE (as of ${f.asOf})` : ` · as of ${f.asOf}`) : '';
@@ -430,7 +439,8 @@ export function edgeCandidateCell(
   if (data.availability !== 'ok') return { text: 'Edge unavailable', title: `Edge dataset ${data.availability}` };
   const res = resolveEdgeMarket(deal, data.markets);
   if (res.kind === 'unmatched') return { text: edgeUnmatchedHeadline(res.reason), title: EDGE_UNMATCHED_TEXT[res.reason] };
-  const vac = edgeCellDisplay(res.market.series.vac, SERIES_UNIT_OF('vac', data), data.years, 'vac').text;
-  const rent = edgeCellDisplay(res.market.series.rent, SERIES_UNIT_OF('rent', data), data.years, 'rent').text;
+  const withMarker = (d: EdgeCellDisplay): string => (d.marker ? `${d.text} ${d.marker}` : d.text);
+  const vac = withMarker(edgeCellDisplay(res.market.series.vac, SERIES_UNITS.vac, data.years, 'vac'));
+  const rent = withMarker(edgeCellDisplay(res.market.series.rent, SERIES_UNITS.rent, data.years, 'rent'));
   return { text: `${vac} · ${rent}${data.freshness?.stale ? ' · STALE' : ''}`, title: edgeReadoutTitle(res.market, data) };
 }

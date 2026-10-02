@@ -6,7 +6,7 @@ import {
   EDGE_TIER1_TABLE, EDGE_TIER2_MARKETS, EDGE_UNMATCHED_TEXT, edgeCandidateCell, findDealForCandidate, parseCityState,
   resolveEdgeMarket,
 } from '../../src/modules/acquisitions/edge-hooks';
-import { fourMarkets, mkMarket, mkMarketsResponse } from './edge-test-helpers';
+import { cell, fourMarkets, mkMarket, mkMarketsResponse } from './edge-test-helpers';
 
 const MARKETS = [
   mkMarket('columbus', 'Columbus', 'OH', 'named'),
@@ -42,8 +42,34 @@ describe('Tier 1 (Deal.market enum)', () => {
 
   it('conflicting_location: a Tier-1 market whose state contradicts the location state is unmatched, never guessed', () => {
     expect(resolveEdgeMarket(deal('Columbus OH', 'Columbus, IN'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
-    expect(resolveEdgeMarket(deal('Kansas City MO', 'Kansas City, KS'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
+    expect(resolveEdgeMarket(deal('Kansas City MO', 'Kansas City, TX'), MARKETS)).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
     expect(EDGE_UNMATCHED_TEXT.conflicting_location).toMatch(/different states/);
+  });
+
+  // Gabriel ruling 2026-10-02 (spec §8.4): bi-state metros resolve when the location state is in the market's reviewed allowed set.
+  describe('per-market allowed states', () => {
+    const BI = [
+      mkMarket('kansas_city', 'Kansas City', 'MO', 'named'),
+      mkMarket('cincinnati', 'Cincinnati', 'OH', 'named'),
+      mkMarket('louisville', 'Louisville', 'KY', 'named'),
+      mkMarket('toledo', 'Toledo', 'OH', 'auto'),
+      mkMarket('columbus', 'Columbus', 'OH', 'named'),
+    ];
+    const conflict = { kind: 'unmatched', reason: 'conflicting_location' };
+    it('Kansas City MO + Lenexa, KS resolves to Kansas City via Tier 1', () => {
+      expect(resolveEdgeMarket(deal('Kansas City MO', 'Lenexa, KS'), BI)).toMatchObject({ kind: 'matched', via: 'tier1_market', market: { id: 'kansas_city' } });
+    });
+    it('Cincinnati OH + Florence, KY and Louisville KY + Jeffersonville, IN resolve', () => {
+      expect(resolveEdgeMarket(deal('Cincinnati OH', 'Florence, KY'), BI)).toMatchObject({ kind: 'matched', market: { id: 'cincinnati' } });
+      expect(resolveEdgeMarket(deal('Cincinnati OH', 'Lawrenceburg, IN'), BI)).toMatchObject({ kind: 'matched', market: { id: 'cincinnati' } });
+      expect(resolveEdgeMarket(deal('Louisville KY', 'Jeffersonville, IN'), BI)).toMatchObject({ kind: 'matched', market: { id: 'louisville' } });
+    });
+    it('states outside the allowed set still conflict', () => {
+      expect(resolveEdgeMarket(deal('Columbus OH', 'Columbus, IN'), BI)).toEqual(conflict);
+      expect(resolveEdgeMarket(deal('Toledo OH', 'Detroit, MI'), BI)).toEqual(conflict);
+      expect(resolveEdgeMarket(deal('Louisville KY', 'Cincinnati, OH'), BI)).toEqual(conflict);
+      expect(resolveEdgeMarket(deal('Kansas City MO', 'Omaha, NE'), BI)).toEqual(conflict);
+    });
   });
 
   it('matching state, absent location, or unparseable location still resolves via Tier 1', () => {
@@ -169,11 +195,36 @@ describe('Sourcing candidate join', () => {
     expect(errored.title).not.toContain('Edge dataset ok');
     expect(edgeCandidateCell('page-1', [columbusDeal], data, 'loading').title).toBe('Loading Edge market data');
     expect(edgeCandidateCell('page-1', [columbusDeal], undefined, 'idle').title).toBe('Edge market data not loaded yet');
+    // R2: the unit comes from SERIES_UNITS, never fieldMeta, so a fieldMeta that omits a key cannot change units.
+    const noMeta = mkMarketsResponse(fourMarkets(), { fieldMeta: {} });
+    const sparse = edgeCandidateCell('page-1', [columbusDeal], noMeta, 'ready');
+    expect(sparse.text).toBe('3.0% · +1.8% · STALE');
+    expect(sparse.title).toContain('Flex vacancy: 3.0%');
+    expect(sparse.title).toContain('Flex rent growth: +1.8%');
     const tbd = { ...columbusDeal, market: null, location: 'TBD' };
     expect(edgeCandidateCell('page-1', [tbd], data, 'ready')).toEqual({ text: 'No Edge market', title: EDGE_UNMATCHED_TEXT.no_location });
     const conflict = { ...columbusDeal, location: 'Columbus, IN' };
     expect(edgeCandidateCell('page-1', [conflict], data, 'ready')).toEqual({
       text: 'No Edge market (conflicting location)', title: EDGE_UNMATCHED_TEXT.conflicting_location,
     });
+  });
+});
+
+describe('Sourcing cell: estimated / nowcast are visible text (R3f)', () => {
+  const dealCol: Deal = {
+    id: 'page-1', name: 'Fixture', shortName: null, location: 'Columbus, OH', market: 'Columbus OH', sf: null, buildings: null,
+    stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null, lender: null, status: null,
+    nextAction: null, owner: null, targetCloseDate: null, notionDealId: 'DEAL-9', confidential: false, estimatedFields: [],
+  };
+  it('appends Est. / Nowcast next to the value when the latest observed status is estimated / nowcast', () => {
+    const ms = fourMarkets();
+    const col = ms.find((m) => m.id === 'columbus')!;
+    col.series = {
+      ...col.series,
+      vac: cell([5, 4.5, 4, 3.5, 3], ['actual', 'actual', 'actual', 'actual', 'estimated']),
+      rent: cell([1, 1.2, 1.4, 1.6, 1.8], ['actual', 'actual', 'actual', 'actual', 'nowcast']),
+    };
+    const out = edgeCandidateCell('page-1', [dealCol], mkMarketsResponse(ms), 'ready');
+    expect(out.text).toBe('3.0% Est. · +1.8% Nowcast · STALE');
   });
 });
