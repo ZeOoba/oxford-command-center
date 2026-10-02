@@ -316,7 +316,7 @@ describe('every rail destination declares its tab strip in the registry', () => 
     leasing: ['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants'],
     capital: ['allocation', 'pipeline', 'debt', 'cash', 'close'],
     obligations: ['insurance', 'taxes'],
-    portfolio: ['properties', 'trends'],
+    portfolio: ['properties', 'trends', 'expenses'],
     market: ['macro', 'scorecards', 'comps', 'demand'],
     'lease-market': ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'],
     data: ['imports', 'quality', 'mappings', 'calibration', 'documents'],

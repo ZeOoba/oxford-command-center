@@ -240,3 +240,21 @@ describe('StackedBarChart domain edge cases', () => {
     expect(container.innerHTML).not.toMatch(/NaN/);
   });
 });
+
+describe('StackedBarChart crowding (narrow widths)', () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => ({ label: `M${i + 1}`, segments: [{ key: 'a', value: 10 + i }] }));
+
+  it('thins tick labels and drops per-bar totals when 12 bars share ~390px; the tooltip still has totals', () => {
+    const { container } = render(<StackedBarChart data={twelve} keys={['a']} valueFormat={(n) => `$${n}`} />);
+    const texts = [...container.querySelectorAll('svg text')].map((t) => t.textContent);
+    expect(texts.filter((t) => t?.startsWith('M')).length).toBeLessThan(12); // thinned
+    expect(texts.some((t) => t?.startsWith('$'))).toBe(false); // totals hidden at this density
+  });
+
+  it('keeps every tick label and total with few bars', () => {
+    const { container } = render(<StackedBarChart data={twelve.slice(0, 4)} keys={['a']} valueFormat={(n) => `$${n}`} />);
+    const texts = [...container.querySelectorAll('svg text')].map((t) => t.textContent);
+    expect(texts.filter((t) => t?.startsWith('M'))).toHaveLength(4);
+    expect(texts.filter((t) => t?.startsWith('$'))).toHaveLength(4);
+  });
+});

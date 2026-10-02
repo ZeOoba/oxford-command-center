@@ -77,6 +77,12 @@ export function StackedBarChart({ data, keys, height = 250, valueFormat, ariaLab
   const y = scaleLinear({ domain: [min, max], range: [hasNeg ? Math.max(0, ih - 18) : ih, 0] });
   const y0 = y(0);
   const bw = x.bandwidth();
+  // Narrow charts (12 bars at 375px): thin the tick labels and drop the per-bar totals (the tooltip keeps
+  // them) instead of letting neighbouring labels overprint each other.
+  const step = data.length > 0 ? iw / data.length : 0;
+  const tickEvery = step > 0 ? Math.max(1, Math.ceil(46 / step)) : 1;
+  const tickLabels = data.map((d) => d.label).filter((_, i) => i % tickEvery === 0);
+  const showTotals = step === 0 || step >= 40;
 
   const linePath = overlayPts
     .map((o, i) => `${i === 0 ? 'M' : 'L'}${(x(o.label) ?? 0) + bw / 2},${y(o.value)}`)
@@ -130,7 +136,7 @@ export function StackedBarChart({ data, keys, height = 250, valueFormat, ariaLab
                       onMouseLeave={() => setHover(null)}
                     />
                   ))}
-                  {segs.length > 0 && (
+                  {segs.length > 0 && showTotals && (
                     <text
                       x={bx + bw / 2}
                       y={b.pos > 0 ? y(b.pos) - 7 : y(b.neg) + 15}
@@ -160,6 +166,7 @@ export function StackedBarChart({ data, keys, height = 250, valueFormat, ariaLab
             <AxisBottom
               top={ih}
               scale={x}
+              tickValues={tickLabels}
               hideAxisLine
               hideTicks
               tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.5em' })}
