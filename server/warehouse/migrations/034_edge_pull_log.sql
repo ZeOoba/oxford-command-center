@@ -23,3 +23,10 @@ CREATE TABLE IF NOT EXISTS edge_pull_log (
 );
 CREATE INDEX IF NOT EXISTS ix_edge_pull_log_kind_scope
   ON edge_pull_log (pull_kind, scope_key, done_on DESC, id DESC);
+
+-- DB-level append-only guard: rows are never deleted ("undo" = UPDATE voided_at).
+CREATE TRIGGER IF NOT EXISTS trg_edge_pull_log_no_delete
+BEFORE DELETE ON edge_pull_log
+BEGIN
+  SELECT RAISE(ABORT, 'edge_pull_log is append-only: void with voided_at instead of deleting');
+END;

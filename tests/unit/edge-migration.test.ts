@@ -51,6 +51,25 @@ describe('migration 034 — edge_pull_log', () => {
     expect(() => insert(db, 'storage', 'x', '2026-09-30')).toThrow(/CHECK constraint failed/);
   });
 
+  it('boundaries: scope_key length 64 accepted / 65 rejected; note length 2000 accepted', () => {
+    const db = makeDb();
+    expect(() => insert(db, 'storage', 'x'.repeat(64), '2026-09-30', 'y'.repeat(2000))).not.toThrow();
+    expect(() => insert(db, 'storage', 'x'.repeat(65), '2026-09-30')).toThrow(/CHECK constraint failed/);
+    expect(() => insert(db, 'storage', 'xx', '2026-09-30')).not.toThrow();
+  });
+
+  it('is append-only at the DB level: DELETE aborts; INSERT and the void UPDATE still work', () => {
+    const db = makeDb();
+    const id = Number(insert(db, 'storage', 'columbus', '2026-09-30').lastInsertRowid);
+    expect(() => db.prepare('DELETE FROM edge_pull_log WHERE id = ?').run(id)).toThrow(/append-only/);
+    expect(() => db.prepare('DELETE FROM edge_pull_log').run()).toThrow(/append-only/);
+    db.prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?").run(id);
+    const row = db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null };
+    expect(row.voided_at).not.toBeNull();
+    expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(1);
+    expect(() => insert(db, 'ios', 'columbus', '2026-09-30')).not.toThrow();
+  });
+
   it('is idempotent — a second run does not re-apply', () => {
     const db = makeDb();
     const before = (db.prepare('SELECT COUNT(*) AS n FROM _migrations').get() as { n: number }).n;
