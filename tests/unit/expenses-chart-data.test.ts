@@ -258,3 +258,13 @@ describe('completeMonthTotals', () => {
     expect([...m.entries()]).toEqual([['2026-09', 15]]);
   });
 });
+
+describe('stackedExpenseData otherKey', () => {
+  it('folds unlisted categories into the supplied bucket key, leaving a real "Other" series untouched', async () => {
+    const { stackedExpenseData } = await import('../../src/modules/portfolio/expenses-chart-data');
+    const row: ExpenseMonthTotal = { month: '2026-09', total: 1550, byCategory: { Other: 500, Taxes: 450, Snow: 400, Repairs: 200 } };
+    const out = stackedExpenseData([row], ['Other', 'Taxes', 'Other (rest)'], 'Other (rest)');
+    expect(out[0]!.segments).toEqual([{ key: 'Other', value: 500 }, { key: 'Taxes', value: 450 }, { key: 'Other (rest)', value: 600 }]);
+    expect(out[0]!.segments.reduce((a, s) => a + s.value, 0)).toBe(1550);
+  });
+});

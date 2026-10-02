@@ -260,8 +260,11 @@ export function ExpensesView() {
   const windowSeries = series.filter((s) => inWindow.has(s.month));
   const top = topCategories(points, scopeIds, 5);
   const windowCats = new Set(windowSeries.flatMap((s) => Object.keys(s.byCategory)));
-  const keys = windowCats.size > top.length ? [...top, 'Other'] : top;
-  const stacked = stackedExpenseData(windowSeries, keys);
+  // The fold bucket must never collide with a real category that ranks in the top 5.
+  let otherKey = 'Other';
+  while (top.includes(otherKey)) otherKey += ' (rest)';
+  const keys = windowCats.size > top.length ? [...top, otherKey] : top;
+  const stacked = stackedExpenseData(windowSeries, keys, otherKey);
   const overlay = overlayLastYear(series, windowMonths);
 
   const scopeName = isAll ? 'portfolio' : (names[effectiveScope] ?? effectiveScope);

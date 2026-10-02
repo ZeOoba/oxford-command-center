@@ -74,11 +74,12 @@ export function topCategories(points: ExpenseMonthPoint[], propertyIds: readonly
     .map(([cat]) => cat);
 }
 
-/** One datum per month with data; segments in `keys` order. Unlisted categories fold into `Other` only
- *  when `keys` contains 'Other', else they are dropped. */
-export function stackedExpenseData(series: ExpenseMonthTotal[], keys: string[]): StackedBarDatum[] {
-  const listed = new Set(keys);
-  const hasOther = listed.has('Other');
+/** One datum per month with data; segments in `keys` order. Categories not listed in `keys` fold into the
+ *  `otherKey` bucket when `keys` contains it, else they are dropped. `otherKey` must not be a real category
+ *  that is also listed in `keys` (the view picks a non-colliding key). */
+export function stackedExpenseData(series: ExpenseMonthTotal[], keys: string[], otherKey = 'Other'): StackedBarDatum[] {
+  const listed = new Set(keys.filter((k) => k !== otherKey));
+  const hasOther = keys.includes(otherKey);
   const out: StackedBarDatum[] = [];
   for (const row of series) {
     if (Object.keys(row.byCategory).length === 0) continue;
@@ -86,12 +87,10 @@ export function stackedExpenseData(series: ExpenseMonthTotal[], keys: string[]):
     for (const [cat, amt] of Object.entries(row.byCategory)) if (!listed.has(cat)) other += amt;
     out.push({
       label: monthLabel(row.month),
-      segments: keys.map((key) =>
-        key === 'Other' ? { key, value: (row.byCategory['Other'] ?? 0) + other } : { key, value: row.byCategory[key] ?? 0 },
-      ),
+      segments: keys.map((key) => ({ key, value: key === otherKey ? other : (row.byCategory[key] ?? 0) })),
     });
   }
-  return hasOther ? out : out.map((d) => ({ ...d, segments: d.segments.filter((s) => s.key !== 'Other') }));
+  return hasOther ? out : out.map((d) => ({ ...d, segments: d.segments.filter((s) => s.key !== otherKey) }));
 }
 
 /** Same-month-last-year totals for each displayed month; months with no prior-year value are omitted. */

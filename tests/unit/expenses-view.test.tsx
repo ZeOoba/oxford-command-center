@@ -512,3 +512,24 @@ describe('ExpensesView like-for-like KPI comparisons', () => {
     expect(within(tile('YoY (same month)')).getByText('+20.0%')).toBeTruthy();
   });
 });
+
+describe('ExpensesView fold bucket never collides with a real Other category', () => {
+  it('a real "Other" in the top 5 gets the bucket key "Other (rest)"; keys unique; totals preserved', () => {
+    const points: ExpenseMonthPoint[] = [];
+    const cats: Array<[string, number]> = [['Other', 700], ['Taxes', 600], ['Insurance', 500], ['Payroll', 400], ['Utilities', 300], ['Repairs', 200], ['Snow', 100]];
+    for (const m of MONTHS) for (const [c, v] of cats) points.push(pt('a', m, c, v));
+    setData({ points, coverage: { propertiesLoaded: 1, propertiesExpected: 1, firstMonth: '2025-08', lastMonth: LATEST } });
+    renderView();
+    const keys = attr('stacked', 'data-keys') as string[];
+    expect(keys).toEqual(['Other', 'Taxes', 'Insurance', 'Payroll', 'Utilities', 'Other (rest)']);
+    expect(new Set(keys).size).toBe(keys.length);
+    const legend = within(screen.getByTestId('expense-legend')).getAllByRole('listitem').map((li) => li.textContent);
+    expect(legend).toEqual(keys);
+    const data = attr('stacked', 'data-data') as Array<{ segments: Array<{ key: string; value: number }> }>;
+    for (const d of data) {
+      expect(d.segments.reduce((a, s) => a + s.value, 0)).toBe(2800); // 700+600+500+400+300+200+100
+      expect(d.segments.find((s) => s.key === 'Other')!.value).toBe(700);
+      expect(d.segments.find((s) => s.key === 'Other (rest)')!.value).toBe(300);
+    }
+  });
+});
