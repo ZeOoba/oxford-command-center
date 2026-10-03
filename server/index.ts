@@ -17,7 +17,7 @@ import { DealCompsActionInput } from '../src/contracts/index';
 import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
-import { runAgent, sanitizeAgentInput } from './ai/agent';
+import { runAgent, sanitizeAgentInput, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE } from './ai/agent';
 import { parseLimitParam } from './lib/query-params';
 import { scanForConfidential } from './briefing/confidential';
 import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
@@ -605,7 +605,7 @@ app.post('/api/ai', (c) =>
       // imported into the runtime-agnostic agent module (the mirror has no filesystem) — it is
       // injected here instead. Evaluated per tool result rather than hoisted, so a roster edit takes
       // effect without a restart. If the roster is absent/unreadable, loadTerms THROWS by design and
-      // runAgent's catch re-emits e.message verbatim as an SSE error event: a confidentiality gate
+      // runAgent's catch would otherwise surface e.message: a confidentiality gate
       // fails closed, but that raw message embeds the roster's absolute filesystem path and the
       // ALLOW_PLACEHOLDER opt-out's name (refute finding, LOW) — fine on stderr, not fine streamed to
       // whatever is reading the browser's network tab. Catch here, log the real detail server-side,
@@ -616,7 +616,7 @@ app.post('/api/ai', (c) =>
           return scanForConfidential(value);
         } catch (err) {
           console.error('[ai] confidentiality guard unavailable:', err);
-          throw new Error('Confidentiality guard unavailable — refusing to send.');
+          throw new Error(CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE); // runAgent passes exactly this through
         }
       },
       emit: async (e) => {

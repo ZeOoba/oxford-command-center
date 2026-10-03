@@ -6,7 +6,7 @@
     "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "PR open, not merged by the author. Touches server/warehouse/calibration.ts (error-return text only).",
+    "review_detail": "PR open, not merged by the author. Touches server/warehouse/calibration.ts (error-return text only). Also server/index.ts (Architect-owned): imports the new CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE constant in place of the same literal, and corrects a now-false comment; no route/middleware change. Needs architect acknowledgment before merge.",
     "last_updated": "2026-10-03T00:00:00Z"
   },
   "warehouse-500-sanitize": {

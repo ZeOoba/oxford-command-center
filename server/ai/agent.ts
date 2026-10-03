@@ -13,6 +13,11 @@ import { respond } from './respond';
  * - Bounded tool loop. When no API key is configured, falls back to the deterministic responder.
  */
 
+/** The one thrown message that IS meant for the user: the injected confidential scan (server/index.ts)
+ *  rethrows it when the roster is unreadable, so the fail-closed refusal is explained rather than
+ *  collapsed into the generic retry text below. Carries no path or deal name. */
+export const CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE = 'Confidentiality guard unavailable — refusing to send.';
+
 export type AgentEvent =
   | { type: 'tool'; name: string; label: string }
   | { type: 'text'; delta: string }
@@ -378,9 +383,14 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     await emit({ type: 'done', model, refs: allRefs });
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') return;
-    // Raw exception text (network targets, paths) stays in the server log, not the SSE stream.
+    // Raw exception text (network targets, paths) stays in the server log, not the SSE stream —
+    // except the fixed, path-free confidentiality-gate refusal, which the user should see.
     console.error('[agent] run failed:', e);
-    await emit({ type: 'error', message: 'The assistant hit an unexpected error. Try again in a moment.' });
+    const gateRefusal = e instanceof Error && e.message === CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE;
+    await emit({
+      type: 'error',
+      message: gateRefusal ? CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE : 'The assistant hit an unexpected error. Try again in a moment.',
+    });
   }
 }
 
