@@ -449,6 +449,81 @@ describe('I1 — an automated truck state is not queued and not recordable', () 
   });
 });
 
+describe('I2/I3 — storage/IOS scope = loaded buy-box ∪ frozen-unless-explicitly-non-buy-box ∪ logged', () => {
+  type RawM = Record<string, unknown> & { id: string; type: string; lat: number };
+  function writeDataset(dir: string, edit: (markets: RawM[]) => void): void {
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: RawM[] };
+    edit(f.markets);
+    writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
+  }
+  const cloneAs = (markets: RawM[], id: string, type: string): RawM => {
+    const m = JSON.parse(JSON.stringify(markets[0])) as RawM;
+    m.id = id;
+    m.type = type;
+    return m;
+  };
+  const scopeKeys = async (app: ReturnType<typeof makeApp>, kind: string) =>
+    EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json()).items.find((i) => i.kind === kind)!;
+
+  it('I2: a recorded 22nd buy-box market stays visible and recordable after it is quarantined or retyped', async () => {
+    const db = freshDb();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-22nd-'));
+    writeDataset(dir, (ms) => ms.push(cloneAs(ms, 'newtown', 'named')));
+    const app = makeApp(() => db, dir);
+    expect((await scopeKeys(app, 'storage')).scopes.map((s) => s.scopeKey)).toContain('newtown');
+    expect((await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'newtown', doneOn: '2026-09-30' })).status).toBe(200);
+
+    // quarantined (bad lat) → still listed with its recorded state, still recordable
+    writeDataset(dir, (ms) => {
+      const n = cloneAs(ms, 'newtown', 'named');
+      n.lat = 1e999;
+      ms.push(n);
+    });
+    let storage = await scopeKeys(app, 'storage');
+    expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', lastDoneOn: '2026-09-30' });
+    expect(storage.counts).toEqual({ open: 21, due: 0, current: 1 });
+    expect((await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'newtown', doneOn: '2026-10-01' })).status).toBe(200);
+    // the IOS queue has no history for it → not in IOS scope while quarantined
+    expect((await scopeKeys(app, 'ios')).scopes.map((s) => s.scopeKey)).not.toContain('newtown');
+    expect((await post(app, '/pull-queue', { kind: 'ios', scopeKey: 'newtown', doneOn: '2026-10-01' })).status).toBe(400);
+
+    // retyped non-buy-box → still listed and recordable
+    writeDataset(dir, (ms) => ms.push(cloneAs(ms, 'newtown', 'auto')));
+    storage = await scopeKeys(app, 'storage');
+    expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', lastDoneOn: '2026-10-01' });
+    expect((await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'newtown', doneOn: '2026-10-02' })).status).toBe(200);
+  });
+
+  it('I3: a frozen id loaded OK and typed non-buy-box (harrisburg auto) leaves storage/IOS and is not recordable', async () => {
+    const db = freshDb();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-retype-'));
+    writeDataset(dir, (ms) => ms.push(cloneAs(ms, 'harrisburg', 'auto')));
+    const app = makeApp(() => db, dir);
+    for (const kind of ['storage', 'ios']) {
+      const item = await scopeKeys(app, kind);
+      expect(item.scopes.map((s) => s.scopeKey)).not.toContain('harrisburg');
+      expect(item.scopes).toHaveLength(20);
+      expect(item.counts).toEqual({ open: 20, due: 0, current: 0 });
+      expect((await post(app, '/pull-queue', { kind, scopeKey: 'harrisburg', doneOn: '2026-09-30' })).status).toBe(400);
+    }
+    expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
+  });
+
+  it('I3 + I2: a retyped frozen id WITH log history stays visible and recordable', async () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'harrisburg', '2026-09-30')").run();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-retype-log-'));
+    writeDataset(dir, (ms) => ms.push(cloneAs(ms, 'harrisburg', 'auto')));
+    const app = makeApp(() => db, dir);
+    const storage = await scopeKeys(app, 'storage');
+    expect(storage.scopes.find((s) => s.scopeKey === 'harrisburg')).toMatchObject({ state: 'current', scopeLabel: 'Harrisburg, PA' });
+    expect(storage.scopes).toHaveLength(21);
+    expect((await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'harrisburg', doneOn: '2026-10-01' })).status).toBe(200);
+    // IOS has no history for it → excluded there
+    expect((await scopeKeys(app, 'ios')).scopes.map((s) => s.scopeKey)).not.toContain('harrisburg');
+  });
+});
+
 describe('GET /markets — non-finite numbers (gate-fix F1)', () => {
   it.each([
     ['lat', (t: string) => t.replace(/"lat":\s*-?[\d.]+/, '"lat":1e999')],

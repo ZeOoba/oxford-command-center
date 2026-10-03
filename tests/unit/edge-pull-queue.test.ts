@@ -86,6 +86,48 @@ describe('scope lists', () => {
     expect(pullScopeKeys('truck', [])).toEqual([...TRUCK_STATES]);
   });
 
+  it('I3: a frozen id the dataset LOADED and types non-buy-box leaves storage/IOS; absent or logged frozen ids stay', () => {
+    const fallbackIds = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+    const markets = [...fourMarkets(), mkMarket('harrisburg', 'Harrisburg', 'PA', 'auto')];
+    const without = fallbackIds.filter((id) => id !== 'harrisburg');
+    expect(deriveBuyBoxIds(markets)).toEqual(without);
+    expect(pullScopeKeys('storage', markets)).toEqual(without);
+    expect(pullScopeKeys('ios', markets)).toEqual(without);
+    // with pull-log history it stays visible (I2 rule wins)
+    expect(pullScopeKeys('storage', markets, new Set(['harrisburg']))).toEqual(fallbackIds);
+    // absent from the dataset (quarantined / missing) → stays in scope
+    expect(pullScopeKeys('storage', fourMarkets())).toEqual(fallbackIds);
+  });
+
+  it('I2: a logged scope key stays in storage/IOS scope even when the dataset no longer carries it as buy-box', () => {
+    const fallbackIds = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+    // newtown: a 22nd buy-box market that was recorded, then quarantined (absent) …
+    expect(pullScopeKeys('storage', fourMarkets(), new Set(['newtown']))).toEqual([...fallbackIds, 'newtown']);
+    // … or retyped non-buy-box
+    const retyped = [...fourMarkets(), mkMarket('newtown', 'Newtown', 'PA', 'auto')];
+    expect(pullScopeKeys('ios', retyped, new Set(['newtown']))).toEqual([...fallbackIds, 'newtown']);
+    // logged keys never leak into the state-scoped kinds
+    expect(pullScopeKeys('mfgInvest', [], new Set(['newtown']))).toEqual([...MFG_INVEST_STATES]);
+    expect(pullScopeKeys('truck', [], new Set(['newtown']))).toEqual([...TRUCK_STATES]);
+  });
+
+  it('I2: readEdgePullLoggedKeys returns every logged key for the kind, voided rows included', () => {
+    const db = freshDb();
+    recordEdgePull(db, { kind: 'storage', scopeKey: 'newtown', doneOn: '2026-09-01' });
+    const v = recordEdgePull(db, { kind: 'storage', scopeKey: 'oldtown', doneOn: '2026-09-01' });
+    voidEdgePull(db, v);
+    recordEdgePull(db, { kind: 'ios', scopeKey: 'iosonly', doneOn: '2026-09-01' });
+    expect([...pullQueue.readEdgePullLoggedKeys(db, 'storage')].sort()).toEqual(['newtown', 'oldtown']);
+    expect([...pullQueue.readEdgePullLoggedKeys(db, 'ios')]).toEqual(['iosonly']);
+    // the queue shows them (voided-only history renders as open), per kind only
+    const q = buildEdgePullQueue(db, fourMarkets(), '2026-10-02');
+    const storage = q.items.find((i) => i.kind === 'storage')!;
+    expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', scopeLabel: 'newtown' });
+    expect(storage.scopes.find((s) => s.scopeKey === 'oldtown')).toMatchObject({ state: 'open' });
+    expect(storage.scopes.map((s) => s.scopeKey)).not.toContain('iosonly');
+    expect(storage.counts).toEqual({ open: 22, due: 0, current: 1 });
+  });
+
   it('lists in-dataset states outside the pull scope (never silently omitted)', () => {
     const markets = [
       ...fourMarkets(),

@@ -16,7 +16,7 @@ import { edgeDir } from './config';
 import { loadEdgeDataset, NODE_EDGE_FS, type EdgeFsDeps } from './loader';
 import {
   buildEdgePullItem, buildEdgePullQueue, computeOutsidePullScope, localIsoDate, PullValidationError, pullScopeKeys,
-  readEdgePullLatest, recordEdgePull, voidEdgePull,
+  readEdgePullLatest, readEdgePullLoggedKeys, recordEdgePull, voidEdgePull,
 } from './pull-queue';
 
 /** better-sqlite3 surfaces CHECK failures as SqliteError with code SQLITE_CONSTRAINT_CHECK. */
@@ -79,7 +79,8 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       if (!parsed.success) return c.json({ error: 'invalid pull record', issues: parsed.error.issues }, 400);
       const input = parsed.data;
       const { markets } = await load();
-      if (!pullScopeKeys(input.kind, markets).includes(input.scopeKey)) {
+      // Same scope set as GET /pull-queue (loaded buy-box ∪ frozen ∪ logged; truck minus automated).
+      if (!pullScopeKeys(input.kind, markets, readEdgePullLoggedKeys(db, input.kind)).includes(input.scopeKey)) {
         return c.json({ error: `unknown scope '${input.scopeKey}' for ${input.kind}` }, 400);
       }
       // `today` is server-derived (injected clock), never request-derived.
@@ -93,7 +94,8 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
         if (isSqliteCheckViolation(e)) return c.json({ error: 'pull record violates a storage constraint' }, 400);
         throw e;
       }
-      return c.json(EdgePullItem.parse(buildEdgePullItem(input.kind, markets, readEdgePullLatest(db), today)), 200);
+      const logged = readEdgePullLoggedKeys(db, input.kind);
+      return c.json(EdgePullItem.parse(buildEdgePullItem(input.kind, markets, readEdgePullLatest(db), today, logged)), 200);
     }),
   );
 
@@ -111,7 +113,9 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
         return c.json({ error: 'that pull was superseded by a newer record; refresh and retry' }, 409);
       }
       return c.json(
-        EdgePullItem.parse(buildEdgePullItem(result.kind, markets, readEdgePullLatest(db), localIsoDate(now()))),
+        EdgePullItem.parse(
+          buildEdgePullItem(result.kind, markets, readEdgePullLatest(db), localIsoDate(now()), readEdgePullLoggedKeys(db, result.kind)),
+        ),
         200,
       );
     }),

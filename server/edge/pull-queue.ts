@@ -141,27 +141,45 @@ export const PULL_KIND_ORDER: readonly EdgePullKind[] = ['storage', 'ios', 'mfgI
 
 const DAY_MS = 86_400_000;
 
-/** Buy-box ids = the frozen list UNION loaded markets typed buy-box (frozen order first, then any extra
- *  loaded ids). The frozen list always stays in scope so a market quarantined at load keeps its recorded
- *  state and stays recordable; non-buy-box markets are never added. */
-export function deriveBuyBoxIds(markets: readonly EdgeMarket[]): string[] {
-  const ids = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
-  const seen = new Set(ids);
-  for (const m of markets) {
-    if (BUY_BOX_TYPES.has(m.type) && !seen.has(m.id)) {
-      seen.add(m.id);
-      ids.push(m.id);
+const NO_LOGGED_KEYS: ReadonlySet<string> = new Set();
+
+/** Storage/IOS scope ids, in order: (1) frozen ids, EXCEPT one the dataset loaded OK and explicitly types
+ *  non-buy-box with no pull-log history (a frozen id that is absent or quarantined stays, so an unavailable
+ *  dataset yields the full frozen set); (2) loaded markets typed buy-box; (3) `logged` = scope keys already
+ *  in edge_pull_log for this kind, so a market with history stays visible and recordable even after the
+ *  dataset quarantines or retypes it (log-derived keys are safe: they were accepted from this allowlist
+ *  and the DB CHECK bounds them). Callers pass the set for ONE kind (readEdgePullLoggedKeys). */
+export function deriveBuyBoxIds(markets: readonly EdgeMarket[], logged: ReadonlySet<string> = NO_LOGGED_KEYS): string[] {
+  const loaded = new Map(markets.map((m) => [m.id, m]));
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const add = (id: string) => {
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
     }
+  };
+  for (const s of EDGE_BUY_BOX_FALLBACK) {
+    const m = loaded.get(s.id);
+    if (m !== undefined && !BUY_BOX_TYPES.has(m.type) && !logged.has(s.id)) continue;
+    add(s.id);
   }
+  for (const m of markets) if (BUY_BOX_TYPES.has(m.type)) add(m.id);
+  for (const k of [...logged].sort()) add(k);
   return ids;
 }
 
 /** The scope set is the single source for both the GET queue rows and the POST membership check.
+ *  Storage/IOS: see deriveBuyBoxIds (`logged` applies to these kinds only). mfgInvest: the fixed list.
  *  Truck: the fixed TRUCK_STATES list MINUS any state markets.json already automates (spec §5.3): an
  *  automated state is neither queued nor recordable. If a state that already has truck log rows later
  *  becomes automated, its rows are kept (append-only) but simply stop appearing in the queue. */
-export function pullScopeKeys(kind: EdgePullKind, markets: readonly EdgeMarket[]): string[] {
-  if (kind === 'storage' || kind === 'ios') return deriveBuyBoxIds(markets);
+export function pullScopeKeys(
+  kind: EdgePullKind,
+  markets: readonly EdgeMarket[],
+  logged: ReadonlySet<string> = NO_LOGGED_KEYS,
+): string[] {
+  if (kind === 'storage' || kind === 'ios') return deriveBuyBoxIds(markets, logged);
   if (kind === 'mfgInvest') return [...MFG_INVEST_STATES];
   const automated = new Set(automatedTruckStates(markets));
   return TRUCK_STATES.filter((s) => !automated.has(s));
@@ -231,6 +249,15 @@ export function readEdgePullLatest(db: WarehouseDb): Map<string, EdgePullLogRow>
     if (!latest.has(key)) latest.set(key, r);
   }
   return latest;
+}
+
+/** Every scope key with ANY edge_pull_log row for `kind` — voided rows included (deliberate: a scope whose
+ *  only history was voided keeps its history reachable instead of orphaning it; it renders as open). */
+export function readEdgePullLoggedKeys(db: WarehouseDb, kind: EdgePullKind): Set<string> {
+  const rows = db
+    .prepare('SELECT DISTINCT scope_key AS scopeKey FROM edge_pull_log WHERE pull_kind = ?')
+    .all(kind) as { scopeKey: string }[];
+  return new Set(rows.map((r) => r.scopeKey));
 }
 
 /** Thrown by recordEdgePull for a bad (non-calendar / future) doneOn. Subclass of RangeError so
@@ -326,9 +353,10 @@ export function buildEdgePullItem(
   markets: readonly EdgeMarket[],
   latest: ReadonlyMap<string, EdgePullLogRow>,
   today: string,
+  logged: ReadonlySet<string> = NO_LOGGED_KEYS,
 ): EdgePullItem {
   const def = PULL_ITEMS[kind];
-  const scopes: EdgePullScopeState[] = pullScopeKeys(kind, markets).map((scopeKey) => {
+  const scopes: EdgePullScopeState[] = pullScopeKeys(kind, markets, logged).map((scopeKey) => {
     const row = latest.get(`${kind}|${scopeKey}`) ?? null;
     const { state, ageDays } = scopeStateFor(row?.doneOn ?? null, def.cadenceDays, today);
     return {
@@ -363,7 +391,7 @@ export function buildEdgePullItem(
 export function buildEdgePullQueue(db: WarehouseDb, markets: readonly EdgeMarket[], today: string): EdgePullQueueResponse {
   const latest = readEdgePullLatest(db);
   return {
-    items: PULL_KIND_ORDER.map((kind) => buildEdgePullItem(kind, markets, latest, today)),
+    items: PULL_KIND_ORDER.map((kind) => buildEdgePullItem(kind, markets, latest, today, readEdgePullLoggedKeys(db, kind))),
     automatedCoverage: { truck: automatedTruckStates(markets) },
     today,
   };
