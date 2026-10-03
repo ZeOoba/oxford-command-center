@@ -209,21 +209,28 @@ The server reshapes each market into `series[field] = {values, status}`. This is
       "kind": "storage",
       "label": "Self-storage asking rates",
       "cadenceDays": 90,
+      "cadenceLabel": "Quarterly",
       "scopeType": "market",
+      "why": "…", "caveat": "…",
       "scopes": [
         { "scopeKey": "columbus", "scopeLabel": "Columbus, OH", "state": "open",
-          "lastDoneOn": null, "lastNote": null, "lastLogId": null, "ageDays": null }
+          "lastDoneOn": null, "lastNote": null, "lastLogId": null, "ageDays": null,
+          "links": [{ "label": "StorageCafe", "url": "https://www.storagecafe.com/self-storage-rates/columbus-oh/" }],
+          "blocker": null }
       ],
-      "links": [{ "label": "StorageCafe", "urlTemplate": "https://www.storagecafe.com/self-storage-rates/{slug}/" }]
+      "counts": { "open": 1, "due": 0, "current": 0 }
     }
   ],
-  "automatedCoverage": { "truck": ["VA", "MI"] }
+  "automatedCoverage": { "truck": ["MI", "VA"] },
+  "today": "2026-10-02"
 }
 ```
 
 **POST `/pull-queue` request** (`RecordPullRequest`, Zod, strict):
 `{ kind: 'storage'|'ios'|'mfgInvest'|'truck', scopeKey: string, doneOn: 'YYYY-MM-DD', note: string (≤ 2000, optional) }`.
-`scopeKey` must be in `PULL_ITEMS[kind].scopes`, or the route returns 400. `doneOn` must be a real calendar date that is not in the future relative to server local date. Otherwise 400.
+`scopeKey` must be in the scope set for `kind` defined in §5.3 (code-declared lists plus the log-derived keys), or the route returns 400. `doneOn` must be a real calendar date that is not in the future relative to server local date. Otherwise 400. Links are per scope (`links[{label, url}]`), not per item. A write-lock timeout (SQLITE_BUSY) returns **503** with the fixed text `pull log is busy; retry`.
+
+**POST `/pull-queue/:id/void`** sets `voided_at` on one row (no delete) and returns the updated `EdgePullItem`. Outcomes: 400 non-positive-integer id · 404 unknown id · 409 already voided · 409 superseded by a newer record (only the scope's current row is voidable) · 409 the row's scope is no longer in the §5.3 scope set (e.g. a truck state that became automated; fixed text `that scope is no longer in the pull queue; its history is kept`, since a void is permanent and would lose the real `done_on`) · 503 write-lock timeout (`pull log is busy; retry`). A log-history scope is in scope by definition, so a retyped or quarantined market with history stays voidable.
 
 ### 5.3 Pull-queue model (`server/edge/pull-queue.ts`)
 
@@ -237,7 +244,7 @@ The scope lists and cadences are **code**, which keeps them versioned and review
 | `truck` | state | OH IN WI PA MD KY MO KS IA NE WV IL MN (13), minus any state markets.json automates | 365 d (AADT is annual) | Per-state blocker note carried verbatim in intent: OH dead TIMS endpoint; IN TCDS JS-app only, check INDOT open data; WI usable-but-risky (irregular count cycle, no truck class); others not attempted, with PASDA (PA) and MSDIS (MO) as known open layers |
 
 - **Storage/IOS scope keys** (one set drives both the GET queue rows and the POST membership check) are the union of: (1) ids of loaded markets typed buy-box (`type ∈ {named, named_custom}`); (2) the frozen copy of the artifact's 21-id list, EXCEPT a frozen id the dataset loaded OK and explicitly types non-buy-box with no log history (a frozen id that is absent or quarantined stays, so an unavailable dataset yields the full frozen 21); (3) every scope key already in `edge_pull_log` for that kind, voided rows included, so a market with history stays visible and recordable even after the dataset quarantines or retypes it. Tests assert derivation equals the frozen list on the fixture, a retyped frozen id drops out, and a recorded 22nd market survives quarantine and retyping.
-- VA and MI are **not** truck queue rows. They are complete through the automated pull and appear under `automatedCoverage`, derived from markets.json (any non-null `truck` value in a state's markets), not from the log. The same rule applies to any `TRUCK_STATES` state that becomes automated: it leaves the truck queue, its counts and the KPI, and POST for it is rejected (400); existing log rows for it are kept but stop appearing. `mfgInvest` is the fixed 15-state list.
+- VA and MI are **not** truck queue rows. They are complete through the automated pull and appear under `automatedCoverage`, derived from markets.json (at least one `truck` value that is non-null AND carries an observed status `actual`/`estimated`/`nowcast` in a state's markets — the same rule coverage uses, so `guide_only` or "Not published" values never automate a state; the truck caveat text is derived from this set, not hardcoded), not from the log. The same rule applies to any `TRUCK_STATES` state that becomes automated: it leaves the truck queue, its counts and the KPI, and POST for it is rejected (400), as is voiding its existing rows (409); existing log rows for it are kept but stop appearing. `mfgInvest` is the fixed 15-state list.
 - States that are in the dataset but outside the artifact's pull scope (TN, ND, SD, DC for both truck and mfgInvest) are listed in Data health as "outside pull scope". The queue does not silently omit them.
 - State per scope: `open` (no non-voided log row), `current` (latest `done_on` age ≤ cadence), `due` (age > cadence).
 - **Launch state:** zero log rows, so all 21 + 21 + 15 + 13 = 70 scopes read `open`. No seeding. This matches the instruction that nothing is recorded done.
