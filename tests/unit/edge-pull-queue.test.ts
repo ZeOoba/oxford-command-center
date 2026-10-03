@@ -44,11 +44,21 @@ describe('scope lists', () => {
     expect(deriveBuyBoxIds(markets)).toEqual(EDGE_BUY_BOX_FALLBACK.map((s) => s.id));
   });
 
-  it('derives buy-box ids from the dataset when present (fixture-sized)', () => {
-    expect(deriveBuyBoxIds(fourMarkets())).toEqual(['columbus', 'indianapolis_south', 'richmond']);
-    for (const id of deriveBuyBoxIds(fourMarkets())) {
-      expect(EDGE_BUY_BOX_FALLBACK.map((s) => s.id)).toContain(id);
-    }
+  it('R2: derived buy-box ids are the UNION of loaded buy-box markets and the frozen list (a quarantined market stays in scope)', () => {
+    const fallbackIds = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+    // fourMarkets() carries only 3 of the 21 buy-box markets; the other 18 (quarantined/missing) must stay
+    expect(deriveBuyBoxIds(fourMarkets())).toEqual(fallbackIds);
+    expect(pullScopeKeys('storage', fourMarkets())).toEqual(fallbackIds);
+    expect(pullScopeKeys('ios', fourMarkets())).toEqual(fallbackIds);
+  });
+
+  it('R2: a loaded buy-box market outside the frozen list is added; non-buy-box markets never are', () => {
+    const fallbackIds = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+    const markets = [...fourMarkets(), mkMarket('newtown', 'Newtown', 'PA', 'named'), mkMarket('akron', 'Akron', 'OH', 'auto')];
+    const ids = deriveBuyBoxIds(markets);
+    expect(ids).toEqual([...fallbackIds, 'newtown']);
+    expect(ids).not.toContain('akron');
+    expect(ids).not.toContain('cedar_rapids');
   });
 
   it('VA/MI truck coverage comes from markets.json, not the queue', () => {
@@ -239,7 +249,7 @@ describe('R1 — void check-then-update is atomic against another connection', (
     b.pragma('busy_timeout = 0'); // B must not wait on A's lock (same thread: a wait could never be released)
     const target = recordEdgePull(a, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
 
-    let bInsert: 'not_run' | 'inserted' | 'busy' = 'not_run';
+    let bInsert = 'not_run' as 'not_run' | 'inserted' | 'busy';
     const hooked = new Proxy(a, {
       get(t, prop) {
         const v = Reflect.get(t, prop, t) as unknown;

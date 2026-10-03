@@ -101,7 +101,7 @@ describe('GET /pull-queue', () => {
     const db = freshDb();
     const body = EdgePullQueueResponse.parse(await (await makeApp(() => db).request('/pull-queue')).json());
     const byKind = Object.fromEntries(body.items.map((i) => [i.kind, i]));
-    expect(byKind.storage!.scopes.map((s) => s.scopeKey)).toEqual(['columbus', 'indianapolis_south', 'richmond']);
+    expect(byKind.storage!.scopes.map((s) => s.scopeKey)).toEqual(EDGE_BUY_BOX_FALLBACK.map((s) => s.id)); // R2: union with the frozen list
     expect(byKind.mfgInvest!.scopes).toHaveLength(15);
     expect(byKind.truck!.scopes).toHaveLength(13);
     expect(body.automatedCoverage.truck).toEqual(['VA']);
@@ -121,7 +121,7 @@ describe('POST /pull-queue', () => {
       state: 'current', lastDoneOn: '2026-09-30', lastNote: 'baseline', ageDays: 2,
     });
     const queue = EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json());
-    expect(queue.items[0]!.counts).toEqual({ open: 2, due: 0, current: 1 });
+    expect(queue.items[0]!.counts).toEqual({ open: 20, due: 0, current: 1 }); // 21 scopes (frozen union), 1 recorded
   });
 
   it.each([
@@ -371,6 +371,45 @@ describe('POST /pull-queue content-type (gate-fix P2)', () => {
       body: JSON.stringify({ kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' }),
     });
     expect(res.status).toBe(status);
+  });
+});
+
+describe('R2 — a quarantined buy-box market stays in the storage/IOS queues', () => {
+  function quarantinedColumbusDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-quar-'));
+    const text = readFileSync(FIXTURE, 'utf8').replace(/"lat":\s*-?[\d.]+/, '"lat":1e999'); // first market = columbus
+    writeFileSync(join(dir, 'markets.json'), text);
+    return dir;
+  }
+
+  it('keeps recorded state visible, counts it, and still accepts POST for it', async () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'columbus', '2026-09-30')").run();
+    const app = makeApp(() => db, quarantinedColumbusDir());
+    const markets = EdgeMarketsResponse.parse(await (await app.request('/markets')).json());
+    expect(markets.rejectedMarkets.map((r) => JSON.stringify(r))).toEqual([expect.stringContaining('columbus')]);
+    expect(markets.markets.map((m) => m.id)).not.toContain('columbus');
+
+    const queue = EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json());
+    const storage = queue.items.find((i) => i.kind === 'storage')!;
+    expect(storage.scopes).toHaveLength(21);
+    expect(storage.scopes.find((s) => s.scopeKey === 'columbus')).toMatchObject({ state: 'current', lastDoneOn: '2026-09-30' });
+    expect(storage.counts).toEqual({ open: 20, due: 0, current: 1 });
+    expect(queue.items.find((i) => i.kind === 'ios')!.scopes.map((s) => s.scopeKey)).toContain('columbus');
+
+    for (const kind of ['storage', 'ios']) {
+      const res = await post(app, '/pull-queue', { kind, scopeKey: 'columbus', doneOn: '2026-10-01' });
+      expect(res.status).toBe(200);
+    }
+    // a non-buy-box id is still unknown
+    expect((await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'cedar_rapids', doneOn: '2026-10-01' })).status).toBe(400);
+  });
+
+  it('an unavailable dataset still serves the full frozen set', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-empty-'));
+    const app = makeApp(() => freshDb(), dir);
+    const queue = EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json());
+    expect(queue.items.find((i) => i.kind === 'storage')!.scopes.map((s) => s.scopeKey)).toEqual(EDGE_BUY_BOX_FALLBACK.map((s) => s.id));
   });
 });
 

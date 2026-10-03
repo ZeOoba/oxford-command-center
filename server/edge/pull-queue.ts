@@ -1,9 +1,10 @@
 // server/edge/pull-queue.ts
 //
 // Oxford Edge manual-pull queue (spec §5.3). Scope lists and cadences are CODE (versioned,
-// reviewable); the DB holds only the append-only edge_pull_log (migration 034). The 21 storage/IOS
-// scopes are derived from markets.json `type` when the dataset is available and fall back to the
-// frozen copy of the retired Morning Guide's list when it is not. VA and MI truck coverage is
+// reviewable); the DB holds only the append-only edge_pull_log (migration 034). The storage/IOS
+// scopes are the UNION of the frozen copy of the retired Morning Guide's 21-market list and any loaded
+// markets.json market typed buy-box, so a buy-box market quarantined at load never drops out of the
+// queue (its recorded state stays visible and it stays recordable). VA and MI truck coverage is
 // automated (derived from markets.json), never a queue row. Labels, slugs, press feeds and truck
 // blockers are carried from the retired artifact (morning_guide.html, 2026-07-14).
 import type { WarehouseDb } from '../warehouse/db';
@@ -140,9 +141,19 @@ export const PULL_KIND_ORDER: readonly EdgePullKind[] = ['storage', 'ios', 'mfgI
 
 const DAY_MS = 86_400_000;
 
+/** Buy-box ids = the frozen list UNION loaded markets typed buy-box (frozen order first, then any extra
+ *  loaded ids). The frozen list always stays in scope so a market quarantined at load keeps its recorded
+ *  state and stays recordable; non-buy-box markets are never added. */
 export function deriveBuyBoxIds(markets: readonly EdgeMarket[]): string[] {
-  if (markets.length === 0) return EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
-  return markets.filter((m) => BUY_BOX_TYPES.has(m.type)).map((m) => m.id);
+  const ids = EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+  const seen = new Set(ids);
+  for (const m of markets) {
+    if (BUY_BOX_TYPES.has(m.type) && !seen.has(m.id)) {
+      seen.add(m.id);
+      ids.push(m.id);
+    }
+  }
+  return ids;
 }
 
 export function pullScopeKeys(kind: EdgePullKind, markets: readonly EdgeMarket[]): string[] {
