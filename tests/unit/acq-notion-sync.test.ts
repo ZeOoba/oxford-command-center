@@ -331,6 +331,23 @@ describe('syncNotionPipeline — Notion API failure', () => {
   });
 });
 
+describe('syncNotionPipeline — Notion request shape', () => {
+  // ACQ_PIPELINE_DB_ID is a Notion *data source* id. The legacy /v1/databases/{id}/query
+  // endpoint 404s (object_not_found) for it; the data-source endpoint + 2025-09-03 version works.
+  it('queries /v1/data_sources/{id}/query with Notion-Version 2025-09-03', async () => {
+    const db = freshDb();
+    const calls: { url: string; version: string | undefined }[] = [];
+    const spy: FetchLike = async (url, init) => {
+      calls.push({ url, version: (init?.headers as Record<string, string> | undefined)?.['Notion-Version'] });
+      return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), { status: 200 });
+    };
+    await syncNotionPipeline(db, 'tok', { databaseId: 'ds-123', fetchImpl: spy });
+    expect(calls).toEqual([
+      { url: 'https://api.notion.com/v1/data_sources/ds-123/query', version: '2025-09-03' },
+    ]);
+  });
+});
+
 describe('syncNotionPipeline — spine isolation', () => {
   it('CRITICAL: ledger_entries count is 0 after notion sync (Spine B untouched)', async () => {
     const db = freshDb();
