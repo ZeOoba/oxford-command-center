@@ -18,7 +18,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { runTool } from '../../server/ai/tools';
-import { runAgent, type AgentEvent } from '../../server/ai/agent';
+import { runAgent, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, type AgentEvent } from '../../server/ai/agent';
 
 /** A deal name that must never reach the API, plus the shortName the alert titles actually use. */
 const SECRET_NAME = 'Zephyr Logistics Center — Walker, MI';
@@ -253,6 +253,25 @@ describe('OI-225 layer 2 — injected pre-send scan on the agent egress', () => 
     expect(err!.message).toContain('Confidential Deal');
     expect(err!.message).not.toContain(SECRET_NAME);
     expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('surfaces the gate-unavailable refusal from a throwing tool-result scan (not the generic retry text)', async () => {
+    const fetchMock = vi.fn(async () => new Response(TURN_TOOL, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question: 'any deadlines?', snapshot: makeSnap(), apiKey: 'test-key',
+      emit: (e) => void events.push(e),
+      // server/index.ts's injected scan rethrows exactly this message when the roster is unreadable.
+      confidentialScan: (v) => {
+        if (v && typeof v === 'object' && 'question' in v) return null;
+        throw new Error(CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE);
+      },
+    });
+    vi.unstubAllGlobals();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // fails closed: nothing further is sent
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err!.message).toBe(CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE);
   });
 
   it('refuses BEFORE any request when the user question or history trips the scan (input egress)', async () => {

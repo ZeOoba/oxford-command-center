@@ -360,6 +360,9 @@ describe('syncHubSpotPipeline — error isolation', () => {
 
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0]).toMatch(/bad-deal/);
+    // Raw exception text (JS internals / SQLite table names) must not reach the 200 response body.
+    expect(result.errors[0]).toMatch(/could not be processed/);
+    expect(result.errors[0]).not.toMatch(/TypeError|Cannot read|Cannot convert/);
     // Good deal was still inserted
     const count = (db.prepare('SELECT COUNT(*) AS n FROM acq_candidates').get() as { n: number }).n;
     expect(count).toBe(1);

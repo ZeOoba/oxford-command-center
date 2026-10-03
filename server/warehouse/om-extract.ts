@@ -186,9 +186,11 @@ export async function extractOmFields(
       }),
     });
   } catch (e) {
-    const msg = e instanceof Error && e.name === 'AbortError'
+    const timedOut = e instanceof Error && e.name === 'AbortError';
+    if (!timedOut) console.error('[om-extract] network error reaching AI service:', e);
+    const msg = timedOut
       ? 'AI service request timed out — try again in a moment.'
-      : `Network error reaching AI service: ${e instanceof Error ? e.message : String(e)}`;
+      : 'Network error reaching the AI service.';
     return { ok: false, error: msg, status: 503 };
   } finally {
     clearTimeout(timeout);
@@ -199,7 +201,8 @@ export async function extractOmFields(
       return { ok: false, error: 'AI service temporarily unavailable — try again in a moment.', status: 503 };
     }
     const detail = await res.text().catch(() => '');
-    return { ok: false, error: `AI service error (${res.status}): ${detail.slice(0, 200)}`, status: 502 };
+    console.error(`[om-extract] AI service ${res.status}:`, detail.slice(0, 200));
+    return { ok: false, error: `AI service error (${res.status}).`, status: 502 };
   }
 
   const json = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
