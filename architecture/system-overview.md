@@ -2,13 +2,13 @@
 
 **Status:** Architecture lock file — no implementation agent may silently diverge from this document. If implementation conflicts with this file, update this file first (Lead Architect approval required), then implement.
 
-**Last verified:** 2026-06-13 · Branch: `feat/pfi-phase-1-foundation` (e44dd22)
+**Last verified:** 2026-10-03 against `origin/main` (6a6b186) — sections 2-6 refreshed from the code; section 7 (build state) and section 8 (roadmap) are historical snapshots, see their notes.
 
 ---
 
 ## 1. Purpose
 
-The Oxford Command Center is a **local-first investment intelligence platform** for Oxford Realty Advisors (~600K SF, ~140 tenants, ~27 properties, OH/MD/IN/WI/MO/KS/TN). It is not a general-purpose dashboard. Every feature must answer the question: *did this help ORA make a better capital allocation decision?*
+The Oxford Command Center is a **local-first investment intelligence platform** for Oxford Realty Advisors (OH/MD/IN/WI/MO/KS/TN). It is not a general-purpose dashboard. Every feature must answer the question: *did this help ORA make a better capital allocation decision?*
 
 ---
 
@@ -27,13 +27,14 @@ Master Workbook .xlsx (OneDrive/SharePoint)
   → reconcile (scripts/reconcile.ts)  $0-tolerance self-totals check
   → /api/snapshot + /sse              Push to client
   → src/analytics/engine.ts           buildAnalytics() → AnalyticsBundle
-  → 20 client modules                 UI rendering
+  → 12 registered destinations        UI rendering (src/shell/modules.tsx)
 
 Supplemental live sources (appended to Spine A):
-  Notion deals → /api/ai (tool: list_pipeline)
-  M365 tasks   → /api/ai (tool: list_tasks)
+  Notion deals/tenants → server/sources/notion-*.ts
+  M365 tasks   → server/sources/m365-tasks.ts (Graph)
+  AI agent     → /api/ai (12 tools, server/ai/tools.ts)
   FRED macro   → server/macro/getMacro.ts (FRED_API_KEY required; seeded fallback)
-  Doc RAG      → server/sources/documents.ts (better-sqlite3 vector index)
+  Doc RAG      → server/sources/documents.ts (sqlite-vec index, local embeddings)
 
 SPINE B — "Time Dimension" (historical, warehouse-driven)
 ─────────────────────────────────────────────────────────
@@ -44,15 +45,15 @@ Property Financials folder (32 P&L .xlsx/.xlsm files, OneDrive)
   → server/warehouse/raw-store.ts     SHA-256 immutable raw copy
   → server/warehouse/mapping.ts       Account → classification (manual>seed>learned)
   → server/warehouse/ingest.ts        Transactional commit pipeline
-  → better-sqlite3 (WAL)             5-table SQLite warehouse (see database-schema.md)
+  → better-sqlite3 (WAL)             SQLite warehouse, 33 numbered migrations (see database-schema.md)
   → server/warehouse/metrics.ts       Pure in-memory computation layer
   → server/warehouse/growth.ts        NOI trend / CAGR / since-acquisition
   → server/warehouse/drivers.ts       ΔNOI decomposition
   → server/warehouse/anomalies.ts     Statistical anomaly detection
   → server/warehouse/benchmarks.ts    Cross-property percentile ranking
   → server/warehouse/scores.ts        Health (0-100) / attention / capital scores
-  → /api/warehouse/*                  Served to Intel module
-  → src/modules/intel/               Intelligence UI
+  → /api/warehouse/*                  Served to the warehouse-backed modules
+  → src/modules/intel/ (Financials) + others   Intelligence UI
 ```
 
 **Critical defect (structural — must not regress):** `Property.noi` (Spine A, workbook formula cell) and `warehouse ledger NOI` (Spine B, `Σ revenue+recovery−opex`) are independent computations with no reconciliation check. Two numbers both called "NOI" can silently disagree. No new scoring or capital-allocation engine may consume both without explicit tie-out. See Phase 1a (basis discipline, commit 631963e).
@@ -62,21 +63,49 @@ Property Financials folder (32 P&L .xlsx/.xlsm files, OneDrive)
 ## 3. Server Architecture
 
 ```
-server/index.ts         Hono 4 app, 127.0.0.1:8911, localhost-only CORS
-  server/brain.ts       ExcelJS + chokidar file watcher → in-memory snapshot + EventEmitter
-  server/workbook/      Workbook parsers + counterparty graph
+server/index.ts         Hono 4 app, 127.0.0.1:8911 (BRAIN_SERVER_PORT), request boundary first:
+                        host-guard -> localhost CORS -> access-authz (ACCESS_REQUIRE=1 only) -> rate limits
+  server/brain.ts       ExcelJS + chokidar file watcher -> in-memory snapshot + EventEmitter -> /sse
+  server/workbook/      Workbook parser + counterparty graph
+  server/overlay.ts     data/overlay.json -- the one user write surface
   server/macro/         FRED API + seeded fallback macro data
-  server/ai/            Streaming Claude agent (11 tools) + keyword responder
-  server/alerts/        Alert inbox state + condition evaluator (conditions.ts)
-  server/sources/       Document RAG (index-docs, vector search)
+  server/ai/            Streaming Claude agent (12 tools) + deterministic responder
+  server/alerts/        Alert inbox state
+  server/brief/         Daily brief + critical-alert email (run from the mirror bake)
+  server/briefing/      Per-property / per-manager PDF briefings, confidentiality scan
+  server/sources/       Notion deals/tenants, M365 tasks, QuickBooks CSV, document RAG (doc-index worker)
+  server/ar/            Receivables / delinquency import
+  server/insights/      Insight ranking + generators
+  server/notion/        Capital-action write-back
   server/warehouse/     SQLite financial warehouse (Spine B)
     db.ts               open + migrate (WAREHOUSE_DB env var)
-    migrate.ts          Migration runner — numbered SQL files applied in order
-    migrations/         001_initial.sql, 002_*.sql, ...
-    ingest.ts           Full pipeline: detect→parse→map→foot→commit
-    api.ts              /api/warehouse Hono sub-router (injected db getter)
+    migrate.ts          Migration runner -- numbered SQL files applied in order
+    migrations/         001_initial.sql ... 033_portfolio_month_snapshot.sql
+    ingest.ts           Full pipeline: detect->parse->map->foot->commit
+    api.ts              /api/warehouse Hono router (injected db getter)
+    sub-routers.ts      Sub-router mount list (debt, insurance, tax, capital, lease-market, brain, ...)
     queries.ts          Read queries (no side effects)
     actions.ts          Mutations (approve/reject import, add mapping, resolve issue)
+    acq-*.ts            Acquisition engine + Notion/HubSpot sync
+```
+
+```mermaid
+flowchart LR
+    subgraph A["Spine A - current state"]
+        WB["Master Workbook"] --> PARSE["workbook/parse.ts"] --> SNAP["PortfolioSnapshot (Zod)"]
+        SNAP --> OV["applyOverlay"] --> BRAINSRV["brain.ts state + SSE"]
+        SRC["sources/* (Notion, M365, QuickBooks, docs)"] --> BRAINSRV
+    end
+    subgraph B["Spine B - time dimension"]
+        PL["32 P&L files"] --> ING["warehouse/ingest.ts"] --> DB[("SQLite WAL")]
+        DB --> ENG["metrics / scores / debt / tax / acq-engine / lease-market"]
+    end
+    BRAINSRV --> API["/api/* + /sse"]
+    ENG --> API
+    API --> CLIENT["React client: DATA -> contracts -> analytics -> modules"]
+    BRAINSRV -. "NOI tie-out (reconcile:noi-crosscheck)" .- DB
+    BRAINSRV -. "parseWorkbook() direct call" .-> BAKE["scripts/bake-mirror.ts"]
+    BAKE --> MIRROR["Cloudflare Pages mirror (+ functions/)"]
 ```
 
 **Server invariants:**
@@ -95,80 +124,64 @@ src/
   analytics/          buildAnalytics() — single metric source of truth
   data/               TanStack Query hooks + SSE listener + brain context
   brain/              App-wide UI state (drawer, AI panel, command palette)
-  shell/              AppShell, Sidebar, TopBar, ScenarioSwitch
-  modules/            20 modules (one per view — see §5)
+  shell/              AppShell, Sidebar, TopBar, ScenarioSwitch, module registry (modules.tsx)
+  modules/            28 folders: 12 registered destinations + their per-tab panels (see section 5)
   primitives/         StatusPill + other presentation atoms
   charts/             visx chart components (Waterfall, etc.)
+  tokens/ lib/        Theme tokens; shared client helpers
 ```
 
 **Client invariants:**
-- No URL-driven views (no react-router path routing — module switching via in-memory state).
+- Routing is `react-router-dom` (`/:moduleId/*` in `src/App.tsx`); each destination's tabs are addressed with `?tab=<id>`. The module registry in `src/shell/modules.tsx` is the single list of destinations.
 - All data flows through `buildAnalytics()` → typed `AnalyticsBundle` — never reach into raw snapshot.
 - `data/overlay.json` is the ONLY write surface — gitignored, user mutations only.
 
 ---
 
-## 5. Module Map (20 modules)
+## 5. Module Map (12 registered destinations)
 
-Rail modules are registered as entries in the `MODULES` array in `src/shell/modules.tsx`. Each
-entry owns a unique `id` string (`ModuleDef.id`) that the shell uses to track the active module
-in memory — there is no URL routing. The **ID** column is the `ModuleDef.id` field, which differs
-from the display label in a few cases (e.g. **Acquisitions** has `id: 'pipeline'`, **Monthly Close**
-has `id: 'close'`, **System Health** has `id: 'health'`). Overlay components (AI Panel, Command
-Palette, Entity Drawer) live in `src/brain/` and are not rail modules.
+Destinations are entries in the `MODULES` array in `src/shell/modules.tsx` (`ModuleDef.id` drives the URL segment). Each lazily loads one code-split chunk and declares up to five tabs (`?tab=<id>`). The `ID` column differs from the display label in a few cases (**Acquisitions** is `pipeline`, **Brain** is `command-brain`, **Financials** is `intel`). Earlier standalone modules (Principal Home, Tasks, Alerts, Calendar, Renewals, Calibration, Debt, Cash, Monthly Close, Insurance, Taxes, Documents) now live as tab panels inside these destinations. Overlay components (AI Panel, Command Palette, Entity/Deal Drawers) live in `src/brain/` and are not destinations.
 
-| Module | ID | Path | Spine | Status |
-|--------|----|------|-------|--------|
-| Overview | `overview` | `src/modules/overview/` | A | Shipped |
-| Principal Home | `principal` | `src/modules/principal/` | A | Shipped |
-| Acquisitions | `pipeline` | `src/modules/acquisitions/` | A | Seeded kanban only |
-| Tasks | `tasks` | `src/modules/tasks/` | A | Shipped |
-| Alerts | `alerts` | `src/modules/alerts/` | A | Shipped |
-| Calendar | `calendar` | `src/modules/calendar/` | A | Shipped |
-| Renewals | `renewals` | `src/modules/renewals/` | A | Shipped |
-| Portfolio | `portfolio` | `src/modules/portfolio/` | A | Shipped |
-| Property Financials | `intel` | `src/modules/intel/` | B | Phase B2 (PR #14) |
-| Calibration | `calibration` | `src/modules/calibration/` | B | Shipped |
-| Leases | `leases` | `src/modules/leases/` | A | Shipped |
-| Tenants | `tenants` | `src/modules/tenants/` | A | Shipped |
-| Debt | `debt` | `src/modules/debt/` | A | Shipped |
-| Cash | `cash` | `src/modules/cash/` | A | Shipped |
-| Monthly Close | `close` | `src/modules/close/` | A | Shipped |
-| Insurance | `insurance` | `src/modules/insurance/` | A | Shipped |
-| Market | `market` | `src/modules/market/` | A | Shipped |
-| Relationships | `relationships` | `src/modules/relationships/` | A | Shipped |
-| Documents | `documents` | `src/modules/documents/` | A | Shipped |
-| System Health | `health` | `src/modules/health/` | A | Shipped |
+| Group | Destination | ID | Path | Tabs |
+|-------|-------------|----|------|------|
+| Command | Overview | `overview` | `src/modules/overview/` | none |
+| Command | Acquisitions | `pipeline` | `src/modules/acquisitions/` | pipeline, workbench, sourcing, grader |
+| Command | Worklist | `worklist` | `src/modules/worklist/` | today, alerts, calendar, renewals |
+| Command | Brain | `command-brain` | `src/modules/command-brain/` | digest, insights, track-record, feedback, memory |
+| Assets | Portfolio | `portfolio` | `src/modules/portfolio/` | properties, trends, expenses |
+| Assets | Financials | `intel` | `src/modules/intel/` | ownership, property, lease-run, benchmarks, managers |
+| Assets | Leasing | `leasing` | `src/modules/leasing/` | rollover, rent-roll, forecast, market-rents, tenants |
+| Capital | Capital | `capital` | `src/modules/capital/` | allocation, pipeline, debt, cash, close |
+| Capital | Obligations | `obligations` | `src/modules/obligations/` | insurance, taxes |
+| Market | Market | `market` | `src/modules/market/` | macro, scorecards, comps, demand |
+| Market | Lease Market | `lease-market` | `src/modules/lease-market/` | portfolio, market-rents, radar, changes, data-quality |
+| System | Data | `data` | `src/modules/data/` | imports, quality, mappings, calibration, documents |
+| (off rail) | System Health | `health` | `src/modules/health/` | none; routable, shown as a TopBar status dot |
+
+Destinations are no longer one-to-one with a spine: warehouse-backed (Spine B) data reaches Financials, Capital, Obligations, Leasing, Lease Market, Brain and Data through `/api/warehouse/*`.
 
 ---
 
 ## 6. Static Mirror
 
-The Cloudflare Pages static mirror (`deploy:mirror`) is a read-only snapshot. It has no Brain Server, no AI, no warehouse. The mirror bakes `public/snapshot.json` + `public/macro.json` and serves them via Cloudflare Pages Functions (`functions/`). Confidential deal data is redacted by default (`data/overlay.json` stays local).
+The Cloudflare Pages static mirror (`ora-command-center.pages.dev`, behind Cloudflare Access) is a read-only copy. It has no Brain Server and no live warehouse. The bake (`scripts/bake-mirror.ts`) writes `public/snapshot.json` + `public/macro.json`; an optional heavier bake (`scripts/bake-warehouse.ts`, via `--warehouse` / `BAKE_WAREHOUSE=1`) writes `public/warehouse.json` holding computed warehouse route payloads. Pages Functions in `functions/api/` provide the Ask panel (`ai.ts`, the same agent code as the Brain Server, reading the baked snapshot), Access identity (`whoami.ts`) and edge acquisition scoring (`warehouse/acquisition/score.ts`). Confidential deals are redacted by default; `MIRROR_INCLUDE_CONFIDENTIAL=1` is an explicit opt-in only for an Access-verified target, and `data/overlay.json` stays local. Deployment is `scripts/deploy-mirror.ps1`, run by an off-fleet Windows scheduled task (hourly plus 06:45 ET) from an isolated build root reset to `origin/main`, followed by an Access-gate re-verification.
 
 ---
 
 ## 7. Current Build State
 
-| Layer | State |
-|-------|-------|
-| Gate | `npm run gate` = typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 450+ vitest unit tests |
-| Warehouse | 5-table SQLite, 32 P&L files ingested, 339 GL accounts mapped |
-| Intelligence | Phase B2 merged (PR #14 stacked on #13, pending merge) |
-| Phase 1a | Basis discipline + NOI integrity gate (commit 631963e, pending PR to main) |
+Not tracked in this file (it went stale within days of being written). Current sources of truth:
+
+| Item | Source |
+|------|--------|
+| Gate steps | `package.json` scripts `gate` (11 steps, local) and `gate:ci` (CI subset); description in `CLAUDE.md` section 6 |
+| CI | `.github/workflows/ci.yml`, `order-fragility.yml`, `full-gate-selfhosted.yml` |
+| Warehouse schema | `server/warehouse/migrations/` (001 through 033) and `architecture/database-schema.md` |
+| Phase status | `CLAUDE.md` section 3 |
+| Merge history | `git log` |
 
 ---
 
 ## 8. Roadmap Phases
 
-| Phase | Name | Status |
-|-------|------|--------|
-| 1a | Foundation integrity (basis discipline, NOI integrity gate) | Shipped on branch |
-| 1b | FRED macro agent tool | Shipped on branch |
-| 2 | Debt/Refi scoring + AI narrative briefings | Not started |
-| 3 | Forecast + Leasing intelligence | Not started |
-| 4 | Acquisition Intelligence Engine | Not started (firm priority #1) |
-| 5 | Capital Allocation capstone + Market intelligence | Not started |
-
-See `docs/superpowers/specs/2026-06-13-ora-intelligence-platform-master-plan.md` for full detail.
+Maintained in `CLAUDE.md` section 3 (phases 1a through 5 and the design-parity waves are recorded there as merged). Master plan: `docs/superpowers/specs/2026-06-13-ora-intelligence-platform-master-plan.md`.
