@@ -684,3 +684,54 @@ describe('fix-pass 3 — B7 loader gaps', () => {
     });
   });
 });
+
+describe('review-fix F3/T6 — market id bounds, ENOTDIR, status length, state length', () => {
+  type Raw = { markets: Array<Record<string, unknown> & { status: Record<string, unknown[]> }> };
+  const withExtra = (patch: (m: Raw['markets'][number]) => void, id: string): string => {
+    const f = JSON.parse(FIXTURE_TEXT) as Raw;
+    const m = JSON.parse(JSON.stringify(f.markets[0])) as Raw['markets'][number];
+    m.id = id;
+    patch(m);
+    f.markets.push(m);
+    return JSON.stringify(f);
+  };
+
+  it.each([['x'], ['y'.repeat(65)]])('market id of length %#: out of 2..64 is quarantined with a reason', async (id) => {
+    const { deps } = fakeFs({ text: () => withExtra(() => undefined, id) });
+    const r = await loadEdgeDataset(`mem://id-${id.length}`, NOW, deps);
+    expect(r.marketCount).toBe(4);
+    expect(r.rejectedMarkets).toHaveLength(1);
+    expect(r.rejectedMarkets[0]!.reason).toMatch(/^id: /);
+  });
+
+  it.each([['ab'], ['z'.repeat(64)]])('market id of length %#: 2 and 64 chars load', async (id) => {
+    const { deps } = fakeFs({ text: () => withExtra(() => undefined, id) });
+    const r = await loadEdgeDataset(`mem://idok-${id.length}`, NOW, deps);
+    expect(r.marketCount).toBe(5);
+    expect(r.rejectedMarkets).toEqual([]);
+  });
+
+  it('ENOTDIR yields availability missing', async () => {
+    const { deps } = fakeFs({ text: () => { throw errno('ENOTDIR'); } });
+    const r = await loadEdgeDataset('mem://enotdir-read', NOW, deps);
+    expect(r.availability).toBe('missing');
+    const { deps: d2 } = fakeFs({ text: () => FIXTURE_TEXT, stat: () => { throw errno('ENOTDIR'); } });
+    expect((await loadEdgeDataset('mem://enotdir-stat', NOW, d2)).availability).toBe('missing');
+  });
+
+  it('a status array of the wrong length quarantines that market only', async () => {
+    const { deps } = fakeFs({ text: () => withExtra((m) => { m.status.vac = m.status.vac!.slice(1); }, 'bad_status') });
+    const r = await loadEdgeDataset('mem://status-len', NOW, deps);
+    expect(r.marketCount).toBe(4);
+    expect(r.rejectedMarkets.map((x) => x.id)).toEqual(['bad_status']);
+    expect(r.rejectedMarkets[0]!.reason).toContain('status');
+  });
+
+  it('a 3-letter state quarantines that market only', async () => {
+    const { deps } = fakeFs({ text: () => withExtra((m) => { m.state = 'OHI'; }, 'bad_state') });
+    const r = await loadEdgeDataset('mem://state-len', NOW, deps);
+    expect(r.marketCount).toBe(4);
+    expect(r.rejectedMarkets.map((x) => x.id)).toEqual(['bad_state']);
+    expect(r.rejectedMarkets[0]!.reason).toContain('state');
+  });
+});

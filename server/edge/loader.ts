@@ -66,7 +66,8 @@ export function rawEdgeMarketSchema(yearCount: number) {
   const seriesShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, values])) as Record<EdgeSeriesKey, typeof values>;
   const statusShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, statuses])) as Record<EdgeSeriesKey, typeof statuses>;
   return z.object({
-    id: z.string().min(1),
+    // 2..64 mirrors RecordPullRequest.scopeKey and the pull-log CHECK: a market outside it could never be recorded.
+    id: z.string().min(2).max(64),
     name: z.string(),
     state: z.string().length(2),
     cbsa: z.string(),
