@@ -16,7 +16,13 @@
 // sub-router factory.
 import type { ErrorHandler } from 'hono';
 
+// The 500 body is deliberately generic: a raw err.message can carry SQLite constraint/table
+// names or filesystem paths (2026-10 security review of PR #427). The full error is logged
+// server-side only. The log line carries method + path (never the query string); the path is
+// JSON-quoted because Hono decodes it, so a crafted %0A would otherwise forge log lines. The
+// logged `err` itself may still embed input values (e.g. Zod issue text) — it never leaves
+// the process.
 export const warehouseJsonError: ErrorHandler = (err, c) => {
-  console.error('[warehouse] route error:', err);
-  return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  console.error(`[warehouse] route error: ${c.req.method} ${JSON.stringify(c.req.path)}`, err);
+  return c.json({ error: 'internal error' }, 500);
 };
