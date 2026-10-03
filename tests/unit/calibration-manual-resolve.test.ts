@@ -234,3 +234,29 @@ describe('resolveManualOutcome — validation + grain guard (adversarial)', () =
     expect(totalOutcomes(db, id)).toBe(0);
   });
 });
+
+describe('resolveManualOutcome — unexpected DB failure', () => {
+  it('returns a generic error, never the raw SQLite message (table names)', () => {
+    const db = freshDb();
+    const id = seedVerdict(db);
+    db.exec('DROP TABLE calibration_outcome'); // force the transaction to throw
+    const res = resolveManualOutcome(db, {
+      calibrationId: id,
+      realizedBand: 'noi-flat-or-declined',
+      realizedValue: -0.04,
+      realizedUnit: 'pct-change',
+      outcomePeriod: '2025',
+      hit: 1,
+      actionTaken: 'none',
+      actionDetail: null,
+      treatmentNote: 'x',
+      resolutionBasis: 'analyst-judgment',
+      resolvedBy: 'manual:gabriel',
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).not.toMatch(/calibration_outcome|no such table/i);
+      expect(res.error).not.toMatch(/not found/i); // must not be misrouted to the 404 branch
+    }
+  });
+});

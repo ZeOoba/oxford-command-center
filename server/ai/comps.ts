@@ -60,12 +60,14 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
       body: JSON.stringify(body),
     });
   } catch (e) {
-    return { ok: false, error: `Network error reaching Anthropic: ${e instanceof Error ? e.message : String(e)}` };
+    console.error('[comps] network error reaching Anthropic:', e);
+    return { ok: false, error: 'Network error reaching the AI service.' };
   }
 
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    return { ok: false, error: `Anthropic ${res.status}: ${detail.slice(0, 200)}` };
+    console.error(`[comps] Anthropic ${res.status}:`, detail.slice(0, 200));
+    return { ok: false, error: `AI service error (${res.status}).` };
   }
 
   const json = (await res.json()) as { content?: AnthropicContentBlock[] };

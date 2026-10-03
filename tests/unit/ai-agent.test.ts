@@ -414,3 +414,15 @@ describe('runAgent — streaming tool loop', () => {
     expect(bodies[1]).not.toContain('Live macro is not available on this surface');
   });
 });
+
+describe('runAgent — unexpected failure', () => {
+  it('emits a generic error event, never the raw exception text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect ECONNREFUSED 10.1.2.3:443 C:/secret/path'); }));
+    const events: AgentEvent[] = [];
+    await runAgent({ question: 'summary', snapshot: makeSnap(), apiKey: 'test-key', emit: (e) => void events.push(e) });
+    vi.unstubAllGlobals();
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err).toBeDefined();
+    expect(err!.message).not.toMatch(/ECONNREFUSED|10\.1\.2\.3|secret/);
+  });
+});

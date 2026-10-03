@@ -373,3 +373,31 @@ describe('extractOmFields egress roster scan (blank-deal upload)', () => {
     expect(seen[0]!.length).toBeLessThan(40_000);
   });
 });
+
+describe('extractOmFields — upstream failures do not leak raw text', () => {
+  const pdfParseFn = async () => ({ text: 'Industrial OM with lots of detail.' });
+
+  it('network error: generic 503, no raw exception text', async () => {
+    const fetchImpl = (async () => { throw new Error('connect ECONNREFUSED 10.1.2.3:443'); }) as unknown as typeof fetch;
+    const r = await extractOmFields(VALID_PDF_BUFFER, { apiKey: 'test-key', pdfParseFn, fetchImpl });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(503);
+      expect(r.error).not.toMatch(/ECONNREFUSED|10\.1\.2\.3/);
+    }
+  });
+
+  it('non-2xx: 502 with status only, upstream body not echoed', async () => {
+    const r = await extractOmFields(VALID_PDF_BUFFER, {
+      apiKey: 'test-key',
+      pdfParseFn,
+      fetchImpl: mockFetch('upstream org_SECRET123 trace', 500) as unknown as typeof fetch,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.status).toBe(502);
+      expect(r.error).toContain('500');
+      expect(r.error).not.toContain('org_SECRET123');
+    }
+  });
+});
