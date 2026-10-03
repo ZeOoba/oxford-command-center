@@ -358,9 +358,9 @@ export function edgeUnmatchedHeadline(reason: EdgeUnmatchedReason): string {
  *  at 200 chars and the city pattern is unambiguous (words never contain spaces), so matching is linear. */
 export function parseCityState(location: string | null): { city: string; state: string } | null {
   if (!location) return null;
-  const stripped = location.slice(0, 200).replace(/\([^)]*\)/g, ' ');
+  const stripped = location.slice(0, 200).normalize('NFC').replace(/\([^)]*\)/g, ' ');
   // \p{L}: Unicode letters, so "Montréal" / "Española" / "Cañon City" keep their full names.
-  const re = /(\p{L}[\p{L}.'-]*(?: +[\p{L}.'-]+)*)\s*,\s*([A-Z]{2})\b/gu;
+  const re = /(\p{L}[\p{L}\p{M}.'-]*(?: +[\p{L}\p{M}.'-]+)*)\s*,\s*([A-Z]{2})\b/gu;
   let last: { city: string; state: string } | null = null;
   let m: RegExpExecArray | null;
   while ((m = re.exec(stripped)) !== null) {
@@ -373,7 +373,7 @@ export function parseCityState(location: string | null): { city: string; state: 
 
 /** First hyphen-segment of a CBSA title = its principal city ("Scranton--Wilkes-Barre" → "scranton"). */
 function principalCity(name: string): string {
-  return (name.split('-')[0] ?? name).trim().toLowerCase();
+  return ((name.split('-')[0] ?? name).trim()).normalize('NFC').toLowerCase();
 }
 
 export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, markets: readonly EdgeMarket[]): EdgeResolution {
@@ -391,7 +391,7 @@ export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, marke
   if (!pair) return { kind: 'unmatched', reason: 'no_location' };
   const city = pair.city.toLowerCase();
   const hits = markets.filter(
-    (m) => m.state === pair.state && (m.name.trim().toLowerCase() === city || principalCity(m.name) === city),
+    (m) => m.state === pair.state && (m.name.trim().normalize('NFC').toLowerCase() === city || principalCity(m.name) === city),
   );
   const only = hits.length === 1 ? hits[0] : undefined;
   if (only) return { kind: 'matched', market: only, via: 'tier2_location' };

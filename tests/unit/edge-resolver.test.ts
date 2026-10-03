@@ -158,6 +158,33 @@ describe('Tier 2 (Deal.location exact City, ST)', () => {
     expect(parseCityState(`${' '.repeat(300)}Hagerstown, MD`)).toBeNull(); // the pair sits past the 200-char cap
   });
 
+  it('strips parentheticals that contain commas/states ("Foo Park (Bldg 2, OH)")', () => {
+    expect(parseCityState('Foo Park (Bldg 2, OH)')).toBeNull();
+    expect(parseCityState('Foo Park (Dayton, OH)')).toBeNull();
+    expect(parseCityState('Hagerstown, MD (Dayton, OH)')).toEqual({ city: 'Hagerstown', state: 'MD' });
+  });
+
+  it('decomposed (NFD) accents keep the full city name', () => {
+    const nfd = (t: string) => t.normalize('NFD');
+    expect(parseCityState(nfd('Española, NM'))).toEqual({ city: 'Española', state: 'NM' });
+    expect(parseCityState(nfd('Cañon City, CO'))).toEqual({ city: 'Cañon City', state: 'CO' });
+    expect(parseCityState(nfd('Montréal, QC'))).toEqual({ city: 'Montréal', state: 'QC' });
+  });
+
+  it('tier 2 matches an NFD deal city against an NFC market name and vice versa', () => {
+    const nfcMarket = mkMarket('espanola', 'Española', 'NM', 'auto');
+    const nfdMarket = mkMarket('canon_city', 'Cañon City'.normalize('NFD'), 'CO', 'auto');
+    const markets = [nfcMarket, nfdMarket];
+    expect(resolveEdgeMarket(deal('Other', 'Española, NM'.normalize('NFD')), markets)).toMatchObject({ kind: 'matched', market: { id: 'espanola' } });
+    expect(resolveEdgeMarket(deal('Other', 'Cañon City, CO'), markets)).toMatchObject({ kind: 'matched', market: { id: 'canon_city' } });
+  });
+
+  it('Cincinnati OH deal located in MI is conflicting_location (MI is not an allowed state)', () => {
+    expect(resolveEdgeMarket(deal('Cincinnati OH', 'Detroit, MI'), [
+      mkMarket(EDGE_TIER1_TABLE['Cincinnati OH'] as string, 'Cincinnati', 'OH', 'named'),
+    ])).toEqual({ kind: 'unmatched', reason: 'conflicting_location' });
+  });
+
   it('every reason has display text', () => {
     expect(Object.keys(EDGE_UNMATCHED_TEXT).sort()).toEqual([
       'ambiguous', 'conflicting_location', 'edge_id_absent', 'no_location', 'no_market_for_location',
