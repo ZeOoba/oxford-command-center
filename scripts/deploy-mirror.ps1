@@ -240,6 +240,10 @@ try {
   # 2) Bake (confidential included -- target is Access-gated) + build.
   $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
   $env:BRIEF_ENABLED               = '1'
+  # The brief runs inside the isolated build root, whose data/ is not the dir the live Brain Server
+  # reads. Without this, brief-health.json lands in the build root and the Data Feeds "Daily brief"
+  # row reads a stale primary-checkout copy (86d stale on 2026-10-03 while the brief ran hourly).
+  $env:BRIEF_HEALTH_PATH           = Join-Path $repo 'data\brief-health.json'
   # Fat Mirror / cold-standby payload. Set explicitly to '0' rather than left unset when the switch
   # is absent: this process inherits the caller's environment, and a BAKE_WAREHOUSE=1 lingering in an
   # operator's shell would otherwise silently turn every hourly run into the heavy bake -- the exact
@@ -343,6 +347,7 @@ try {
   finally {
     Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_ENABLED               -ErrorAction SilentlyContinue
+    Remove-Item Env:\BRIEF_HEALTH_PATH           -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
     Remove-Item Env:\NODE_OPTIONS                -ErrorAction SilentlyContinue
   }
