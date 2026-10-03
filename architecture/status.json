@@ -9,6 +9,15 @@
     "review_detail": "PR open, not merged by the author. Touches server/warehouse/calibration.ts (error-return text only).",
     "last_updated": "2026-10-03T00:00:00Z"
   },
+  "warehouse-500-sanitize": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (security review finding on PR #427)",
+    "phase": "server/warehouse/json-errors.ts: warehouseJsonError returns a generic {error:'internal error'} 500 and logs method+path+full error server-side instead of echoing err.message. Tests updated.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "PR open, not merged by the author. Error-handling only, no financial math (Refute-Skip).",
+    "last_updated": "2026-10-03T00:00:00Z"
+  },
   "sse-access-authz": {
     "agent_role": "Engineering (Claude Code) - cc-audit-army finding sse-bypasses-access-authz, Gabriel-approved in-turn 2026-09-29",
     "phase": "server/index.ts: build the accessAuthz gate once (const accessGate) and mount that ONE instance on /api/* AND /sse. /sse lives outside /api/* and streams the same confidential BrainState (workbookPath, lastError, data-quality flags) but was covered only by the host/origin boundary, which stops being the security boundary once the tunnel is on. Inert with ACCESS_REQUIRE unset. Tests: structural mount-order test updated, /sse mount asserted, behavioral 403 test.",
