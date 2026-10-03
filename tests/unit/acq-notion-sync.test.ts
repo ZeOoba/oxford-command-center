@@ -215,6 +215,44 @@ describe('syncNotionPipeline — field mapping', () => {
   });
 });
 
+describe('syncNotionPipeline — live Acquisition Pipeline Tracker schema', () => {
+  // The live database uses "Deal Name" / "Address" / "Total SF" / "Stage" (not the Name/SF/Status
+  // names the original fixtures assumed). Pin the mapping against that real shape.
+  function livePage(id: string, stage: string, totalSf: number | null): object {
+    return {
+      id,
+      properties: {
+        'Deal Name': { type: 'title', title: [{ plain_text: '123 Main St' }] },
+        Address: { type: 'rich_text', rich_text: [{ plain_text: '123 Main St, Columbus OH' }] },
+        'Total SF': { type: 'number', number: totalSf },
+        Stage: { type: 'select', select: { name: stage } },
+      },
+    };
+  }
+
+  it('reads Total SF into rentable_sf', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([livePage('live-sf', 'Candidate', 38500)]) });
+    const row = db.prepare('SELECT rentable_sf FROM acq_candidates WHERE id = ?').get('deal:live-sf') as
+      { rentable_sf: number | null } | undefined;
+    expect(row?.rentable_sf).toBe(38500);
+  });
+
+  it.each([
+    ['Killed', 'passed'],
+    ['Passed', 'passed'],
+    ['Closed Won', 'acquired'],
+    ['Candidate', 'active'],
+    ['LOI Executed', 'active'],
+  ])('Stage %s maps to status %s', async (stage, expected) => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([livePage('live-stage', stage, null)]) });
+    const row = db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get('deal:live-stage') as
+      { status: string } | undefined;
+    expect(row?.status).toBe(expected);
+  });
+});
+
 describe('syncNotionPipeline — status no-clobber', () => {
   it('does not downgrade a locally-acquired candidate back to active on sync', async () => {
     const db = freshDb();

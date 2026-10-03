@@ -115,7 +115,7 @@ function mapStatus(raw: string | null): 'active' | 'archived' | 'acquired' | 'pa
   if (!raw) return 'active';
   const lower = raw.toLowerCase();
   if (lower.includes('closed') || lower.includes('won')) return 'acquired';
-  if (lower.includes('dead') || lower.includes('lost') || lower.includes('passed')) return 'passed';
+  if (lower.includes('dead') || lower.includes('lost') || lower.includes('passed') || lower.includes('killed')) return 'passed';
   if (lower.includes('archiv')) return 'archived';
   return 'active';
 }
@@ -179,7 +179,7 @@ export async function syncNotionPipeline(
       const county = propText(props, 'county');
       const state = propText(props, 'state');
       const market = mapMarket(propText(props, 'market', 'cluster'));
-      const rentableSf = propNumber(props, 'sf', 'rentable sf', 'building sf');
+      const rentableSf = propNumber(props, 'sf', 'rentable sf', 'building sf', 'total sf');
       const yearBuilt = (() => {
         const n = propNumber(props, 'year built');
         return n !== null ? Math.trunc(n) : null;
