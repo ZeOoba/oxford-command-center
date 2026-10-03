@@ -524,6 +524,66 @@ describe('I2/I3 — storage/IOS scope = loaded buy-box ∪ frozen-unless-explici
   });
 });
 
+describe('I4 — void under write contention', () => {
+  it('missing → 404 and already-voided → 409 immediately; a live void → 503 with a fixed message', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'edge-api-busy-')), 'w.sqlite');
+    const a = openWarehouse(path);
+    const b = openWarehouse(path);
+    a.pragma('busy_timeout = 0');
+    const app = makeApp(() => a);
+    const live = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' })).json())
+      .scopes.find((s) => s.scopeKey === 'columbus')!.lastLogId!;
+    const dead = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'richmond', doneOn: '2026-09-01' })).json())
+      .scopes.find((s) => s.scopeKey === 'richmond')!.lastLogId!;
+    expect((await post(app, `/pull-queue/${dead}/void`)).status).toBe(200);
+
+    b.exec('BEGIN IMMEDIATE');
+    try {
+      expect((await post(app, '/pull-queue/9999/void')).status).toBe(404);
+      expect((await post(app, `/pull-queue/${dead}/void`)).status).toBe(409);
+      const busy = await post(app, `/pull-queue/${live}/void`);
+      expect(busy.status).toBe(503);
+      expect(await busy.json()).toEqual({ error: 'pull log is busy; retry' });
+    } finally {
+      b.exec('ROLLBACK');
+    }
+    expect((await post(app, `/pull-queue/${live}/void`)).status).toBe(200);
+    a.close();
+    b.close();
+  });
+
+  it.each([
+    ['SQLITE_BUSY', 503],
+    ['SQLITE_BUSY_SNAPSHOT', 503],
+    ['SQLITE_IOERR', 500],
+  ])('a %s thrown by the void transaction → %i', async (code, status) => {
+    const real = freshDb();
+    real.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'columbus', '2026-09-01')").run();
+    const faulty = new Proxy(real, {
+      get(target, prop, recv) {
+        if (prop === 'transaction') {
+          return () => ({
+            immediate: () => {
+              throw Object.assign(new Error(`${code}: database is locked at C:/secret/path`), { code });
+            },
+          });
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as WarehouseDb;
+    const app = makeApp(() => faulty);
+    app.onError(warehouseJsonError);
+    const res = await post(app, '/pull-queue/1/void');
+    expect(res.status).toBe(status);
+    if (status === 503) {
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ error: 'pull log is busy; retry' });
+      expect(text).not.toMatch(/secret|SQLITE|locked/);
+    }
+  });
+});
+
 describe('GET /markets — non-finite numbers (gate-fix F1)', () => {
   it.each([
     ['lat', (t: string) => t.replace(/"lat":\s*-?[\d.]+/, '"lat":1e999')],

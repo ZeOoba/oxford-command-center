@@ -24,6 +24,12 @@ function isSqliteCheckViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'SQLITE_CONSTRAINT_CHECK';
 }
 
+/** Write-lock contention: SQLITE_BUSY and its extended codes (SQLITE_BUSY_SNAPSHOT, _RECOVERY, _TIMEOUT). */
+function isSqliteBusy(e: unknown): boolean {
+  const code = typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && /^SQLITE_BUSY(_[A-Z]+)?$/.test(code);
+}
+
 export interface EdgeApiDeps {
   edgeDir?: () => string;
   now?: () => Date;
@@ -106,7 +112,14 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       if (!Number.isSafeInteger(id) || id <= 0) return c.json({ error: 'id must be a positive integer' }, 400);
       // Load BEFORE the void commit so a dataset-read fault can never turn a committed void into a 500.
       const { markets } = await load();
-      const result = voidEdgePull(db, id);
+      let result: ReturnType<typeof voidEdgePull>;
+      try {
+        result = voidEdgePull(db, id);
+      } catch (e) {
+        // Contention is transient, not a server fault: fixed text only (no SQL, path or driver message).
+        if (isSqliteBusy(e)) return c.json({ error: 'pull log is busy; retry' }, 503);
+        throw e;
+      }
       if (result.status === 'not_found') return c.json({ error: `pull log row ${id} not found` }, 404);
       if (result.status === 'already_voided') return c.json({ error: `pull log row ${id} is already voided` }, 409);
       if (result.status === 'superseded') {

@@ -292,12 +292,22 @@ export type VoidEdgePullResult =
  *  currently the scope's state (latest non-voided by done_on DESC, id DESC) is voidable: voiding an older,
  *  superseded row from a stale tab would be permanent (the trigger forbids un-voiding) yet change nothing visible. */
 export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
-  // BEGIN IMMEDIATE: the latest-row check and the UPDATE hold the write lock together, so another
-  // connection cannot record a newer row between them (a void is permanent: the trigger forbids un-voiding).
-  const run = db.transaction((): VoidEdgePullResult => {
-    const row = db
+  type LogRowById = { kind: EdgePullKind; scopeKey: string; voidedAt: string | null };
+  const byId = (): LogRowById | undefined =>
+    db
       .prepare('SELECT pull_kind AS kind, scope_key AS scopeKey, voided_at AS voidedAt FROM edge_pull_log WHERE id = ?')
-      .get(id) as { kind: EdgePullKind; scopeKey: string; voidedAt: string | null } | undefined;
+      .get(id) as LogRowById | undefined;
+  // Cheap terminal answers first, OUTSIDE the write lock: under write contention a missing or already-voided
+  // id must still answer 404/409 at once instead of waiting out the busy timeout. Rows are never deleted and
+  // a void is permanent, so both answers are final and cannot be invalidated by a concurrent writer.
+  const pre = byId();
+  if (!pre) return { status: 'not_found' };
+  if (pre.voidedAt !== null) return { status: 'already_voided', kind: pre.kind };
+  // BEGIN IMMEDIATE: everything is RE-CHECKED under the write lock — the latest-row check and the UPDATE
+  // hold the lock together, so another connection cannot record a newer row (or void this one) between
+  // them (a void is permanent: the trigger forbids un-voiding).
+  const run = db.transaction((): VoidEdgePullResult => {
+    const row = byId();
     if (!row) return { status: 'not_found' };
     if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
     const current = db

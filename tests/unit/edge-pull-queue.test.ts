@@ -356,6 +356,72 @@ describe('R1 — void check-then-update is atomic against another connection', (
   });
 });
 
+describe('I4 — not_found / already_voided resolve outside the write lock', () => {
+  it('under a held BEGIN IMMEDIATE on another connection, missing and already-voided ids return without SQLITE_BUSY; a live void is BUSY', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'edge-pq-busy-')), 'w.sqlite');
+    const a = openWarehouse(path);
+    const b = openWarehouse(path);
+    a.pragma('busy_timeout = 0'); // voiding connection: never wait (same thread — the lock could never be released)
+    const live = recordEdgePull(a, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+    const dead = recordEdgePull(a, { kind: 'storage', scopeKey: 'richmond', doneOn: '2026-09-01' });
+    expect(voidEdgePull(a, dead)).toEqual({ status: 'voided', kind: 'storage' });
+
+    b.exec('BEGIN IMMEDIATE');
+    let busyCode: unknown = null;
+    try {
+      expect(voidEdgePull(a, 9999)).toEqual({ status: 'not_found' });
+      expect(voidEdgePull(a, dead)).toEqual({ status: 'already_voided', kind: 'storage' });
+      try {
+        voidEdgePull(a, live);
+      } catch (e) {
+        busyCode = (e as { code?: unknown }).code;
+      }
+    } finally {
+      b.exec('ROLLBACK');
+    }
+    expect(busyCode).toBe('SQLITE_BUSY');
+    // lock released: the live void now succeeds and is still atomic/guarded
+    expect(voidEdgePull(a, live)).toEqual({ status: 'voided', kind: 'storage' });
+    a.close();
+    b.close();
+  });
+
+  it('re-checks inside the transaction: a row voided by another connection after the pre-check is already_voided, not re-voided', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'edge-pq-recheck-')), 'w.sqlite');
+    const a = openWarehouse(path);
+    const b = openWarehouse(path);
+    b.pragma('busy_timeout = 0');
+    const target = recordEdgePull(a, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+    let selects = 0;
+    // After the FIRST by-id lookup (the outside pre-check), B voids the row before A takes the lock.
+    const hooked = new Proxy(a, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t) as unknown;
+        if (prop !== 'prepare') return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+        return (sql: string) => {
+          const stmt = t.prepare(sql);
+          if (!/FROM edge_pull_log WHERE id = \?/.test(sql)) return stmt;
+          return {
+            get: (...args: unknown[]) => {
+              const out = stmt.get(...args);
+              if (++selects === 1) {
+                b.prepare("UPDATE edge_pull_log SET voided_at = '2026-10-02T00:00:00Z' WHERE id = ?").run(target);
+              }
+              return out;
+            },
+          };
+        };
+      },
+    }) as WarehouseDb;
+    expect(voidEdgePull(hooked, target)).toEqual({ status: 'already_voided', kind: 'storage' });
+    expect(selects).toBe(2); // pre-check + in-transaction re-check
+    expect((a.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(target) as { voided_at: string }).voided_at)
+      .toBe('2026-10-02T00:00:00Z'); // B's void stands; A did not overwrite it
+    a.close();
+    b.close();
+  });
+});
+
 describe('fix-pass 3 — B7 pull-queue gaps', () => {
   it('blockers appear only on truck scopes, never on other kinds even when the scope key collides', () => {
     for (const kind of ['storage', 'ios', 'mfgInvest'] as const) {
