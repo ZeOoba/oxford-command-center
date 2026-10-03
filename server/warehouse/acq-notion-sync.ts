@@ -260,7 +260,9 @@ export async function syncNotionPipeline(
         result.inserted += 1;
       }
     } catch (e) {
-      result.errors.push(`page ${page.id}: ${String(e)}`);
+      // Raw exception text (SQLite table/constraint names) goes to the server log, not the 200 body.
+      console.error(`[acq-notion-sync] page ${page.id} failed:`, e);
+      result.errors.push(`page ${page.id}: could not be processed (see server log)`);
     }
   }
 

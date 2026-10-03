@@ -279,7 +279,9 @@ export async function syncHubSpotPipeline(
         result.inserted += 1;
       }
     } catch (e) {
-      result.errors.push(`deal ${deal.id}: ${String(e)}`);
+      // Raw exception text (SQLite table/constraint names) goes to the server log, not the 200 body.
+      console.error(`[acq-hubspot-sync] deal ${deal.id} failed:`, e);
+      result.errors.push(`deal ${deal.id}: could not be processed (see server log)`);
     }
   }
 
