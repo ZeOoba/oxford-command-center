@@ -231,6 +231,66 @@ describe('recordEdgePull validation and append-only guarantees', () => {
   });
 });
 
+describe('R1 — void check-then-update is atomic against another connection', () => {
+  it('a competing newer pull recorded between the latest-row check and the UPDATE never lets a superseded row be voided', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'edge-pq-race-')), 'w.sqlite');
+    const a = openWarehouse(path);
+    const b = openWarehouse(path);
+    b.pragma('busy_timeout = 0'); // B must not wait on A's lock (same thread: a wait could never be released)
+    const target = recordEdgePull(a, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+
+    let bInsert: 'not_run' | 'inserted' | 'busy' = 'not_run';
+    const hooked = new Proxy(a, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t) as unknown;
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            const stmt = t.prepare(sql);
+            if (!/ORDER BY done_on DESC/.test(sql)) return stmt;
+            // Right after the latest-row SELECT executes, connection B records a newer row for the scope.
+            return new Proxy(stmt, {
+              get(st, sp) {
+                const sv = Reflect.get(st, sp, st) as unknown;
+                if (sp !== 'get') return typeof sv === 'function' ? (sv as (...x: unknown[]) => unknown).bind(st) : sv;
+                return (...args: unknown[]) => {
+                  const out = st.get(...args);
+                  try {
+                    b.prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES (?, ?, ?)')
+                      .run('storage', 'columbus', '2026-09-20');
+                    bInsert = 'inserted';
+                  } catch (e) {
+                    if ((e as { code?: string }).code !== 'SQLITE_BUSY') throw e;
+                    bInsert = 'busy';
+                  }
+                  return out;
+                };
+              },
+            });
+          };
+        }
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+      },
+    }) as WarehouseDb;
+
+    const result = voidEdgePull(hooked, target);
+
+    // Invariant (deterministic either way): a void decision is never applied to a row that B's
+    // committed insert had already superseded. With the fix BEGIN IMMEDIATE holds the write lock
+    // across check+update, so B is refused (SQLITE_BUSY) inside the window and the void is valid;
+    // without it B's insert lands in the window and the stale decision voids a superseded row.
+    if (bInsert === 'inserted') expect(result.status).not.toBe('voided');
+    expect(bInsert).toBe('busy');
+    expect(result).toEqual({ status: 'voided', kind: 'storage' });
+    const voidedAt = (a.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(target) as { voided_at: string | null }).voided_at;
+    expect(voidedAt).not.toBeNull();
+    // once A has committed, B's retry succeeds and becomes the scope's state
+    b.prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES (?, ?, ?)').run('storage', 'columbus', '2026-09-20');
+    expect(readEdgePullLatest(a).get('storage|columbus')?.doneOn).toBe('2026-09-20');
+    a.close();
+    b.close();
+  });
+});
+
 describe('fix-pass 3 — B7 pull-queue gaps', () => {
   it('blockers appear only on truck scopes, never on other kinds even when the scope key collides', () => {
     for (const kind of ['storage', 'ios', 'mfgInvest'] as const) {

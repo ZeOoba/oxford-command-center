@@ -249,24 +249,29 @@ export type VoidEdgePullResult =
  *  currently the scope's state (latest non-voided by done_on DESC, id DESC) is voidable: voiding an older,
  *  superseded row from a stale tab would be permanent (the trigger forbids un-voiding) yet change nothing visible. */
 export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
-  const row = db
-    .prepare('SELECT pull_kind AS kind, scope_key AS scopeKey, voided_at AS voidedAt FROM edge_pull_log WHERE id = ?')
-    .get(id) as { kind: EdgePullKind; scopeKey: string; voidedAt: string | null } | undefined;
-  if (!row) return { status: 'not_found' };
-  if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
-  const current = db
-    .prepare(
-      `SELECT id FROM edge_pull_log
-        WHERE pull_kind = ? AND scope_key = ? AND voided_at IS NULL
-        ORDER BY done_on DESC, id DESC LIMIT 1`,
-    )
-    .get(row.kind, row.scopeKey) as { id: number } | undefined;
-  if (current !== undefined && current.id !== id) return { status: 'superseded', kind: row.kind };
-  // result.changes (not the SELECT above) decides the race: a concurrent void leaves 0 changes.
-  const res = db
-    .prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND voided_at IS NULL")
-    .run(id);
-  return res.changes === 1 ? { status: 'voided', kind: row.kind } : { status: 'already_voided', kind: row.kind };
+  // BEGIN IMMEDIATE: the latest-row check and the UPDATE hold the write lock together, so another
+  // connection cannot record a newer row between them (a void is permanent: the trigger forbids un-voiding).
+  const run = db.transaction((): VoidEdgePullResult => {
+    const row = db
+      .prepare('SELECT pull_kind AS kind, scope_key AS scopeKey, voided_at AS voidedAt FROM edge_pull_log WHERE id = ?')
+      .get(id) as { kind: EdgePullKind; scopeKey: string; voidedAt: string | null } | undefined;
+    if (!row) return { status: 'not_found' };
+    if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
+    const current = db
+      .prepare(
+        `SELECT id FROM edge_pull_log
+          WHERE pull_kind = ? AND scope_key = ? AND voided_at IS NULL
+          ORDER BY done_on DESC, id DESC LIMIT 1`,
+      )
+      .get(row.kind, row.scopeKey) as { id: number } | undefined;
+    if (current !== undefined && current.id !== id) return { status: 'superseded', kind: row.kind };
+    // result.changes stays as a guard: it must be exactly 1 for the void to count.
+    const res = db
+      .prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND voided_at IS NULL")
+      .run(id);
+    return res.changes === 1 ? { status: 'voided', kind: row.kind } : { status: 'already_voided', kind: row.kind };
+  });
+  return run.immediate();
 }
 
 function scopeLabelFor(kind: EdgePullKind, scopeKey: string, markets: readonly EdgeMarket[]): string {
