@@ -55,7 +55,7 @@
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
     "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
-    "gate:ci": "npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile:snapshot && npm run build && npm run check:bundle"
+    "gate:ci": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run build && npm run check:bundle"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
