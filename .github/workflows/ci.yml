@@ -7,12 +7,20 @@ name: CI
 # (scripts/reconcile-snapshot.ts, added 2026-08-03 after the phantom-vacancy-lease incident —
 # see PR #250 — shipped to the committed snapshot uncaught) IS wired in below: it runs
 # checkSnapshot() against the COMMITTED data/snapshots/portfolio.json with zero workbook I/O, so
-# it's a strict subset of the full check but runs on every PR here. CI runs typecheck + lint +
-# tests + the snapshot reconciliation + a production build + the bundle-size budget.
+# it's a strict subset of the full check but runs on every PR here. CI runs governance + typecheck +
+# lint + check:dev-css + check:schema-drift + tests + the snapshot reconciliation + a production
+# build + the bundle-size budget (governance and check:schema-drift are pure repo-text checks).
 on:
   push:
     branches: [main]
   pull_request:
+
+# Least privilege (2026-10-03): both jobs only check out and read the repo (refute-required's
+# `git fetch origin <base>` needs contents: read, nothing more). No job comments on PRs or writes
+# anything back, so no job-level grants are needed. Do not widen this at workflow level — PR code
+# runs in these jobs, including on the self-hosted laptop runner when CI_RUNNER=self.
+permissions:
+  contents: read
 
 # RUNNER TOGGLE (2026-09-28): both required jobs run on GitHub-hosted ubuntu-latest by default.
 # Setting the repo variable CI_RUNNER=self moves them to the self-hosted runner on Gabriel's
