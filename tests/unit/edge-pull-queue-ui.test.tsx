@@ -272,6 +272,21 @@ describe('fix-pass 3 - mutation plumbing (B5) and busy guard (B7)', () => {
     await waitFor(() => expect(queueGets()).toHaveLength(1));
   });
 
+  it('a 409 on void (stale tab) shows the server message and refetches the queue (F1)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const msg = 'that pull was superseded by a newer record; refresh and retry';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      String(url).includes('/void')
+        ? new Response(JSON.stringify({ error: msg }), { status: 409, headers: { 'content-type': 'application/json' } })
+        : itemJson()));
+    renderQueue({ live: true });
+    expect(queueGets()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo Richmond, VA' }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect((await screen.findByRole('alert')).textContent).toBe(msg);
+    await waitFor(() => expect(queueGets()).toHaveLength(1)); // onError invalidated → refetch
+  });
+
   it('while a save is pending: Save and the row actions are disabled, and a repeat submit posts nothing', async () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
     renderQueue({ live: true });

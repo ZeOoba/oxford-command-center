@@ -107,6 +107,9 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       const result = voidEdgePull(db, id);
       if (result.status === 'not_found') return c.json({ error: `pull log row ${id} not found` }, 404);
       if (result.status === 'already_voided') return c.json({ error: `pull log row ${id} is already voided` }, 409);
+      if (result.status === 'superseded') {
+        return c.json({ error: 'that pull was superseded by a newer record; refresh and retry' }, 409);
+      }
       return c.json(
         EdgePullItem.parse(buildEdgePullItem(result.kind, markets, readEdgePullLatest(db), localIsoDate(now()))),
         200,

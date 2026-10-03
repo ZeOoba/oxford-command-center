@@ -124,6 +124,32 @@ describe('append-only log', () => {
     expect(count).toBe(4); // void never deletes
   });
 
+  it('F1: a stale tab cannot void a superseded row; only the latest non-voided row per scope is voidable', () => {
+    const db = freshDb();
+    const id1 = recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-06-01' });
+    const id2 = recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+    // another scope's rows never count as "newer"
+    const other = recordEdgePull(db, { kind: 'storage', scopeKey: 'richmond', doneOn: '2026-09-15' });
+
+    expect(voidEdgePull(db, id1)).toEqual({ status: 'superseded', kind: 'storage' });
+    const voidedAt = (id: number) => (db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null }).voided_at;
+    expect(voidedAt(id1)).toBeNull(); // row 1 NOT voided
+    expect(readEdgePullLatest(db).get('storage|columbus')?.id).toBe(id2); // state unchanged
+
+    expect(voidEdgePull(db, other)).toEqual({ status: 'voided', kind: 'storage' }); // different scope: own latest
+    expect(voidEdgePull(db, id2)).toEqual({ status: 'voided', kind: 'storage' });
+    expect(readEdgePullLatest(db).get('storage|columbus')?.id).toBe(id1); // reverts to row 1
+    expect(voidEdgePull(db, id1)).toEqual({ status: 'voided', kind: 'storage' }); // now row 1 is the latest
+  });
+
+  it('F1: supersession uses the state ordering (done_on DESC, id DESC), not insertion order', () => {
+    const db = freshDb();
+    const newerDate = recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+    const laterInsertOlderDate = recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-06-01' });
+    expect(voidEdgePull(db, laterInsertOlderDate)).toEqual({ status: 'superseded', kind: 'storage' });
+    expect(voidEdgePull(db, newerDate)).toEqual({ status: 'voided', kind: 'storage' });
+  });
+
   it('launch state: zero log rows → all 70 scopes open, no seeding', () => {
     const q = buildEdgePullQueue(freshDb(), [], '2026-10-02');
     expect(q.items.map((i) => i.kind)).toEqual(['storage', 'ios', 'mfgInvest', 'truck']);

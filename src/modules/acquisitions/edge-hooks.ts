@@ -87,6 +87,11 @@ export function useVoidPull() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: EDGE_KEYS.pullQueue });
     },
+    // A 409 (row already voided / superseded by a newer record) means this tab is stale: refetch so it
+    // shows the true state. The error line already surfaces the server's message.
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: EDGE_KEYS.pullQueue });
+    },
   });
 }
 

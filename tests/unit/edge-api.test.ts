@@ -163,6 +163,26 @@ describe('POST /pull-queue/:id/void', () => {
   });
 });
 
+describe('POST /pull-queue/:id/void — stale tab (F1)', () => {
+  it('voiding a superseded row → 409 with a refresh message, row untouched; the latest row still voids → 200', async () => {
+    const db = freshDb();
+    const app = makeApp(() => db);
+    const first = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-06-01' })).json());
+    const id1 = first.scopes.find((s) => s.scopeKey === 'columbus')!.lastLogId!;
+    const second = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' })).json());
+    const id2 = second.scopes.find((s) => s.scopeKey === 'columbus')!.lastLogId!;
+
+    const stale = await post(app, `/pull-queue/${id1}/void`);
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: string }).error).toMatch(/superseded by a newer record.*refresh and retry/);
+    expect((db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id1) as { voided_at: string | null }).voided_at).toBeNull();
+
+    const ok = await post(app, `/pull-queue/${id2}/void`);
+    expect(ok.status).toBe(200);
+    expect(EdgePullItem.parse(await ok.json()).scopes.find((s) => s.scopeKey === 'columbus')!.lastDoneOn).toBe('2026-06-01');
+  });
+});
+
 describe('POST /pull-queue/:id/void — injected clock', () => {
   it('voiding the newer row returns state/ageDays computed from the injected today, not a stale constant', async () => {
     const db = freshDb();
