@@ -682,6 +682,25 @@ describe('fix-pass 3 — B7 loader gaps', () => {
       expect(r.availability).toBe('invalid');
       expect(r.issues.join(' ')).toMatch(/^meta\.pulled/);
     });
+
+    it.each([
+      ['reversed', [2025, 2024, 2023, 2022, 2021]],
+      ['duplicate', [2021, 2022, 2022, 2024, 2025]],
+      ['unsorted', [2021, 2023, 2022, 2024, 2025]],
+    ])('meta.years %s → whole dataset invalid with a meta.years issue', async (label, years) => {
+      const { deps } = fakeFs({ text: () => mutate((f) => { f.meta.years = years; }) });
+      const r = await loadEdgeDataset(`mem://years-${label}`, NOW, deps);
+      expect(r.availability).toBe('invalid');
+      expect(r.markets).toEqual([]);
+      expect(r.issues.join(' ')).toMatch(/^meta\.years/);
+    });
+
+    it('ascending unique years (the real [2021..2025] shape) still load', async () => {
+      const { deps } = fakeFs({ text: () => FIXTURE_TEXT });
+      const r = await loadEdgeDataset('mem://years-ok', NOW, deps);
+      expect(r.availability).toBe('ok');
+      expect(r.years).toEqual([2021, 2022, 2023, 2024, 2025]);
+    });
   });
 });
 

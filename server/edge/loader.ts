@@ -49,7 +49,7 @@ const BACKOFF_MS = 250;
 export const RawEdgeMeta = z
   .object({
     pulled: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    years: z.array(z.number().int()).min(1),
+    years: z.array(z.number().int()).min(1).refine((ys) => ys.every((y, i) => i === 0 || y > ys[i - 1]!), { message: 'years must be strictly ascending and unique' }),
     sources: z.record(z.string(), z.array(z.string())),
     statusEnum: z.array(z.string()),
     fieldMeta: z.record(z.string(), z.object({ trueLabel: z.string(), isProxy: z.boolean() }).strict()),
