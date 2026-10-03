@@ -354,11 +354,16 @@ export function edgeUnmatchedHeadline(reason: EdgeUnmatchedReason): string {
   return reason === 'conflicting_location' ? 'No Edge market (conflicting location)' : 'No Edge market';
 }
 
+/** NFC + collapse every whitespace run (\s with /u covers NBSP, tabs, ideographic space) to one ASCII space. */
+function collapseWs(text: string): string {
+  return text.normalize('NFC').replace(/\s+/gu, ' ');
+}
+
 /** The LAST "City, ST" pair in a location string, after stripping parentheticals. Input is capped
  *  at 200 chars and the city pattern is unambiguous (words never contain spaces), so matching is linear. */
 export function parseCityState(location: string | null): { city: string; state: string } | null {
   if (!location) return null;
-  const stripped = location.slice(0, 200).normalize('NFC').replace(/\([^)]*\)/g, ' ');
+  const stripped = collapseWs(location.slice(0, 200)).replace(/\([^)]*\)/g, ' ');
   // \p{L}: Unicode letters, so "Montréal" / "Española" / "Cañon City" keep their full names.
   const re = /(\p{L}[\p{L}\p{M}.'-]*(?: +[\p{L}\p{M}.'-]+)*)\s*,\s*([A-Z]{2})\b/gu;
   let last: { city: string; state: string } | null = null;
@@ -373,7 +378,7 @@ export function parseCityState(location: string | null): { city: string; state: 
 
 /** First hyphen-segment of a CBSA title = its principal city ("Scranton--Wilkes-Barre" → "scranton"). */
 function principalCity(name: string): string {
-  return ((name.split('-')[0] ?? name).trim()).normalize('NFC').toLowerCase();
+  return collapseWs((name.split('-')[0] ?? name).trim()).toLowerCase();
 }
 
 export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, markets: readonly EdgeMarket[]): EdgeResolution {
@@ -391,7 +396,7 @@ export function resolveEdgeMarket(deal: Pick<Deal, 'market' | 'location'>, marke
   if (!pair) return { kind: 'unmatched', reason: 'no_location' };
   const city = pair.city.toLowerCase();
   const hits = markets.filter(
-    (m) => m.state === pair.state && (m.name.trim().normalize('NFC').toLowerCase() === city || principalCity(m.name) === city),
+    (m) => m.state === pair.state && (collapseWs(m.name.trim()).toLowerCase() === city || principalCity(m.name) === city),
   );
   const only = hits.length === 1 ? hits[0] : undefined;
   if (only) return { kind: 'matched', market: only, via: 'tier2_location' };

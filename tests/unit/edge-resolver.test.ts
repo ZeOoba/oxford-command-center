@@ -124,6 +124,22 @@ describe('Tier 2 (Deal.location exact City, ST)', () => {
     expect(resolveEdgeMarket(deal('Unknown', 'Scranton, PA'), MARKETS)).toMatchObject({ kind: 'matched', market: { id: 'scranton_wilkes_barre' } });
   });
 
+  it.each([
+    ['NBSP', 'Cedar Rapids, IA'],
+    ['double space', 'Cedar  Rapids, IA'],
+    ['tab', 'Cedar	Rapids, IA'],
+    ['ideographic space + street prefix', '123 Main St, Cedar　Rapids , IA'],
+  ])('whitespace variant (%s) of "Cedar Rapids, IA" resolves to cedar_rapids', (_label, location) => {
+    const ms = [...MARKETS, mkMarket('cedar_rapids', 'Cedar Rapids', 'IA', 'auto')];
+    expect(parseCityState(location)).toMatchObject({ city: 'Cedar Rapids', state: 'IA' });
+    expect(resolveEdgeMarket(deal('Other', location), ms)).toMatchObject({ kind: 'matched', via: 'tier2_location', market: { id: 'cedar_rapids' } });
+  });
+
+  it('a market name carrying an NBSP still matches a plain-space location (tier-2 name side)', () => {
+    const ms = [mkMarket('cedar_rapids', 'Cedar Rapids', 'IA', 'auto')];
+    expect(resolveEdgeMarket(deal('Other', 'Cedar Rapids, IA'), ms)).toMatchObject({ kind: 'matched', market: { id: 'cedar_rapids' } });
+  });
+
   it('two candidates → ambiguous, never picks one', () => {
     const twins = [mkMarket('springfield', 'Springfield', 'MO', 'auto'), mkMarket('springfield_x', 'Springfield-Branson', 'MO', 'auto')];
     expect(resolveEdgeMarket(deal('Other', 'Springfield, MO'), twins)).toEqual({ kind: 'unmatched', reason: 'ambiguous' });
