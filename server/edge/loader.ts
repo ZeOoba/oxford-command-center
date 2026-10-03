@@ -66,8 +66,10 @@ export function rawEdgeMarketSchema(yearCount: number) {
   const seriesShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, values])) as Record<EdgeSeriesKey, typeof values>;
   const statusShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, statuses])) as Record<EdgeSeriesKey, typeof statuses>;
   return z.object({
-    // 2..64 mirrors RecordPullRequest.scopeKey and the pull-log CHECK: a market outside it could never be recorded.
-    id: z.string().min(2).max(64),
+    // Mirrors RecordPullRequest.scopeKey and the pull-log CHECK (length(scope_key) BETWEEN 2 AND 64, which counts
+    // characters and stops at NUL). A JS length bound is not equivalent (astral chars, NUL), so the charset is pinned:
+    // every real market id is lowercase [a-z0-9_]. A market outside it could never be recorded.
+    id: z.string().regex(/^[a-z0-9_]{2,64}$/),
     name: z.string(),
     state: z.string().length(2),
     cbsa: z.string(),

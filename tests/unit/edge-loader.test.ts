@@ -711,6 +711,24 @@ describe('review-fix F3/T6 — market id bounds, ENOTDIR, status length, state l
     expect(r.rejectedMarkets).toEqual([]);
   });
 
+  it.each([['\u{1F600}'], ['a\u0000b'], ['Bad_Id'], ['has-hyphen'], ['sp ace']])(
+    'market id %j is outside [a-z0-9_]{2,64} (would break the pull-log CHECK) and is quarantined',
+    async (id) => {
+      const { deps } = fakeFs({ text: () => withExtra(() => undefined, id) });
+      const r = await loadEdgeDataset(`mem://idchars-${JSON.stringify(id)}`, NOW, deps);
+      expect(r.marketCount).toBe(4);
+      expect(r.rejectedMarkets).toHaveLength(1);
+      expect(r.rejectedMarkets[0]!.reason).toMatch(/^id: /);
+    },
+  );
+
+  it('ids made of [a-z0-9_] load (digits and underscores)', async () => {
+    const { deps } = fakeFs({ text: () => withExtra(() => undefined, 'a1_b2') });
+    const r = await loadEdgeDataset('mem://idchars-ok', NOW, deps);
+    expect(r.marketCount).toBe(5);
+    expect(r.rejectedMarkets).toEqual([]);
+  });
+
   it('ENOTDIR yields availability missing', async () => {
     const { deps } = fakeFs({ text: () => { throw errno('ENOTDIR'); } });
     const r = await loadEdgeDataset('mem://enotdir-read', NOW, deps);

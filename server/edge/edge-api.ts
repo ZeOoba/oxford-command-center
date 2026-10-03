@@ -19,6 +19,11 @@ import {
   readEdgePullLatest, recordEdgePull, voidEdgePull,
 } from './pull-queue';
 
+/** better-sqlite3 surfaces CHECK failures as SqliteError with code SQLITE_CONSTRAINT_CHECK. */
+function isSqliteCheckViolation(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'SQLITE_CONSTRAINT_CHECK';
+}
+
 export interface EdgeApiDeps {
   edgeDir?: () => string;
   now?: () => Date;
@@ -84,6 +89,8 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       } catch (e) {
         // Only the store's date validation maps to 400; any other fault propagates → 500.
         if (e instanceof PullValidationError) return c.json({ error: e.message }, 400);
+        // Defense in depth: a pull-log CHECK violation is a rejected input, not a server fault.
+        if (isSqliteCheckViolation(e)) return c.json({ error: 'pull record violates a storage constraint' }, 400);
         throw e;
       }
       return c.json(EdgePullItem.parse(buildEdgePullItem(input.kind, markets, readEdgePullLatest(db), today)), 200);

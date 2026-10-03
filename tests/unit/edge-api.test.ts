@@ -214,6 +214,30 @@ describe('error mapping (carry-over 1)', () => {
     expect(res.status).toBe(500);
   });
 
+  it('a genuine SQLite CHECK violation (SQLITE_CONSTRAINT_CHECK) is 400, not 500; no row recorded', async () => {
+    const real = freshDb();
+    const violating = new Proxy(real, {
+      get(target, prop, recv) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            // Rewrite the bound scope to a 1-char key so the real pull-log CHECK (length 2..64) fires.
+            if (/INSERT INTO edge_pull_log/.test(sql)) {
+              const stmt = target.prepare(sql);
+              return { run: (kind: string, _scope: string, doneOn: string, note: string | null) => stmt.run(kind, 'x', doneOn, note) };
+            }
+            return target.prepare(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as WarehouseDb;
+    const res = await post(makeApp(() => violating), '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toHaveProperty('error');
+    expect((real.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
+  });
+
   it('through the production JSON error handler, the 500 is JSON (the handler is the shared warehouseJsonError)', async () => {
     const real = freshDb();
     const faulty = new Proxy(real, {
