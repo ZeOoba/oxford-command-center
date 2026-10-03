@@ -16,7 +16,7 @@
 - **Basis discipline:** store `basis` per monthly batch exactly as the file declares (`cash`/`accrual`); never convert; the tie-out compares like with like only. Existing entities: cash — 1100 Rarig, 3540 E 5th, 3034 Westerville, 3875-3883 E Livingston, 9620 Raytown, Sepich portfolio, 1900 N Broadway, 29000 Information Ln, 9050 Red Branch, 2203-2207 Northwood; accrual — 55 New Plant Ct, 1851 S Club Solar.
 - **Classification parity:** every monthly line is classified by `resolveMapping(db, rawAccount, propertyId, section, side?)` with the **month's year as `period`**, so period-scoped exclusions (migration 019 — e.g. the FVC 2025 cell-tower easement) apply identically to monthly and annual data. Side constraint holds (an income-side account can never map to opex).
 - **No fabricated or inferred months.** A month with no column in the file is absent, not zero. Annual-total ÷ 12 is never used.
-- **Architect-owned — claim first** in `architecture/status.json` (`review_needed: true`) and obtain Gabriel's in-turn `architect-edit-ok` sentinel for the worktree (60-min TTL; he places it — do not create it unprompted): `server/warehouse/migrations/` (034), `src/contracts/` (+ `index.ts`), `server/index.ts` (only if the ingest CLI needs a hook — it should not), `architecture/database-schema.md`, `package.json` (new scripts), `scripts/governance-check.ts`.
+- **Architect-owned — claim first** in `architecture/status.json` (`review_needed: true`) and obtain Gabriel's in-turn `architect-edit-ok` sentinel for the worktree (60-min TTL; he places it — do not create it unprompted): `server/warehouse/migrations/` (035), `src/contracts/` (+ `index.ts`), `server/index.ts` (only if the ingest CLI needs a hook — it should not), `architecture/database-schema.md`, `package.json` (new scripts), `scripts/governance-check.ts`.
 - **`server/` and `scripts/` are default-deny for `check:refute`:** every commit that touches them needs a `Refute-Reviewed: wf_<id>` or a justified `Refute-Skip:` trailer **in its own message**. These tasks write shared state and money-adjacent numbers: run the `adversarial-reviewer` agent (explicit `model`, never below the implementer) before attesting; use the `refute-financial-change` workflow if anything touches NOI/verdict math (it should not).
 - **Live data safety:** never DDL against `data/warehouse/finance.sqlite`; migrations only. Real P&L files are **read locally and never committed** (raw files live under the gitignored `data/warehouse/raw/` / Gabriel's drop folder). Test fixtures are **synthetic**, generated in-test by an ExcelJS writer that mimics the layout recorded in Task 1's format notes (the idiom in `tests/unit/warehouse-api.test.ts`'s `writeFixture`). Back up the live warehouse with the SQLite backup API before the first live ingest.
 - Dev servers and any ingest against a non-test DB use a scratch `WAREHOUSE_DB` until Task 8's live-run step, which needs Gabriel's go-ahead.
@@ -41,7 +41,7 @@
 
 ## File structure
 
-- Create `server/warehouse/migrations/034_monthly_ledger.sql` — `monthly_import_batches`, `ledger_monthly`.
+- Create `server/warehouse/migrations/035_monthly_ledger.sql` — `monthly_import_batches`, `ledger_monthly`.
 - Create `server/warehouse/monthly/types.ts` — `RawMonthlyStatement` types + Zod schema (the parser↔ingest contract).
 - Create `server/warehouse/monthly/detect-monthly.ts` — filename detection.
 - Create `server/warehouse/monthly/parse-quickbooks.ts`, `parse-yardi.ts`, `parse-appfolio.ts` — **Task 4, sample-gated**.
@@ -53,7 +53,7 @@
 
 ### Task 0: Preflight, branch, claim
 
-- [ ] **Step 1:** `git fetch`; check open PRs and `architecture/status.json` for claims on `server/warehouse/migrations/`, `src/contracts/`, `package.json`. Confirm the next free migration number: `git ls-tree --name-only origin/main server/warehouse/migrations/ | tail -3` (planned **034**; if taken use the next free integer in the three places it appears — filename, test filename, `database-schema.md`).
+- [ ] **Step 1:** `git fetch`; check open PRs and `architecture/status.json` for claims on `server/warehouse/migrations/`, `src/contracts/`, `package.json`. Confirm the next free migration number: `git ls-tree --name-only origin/main server/warehouse/migrations/ | tail -3` (planned **035**; Oxford Edge (PR #427) holds 034; if taken use the next free integer in the three places it appears — filename, test filename, `database-schema.md`).
 - [ ] **Step 2:** `npm run worktree -- add .claude/worktrees/trends-w3a origin/main feat/trends-wave3a`.
 - [ ] **Step 3:** append a `trends-wave3a` entry to `architecture/status.json` as a **pure textual append** (verify `git diff` shows 0 removed lines); copy this plan in; two separate commits. Ask Gabriel for the sentinel before Task 2's migration edit.
 - [ ] **Step 4:** ask the three open decisions above; record the answers at the top of Task 1's format-notes doc.
@@ -66,12 +66,12 @@
 - [ ] **Step 2:** Record a **ground-truth number set per sample privately** (not committed): the sample's annual total for opex and income, and the per-category totals, so the first tie-out (Task 6) can be proven on real data.
 - [ ] **Step 3: Amend this plan.** Replace Tasks 4 and 5 below with fully specified tasks — real column/regex rules, synthetic-fixture builders that reproduce the documented layout, exact expected values — in the same TDD format as the other tasks (complete code, exact commands). Commit the amendment (`docs(plan): wave 3a parsers specified from samples`) and **stop for Gabriel's review of the format notes before Task 4 starts**.
 
-### Task 2: Migration 034 — monthly tables
+### Task 2: Migration 035 — monthly tables
 
-**Files:** Create `server/warehouse/migrations/034_monthly_ledger.sql`; Test `tests/unit/migration-034-monthly-ledger.test.ts`; Modify `architecture/database-schema.md`.
+**Files:** Create `server/warehouse/migrations/035_monthly_ledger.sql`; Test `tests/unit/migration-035-monthly-ledger.test.ts`; Modify `architecture/database-schema.md`.
 
 ```sql
--- 034_monthly_ledger.sql — Portfolio Trends Wave 3A: monthly P&L ledger.
+-- 035_monthly_ledger.sql — Portfolio Trends Wave 3A: monthly P&L ledger.
 -- Separate from import_batches/ledger_entries on purpose: Spine B readers select status='committed'
 -- batches by property+period and warehouse:verify asserts their count/hash uniqueness; a monthly
 -- batch in those tables would be picked up by annual analytics. Additive only.
@@ -114,9 +114,9 @@ CREATE INDEX IF NOT EXISTS idx_ledger_monthly_batch ON ledger_monthly(batch_id);
 
 - [ ] **Step 1: Failing test** (idiom of `tests/unit/migration-033-portfolio-month-snapshot.test.ts` — `:memory:` DB, `foreign_keys = ON`, `runMigrations`, seed `property_master (id, name)`): insert a batch + two ledger rows OK; duplicate `file_hash` rejects; bad `month` (`'2026-1'`, `'October'`), bad `basis` (`'tax'`), `first_month > last_month`, bad `source_system`, bad `status` each reject; deleting the property cascades batches and ledger rows; deleting a batch cascades its rows; `ledger_monthly` has no FK path to `import_batches`.
 - [ ] **Step 2:** run → FAIL (no such table).
-- [ ] **Step 3:** add the migration verbatim; update `database-schema.md` (history row + two table sections with DDL byte-identical to the `.sql`; the doc's "next free migration number" sentence → 035).
+- [ ] **Step 3:** add the migration verbatim; update `database-schema.md` (history row + two table sections with DDL byte-identical to the `.sql`; the doc's "next free migration number" sentence → 036).
 - [ ] **Step 4:** run the new test + `tests/unit/warehouse-migrate.test.ts` + `npm run governance`; typecheck/lint.
-- [ ] **Step 5:** commit `feat(warehouse): migration 034 monthly ledger tables` with a `Refute-` trailer in its message.
+- [ ] **Step 5:** commit `feat(warehouse): migration 035 monthly ledger tables` with a `Refute-` trailer in its message.
 
 ### Task 3: Monthly filename detection
 
@@ -189,7 +189,7 @@ Rules: compare `Σ ledger_monthly` (active rows, committed batches, `classificat
 - [ ] Focused tests for every file above; `npm run gate` (known-red `reconcile` step aside; later steps by hand, including `warehouse:verify` — it must still report `committed >= 32` and the same hashes, proving Spine B was untouched — and `warehouse:drift`).
 - [ ] Prove **Spine B untouched**: before/after row counts and a content hash of `import_batches` and `ledger_entries` on a scratch copy after a full monthly ingest — identical.
 - [ ] `adversarial-reviewer` (explicit `model`) on the whole branch: double counting across overlapping/superseding batches, basis mixing, period-scoped exclusion parity, pending-review leakage into the API, parsers accepting wrong columns, any path that lets monthly rows reach `import_batches`/`ledger_entries` readers, the tie-out passing vacuously (zero rows compared).
-- [ ] **Live run (needs Gabriel's go-ahead):** back up the live warehouse (SQLite backup API → `data/_backup/finance.sqlite.pre-034-<date>`), apply migration 034 by starting the Brain server (migrations run on open), ingest the real files with `--commit`, run `reconcile:monthly`, report the tie-out table. Real files are never committed.
+- [ ] **Live run (needs Gabriel's go-ahead):** back up the live warehouse (SQLite backup API → `data/_backup/finance.sqlite.pre-035-<date>`), apply migration 035 by starting the Brain server (migrations run on open), ingest the real files with `--commit`, run `reconcile:monthly`, report the tie-out table. Real files are never committed.
 - [ ] Push and open the PR only with Gabriel's go-ahead; `Refute-` trailers per commit (`npx tsx scripts/check-refute-required.ts --strict --base=origin/main --head=$(git rev-parse HEAD)`); squash message carries the union of trailers.
 
 ---
