@@ -231,13 +231,13 @@ The scope lists and cadences are **code**, which keeps them versioned and review
 
 | kind | Scope | Scope keys | Cadence | Source (from the artifact) |
 |---|---|---|---|---|
-| `storage` | market | the 21 buy-box ids (`type ∈ {named, named_custom}`) | 90 d (quarterly) | StorageCafe / RentCafe. Today's rate only, no history: record a baseline. |
-| `ios` | market | same 21 | 90 d (quarterly) | Crexi / LoopNet manual scan (scripts are blocked) |
+| `storage` | market | loaded buy-box ids ∪ frozen 21 (unless explicitly non-buy-box) ∪ logged keys — see rule below; 21 at launch | 90 d (quarterly) | StorageCafe / RentCafe. Today's rate only, no history: record a baseline. |
+| `ios` | market | same rule as `storage` (logged keys counted per kind) | 90 d (quarterly) | Crexi / LoopNet manual scan (scripts are blocked) |
 | `mfgInvest` | state | PA MD VA WV OH IN MI KY MO KS WI IA NE IL MN (15) | 30 d | 15 state econ-dev press feeds (URLs carried from the artifact) |
-| `truck` | state | OH IN WI PA MD KY MO KS IA NE WV IL MN (13) | 365 d (AADT is annual) | Per-state blocker note carried verbatim in intent: OH dead TIMS endpoint; IN TCDS JS-app only, check INDOT open data; WI usable-but-risky (irregular count cycle, no truck class); others not attempted, with PASDA (PA) and MSDIS (MO) as known open layers |
+| `truck` | state | OH IN WI PA MD KY MO KS IA NE WV IL MN (13), minus any state markets.json automates | 365 d (AADT is annual) | Per-state blocker note carried verbatim in intent: OH dead TIMS endpoint; IN TCDS JS-app only, check INDOT open data; WI usable-but-risky (irregular count cycle, no truck class); others not attempted, with PASDA (PA) and MSDIS (MO) as known open layers |
 
-- The 21 storage/IOS scope keys are **derived at load from markets.json `type`** when the dataset is available. They fall back to a frozen copy of the artifact's 21-id list when it is not. A test asserts the two agree on the fixture.
-- VA and MI are **not** truck queue rows. They are complete through the automated pull and appear under `automatedCoverage`, derived from markets.json (any non-null `truck` value in a state's markets), not from the log.
+- **Storage/IOS scope keys** (one set drives both the GET queue rows and the POST membership check) are the union of: (1) ids of loaded markets typed buy-box (`type ∈ {named, named_custom}`); (2) the frozen copy of the artifact's 21-id list, EXCEPT a frozen id the dataset loaded OK and explicitly types non-buy-box with no log history (a frozen id that is absent or quarantined stays, so an unavailable dataset yields the full frozen 21); (3) every scope key already in `edge_pull_log` for that kind, voided rows included, so a market with history stays visible and recordable even after the dataset quarantines or retypes it. Tests assert derivation equals the frozen list on the fixture, a retyped frozen id drops out, and a recorded 22nd market survives quarantine and retyping.
+- VA and MI are **not** truck queue rows. They are complete through the automated pull and appear under `automatedCoverage`, derived from markets.json (any non-null `truck` value in a state's markets), not from the log. The same rule applies to any `TRUCK_STATES` state that becomes automated: it leaves the truck queue, its counts and the KPI, and POST for it is rejected (400); existing log rows for it are kept but stop appearing. `mfgInvest` is the fixed 15-state list.
 - States that are in the dataset but outside the artifact's pull scope (TN, ND, SD, DC for both truck and mfgInvest) are listed in Data health as "outside pull scope". The queue does not silently omit them.
 - State per scope: `open` (no non-voided log row), `current` (latest `done_on` age ≤ cadence), `due` (age > cadence).
 - **Launch state:** zero log rows, so all 21 + 21 + 15 + 13 = 70 scopes read `open`. No seeding. This matches the instruction that nothing is recorded done.
@@ -444,7 +444,7 @@ Assume Phase 1 ships and is wrong. These are the most likely ways, with the cont
 - `edge-freshness.test.ts`: F1 matrix.
 - `edge-resolver.test.ts`: F2 + F13 cases; enum-completeness guard; `edge_id_absent`.
 - `edge-status-label.test.ts`: all 5 statuses + JSON `null` value with each status.
-- `edge-pull-queue.test.ts`: state derivation (open/current/due at cadence boundaries); latest-non-voided ordering (`done_on DESC, id DESC`); scope lists = 21/21/15/13; VA/MI in `automatedCoverage`, not the queue; buy-box derivation equals the frozen list.
+- `edge-pull-queue.test.ts`: state derivation (open/current/due at cadence boundaries); latest-non-voided ordering (`done_on DESC, id DESC`); scope lists = 21/21/15/13 with no dataset; VA/MI (and any automated state) in `automatedCoverage`, not the queue; buy-box derivation equals the frozen list; retyped frozen ids drop out unless logged; logged keys stay in scope; void answers not_found/already_voided outside the write lock.
 - `edge-api.test.ts`: in-process Hono via `edgeApi(getDb)` against a fresh `openWarehouse()` on a `mkdtempSync(tmpdir())` path, all migrations applied (pattern: `tests/unit/acq-api.test.ts`); GET markets without DB; GET/POST/void pull-queue; 400s for bad kind/scope/date/future date/oversize note; 503 when `getDb` throws; F9 key assertion.
 - `edge-migration.test.ts`: fresh DB migrates through `034`; CHECKs reject a bad `pull_kind`, a non-date `done_on` (`'2026-02-30'`), and an oversize note.
 - `acquisitions-tabs.test.tsx` (**update**): five tabs; Edge lazy; F11 no-fetch assertion.

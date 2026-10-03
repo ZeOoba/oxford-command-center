@@ -1937,6 +1937,7 @@ describe('scope lists', () => {
     expect(deriveBuyBoxIds(markets)).toEqual(EDGE_BUY_BOX_FALLBACK.map((s) => s.id));
   });
 
+  // SUPERSEDED (PR #427 review fixes): storage/IOS scopes are now loaded buy-box ∪ frozen ∪ logged keys; final scope rules are in spec §5.3 and server/edge/pull-queue.ts.
   it('derives buy-box ids from the dataset when present (fixture-sized)', () => {
     expect(deriveBuyBoxIds(fourMarkets())).toEqual(['columbus', 'indianapolis_south', 'richmond']);
     for (const id of deriveBuyBoxIds(fourMarkets())) {
@@ -2034,6 +2035,8 @@ Expected: FAIL — `Failed to resolve import "../../server/edge/pull-queue"`.
 - [ ] **Step 3: Write the implementation**
 
 Create `server/edge/pull-queue.ts`:
+
+> **Superseded (PR #427 review fixes):** the header comment and the `deriveBuyBoxIds` / `pullScopeKeys` snippets below are the original draft; final scope rules are in spec §5.3 and server/edge/pull-queue.ts.
 
 ```ts
 // server/edge/pull-queue.ts
@@ -2177,6 +2180,7 @@ export const PULL_KIND_ORDER: readonly EdgePullKind[] = ['storage', 'ios', 'mfgI
 
 const DAY_MS = 86_400_000;
 
+// SUPERSEDED (PR #427 review fixes): storage/IOS = loaded buy-box ∪ frozen-unless-explicitly-non-buy-box ∪ logged; truck excludes automated states.
 export function deriveBuyBoxIds(markets: readonly EdgeMarket[]): string[] {
   if (markets.length === 0) return EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
   return markets.filter((m) => BUY_BOX_TYPES.has(m.type)).map((m) => m.id);

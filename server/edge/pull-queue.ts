@@ -1,12 +1,14 @@
 // server/edge/pull-queue.ts
 //
 // Oxford Edge manual-pull queue (spec §5.3). Scope lists and cadences are CODE (versioned,
-// reviewable); the DB holds only the append-only edge_pull_log (migration 034). The storage/IOS
-// scopes are the UNION of the frozen copy of the retired Morning Guide's 21-market list and any loaded
-// markets.json market typed buy-box, so a buy-box market quarantined at load never drops out of the
-// queue (its recorded state stays visible and it stays recordable). VA and MI truck coverage is
-// automated (derived from markets.json), never a queue row. Labels, slugs, press feeds and truck
-// blockers are carried from the retired artifact (morning_guide.html, 2026-07-14).
+// reviewable); the DB holds only the append-only edge_pull_log (migration 034). Storage/IOS scopes =
+// loaded markets.json markets typed buy-box ∪ the frozen copy of the retired Morning Guide's 21-market
+// list (minus a frozen id the dataset loaded OK and explicitly types non-buy-box with no log history)
+// ∪ scope keys already in the log for that kind — so a market with history never drops out (its state
+// stays visible and recordable) even if quarantined or retyped. mfgInvest is a fixed state list; truck
+// is a fixed state list minus states markets.json automates (VA and MI today), which are reported as
+// automated coverage, never queued or recordable. Labels, slugs, press feeds and truck blockers are
+// carried from the retired artifact (morning_guide.html, 2026-07-14).
 import type { WarehouseDb } from '../warehouse/db';
 import type {
   EdgeMarket, EdgeOutsidePullScope, EdgePullItem, EdgePullKind, EdgePullLink, EdgePullQueueResponse,
