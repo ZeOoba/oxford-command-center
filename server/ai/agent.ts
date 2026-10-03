@@ -378,7 +378,9 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     await emit({ type: 'done', model, refs: allRefs });
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') return;
-    await emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+    // Raw exception text (network targets, paths) stays in the server log, not the SSE stream.
+    console.error('[agent] run failed:', e);
+    await emit({ type: 'error', message: 'The assistant hit an unexpected error. Try again in a moment.' });
   }
 }
 

@@ -102,3 +102,22 @@ describe('fetchDealComps', () => {
     if (!r.ok) expect(r.error).toMatch(/403/);
   });
 });
+
+describe('fetchDealComps — upstream failures do not leak raw text', () => {
+  it('network error: generic message, no raw exception text', async () => {
+    const f = (async () => { throw new Error('connect ECONNREFUSED 10.1.2.3:443 C:/secret/proxy.pac'); }) as unknown as typeof fetch;
+    const r = await fetchDealComps(deal, { apiKey: 'sk-test', now: NOW, fetchImpl: f });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).not.toMatch(/ECONNREFUSED|10\.1\.2\.3|secret/);
+  });
+
+  it('non-2xx: status only, upstream body not echoed', async () => {
+    const f = (async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => 'upstream org-id org_SECRET123 trace' })) as unknown as typeof fetch;
+    const r = await fetchDealComps(deal, { apiKey: 'sk-test', now: NOW, fetchImpl: f });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain('500');
+      expect(r.error).not.toContain('org_SECRET123');
+    }
+  });
+});
