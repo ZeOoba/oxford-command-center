@@ -171,7 +171,7 @@ Scripts, pulled directly from `package.json`:
 | `npm run check:bundle` | Enforces the bundle-size budget (entry < 250 kB gzip, lazy chunks < 60 kB gzip) |
 | `npm run check:refute` | Checks that financial-decision code changes carry a Refute-Reviewed commit trailer |
 | `npm run gate` | Full local gate (11 steps): governance → typecheck → lint → check:dev-css → check:schema-drift → test → reconcile:snapshot → reconcile → reconcile:noi-crosscheck → warehouse:verify → warehouse:drift |
-| `npm run gate:ci` | The CI-safe subset (no workbook access): typecheck → lint → check:dev-css → test → reconcile:snapshot → build → check:bundle |
+| `npm run gate:ci` | The CI-safe subset (no workbook access): governance → typecheck → lint → check:dev-css → check:schema-drift → test → reconcile:snapshot → build → check:bundle |
 
 CI workflows (`.github/workflows/`):
 
