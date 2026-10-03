@@ -2,11 +2,26 @@
 import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { warehouseRoutes } from '../../server/warehouse/api';
+import { warehouseJsonError } from '../../server/warehouse/json-errors';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
 import type { WarehouseDb } from '../../server/warehouse/db';
 
 describe('warehouse routes — uncaught handler errors', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('cannot be log-injected via a decoded newline in the request path', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const app = new Hono();
+    app.onError(warehouseJsonError);
+    app.get('/x/:id', () => {
+      throw new Error('boom');
+    });
+    const res = await app.request('/x/abc%0A%5Bwarehouse%5D%20forged');
+    expect(res.status).toBe(500);
+    const first = String(errSpy.mock.calls[0]?.[0]);
+    expect(first).not.toMatch(/[\r\n]/);
+    expect(first).toContain('GET');
+  });
 
   it('never echoes the raw error message (table/path leak) — generic body, detail logged server-side', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
