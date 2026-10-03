@@ -46,7 +46,12 @@ function asOfSource(f: NonNullable<EdgeMarketsResponse['freshness']>): string | 
   return null;
 }
 
-const isRealDay = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+const isRealDay = (s: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const ms = Date.parse(`${s}T00:00:00Z`);
+  // Date.parse is NaN for 2026-13-01 etc.; toISOString would throw RangeError on that, so guard first.
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === s;
+};
 
 /** Which date made the dataset unverifiable: pulled date invalid/future, file mtime unreadable/future. */
 function unverifiedReason(f: NonNullable<EdgeMarketsResponse['freshness']>): string {

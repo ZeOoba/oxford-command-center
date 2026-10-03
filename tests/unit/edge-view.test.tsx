@@ -89,6 +89,12 @@ describe('EdgeView', () => {
     expect(screen.getByText(/Date could not be verified \(data pulled date is in the future or invalid; file modified time is in the future or unreadable\) — treated as stale\./)).toBeTruthy();
   });
 
+  it.each(['2026-13-01', '2026-02-32', '2026-00-10'])('shape-valid impossible pulled date %s renders the unverified banner without throwing', (bad) => {
+    const data = mkMarketsResponse(fourMarkets());
+    renderView({ ...data, freshness: { asOf: '2026-09-30', ageDays: 0, staleAfterDays: 7, stale: true, metaPulled: bad, fileMtime: '2026-09-30T10:00:00.000Z' } });
+    expect(screen.getByText(/Date could not be verified \(data pulled date is in the future or invalid\) — treated as stale\./)).toBeTruthy();
+  });
+
   it('readError with no freshness still shows the readError line', () => {
     const data = mkMarketsResponse(fourMarkets(), { readError: 'EBUSY: gone', lastGoodLoadedAt: null });
     renderView({ ...data, freshness: null });
