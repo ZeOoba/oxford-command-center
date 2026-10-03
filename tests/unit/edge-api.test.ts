@@ -413,6 +413,42 @@ describe('R2 — a quarantined buy-box market stays in the storage/IOS queues', 
   });
 });
 
+describe('I1 — an automated truck state is not queued and not recordable', () => {
+  function automatedOhioDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-truck-'));
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<{ id: string; truck: Array<number | null> }> };
+    f.markets.find((m) => m.id === 'columbus')!.truck = [1, 2, 3, 4, 5];
+    writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
+    return dir;
+  }
+
+  it('automated OH is listed in automatedCoverage, absent from the truck scopes and counts; POST for it → 400', async () => {
+    const db = freshDb();
+    const app = makeApp(() => db, automatedOhioDir());
+    const queue = EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json());
+    expect(queue.automatedCoverage.truck).toEqual(['OH', 'VA']);
+    const truck = queue.items.find((i) => i.kind === 'truck')!;
+    expect(truck.scopes.map((s) => s.scopeKey)).not.toContain('OH');
+    expect(truck.scopes).toHaveLength(12);
+    expect(truck.counts).toEqual({ open: 12, due: 0, current: 0 });
+
+    const res = await post(app, '/pull-queue', { kind: 'truck', scopeKey: 'OH', doneOn: '2026-09-30' });
+    expect(res.status).toBe(400);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
+    // a non-automated state is unchanged
+    expect((await post(app, '/pull-queue', { kind: 'truck', scopeKey: 'IN', doneOn: '2026-09-30' })).status).toBe(200);
+  });
+
+  it('an unavailable dataset keeps the full fixed truck list', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'edge-api-truck-missing-')), 'nope');
+    const db = freshDb();
+    const app = makeApp(() => db, dir);
+    const queue = EdgePullQueueResponse.parse(await (await app.request('/pull-queue')).json());
+    expect(queue.items.find((i) => i.kind === 'truck')!.scopes).toHaveLength(13);
+    expect((await post(app, '/pull-queue', { kind: 'truck', scopeKey: 'OH', doneOn: '2026-09-30' })).status).toBe(200);
+  });
+});
+
 describe('GET /markets — non-finite numbers (gate-fix F1)', () => {
   it.each([
     ['lat', (t: string) => t.replace(/"lat":\s*-?[\d.]+/, '"lat":1e999')],

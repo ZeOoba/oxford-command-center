@@ -156,10 +156,15 @@ export function deriveBuyBoxIds(markets: readonly EdgeMarket[]): string[] {
   return ids;
 }
 
+/** The scope set is the single source for both the GET queue rows and the POST membership check.
+ *  Truck: the fixed TRUCK_STATES list MINUS any state markets.json already automates (spec §5.3): an
+ *  automated state is neither queued nor recordable. If a state that already has truck log rows later
+ *  becomes automated, its rows are kept (append-only) but simply stop appearing in the queue. */
 export function pullScopeKeys(kind: EdgePullKind, markets: readonly EdgeMarket[]): string[] {
   if (kind === 'storage' || kind === 'ios') return deriveBuyBoxIds(markets);
   if (kind === 'mfgInvest') return [...MFG_INVEST_STATES];
-  return [...TRUCK_STATES];
+  const automated = new Set(automatedTruckStates(markets));
+  return TRUCK_STATES.filter((s) => !automated.has(s));
 }
 
 /** States with any non-null truck value in markets.json (VA + MI today). */

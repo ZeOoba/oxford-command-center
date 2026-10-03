@@ -73,6 +73,19 @@ describe('scope lists', () => {
     expect(pullScopeKeys('truck', markets)).not.toContain('MI');
   });
 
+  it('I1: a TRUCK_STATES state with real truck values is automated and leaves the truck queue; the rest are unchanged', () => {
+    const markets = [...fourMarkets(), mkMarket('dayton', 'Dayton', 'OH', 'named', { truck: obs([1, 2, 3, 4, 5]) })];
+    expect(automatedTruckStates(markets)).toEqual(['OH', 'VA']);
+    const keys = pullScopeKeys('truck', markets);
+    expect(keys).not.toContain('OH');
+    expect(keys).toEqual(TRUCK_STATES.filter((s) => s !== 'OH'));
+    const item = buildEdgePullItem('truck', markets, new Map(), '2026-10-02');
+    expect(item.scopes.map((s) => s.scopeKey)).not.toContain('OH');
+    expect(item.counts).toEqual({ open: 12, due: 0, current: 0 });
+    // no dataset (unavailable): the full fixed list
+    expect(pullScopeKeys('truck', [])).toEqual([...TRUCK_STATES]);
+  });
+
   it('lists in-dataset states outside the pull scope (never silently omitted)', () => {
     const markets = [
       ...fourMarkets(),
