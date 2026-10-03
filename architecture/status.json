@@ -799,6 +799,15 @@
     "review_detail": "Architect-owned surfaces planned: server/warehouse/migrations/033_portfolio_month_snapshot.sql, src/contracts/trends.ts (+ index export), server/index.ts (one guarded captureMonthSnapshot call inside the existing brain.on('snapshot') handler), architecture/database-schema.md. Additive only; no existing table altered. Wave 1 (PR #423) merged 2026-10-02.",
     "last_updated": "2026-10-02T17:40:37Z"
   },
+  "oxford-edge-tab": {
+    "agent_role": "Integration Agent (server/edge/*) + UX Agent (src/modules/acquisitions/Edge*, edge-hooks.ts, DealDrawer card) - Claude Code session",
+    "phase": "Oxford Edge Phase 1 - Acquisitions > Edge tab, display only. Spec docs/superpowers/specs/2026-10-02-oxford-edge-tab-design.md; plan docs/superpowers/plans/2026-10-02-oxford-edge-tab.md. Worktree .claude/worktrees/oxford-edge-tab, branch feat/oxford-edge-tab.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/034_edge_pull_log.sql (renumbered from 033 after PR 425 took 033; one isolated append-only table edge_pull_log; no existing table touched); (3) package.json: NOT touched by this PR (the branch's own one-line gate:ci governance change was dropped when main's PR 433 landed the same step; merge took main's file verbatim). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Architect ack: Gabriel, in-session 2026-10-02 (AskUserQuestion: Acknowledge and proceed; sentinel placed by Gabriel).",
+    "last_updated": "2026-10-02T17:55:39Z"
+  },
   "trends-wave3b": {
     "agent_role": "Integration Agent + UX Agent — Claude Code",
     "phase": "Portfolio Trends Wave 3B: Expenses tab (stacked monthly opex, heatmap, small-multiples, movers) + health alerts, built against a typed contract (plan: docs/superpowers/plans/2026-10-02-portfolio-trends-wave3b-expense-ui-alerts.md). Data feed is Wave 3A.",

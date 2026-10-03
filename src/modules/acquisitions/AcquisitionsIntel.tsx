@@ -33,7 +33,7 @@ const VERDICT_OPTIONS = [
   { value: 'KILLED', label: 'Killed' },
 ];
 
-export function AcquisitionsIntel() {
+export function AcquisitionsIntel({ edgeEnabled = false }: { edgeEnabled?: boolean } = {}) {
   const [status,  setStatus]  = useState('active');
   const [market,  setMarket]  = useState('');
   const [verdict, setVerdict] = useState('');
@@ -101,6 +101,7 @@ export function AcquisitionsIntel() {
             items={data.rankedCandidates}
             advisoryOnly={data.advisoryOnly}
             writesEnabled={writesEnabled}
+            edgeEnabled={edgeEnabled}
           />
         </>
       )}

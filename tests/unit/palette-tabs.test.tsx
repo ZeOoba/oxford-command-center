@@ -41,7 +41,7 @@ describe('CommandPalette — tab entries', () => {
 
   it('indexes the two in-module strips registered last (Acquisitions, Lease Market)', () => {
     render(<CommandPalette />);
-    for (const label of ['Acquisitions › Workbench', 'Acquisitions › Sourcing', 'Acquisitions › Grader',
+    for (const label of ['Acquisitions › Workbench', 'Acquisitions › Sourcing', 'Acquisitions › Grader', 'Acquisitions › Edge',
       'Lease Market › Acquisition Radar', 'Lease Market › Data Quality']) {
       expect(screen.getByText(label)).toBeTruthy();
     }

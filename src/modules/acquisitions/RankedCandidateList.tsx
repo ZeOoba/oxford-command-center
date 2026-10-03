@@ -10,6 +10,7 @@ import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useSetCandidateStatus } from './hooks';
 import { useSnapshot } from '@/data/queries';
+import { edgeCandidateCell, useEdgeMarkets, type EdgeQueryState } from './edge-hooks';
 
 const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> = {
   T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)', color: 'var(--text-on-accent)' },
@@ -73,10 +74,20 @@ type Props = {
   items: RankedCandidate[];
   advisoryOnly: boolean;
   writesEnabled: boolean;
+  /** Gate for the Edge column's markets query: this list lives in the force-mounted Sourcing panel,
+   *  so the query fires only once AcquisitionsModule's sticky edgeArmed flag is set (spec F11). */
+  edgeEnabled?: boolean;
 };
 
-export function RankedCandidateList({ items, advisoryOnly, writesEnabled }: Props) {
+export function RankedCandidateList({ items, advisoryOnly, writesEnabled, edgeEnabled = false }: Props) {
   const setStatus = useSetCandidateStatus();
+  // Oxford Edge column (spec §8.4). AcqCandidateRow.market is a ClusterTier, not a metro, so a
+  // candidate resolves only through notionDealId → snapshot Deal.id → resolveEdgeMarket, client-side.
+  // The query is gated by edgeEnabled (this list is force-mounted in Sourcing; spec F11).
+  const { data: snap } = useSnapshot();
+  const deals = snap?.snapshot.deals ?? [];
+  const edge = useEdgeMarkets({ enabled: edgeEnabled });
+  const edgeState: EdgeQueryState = !edgeEnabled ? 'idle' : edge.isError ? 'error' : edge.isLoading ? 'loading' : 'ready';
 
   if (items.length === 0) {
     return (
@@ -109,6 +120,18 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled }: Prop
       header: 'Market',
       render: (item) => <span style={{ color: 'var(--text-secondary)' }}>{item.candidate.market ?? '—'}</span>,
       sortValue: (item) => item.candidate.market ?? '',
+    },
+    {
+      key: 'edge',
+      header: 'Edge',
+      render: (item) => {
+        const cell = edgeCandidateCell(item.candidate.notionDealId, deals, edge.data, edgeState);
+        return (
+          <span title={cell.title ?? undefined} style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+            {cell.text}
+          </span>
+        );
+      },
     },
     {
       key: 'sf',
