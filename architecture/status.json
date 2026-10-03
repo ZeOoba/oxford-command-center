@@ -9,6 +9,15 @@
     "review_detail": "PR #436 open, not merged by the author. No Architect-owned file touched; this entry is the CLAUDE.md shared-infra claim only.",
     "last_updated": "2026-10-03T00:00:00Z"
   },
+  "server-error-leaks": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (follow-up to PR #434 adversarial review)",
+    "phase": "Stop five raw-error echoes: calibration.ts resolveManualOutcome catch, acq-notion/hubspot sync errors[], ai/agent.ts SSE error, ai/comps.ts + warehouse/om-extract.ts upstream error text. Detail goes to server log; responses get generic text.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "PR open, not merged by the author. Touches server/warehouse/calibration.ts (error-return text only). Also server/index.ts (Architect-owned): imports the new CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE constant in place of the same literal, and corrects a now-false comment; no route/middleware change. Needs architect acknowledgment before merge.",
+    "last_updated": "2026-10-03T00:00:00Z"
+  },
   "warehouse-500-sanitize": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (security review finding on PR #427)",
     "phase": "server/warehouse/json-errors.ts: warehouseJsonError returns a generic {error:'internal error'} 500 and logs method+path+full error server-side instead of echoing err.message. Tests updated.",

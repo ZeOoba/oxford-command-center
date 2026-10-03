@@ -870,8 +870,10 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
     const r = tx();
     return { ok: true, ...r };
   } catch (e) {
-    // Manual writes FAIL CLOSED (unlike the observational auto path): surface the error to the UI.
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    // Manual writes FAIL CLOSED (unlike the observational auto path): report failure to the UI. The
+    // raw message (SQLite table/constraint text) stays in the server log, never the response body.
+    console.error('[calibration] manual outcome write failed:', e);
+    return { ok: false, error: 'could not record the outcome (internal error)' };
   }
 }
 
