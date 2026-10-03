@@ -450,7 +450,7 @@ describe('I1 — an automated truck state is not queued and not recordable', () 
 });
 
 describe('I2/I3 — storage/IOS scope = loaded buy-box ∪ frozen-unless-explicitly-non-buy-box ∪ logged', () => {
-  type RawM = Record<string, unknown> & { id: string; type: string; lat: number };
+  type RawM = Record<string, unknown> & { id: string; type: string; lat: unknown };
   function writeDataset(dir: string, edit: (markets: RawM[]) => void): void {
     const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: RawM[] };
     edit(f.markets);
@@ -476,9 +476,11 @@ describe('I2/I3 — storage/IOS scope = loaded buy-box ∪ frozen-unless-explici
     // quarantined (bad lat) → still listed with its recorded state, still recordable
     writeDataset(dir, (ms) => {
       const n = cloneAs(ms, 'newtown', 'named');
-      n.lat = 1e999;
+      n.lat = 'not-a-number'; // fails the raw schema → quarantined
       ms.push(n);
     });
+    const loaded = EdgeMarketsResponse.parse(await (await app.request('/markets')).json());
+    expect(loaded.rejectedMarkets.map((r) => r.id)).toEqual(['newtown']);
     let storage = await scopeKeys(app, 'storage');
     expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', lastDoneOn: '2026-09-30' });
     expect(storage.counts).toEqual({ open: 21, due: 0, current: 1 });
