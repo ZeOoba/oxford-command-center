@@ -60,6 +60,23 @@ describe('GET /markets', () => {
     expect(body.outsidePullScope).toEqual({ truck: [], mfgInvest: [] });
   });
 
+  it('outsidePullScope lists in-dataset states outside the pull scopes (automated truck states excluded)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-oos-'));
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<Record<string, unknown> & { truck: Array<number | null> }> };
+    const clone = (id: string, state: string, truck?: Array<number | null>) => {
+      const m = JSON.parse(JSON.stringify(f.markets[0])) as (typeof f.markets)[number];
+      m.id = id;
+      m.state = state;
+      if (truck) m.truck = truck;
+      return m;
+    };
+    // TN / DC: outside both scopes. MI with truck data: automated, so out of the truck list; MI is a mfg-scope state.
+    f.markets.push(clone('nashville', 'TN'), clone('washington', 'DC'), clone('detroit', 'MI', [1, 1, 1, 1, 1]));
+    writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
+    const body = EdgeMarketsResponse.parse(await (await makeApp(noDb, dir).request('/markets')).json());
+    expect(body.outsidePullScope).toEqual({ truck: ['DC', 'TN'], mfgInvest: ['DC', 'TN'] });
+  });
+
   it('missing dir → 200 with availability missing and markets []', async () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'edge-api-missing-')), 'nope');
     const res = await makeApp(noDb, dir).request('/markets');
@@ -143,6 +160,20 @@ describe('POST /pull-queue/:id/void', () => {
     expect((await post(app, `/pull-queue/${id}/void`)).status).toBe(409);
     expect((await post(app, '/pull-queue/9999/void')).status).toBe(404);
     expect((await post(app, '/pull-queue/abc/void')).status).toBe(400);
+  });
+});
+
+describe('POST /pull-queue/:id/void — injected clock', () => {
+  it('voiding the newer row returns state/ageDays computed from the injected today, not a stale constant', async () => {
+    const db = freshDb();
+    const app = makeApp(() => db);
+    await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-06-01' });
+    const second = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' })).json());
+    const id = second.scopes.find((s) => s.scopeKey === 'columbus')!.lastLogId!;
+    const scope = EdgePullItem.parse(await (await post(app, `/pull-queue/${id}/void`)).json()).scopes.find((s) => s.scopeKey === 'columbus')!;
+    expect(scope.lastDoneOn).toBe('2026-06-01');
+    expect(scope.ageDays).toBe(123); // 2026-06-01 -> 2026-10-02
+    expect(scope.state).toBe('due');
   });
 });
 

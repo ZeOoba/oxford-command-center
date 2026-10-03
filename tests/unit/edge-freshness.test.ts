@@ -55,6 +55,13 @@ describe('edgeFreshness', () => {
     expect(f.stale).toBe(true);
   });
 
+  it('future pulled date alone (normal past mtime) → stale via clock skew', () => {
+    const f = edgeFreshness('2026-10-03', ms('2026-10-02T08:00:00Z'), NOW);
+    expect(f.asOf).toBe('2026-10-02');
+    expect(f.ageDays).toBe(0);
+    expect(f.stale).toBe(true);
+  });
+
   it('future pulled + future mtime → ageDays clamped to 0 and stale', () => {
     const f = edgeFreshness('2026-10-04', ms('2026-10-05T00:00:00Z'), NOW);
     expect(f.ageDays).toBe(0);

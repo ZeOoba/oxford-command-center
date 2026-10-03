@@ -57,6 +57,12 @@ describe('scope lists', () => {
     expect(pullScopeKeys('truck', markets)).not.toContain('VA');
   });
 
+  it('a partially filled truck series still counts as automated (some, not every)', () => {
+    const markets = [...fourMarkets(), mkMarket('grand_rapids', 'Grand Rapids', 'MI', 'named', { truck: obs([null, null, null, null, 3]) })];
+    expect(automatedTruckStates(markets)).toEqual(['MI', 'VA']);
+    expect(pullScopeKeys('truck', markets)).not.toContain('MI');
+  });
+
   it('lists in-dataset states outside the pull scope (never silently omitted)', () => {
     const markets = [
       ...fourMarkets(),
@@ -171,8 +177,9 @@ describe('recordEdgePull validation and append-only guarantees', () => {
     expect(() => recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-10-03' }, '2026-10-02')).toThrow(/future/);
     expect(() => recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '9999-12-31' })).toThrow(/future/);
     expect(recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-10-02' }, '2026-10-02')).toBeGreaterThan(0);
+    // Inject the same `today` the caller computed: recordEdgePull would otherwise re-read new Date() (midnight-rollover flake).
     const today = localIsoDate(new Date());
-    expect(recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: today })).toBeGreaterThan(0);
+    expect(recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: today }, today)).toBeGreaterThan(0);
   });
 
   it('exposes no delete path: no DELETE SQL in the module, void only sets voided_at and keeps the row', () => {
