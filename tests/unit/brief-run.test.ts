@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, vi } from 'vitest';
+import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,11 +7,6 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { runBrief } from '../../server/brief/run';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'run-'));
-
-// runBrief writes brief-health.json; without this every run of the suite overwrites the real
-// data/brief-health.json with a fixture clock (2026-07-09), which the Data Feeds card reads as 86d stale.
-beforeAll(() => { process.env.BRIEF_HEALTH_PATH = join(dir(), 'brief-health.json'); });
-
 function baseSnap(): PortfolioSnapshot {
   return {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-04', generatedAt: '2026-06-04T00:00:00Z', source: 't', scenario: 'Base' },
@@ -22,6 +17,13 @@ function baseSnap(): PortfolioSnapshot {
 }
 
 describe('runBrief', () => {
+  it('writes brief-health.json to BRIEF_HEALTH_PATH (suite sandbox), never the repo data/ file', async () => {
+    const healthPath = process.env.BRIEF_HEALTH_PATH as string;
+    expect(healthPath).toBeTruthy();
+    await runBrief(baseSnap(), { statePath: join(dir(), 'state.json'), now: new Date('2026-07-09T11:00:00Z'), send: async () => ({ ok: true, via: 'com' }) });
+    expect(existsSync(healthPath)).toBe(true);
+  });
+
   it('sends the brief once when the gate is open and records lastBriefDate', async () => {
     const statePath = join(dir(), 'state.json');
     const sent: string[] = [];
