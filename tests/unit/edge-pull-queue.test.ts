@@ -12,7 +12,7 @@ import {
   PullValidationError, recordEdgePull, scopeStateFor, voidEdgePull,
 } from '../../server/edge/pull-queue';
 import * as pullQueue from '../../server/edge/pull-queue';
-import { fourMarkets, mkMarket, obs } from './edge-test-helpers';
+import { cell, fourMarkets, mkMarket, obs } from './edge-test-helpers';
 
 const pullQueueDays = (k: 'storage' | 'ios' | 'mfgInvest' | 'truck'): number => pullQueue.PULL_ITEMS[k].cadenceDays;
 
@@ -73,6 +73,56 @@ describe('scope lists', () => {
     expect(pullScopeKeys('truck', markets)).not.toContain('MI');
   });
 
+  it('automated = observed-status values only (same rule as coverage): guide_only / null-status values do not automate a state', () => {
+    const guideOnly = mkMarket('dayton', 'Dayton', 'OH', 'named', {
+      truck: cell([1, 2, 3, 4, 5], ['guide_only', 'guide_only', 'guide_only', 'guide_only', 'guide_only']),
+    });
+    const nullStatus = mkMarket('fort_wayne', 'Fort Wayne', 'IN', 'named', {
+      truck: cell([1, null, null, null, null], ['null', 'null', 'null', 'null', 'null']),
+    });
+    const markets = [...fourMarkets(), guideOnly, nullStatus];
+    expect(automatedTruckStates(markets)).toEqual(['VA']);
+    expect(pullScopeKeys('truck', markets)).toEqual(TRUCK_STATES.slice());
+    const item = buildEdgePullItem('truck', markets, new Map(), '2026-10-02');
+    expect(item.scopes.map((s) => s.scopeKey)).toEqual(expect.arrayContaining(['OH', 'IN']));
+    expect(item.counts).toEqual({ open: 13, due: 0, current: 0 });
+    expect(computeOutsidePullScope(markets).truck).toEqual([]);
+  });
+
+  it('automated = observed-status values only: one actual value among guide_only cells automates the state', () => {
+    const mixed = mkMarket('dayton', 'Dayton', 'OH', 'named', {
+      truck: cell([1, 2, null, null, null], ['guide_only', 'actual', 'null', 'null', 'null']),
+    });
+    expect(automatedTruckStates([...fourMarkets(), mixed])).toEqual(['OH', 'VA']);
+    // an observed status with a null value is not a value
+    const nullObserved = mkMarket('toledo', 'Toledo', 'OH', 'named', {
+      truck: cell([null, null, null, null, null], ['actual', 'actual', 'actual', 'actual', 'actual']),
+    });
+    expect(automatedTruckStates([nullObserved])).toEqual([]);
+  });
+
+  it('truck caveat is derived from the automated set, not hardcoded', () => {
+    const none = buildEdgePullItem('truck', [], new Map(), '2026-10-02');
+    expect(none.caveat).not.toMatch(/\b(VA|MI)\b/);
+    const va = buildEdgePullItem('truck', fourMarkets(), new Map(), '2026-10-02');
+    expect(va.caveat).toMatch(/^VA is complete through the automated state-DOT pull/);
+    const mi = mkMarket('grand_rapids', 'Grand Rapids', 'MI', 'named', { truck: obs([1, 2, 3, 4, 5]) });
+    const oh = mkMarket('dayton', 'Dayton', 'OH', 'named', { truck: obs([1, 2, 3, 4, 5]) });
+    const two = buildEdgePullItem('truck', [...fourMarkets(), mi], new Map(), '2026-10-02');
+    expect(two.caveat).toMatch(/^MI and VA are complete through the automated state-DOT pull/);
+    const three = buildEdgePullItem('truck', [...fourMarkets(), mi, oh], new Map(), '2026-10-02');
+    expect(three.caveat).toMatch(/^MI, OH and VA are complete/);
+    expect(buildEdgePullItem('storage', [], new Map(), '2026-10-02').caveat).toBe(pullQueue.PULL_ITEMS.storage.caveat);
+  });
+
+  it('log-only scope labels are humanized from the id', () => {
+    const logged = buildEdgePullItem('storage', [], new Map(), '2026-10-02', new Set(['zeta_town']));
+    expect(logged.scopes.find((s) => s.scopeKey === 'zeta_town')!.scopeLabel).toBe('Zeta Town');
+    // frozen labels are unchanged; state-scoped kinds keep the raw state code
+    expect(buildEdgePullItem('storage', [], new Map(), '2026-10-02').scopes[0]!.scopeLabel).toBe('Harrisburg, PA');
+    expect(buildEdgePullItem('truck', [], new Map(), '2026-10-02').scopes[0]!.scopeLabel).toBe('OH');
+  });
+
   it('I1: a TRUCK_STATES state with real truck values is automated and leaves the truck queue; the rest are unchanged', () => {
     const markets = [...fourMarkets(), mkMarket('dayton', 'Dayton', 'OH', 'named', { truck: obs([1, 2, 3, 4, 5]) })];
     expect(automatedTruckStates(markets)).toEqual(['OH', 'VA']);
@@ -122,7 +172,7 @@ describe('scope lists', () => {
     // the queue shows them (voided-only history renders as open), per kind only
     const q = buildEdgePullQueue(db, fourMarkets(), '2026-10-02');
     const storage = q.items.find((i) => i.kind === 'storage')!;
-    expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', scopeLabel: 'newtown' });
+    expect(storage.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', scopeLabel: 'Newtown' });
     expect(storage.scopes.find((s) => s.scopeKey === 'oldtown')).toMatchObject({ state: 'open' });
     expect(storage.scopes.map((s) => s.scopeKey)).not.toContain('iosonly');
     expect(storage.counts).toEqual({ open: 22, due: 0, current: 1 });
@@ -353,6 +403,31 @@ describe('R1 — void check-then-update is atomic against another connection', (
     expect(readEdgePullLatest(a).get('storage|columbus')?.doneOn).toBe('2026-09-20');
     a.close();
     b.close();
+  });
+});
+
+describe('void scope guard', () => {
+  it('a row whose (kind, scope) the guard rejects is out_of_scope and stays unvoided; in-scope rows void; terminal answers come first', () => {
+    const db = freshDb();
+    const oh = recordEdgePull(db, { kind: 'truck', scopeKey: 'OH', doneOn: '2026-09-01' });
+    const col = recordEdgePull(db, { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-01' });
+    const seen: Array<[string, string]> = [];
+    const guard = (kind: string, scopeKey: string) => {
+      seen.push([kind, scopeKey]);
+      return kind !== 'truck';
+    };
+    expect(voidEdgePull(db, oh, guard)).toEqual({ status: 'out_of_scope', kind: 'truck' });
+    expect(seen).toEqual([['truck', 'OH']]);
+    const voidedAt = (id: number) => (db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null }).voided_at;
+    expect(voidedAt(oh)).toBeNull();
+    expect(voidEdgePull(db, col, guard)).toEqual({ status: 'voided', kind: 'storage' });
+    // not_found / already_voided never consult the guard
+    seen.length = 0;
+    expect(voidEdgePull(db, 9999, guard)).toEqual({ status: 'not_found' });
+    expect(voidEdgePull(db, col, guard)).toEqual({ status: 'already_voided', kind: 'storage' });
+    expect(seen).toEqual([]);
+    // no guard = legacy behavior
+    expect(voidEdgePull(db, oh)).toEqual({ status: 'voided', kind: 'truck' });
   });
 });
 
