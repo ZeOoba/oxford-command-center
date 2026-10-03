@@ -17,7 +17,10 @@ import type { WarehouseDb } from './db';
 // against a resync — see the constant's doc comment for the 2026-07-24 incident this closes).
 import { LOCAL_LOCKED_STATUSES } from './acq-hubspot-sync';
 
-/** Full UUID for the Acquisition Pipeline Tracker Notion database (short id bcfe4a03). */
+/**
+ * Full UUID for the Acquisition Pipeline Tracker Notion *data source* (short id bcfe4a03).
+ * Queried via /v1/data_sources/{id}/query — the legacy /v1/databases/{id}/query 404s for it.
+ */
 export const ACQ_PIPELINE_DB_ID = 'bcfe4a03-7e61-4ac1-a0bb-c44174fa138b';
 
 export interface AcqSyncResult {
@@ -127,11 +130,11 @@ async function queryNotionPage(
 ): Promise<NotionQueryResponse> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NOTION_TIMEOUT_MS);
-  const res = await fetchImpl(`https://api.notion.com/v1/databases/${dbId}/query`, {
+  const res = await fetchImpl(`https://api.notion.com/v1/data_sources/${dbId}/query`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
-      'Notion-Version': '2022-06-28',
+      'Notion-Version': '2025-09-03',
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(cursor ? { start_cursor: cursor, page_size: 100 } : { page_size: 100 }),
