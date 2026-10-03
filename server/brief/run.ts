@@ -22,7 +22,8 @@ function workbookDataMonth(): string {
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const DASHBOARD_URL = process.env.BRIEF_DASHBOARD_URL ?? 'https://ora-command-center.pages.dev';
-const HEALTH_PATH = process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
+// Resolved per write (not at import) so a test or caller can redirect it after the module loads.
+const healthPath = (): string => process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
 
 export interface RunDeps {
   statePath?: string;
@@ -258,8 +259,8 @@ function upcomingDates(
 
 function writeHealth(h: object): void {
   try {
-    mkdirSync(dirname(HEALTH_PATH), { recursive: true });
-    writeFileSync(HEALTH_PATH, JSON.stringify(h, null, 2));
+    mkdirSync(dirname(healthPath()), { recursive: true });
+    writeFileSync(healthPath(), JSON.stringify(h, null, 2));
   } catch {
     /* non-fatal */
   }
