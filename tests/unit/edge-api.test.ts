@@ -62,12 +62,15 @@ describe('GET /markets', () => {
 
   it('outsidePullScope lists in-dataset states outside the pull scopes (automated truck states excluded)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'edge-api-oos-'));
-    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<Record<string, unknown> & { truck: Array<number | null> }> };
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<Record<string, unknown> & { truck: Array<number | null>; status: Record<string, string[]> }> };
     const clone = (id: string, state: string, truck?: Array<number | null>) => {
       const m = JSON.parse(JSON.stringify(f.markets[0])) as (typeof f.markets)[number];
       m.id = id;
       m.state = state;
-      if (truck) m.truck = truck;
+      if (truck) {
+        m.truck = truck;
+        m.status.truck = truck.map(() => 'actual'); // automated = observed STATUS, not just a value
+      }
       return m;
     };
     // TN / DC: outside both scopes. MI with truck data: automated, so out of the truck list; MI is a mfg-scope state.
@@ -416,8 +419,10 @@ describe('R2 — a quarantined buy-box market stays in the storage/IOS queues', 
 describe('I1 — an automated truck state is not queued and not recordable', () => {
   function automatedOhioDir(): string {
     const dir = mkdtempSync(join(tmpdir(), 'edge-api-truck-'));
-    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<{ id: string; truck: Array<number | null> }> };
-    f.markets.find((m) => m.id === 'columbus')!.truck = [1, 2, 3, 4, 5];
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: Array<{ id: string; truck: Array<number | null>; status: Record<string, string[]> }> };
+    const columbus = f.markets.find((m) => m.id === 'columbus')!;
+    columbus.truck = [1, 2, 3, 4, 5];
+    columbus.status.truck = ['actual', 'actual', 'actual', 'actual', 'actual'];
     writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
     return dir;
   }
@@ -600,5 +605,157 @@ describe('GET /markets — non-finite numbers (gate-fix F1)', () => {
     const body = EdgeMarketsResponse.parse(await res.json());
     expect(body.rejectedMarkets).toHaveLength(1);
     expect(body.marketCount).toBe(3);
+  });
+});
+
+describe('POST /pull-queue under write contention', () => {
+  it('SQLITE_BUSY on the insert → 503 with the same fixed text as the void route; no row; succeeds once the lock clears', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'edge-api-post-busy-')), 'w.sqlite');
+    const a = openWarehouse(path);
+    const b = openWarehouse(path);
+    a.pragma('busy_timeout = 1');
+    const app = makeApp(() => a);
+    const body = { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' };
+    b.exec('BEGIN IMMEDIATE');
+    try {
+      const busy = await post(app, '/pull-queue', body);
+      expect(busy.status).toBe(503);
+      const text = await busy.text();
+      expect(JSON.parse(text)).toEqual({ error: 'pull log is busy; retry' });
+      expect(text).not.toMatch(/locked|SQLITE/);
+    } finally {
+      b.exec('ROLLBACK');
+    }
+    expect((a.prepare('SELECT COUNT(*) AS n FROM edge_pull_log').get() as { n: number }).n).toBe(0);
+    expect((await post(app, '/pull-queue', body)).status).toBe(200);
+    a.close();
+    b.close();
+  });
+
+  it('a non-busy fault is still a 500 (the mapping is busy-only)', async () => {
+    const real = freshDb();
+    const faulty = new Proxy(real, {
+      get(target, prop, recv) {
+        if (prop === 'prepare') {
+          return (sql: string) => {
+            if (/INSERT INTO edge_pull_log/.test(sql)) throw Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR' });
+            return target.prepare(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as WarehouseDb;
+    expect((await post(makeApp(() => faulty), '/pull-queue', { kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' })).status).toBe(500);
+  });
+});
+
+describe('POST /pull-queue/:id/void — scope guard', () => {
+  type RawM = Record<string, unknown> & { id: string; type: string; truck?: Array<number | null>; status?: Record<string, string[]> };
+  function writeDataset(dir: string, edit: (markets: RawM[]) => void): void {
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: RawM[] };
+    edit(f.markets);
+    writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
+  }
+  const voidedAt = (db: WarehouseDb, id: number) =>
+    (db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null }).voided_at;
+
+  it('a truck state that became automated cannot be voided (409, fixed text, row untouched); un-automated it is voidable again', async () => {
+    const db = freshDb();
+    const dir = fixtureDir();
+    const app = makeApp(() => db, dir);
+    const item = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'truck', scopeKey: 'OH', doneOn: '2026-09-01' })).json());
+    const id = item.scopes.find((s) => s.scopeKey === 'OH')!.lastLogId!;
+
+    writeDataset(dir, (ms) => {
+      const columbus = ms.find((m) => m.id === 'columbus')!; // columbus is OH → OH automated
+      columbus.truck = [1, 2, 3, 4, 5];
+      columbus.status!.truck = ['actual', 'actual', 'actual', 'actual', 'actual'];
+    });
+    const res = await post(app, `/pull-queue/${id}/void`);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'that scope is no longer in the pull queue; its history is kept' });
+    expect(voidedAt(db, id)).toBeNull();
+
+    writeDataset(dir, () => undefined); // automation lost
+    expect((await post(app, `/pull-queue/${id}/void`)).status).toBe(200);
+    expect(voidedAt(db, id)).not.toBeNull();
+  });
+
+  it('a retyped frozen id with log history stays voidable (log-only keys are in scope)', async () => {
+    const db = freshDb();
+    const id = Number(db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'harrisburg', '2026-09-30')").run().lastInsertRowid);
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-void-retype-'));
+    writeDataset(dir, (ms) => {
+      const m = JSON.parse(JSON.stringify(ms[0])) as RawM;
+      m.id = 'harrisburg';
+      m.type = 'auto';
+      ms.push(m);
+    });
+    const res = await post(makeApp(() => db, dir), `/pull-queue/${id}/void`);
+    expect(res.status).toBe(200);
+    expect(voidedAt(db, id)).not.toBeNull();
+  });
+});
+
+describe('POST / void responses keep log-history-only scopes', () => {
+  type RawM = Record<string, unknown> & { id: string; type: string; lat: unknown };
+  function writeDataset(dir: string, edit: (markets: RawM[]) => void): void {
+    const f = JSON.parse(readFileSync(FIXTURE, 'utf8')) as { markets: RawM[] };
+    edit(f.markets);
+    writeFileSync(join(dir, 'markets.json'), JSON.stringify(f));
+  }
+  const clone = (markets: RawM[], id: string, type: string): RawM => {
+    const m = JSON.parse(JSON.stringify(markets[0])) as RawM;
+    m.id = id;
+    m.type = type;
+    return m;
+  };
+
+  it('quarantined newtown: POST and void bodies still carry its scope (current, then reverted)', async () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'newtown', '2026-09-01')").run();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-hist-quar-'));
+    writeDataset(dir, (ms) => {
+      const n = clone(ms, 'newtown', 'named');
+      n.lat = 'not-a-number'; // quarantined: absent from loaded markets, in scope only via log history
+      ms.push(n);
+    });
+    const app = makeApp(() => db, dir);
+    const rec = await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'newtown', doneOn: '2026-09-30' });
+    expect(rec.status).toBe(200);
+    const item = EdgePullItem.parse(await rec.json());
+    const scope = item.scopes.find((s) => s.scopeKey === 'newtown');
+    expect(scope).toMatchObject({ state: 'current', lastDoneOn: '2026-09-30' });
+    expect(item.scopes).toHaveLength(22);
+
+    const voided = await post(app, `/pull-queue/${scope!.lastLogId}/void`);
+    expect(voided.status).toBe(200);
+    const after = EdgePullItem.parse(await voided.json());
+    expect(after.scopes.find((s) => s.scopeKey === 'newtown')).toMatchObject({ state: 'current', lastDoneOn: '2026-09-01' });
+    expect(after.scopes).toHaveLength(22);
+  });
+
+  it('retyped frozen harrisburg (auto) with history: POST and void bodies still carry its scope', async () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'harrisburg', '2026-09-01')").run();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-hist-retype-'));
+    writeDataset(dir, (ms) => ms.push(clone(ms, 'harrisburg', 'auto')));
+    const app = makeApp(() => db, dir);
+    const item = EdgePullItem.parse(await (await post(app, '/pull-queue', { kind: 'storage', scopeKey: 'harrisburg', doneOn: '2026-09-30' })).json());
+    const scope = item.scopes.find((s) => s.scopeKey === 'harrisburg');
+    expect(scope).toMatchObject({ state: 'current', lastDoneOn: '2026-09-30', scopeLabel: 'Harrisburg, PA' });
+
+    const after = EdgePullItem.parse(await (await post(app, `/pull-queue/${scope!.lastLogId}/void`)).json());
+    expect(after.scopes.find((s) => s.scopeKey === 'harrisburg')).toMatchObject({ state: 'current', lastDoneOn: '2026-09-01' });
+  });
+
+  it('a scope whose ONLY history is the voided row still appears (open) in the void response', async () => {
+    const db = freshDb();
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-hist-only-'));
+    writeDataset(dir, (ms) => ms.push(clone(ms, 'harrisburg', 'auto')));
+    const id = Number(db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('storage', 'harrisburg', '2026-09-01')").run().lastInsertRowid);
+    const after = EdgePullItem.parse(await (await post(makeApp(() => db, dir), `/pull-queue/${id}/void`)).json());
+    expect(after.scopes.find((s) => s.scopeKey === 'harrisburg')).toMatchObject({ state: 'open', lastDoneOn: null });
   });
 });

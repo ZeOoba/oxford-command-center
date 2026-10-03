@@ -30,6 +30,8 @@ function isSqliteBusy(e: unknown): boolean {
   return typeof code === 'string' && /^SQLITE_BUSY(_[A-Z]+)?$/.test(code);
 }
 
+const BUSY_MESSAGE = 'pull log is busy; retry';
+
 export interface EdgeApiDeps {
   edgeDir?: () => string;
   now?: () => Date;
@@ -94,6 +96,8 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       try {
         recordEdgePull(db, input, today);
       } catch (e) {
+        // Contention is transient, not a server fault: fixed text only (no SQL, path or driver message).
+        if (isSqliteBusy(e)) return c.json({ error: BUSY_MESSAGE }, 503);
         // Only the store's date validation maps to 400; any other fault propagates → 500.
         if (e instanceof PullValidationError) return c.json({ error: e.message }, 400);
         // Defense in depth: a pull-log CHECK violation is a rejected input, not a server fault.
@@ -114,14 +118,19 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
       const { markets } = await load();
       let result: ReturnType<typeof voidEdgePull>;
       try {
-        result = voidEdgePull(db, id);
+        // Only rows whose (kind, scope) is still queueable are voidable; log-history scopes are in scope via `logged`.
+        result = voidEdgePull(db, id, (kind, scopeKey) =>
+          pullScopeKeys(kind, markets, readEdgePullLoggedKeys(db, kind)).includes(scopeKey));
       } catch (e) {
         // Contention is transient, not a server fault: fixed text only (no SQL, path or driver message).
-        if (isSqliteBusy(e)) return c.json({ error: 'pull log is busy; retry' }, 503);
+        if (isSqliteBusy(e)) return c.json({ error: BUSY_MESSAGE }, 503);
         throw e;
       }
       if (result.status === 'not_found') return c.json({ error: `pull log row ${id} not found` }, 404);
       if (result.status === 'already_voided') return c.json({ error: `pull log row ${id} is already voided` }, 409);
+      if (result.status === 'out_of_scope') {
+        return c.json({ error: 'that scope is no longer in the pull queue; its history is kept' }, 409);
+      }
       if (result.status === 'superseded') {
         return c.json({ error: 'that pull was superseded by a newer record; refresh and retry' }, 409);
       }

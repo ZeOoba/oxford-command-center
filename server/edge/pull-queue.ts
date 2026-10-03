@@ -14,6 +14,7 @@ import type {
   EdgeMarket, EdgeOutsidePullScope, EdgePullItem, EdgePullKind, EdgePullLink, EdgePullQueueResponse,
   EdgePullScopeState, EdgePullState, RecordPullRequest,
 } from '../../src/contracts/edge';
+import { EDGE_OBSERVED_STATUSES } from '../../src/contracts/edge';
 import { isRealIsoDate } from './freshness';
 import { BUY_BOX_TYPES } from './series';
 
@@ -135,7 +136,7 @@ export const PULL_ITEMS: Readonly<Record<EdgePullKind, EdgePullItemDef>> = {
     cadenceLabel: 'Annual',
     scopeType: 'state',
     why: 'Freight moving before jobs show up is the earliest demand signal there is.',
-    caveat: 'VA and MI are complete through the automated state-DOT pull; each remaining state has a specific blocker below.',
+    caveat: 'Each remaining state has a specific blocker below.',
   },
 };
 
@@ -187,11 +188,20 @@ export function pullScopeKeys(
   return TRUCK_STATES.filter((s) => !automated.has(s));
 }
 
-/** States with any non-null truck value in markets.json (VA + MI today). */
+/** States with at least one OBSERVED truck value in markets.json (VA + MI today): a non-null value whose
+ *  matching status is actual/estimated/nowcast — the same rule coverage uses, so guide_only / "Not published"
+ *  values never take a state out of the manual queue. */
 export function automatedTruckStates(markets: readonly EdgeMarket[]): string[] {
   const states = new Set<string>();
-  for (const m of markets) if (m.series.truck.values.some((v) => v !== null)) states.add(m.state);
+  for (const m of markets) {
+    const { values, status } = m.series.truck;
+    if (values.some((v, i) => v !== null && EDGE_OBSERVED_STATUSES.includes(status[i] ?? 'null'))) states.add(m.state);
+  }
   return [...states].sort();
+}
+
+function joinStates(states: readonly string[]): string {
+  return states.length <= 1 ? (states[0] ?? '') : `${states.slice(0, -1).join(', ')} and ${states[states.length - 1]}`;
 }
 
 /** In-dataset states outside the artifact's pull scope (TN, ND, SD, DC today), listed in Data health. */
@@ -288,12 +298,17 @@ export type VoidEdgePullResult =
   | { status: 'voided'; kind: EdgePullKind }
   | { status: 'already_voided'; kind: EdgePullKind }
   | { status: 'superseded'; kind: EdgePullKind }
+  | { status: 'out_of_scope'; kind: EdgePullKind }
   | { status: 'not_found' };
 
 /** Undo = set voided_at. Rows are never removed (append-only; archive-not-remove rule). Only the row that is
  *  currently the scope's state (latest non-voided by done_on DESC, id DESC) is voidable: voiding an older,
  *  superseded row from a stale tab would be permanent (the trigger forbids un-voiding) yet change nothing visible. */
-export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
+export function voidEdgePull(
+  db: WarehouseDb,
+  id: number,
+  inScope?: (kind: EdgePullKind, scopeKey: string) => boolean,
+): VoidEdgePullResult {
   type LogRowById = { kind: EdgePullKind; scopeKey: string; voidedAt: string | null };
   const byId = (): LogRowById | undefined =>
     db
@@ -312,6 +327,9 @@ export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
     const row = byId();
     if (!row) return { status: 'not_found' };
     if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
+    // A row whose scope is no longer queueable (e.g. a truck state that became automated) stays as it is: a
+    // void is permanent, and the real done_on would be lost if the state later loses automation.
+    if (inScope !== undefined && !inScope(row.kind, row.scopeKey)) return { status: 'out_of_scope', kind: row.kind };
     const current = db
       .prepare(
         `SELECT id FROM edge_pull_log
@@ -329,12 +347,17 @@ export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
   return run.immediate();
 }
 
+/** Log-only market ids (removed from markets.json) get a readable label: zeta_town → "Zeta Town". */
+function humanizeScopeKey(scopeKey: string): string {
+  return scopeKey.split('_').filter((w) => w !== '').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || scopeKey;
+}
+
 function scopeLabelFor(kind: EdgePullKind, scopeKey: string, markets: readonly EdgeMarket[]): string {
   if (kind === 'mfgInvest' || kind === 'truck') return scopeKey;
   const frozen = EDGE_BUY_BOX_FALLBACK.find((s) => s.id === scopeKey);
   if (frozen) return frozen.label;
   const m = markets.find((x) => x.id === scopeKey);
-  return m ? `${m.name}, ${m.state}` : scopeKey;
+  return m ? `${m.name}, ${m.state}` : humanizeScopeKey(scopeKey);
 }
 
 function scopeLinks(kind: EdgePullKind, scopeKey: string): EdgePullLink[] {
@@ -358,6 +381,12 @@ function scopeLinks(kind: EdgePullKind, scopeKey: string): EdgePullLink[] {
     },
     { label: 'LoopNet', url: `https://www.loopnet.com/search/land/${frozen.slug}/` },
   ];
+}
+
+function truckCaveat(markets: readonly EdgeMarket[], base: string): string {
+  const automated = automatedTruckStates(markets);
+  if (automated.length === 0) return base;
+  return `${joinStates(automated)} ${automated.length === 1 ? 'is' : 'are'} complete through the automated state-DOT pull; ${base.charAt(0).toLowerCase()}${base.slice(1)}`;
 }
 
 export function buildEdgePullItem(
@@ -390,7 +419,7 @@ export function buildEdgePullItem(
     cadenceLabel: def.cadenceLabel,
     scopeType: def.scopeType,
     why: def.why,
-    caveat: def.caveat,
+    caveat: kind === 'truck' ? truckCaveat(markets, def.caveat) : def.caveat,
     scopes,
     counts: {
       open: scopes.filter((s) => s.state === 'open').length,
