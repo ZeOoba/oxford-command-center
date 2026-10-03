@@ -908,7 +908,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       try {
         const result = await syncNotionPipeline(db, token);
         return c.json(result, 200);
-      } catch {
+      } catch (err) {
+        console.error('[warehouse-api] /acq/sync/notion error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'notion sync failed' }, 502);
       }
     }),

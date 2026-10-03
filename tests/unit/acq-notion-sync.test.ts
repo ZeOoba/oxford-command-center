@@ -215,6 +215,44 @@ describe('syncNotionPipeline — field mapping', () => {
   });
 });
 
+describe('syncNotionPipeline — live Acquisition Pipeline Tracker schema', () => {
+  // The live database uses "Deal Name" / "Address" / "Total SF" / "Stage" (not the Name/SF/Status
+  // names the original fixtures assumed). Pin the mapping against that real shape.
+  function livePage(id: string, stage: string, totalSf: number | null): object {
+    return {
+      id,
+      properties: {
+        'Deal Name': { type: 'title', title: [{ plain_text: '123 Main St' }] },
+        Address: { type: 'rich_text', rich_text: [{ plain_text: '123 Main St, Columbus OH' }] },
+        'Total SF': { type: 'number', number: totalSf },
+        Stage: { type: 'select', select: { name: stage } },
+      },
+    };
+  }
+
+  it('reads Total SF into rentable_sf', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([livePage('live-sf', 'Candidate', 38500)]) });
+    const row = db.prepare('SELECT rentable_sf FROM acq_candidates WHERE id = ?').get('deal:live-sf') as
+      { rentable_sf: number | null } | undefined;
+    expect(row?.rentable_sf).toBe(38500);
+  });
+
+  it.each([
+    ['Killed', 'passed'],
+    ['Passed', 'passed'],
+    ['Closed Won', 'acquired'],
+    ['Candidate', 'active'],
+    ['LOI Executed', 'active'],
+  ])('Stage %s maps to status %s', async (stage, expected) => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([livePage('live-stage', stage, null)]) });
+    const row = db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get('deal:live-stage') as
+      { status: string } | undefined;
+    expect(row?.status).toBe(expected);
+  });
+});
+
 describe('syncNotionPipeline — status no-clobber', () => {
   it('does not downgrade a locally-acquired candidate back to active on sync', async () => {
     const db = freshDb();
@@ -328,6 +366,23 @@ describe('syncNotionPipeline — Notion API failure', () => {
     await expect(
       syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: failFetch }),
     ).rejects.toThrow('401');
+  });
+});
+
+describe('syncNotionPipeline — Notion request shape', () => {
+  // ACQ_PIPELINE_DB_ID is a Notion *data source* id. The legacy /v1/databases/{id}/query
+  // endpoint 404s (object_not_found) for it; the data-source endpoint + 2025-09-03 version works.
+  it('queries /v1/data_sources/{id}/query with Notion-Version 2025-09-03', async () => {
+    const db = freshDb();
+    const calls: { url: string; version: string | undefined }[] = [];
+    const spy: FetchLike = async (url, init) => {
+      calls.push({ url, version: (init?.headers as Record<string, string> | undefined)?.['Notion-Version'] });
+      return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), { status: 200 });
+    };
+    await syncNotionPipeline(db, 'tok', { databaseId: 'ds-123', fetchImpl: spy });
+    expect(calls).toEqual([
+      { url: 'https://api.notion.com/v1/data_sources/ds-123/query', version: '2025-09-03' },
+    ]);
   });
 });
 
