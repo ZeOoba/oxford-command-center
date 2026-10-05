@@ -570,6 +570,10 @@ export interface EffectLine {
   /** Effect on NOI: revenue up / cost down = positive. */
   readonly impact: number;
   readonly helps: boolean;
+  /** Bar length as a share (0-1) of the largest |effect| in the comparison. */
+  readonly width: number;
+  /** Tooltip lines, title first. */
+  readonly tip: readonly string[];
 }
 
 export interface DriverLine {
@@ -663,7 +667,7 @@ export function whyView(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXP
         : { a: h.yr[String(Number(k) - 1)], b: h.yr[k], la: String(Number(k) - 1), lb: k };
     if (!pair.a || !pair.b) continue;
     const { a, b } = pair;
-    const effects: EffectLine[] = [
+    const ranked = [
       ...REVENUE_CATEGORIES.map((c) => ({ name: c as string, prior: a.rc[c] ?? 0, current: b.rc[c] ?? 0, sign: 1 })),
       ...OPEX_CATEGORIES.map((c) => ({ name: c as string, prior: a.cats[c] ?? 0, current: b.cats[c] ?? 0, sign: -1 })),
     ]
@@ -674,6 +678,12 @@ export function whyView(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXP
       .filter((x) => Math.abs(x.impact) >= rules.why.effectMinDollars)
       .sort((p, q) => Math.abs(q.impact) - Math.abs(p.impact))
       .slice(0, rules.why.effectLimit);
+    const maxAbs = Math.max(1, ...ranked.map((x) => Math.abs(x.impact)));
+    const effects: EffectLine[] = ranked.map((x) => ({
+      ...x,
+      width: Math.abs(x.impact) / maxAbs,
+      tip: [x.name, `${usd(x.prior, 'f')} → ${usd(x.current, 'f')}`, `Effect on NOI ${x.impact >= 0 ? '+' : '-'}${usd(Math.abs(x.impact), 'f')}`],
+    }));
     pairs.push({
       key: k,
       label: `${pair.lb} vs ${pair.la}`,

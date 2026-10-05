@@ -13,6 +13,7 @@ import {
   markerPath,
   sparklineGeometry,
   stackedBarsLayout,
+  stackTotals,
   stepChartLayout,
 } from '../../src/modules/property-financials/charts/geometry';
 
@@ -109,6 +110,8 @@ describe('stackedBarsLayout', () => {
 
   it('totals ignore negative segments (opex categories cannot stack below zero)', () => {
     expect(L.totals).toEqual([175, 280]);
+    expect(stackTotals(groups)).toEqual([175, 280]);
+    expect(stackTotals([[Number.NaN, 5]])).toEqual([5]);
   });
 
   it('segments stack bottom-up in input order; zero / negative segments draw nothing', () => {
