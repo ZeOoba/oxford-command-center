@@ -1,0 +1,13 @@
+{
+  "$schema_note": "Selection thresholds for the derived blocks of dataset.json (plan T9a). Reverse-engineered from the committed dataset: every boundary across all 11 entities and every comparison is consistent with these constants (tests/unit/property-financials-build-dataset.test.ts pins the reproduction). Change here, not in code.",
+  "version": "v1",
+  "account_movers": {
+    "$note": "properties-level opex account movers (account_movers[id][comparison]): opex accounts whose |current - prior| is at least the threshold for the comparison's period family, sorted by |delta| descending.",
+    "minAbsDelta": { "FY": 3000, "YTD": 2500 }
+  },
+  "drivers": {
+    "$note": "history[id].drv[period]: revenue + opex accounts with |current - prior| >= minAbsDelta (whole dollars), top `max` by |delta|. Yearly keys exist only when both the year and the prior year have 12 months of data; the YTD key is always produced.",
+    "minAbsDelta": 1500,
+    "max": 16
+  }
+}
