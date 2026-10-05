@@ -12,7 +12,7 @@
 //   lenses: [ { label: 'noi', focus: 'NOI correctness & regression — ...' }, ... ],  // optional
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
-//   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (so with the default primary there is no fallback)
+//   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
 // }})
 // There is deliberately ONE script: a forked "-opus" copy drifted (47 lines, two versions in circulation).
 // The result records which models ran (`models`, `modelFloorMet`) so a Refute-Reviewed attestation is auditable:
@@ -73,8 +73,9 @@ const primaryModel = A.model ?? 'opus'
 if (!TIERS.includes(primaryModel)) throw new Error('model must be one of ' + TIERS.join(' | ') + ' (got ' + JSON.stringify(A.model) + ')')
 const fallbackModel = A.fallbackModel === undefined ? 'opus' : A.fallbackModel
 if (fallbackModel !== null && !TIERS.includes(fallbackModel)) throw new Error('fallbackModel must be one of ' + TIERS.join(' | ') + ' | null (got ' + JSON.stringify(A.fallbackModel) + ')')
-// A same-model "fallback" would just repeat the failed call, so it is skipped.
-const effectiveFallback = (fallbackModel && fallbackModel !== primaryModel) ? fallbackModel : null
+// A same-model "fallback" is a deliberate single retry: with opus now the default primary, skipping it would
+// let one transient API failure silently drop a lens from a gate attestation (2026-10-05 review, C1).
+const effectiveFallback = fallbackModel || null
 
 phase('Refute')
 
@@ -90,7 +91,7 @@ const verdicts = await parallel(
   lenses.map((l) => async () => {
     let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT })
     if (v === null && effectiveFallback) {
-      log(`${primaryModel} call failed for lens "${l.label}" — falling back to ${effectiveFallback}.`)
+      log(`${primaryModel} call failed for lens "${l.label}" — ${effectiveFallback === primaryModel ? 'retrying once on' : 'falling back to'} ${effectiveFallback}.`)
       v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT })
     }
     return v
@@ -108,7 +109,9 @@ if (allFailed) {
 } else {
   log(real.length
     ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
-    : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
+    : succeeded.length < lenses.length
+      ? `No real defect in ${succeeded.length}/${lenses.length} lenses, but ${lenses.length - succeeded.length} lens(es) FAILED even after retry — PARTIAL coverage; do not treat as a full clean pass.`
+      : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
 }
 
 return {
