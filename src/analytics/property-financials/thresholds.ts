@@ -194,7 +194,7 @@ export function thresholdText(t: EvaluationThreshold): string {
 export function thresholdDefinition(t: EvaluationThreshold): string {
   if (t.minPriorBase === undefined) return t.definition;
   const floor = `$${Math.round(t.minPriorBase).toLocaleString('en-US')}`;
-  return `${t.definition}; n/m when the prior-period base is ${floor} or less`;
+  return `${t.definition}; n/m when either period is partial or the prior-period base is ${floor} or less`;
 }
 
 const FORMAT_DIGITS: Readonly<Record<EvaluationThreshold['format'], number>> = { level0: 0, level1: 1, signed0: 0, signed1: 1 };
