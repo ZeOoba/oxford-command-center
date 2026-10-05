@@ -4,6 +4,7 @@ export const TITLES: Record<string, string> = {
   overview: 'Command Overview',
   pipeline: 'Acquisitions Pipeline',
   portfolio: 'Portfolio Health',
+  'property-financials': 'Property Financials',
   intel: 'Financials',
   worklist: 'Worklist',
   data: 'Data',
