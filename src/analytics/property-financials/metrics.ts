@@ -16,7 +16,7 @@ import type {
   PfSfEntry,
 } from '@contracts/property-financials';
 import { notMeaningful, ok, partialReason, type MetricResult } from './periods';
-import { THRESHOLDS, type EvaluationTestId } from './thresholds';
+import { THRESHOLDS, type EvaluationTestId, type EvaluationThreshold } from './thresholds';
 
 const RE_TAX: OpexCategory = 'Real estate & property tax';
 
@@ -315,34 +315,55 @@ export function rentStepEvents(
 // Scorecard inputs
 // -------------------------------------------------------------------------------------------------
 
-function growthWithFloor(prior: number, current: number, floor: number): number | null {
-  if (!(prior > floor)) return null;
-  return current / prior - 1;
+function growthWithFloor(prior: number, current: number, floor: number): MetricResult {
+  if (!(prior > floor)) return notMeaningful(`prior-period base is $${Math.round(floor).toLocaleString('en-US')} or less`);
+  return ok(current / prior - 1);
 }
+
+function ratioOf(num: number, den: number, reason: string): MetricResult {
+  return den > 0 ? ok(num / den) : notMeaningful(reason);
+}
+
+type ThresholdConfig = Readonly<Record<EvaluationTestId, EvaluationThreshold>>;
 
 /**
  * The eight evaluation-test inputs for one monthly property, exactly as the reference artifact
- * computes them: ratios on TTM26, run-rate Q3-26 vs Q3-25, utility / repairs growth Jan-Sep vs
- * Jan-Sep gated on a prior base above THRESHOLDS[...].minPriorBase. null = n/m.
+ * computes them, each as a MetricResult so an n/m carries its reason: ratios on TTM26, run-rate
+ * Q3-26 vs Q3-25, utility / repairs growth Jan-Sep vs Jan-Sep gated on a prior base above the
+ * test's minPriorBase (read from the `thresholds` passed in, so the guard and the RAG boundaries
+ * come from one config).
  *
  * Pass the property's monthly cube to compute the run-rate growth exactly; without it the
  * dataset's 2-dp `base_rent_runrate_q3.yoy_2026` is used (what the artifact displays).
  */
-export function evaluationInputs(p: PfMonthlyProperty, monthly?: MonthlyBaseRent): Record<EvaluationTestId, number | null> {
+export function evaluationResults(p: PfMonthlyProperty, monthly?: MonthlyBaseRent, thresholds: ThresholdConfig = THRESHOLDS): Record<EvaluationTestId, MetricResult> {
   const t = p.periods.TTM26;
   const y25 = p.periods.YTD25.opex_by;
   const y26 = p.periods.YTD26.opex_by;
-  const ratio = (num: number, den: number): number | null => (den > 0 ? num / den : null);
+  const noRevenue = 'no revenue in the period';
+  const ttmPartial = partialReason('TTM26', t.n_months);
+  const onTtm = (r: MetricResult): MetricResult => (ttmPartial !== null && r.value !== null ? notMeaningful(`TTM: ${ttmPartial}`) : r);
+  const runRate: MetricResult = monthly
+    ? runRateQ3Table(monthly).yoy_2026
+    : p.base_rent_runrate_q3.yoy_2026 === null
+      ? notMeaningful('needs a full Jul-Sep in both years')
+      : ok(p.base_rent_runrate_q3.yoy_2026);
   return {
-    noiMargin: ratio(t.noi, t.revenue),
-    opexExTaxRatio: ratio(t.opex - t.opex_by[RE_TAX], t.revenue),
-    recoveryRatio: recoveryRatio(t).value,
-    mgmtFeePct: ratio(t.opex_by['Management fees'], t.revenue),
-    contraRevenue: ratio(Math.abs(t.vacancy_waivers), t.base_rent),
-    rentRunRateGrowth: monthly ? runRateQ3Table(monthly).yoy_2026.value : p.base_rent_runrate_q3.yoy_2026,
-    utilityGrowth: growthWithFloor(y25.Utilities, y26.Utilities, THRESHOLDS.utilityGrowth.minPriorBase ?? 0),
-    repairsGrowth: growthWithFloor(y25['Repairs & maintenance'], y26['Repairs & maintenance'], THRESHOLDS.repairsGrowth.minPriorBase ?? 0),
+    noiMargin: onTtm(ratioOf(t.noi, t.revenue, noRevenue)),
+    opexExTaxRatio: onTtm(ratioOf(t.opex - t.opex_by[RE_TAX], t.revenue, noRevenue)),
+    recoveryRatio: onTtm(recoveryRatio(t)),
+    mgmtFeePct: onTtm(ratioOf(t.opex_by['Management fees'], t.revenue, noRevenue)),
+    contraRevenue: onTtm(ratioOf(Math.abs(t.vacancy_waivers), t.base_rent, 'no base rent in the period')),
+    rentRunRateGrowth: runRate,
+    utilityGrowth: growthWithFloor(y25.Utilities, y26.Utilities, thresholds.utilityGrowth.minPriorBase ?? 0),
+    repairsGrowth: growthWithFloor(y25['Repairs & maintenance'], y26['Repairs & maintenance'], thresholds.repairsGrowth.minPriorBase ?? 0),
   };
+}
+
+/** evaluationResults without the reasons (null = n/m). */
+export function evaluationInputs(p: PfMonthlyProperty, monthly?: MonthlyBaseRent, thresholds: ThresholdConfig = THRESHOLDS): Record<EvaluationTestId, number | null> {
+  const r = evaluationResults(p, monthly, thresholds);
+  return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v.value])) as Record<EvaluationTestId, number | null>;
 }
 
 // -------------------------------------------------------------------------------------------------
