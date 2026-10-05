@@ -1,13 +1,15 @@
 // tests/unit/property-financials-helpers.ts — shared loaders for the property-financials tests.
 // Not a test file (no .test suffix); vitest ignores it, tsconfig includes it.
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { parsePropertyFinancialsDataset, type PfDataset } from '@contracts/property-financials';
 
-const DATA_DIR = new URL('../../data/property-financials/', import.meta.url);
+// Resolved from the repo root (vitest's cwd), not import.meta.url: under the jsdom environment
+// import.meta.url is not a file: URL, so fileURLToPath throws there (render tests use this too).
+const dataPath = (file: string): string => resolve(process.cwd(), 'data', 'property-financials', file);
 
 export function loadDatasetText(): string {
-  return readFileSync(fileURLToPath(new URL('dataset.json', DATA_DIR)), 'utf8');
+  return readFileSync(dataPath('dataset.json'), 'utf8');
 }
 
 let cached: PfDataset | null = null;
@@ -18,5 +20,5 @@ export function loadDataset(): PfDataset {
 }
 
 export function loadCsvText(): string {
-  return readFileSync(fileURLToPath(new URL('monthly-long.csv', DATA_DIR)), 'utf8');
+  return readFileSync(dataPath('monthly-long.csv'), 'utf8');
 }

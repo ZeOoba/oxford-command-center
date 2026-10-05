@@ -132,6 +132,12 @@ export function whereTheMoneyIs(insights: readonly PfInsight[]): PfInsight[] {
   return sortInsights(insights.filter((i) => i.severity === 'High'));
 }
 
+/** Sign tone class: positive good (or inverted for costs), negligible muted (the artifact's cls). */
+export function toneClass(x: number | null, invert = false): string {
+  if (x === null || Math.abs(x) < 0.0005) return 'pf-mut';
+  return (invert ? x < 0 : x > 0) ? 'pf-pos' : 'pf-neg';
+}
+
 /** Display tone of an impact figure: an expense increase or a revenue loss reads negative. */
 export function impactTone(i: PfInsight): 'pos' | 'neg' | 'mut' {
   const v = i.annual_impact_usd;

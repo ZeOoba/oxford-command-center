@@ -1,0 +1,661 @@
+/* src/modules/property-financials/pf.css
+ *
+ * Property Financials module styles (plan T5), scoped to .pf-root. Visual spec: the reference review
+ * artifact (tests/fixtures/property-financials/reference-artifact.html, ledger-style). The repo's
+ * data-theme tokens win: every artifact role maps onto a repo token where one exists; only the fixed
+ * 8-colour chart palette and the four status colours are literal, per the artifact.
+ *
+ * Fonts are self-hosted (Fontsource, no CDN). IBM Plex Mono 400/500 are already imported globally by
+ * src/tokens/theme.css; EB Garamond (display) and DM Sans (body) are imported here so they load only
+ * with this module's chunk.
+ */
+@import '@fontsource/eb-garamond/500.css';
+@import '@fontsource/eb-garamond/600.css';
+@import '@fontsource/dm-sans/400.css';
+@import '@fontsource/dm-sans/500.css';
+@import '@fontsource/dm-sans/600.css';
+
+.pf-root {
+  /* artifact role -> repo token */
+  --pf-bg: var(--surface-base);
+  --pf-surface: var(--surface-raised);
+  --pf-surface2: var(--surface-overlay);
+  --pf-ink: var(--text-primary);
+  --pf-ink2: var(--text-secondary);
+  --pf-muted: var(--text-tertiary);
+  --pf-rule: var(--border-subtle);
+  --pf-gold: var(--accent);
+  --pf-gold-ink: var(--text-accent);
+  --pf-grid: var(--border-subtle);
+  --pf-axis: var(--border-strong);
+  --pf-good-ink: var(--text-pos);
+  --pf-warn-ink: var(--text-warn);
+  --pf-crit-ink: var(--text-neg);
+  --pf-focus: var(--accent);
+  /* status colours: fixed, always paired with an icon + label */
+  --pf-good: #0ca30c;
+  --pf-warn: #fab219;
+  --pf-serious: #ec835a;
+  --pf-crit: #d03b3b;
+  /* fixed chart palette: light (parchment / warm) */
+  --pf-c1: #2a78d6;
+  --pf-c2: #eb6834;
+  --pf-c3: #1baf7a;
+  --pf-c4: #eda100;
+  --pf-c5: #e87ba4;
+  --pf-c6: #008300;
+  --pf-c7: #4a3aa7;
+  --pf-c8: #e34948;
+  --pf-s1: var(--pf-c1);
+  --pf-s2: var(--pf-c2);
+  --pf-f-display: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  --pf-f-body: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --pf-f-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  position: relative;
+  z-index: 0;
+  min-width: 0;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-bottom: 56px;
+  background: var(--pf-bg);
+  color: var(--pf-ink);
+  font-family: var(--pf-f-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* fixed chart palette: dark (command) */
+[data-theme='command'] .pf-root {
+  --pf-c1: #3987e5;
+  --pf-c2: #d95926;
+  --pf-c3: #199e70;
+  --pf-c4: #c98500;
+  --pf-c5: #d55181;
+  --pf-c6: #008300;
+  --pf-c7: #9085e9;
+  --pf-c8: #e66767;
+}
+
+/* AppShell gives 12px below 640px; the module adds 4px for a 16px phone gutter. */
+@media (max-width: 639px) {
+  .pf-root {
+    padding-inline: 4px;
+  }
+}
+
+.pf-root *,
+.pf-root *::before,
+.pf-root *::after {
+  box-sizing: border-box;
+}
+.pf-root h1,
+.pf-root h2,
+.pf-root h3 {
+  font-family: var(--pf-f-display);
+  font-weight: 600;
+  margin: 0;
+  text-wrap: balance;
+  letter-spacing: 0.005em;
+}
+.pf-root h2 {
+  font-size: 26px;
+  margin-bottom: 6px;
+}
+.pf-root button:focus-visible,
+.pf-root a:focus-visible,
+.pf-root select:focus-visible,
+.pf-root input:focus-visible,
+.pf-root textarea:focus-visible,
+.pf-root [tabindex]:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- masthead ---------- */
+.pf-mast {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-block: 20px 16px;
+  border-bottom: 2px solid var(--pf-ink);
+}
+.pf-mast > * {
+  min-width: 0;
+}
+.pf-firm {
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pf-gold-ink);
+}
+.pf-mast h1 {
+  font-size: clamp(28px, 5vw, 40px);
+  line-height: 1.05;
+  margin-top: 6px;
+}
+.pf-meta {
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  color: var(--pf-muted);
+  text-align: right;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pf-basis {
+  color: var(--pf-ink2);
+}
+.pf-stale {
+  color: var(--pf-warn-ink);
+}
+
+/* ---------- tab strip (sticky inside the shell's scroller) ---------- */
+.pf-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--pf-rule);
+  margin-bottom: 24px;
+  position: sticky;
+  top: 0;
+  background: var(--pf-bg);
+  z-index: 5;
+}
+.pf-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--pf-ink2);
+  font: 500 13px var(--pf-f-body);
+  padding: 12px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  outline: none;
+}
+.pf-tab[data-hovered] {
+  color: var(--pf-ink);
+}
+.pf-tab[data-selected] {
+  color: var(--pf-ink);
+  border-bottom-color: var(--pf-gold);
+}
+.pf-tab[data-focus-visible] {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: -2px;
+}
+
+/* ---------- shared text ---------- */
+.pf-lede {
+  font-family: var(--pf-f-display);
+  font-size: clamp(19px, 2.6vw, 24px);
+  line-height: 1.35;
+  max-width: 62ch;
+  margin: 0 0 20px;
+  font-weight: 500;
+}
+.pf-note {
+  font-size: 12px;
+  color: var(--pf-muted);
+  max-width: 80ch;
+}
+.pf-sec {
+  margin-bottom: 32px;
+}
+.pf-pos {
+  color: var(--pf-good-ink);
+}
+.pf-neg {
+  color: var(--pf-crit-ink);
+}
+.pf-mut {
+  color: var(--pf-muted);
+}
+.pf-nm {
+  color: var(--pf-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.pf-h4 {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+
+/* ---------- KPIs ---------- */
+.pf-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  border-block: 1px solid var(--pf-rule);
+  margin-bottom: 28px;
+}
+.pf-kpi {
+  padding: 14px 18px 14px 0;
+  min-width: 0;
+}
+.pf-kpi + .pf-kpi {
+  border-left: 1px solid var(--pf-rule);
+  padding-left: 18px;
+}
+.pf-kpi-l {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+}
+.pf-kpi-v {
+  font-family: var(--pf-f-display);
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pf-kpi-d {
+  font-size: 12px;
+  color: var(--pf-ink2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- layout ---------- */
+.pf-grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 32px;
+  margin-bottom: 28px;
+}
+.pf-panel {
+  min-width: 0;
+}
+.pf-panel h3 {
+  font-size: 20px;
+  margin-bottom: 2px;
+}
+.pf-sub {
+  font-size: 12px;
+  color: var(--pf-muted);
+  margin-bottom: 10px;
+}
+.pf-mini {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+}
+.pf-mini > * {
+  min-width: 0;
+}
+.pf-mini table {
+  font-size: 12px;
+}
+.pf-mini td,
+.pf-mini th {
+  padding: 6px 8px;
+}
+@media (max-width: 860px) {
+  .pf-grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-kpi + .pf-kpi {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .pf-meta {
+    text-align: left;
+  }
+}
+
+/* ---------- charts ---------- */
+.pf-chart {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+.pf-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.pf-chart text {
+  fill: var(--pf-muted);
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+}
+.pf-chart .pf-bar-label {
+  fill: var(--pf-ink2);
+  font-family: var(--pf-f-body);
+  font-size: 12px;
+}
+.pf-chart .pf-bar-value {
+  fill: var(--pf-ink);
+  font-size: 11px;
+}
+.pf-chart-focus:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+.pf-chart [data-mark]:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 1px;
+}
+.pf-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--pf-surface);
+  color: var(--pf-ink);
+  border: 1px solid var(--pf-rule);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 150px;
+  max-width: 240px;
+  z-index: 4;
+}
+.pf-tip b {
+  font-weight: 600;
+}
+.pf-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  margin-top: 6px;
+}
+.pf-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.pf-tablefb {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pf-tablefb summary {
+  cursor: pointer;
+  color: var(--pf-ink2);
+  width: max-content;
+}
+
+/* ---------- tables ---------- */
+.pf-tbl {
+  overflow-x: auto;
+  border-top: 1px solid var(--pf-rule);
+  max-width: 100%;
+}
+.pf-root table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.pf-root th {
+  font-family: var(--pf-f-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+  text-align: right;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--pf-ink);
+  white-space: nowrap;
+}
+.pf-root th:first-child,
+.pf-root td:first-child {
+  text-align: left;
+}
+.pf-root td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--pf-rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pf-root td small {
+  font-size: 11px;
+}
+.pf-sort {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pf-sort:hover {
+  color: var(--pf-ink);
+}
+.pf-score td:first-child {
+  white-space: normal;
+  min-width: 170px;
+}
+.pf-row {
+  cursor: pointer;
+}
+.pf-row:hover td {
+  background: var(--pf-surface2);
+}
+.pf-det > td {
+  background: var(--pf-surface);
+  white-space: normal;
+  text-align: left;
+  padding: 18px 14px;
+}
+.pf-toggle {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+}
+.pf-caret {
+  display: inline-block;
+  width: 10px;
+  color: var(--pf-gold-ink);
+  font-family: var(--pf-f-mono);
+}
+.pf-pn {
+  font-weight: 600;
+}
+.pf-pn small {
+  display: block;
+  font-weight: 400;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+/* ---------- severity pill (icon + label, never colour alone) ---------- */
+.pf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.pf-pill.High {
+  color: var(--pf-crit-ink);
+}
+.pf-pill.Medium {
+  color: var(--pf-warn-ink);
+}
+.pf-pill.Low {
+  color: var(--pf-muted);
+}
+.pf-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: none;
+}
+.pf-pill.High::before {
+  border-radius: 50%;
+  background: currentColor;
+}
+.pf-pill.Medium::before {
+  transform: rotate(45deg);
+  background: currentColor;
+}
+.pf-pill.Low::before {
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+/* ---------- where the money is ---------- */
+.pf-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--pf-rule);
+  min-width: 0;
+}
+.pf-amt {
+  font-family: var(--pf-f-mono);
+  font-size: 12px;
+  min-width: 76px;
+  text-align: right;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.pf-act-t {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.pf-act-t b {
+  display: block;
+  font-weight: 600;
+}
+.pf-act-t span {
+  font-size: 12px;
+  color: var(--pf-ink2);
+}
+.pf-act-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  margin-top: 4px;
+}
+.pf-status {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pf-link {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--pf-gold-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.pf-form {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+  padding: 12px;
+  margin-top: 6px;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+}
+.pf-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  min-width: 0;
+}
+.pf-form .pf-wide {
+  grid-column: 1 / -1;
+}
+.pf-root input,
+.pf-root select,
+.pf-root textarea {
+  font: 13px var(--pf-f-body);
+  background: var(--pf-bg);
+  color: var(--pf-ink);
+  border: 1px solid var(--pf-rule);
+  padding: 6px 8px;
+  min-width: 0;
+  width: 100%;
+}
+.pf-err {
+  color: var(--pf-crit-ink);
+  font-size: 12px;
+}
+.pf-btn {
+  font: 500 12px var(--pf-f-body);
+  border: 1px solid var(--pf-ink);
+  background: var(--pf-ink);
+  color: var(--pf-bg);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.pf-btn:hover {
+  opacity: 0.9;
+}
+.pf-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pf-btn.ghost {
+  background: none;
+  color: var(--pf-ink);
+}
+
+/* ---------- empty state ---------- */
+.pf-empty {
+  border: 1px dashed var(--pf-rule);
+  padding: 28px 20px;
+  max-width: 70ch;
+}
+.pf-empty h2 {
+  font-size: 22px;
+}
+.pf-empty p {
+  margin: 6px 0 0;
+  color: var(--pf-ink2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-root *,
+  .pf-root *::before,
+  .pf-root *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
