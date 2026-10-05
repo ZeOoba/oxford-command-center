@@ -25,6 +25,7 @@ import { WatchlistView } from './WatchlistView';
 import { EvaluationView } from './EvaluationView';
 import { ExplorerView } from './ExplorerView';
 import { PF_PROPERTY_PARAM, PF_VIEWS, PF_VIEW_IDS, type PfViewId } from './views';
+import { PfDataHealthSummary } from './DataHealthPanel';
 import type { PfDatasetResponse } from './types';
 import './pf.css';
 
@@ -48,7 +49,9 @@ function Masthead({ response }: { response: PfDatasetResponse | undefined }) {
         <div className="pf-meta" data-testid="pf-meta">
           <span>Cash basis · data through {fmtLongDate(d.meta.as_of)}</span>
           {excludedNotes(d.meta.excluded).map((e) => (
-            <span key={e}>{e}</span>
+            <span key={e} data-exclusion="">
+              {e}
+            </span>
           ))}
           <span className="pf-basis">Normalized NOI · not reconciled with Spine A/B</span>
           <span>Prepared {fmtLongDate(d.meta.generated)}</span>
@@ -180,6 +183,8 @@ export function PropertyFinancialsModule() {
       ) : (
         <div style={{ marginTop: 24 }}>{body}</div>
       )}
+      {/* The artifact's seventh tab ("Command center data") lives in Data > Quality; this card links there. */}
+      {d && q.data && <PfDataHealthSummary response={q.data} />}
     </div>
   );
 }

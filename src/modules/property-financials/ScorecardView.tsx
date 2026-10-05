@@ -20,6 +20,7 @@ import { partialReason, periodLabel, type MetricResult } from '@analytics/proper
 import { DASH, pct, pctLevel, usd } from '@analytics/property-financials/format';
 import { linePath, linearScale } from './charts/geometry';
 import { MetricCell, NotMeaningful, SeverityPill } from './components';
+import { PropertyGaps } from './PropertyGaps';
 import { cubeMonths, fmtMonth, insightsForEntity, leaseForEntity, scorecardRows, sortInsights, toneClass, type ScorecardRow } from './model';
 
 interface Column {
@@ -336,6 +337,7 @@ function PropertyDetail({ dataset: d, id, onOpenProperty }: { dataset: PfDataset
       {p.kind === 'monthly' && p.missing_months_since_2024.length > 0 && (
         <p className="pf-note">Missing monthly exports: {p.missing_months_since_2024.map(fmtMonth).join(', ')}. Periods marked n/m need all months.</p>
       )}
+      <PropertyGaps dataset={d} id={id} />
       <div className="pf-mini" style={{ marginTop: 18 }}>
         <div>
           <h4 className="pf-h4">Base rent trend</h4>
