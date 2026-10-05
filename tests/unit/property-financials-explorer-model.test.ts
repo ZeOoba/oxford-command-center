@@ -336,6 +336,9 @@ describe('What changed and why', () => {
     const tax = p.effects.find((e) => e.name === 'Real estate & property tax')!;
     expect(tax.impact).toBeLessThan(0);
     expect(tax.helps).toBe(false);
+    expect(p.effects[0]!.width).toBe(1);
+    for (const e of p.effects) expect(e.width).toBeGreaterThan(0);
+    expect(tax.tip[2]).toMatch(/^Effect on NOI -\$/);
   });
 
   it('drivers carry nature tags labelled [INFERRED] from monthly timing, with hint text', () => {

@@ -200,6 +200,11 @@ export interface StackedBarsLayout {
   readonly totalY: readonly number[];
 }
 
+/** Sum of the positive segments of each group (the stack heights). */
+export function stackTotals(groups: ReadonlyArray<readonly number[]>): number[] {
+  return groups.map((g) => g.reduce((a, v) => a + (Number.isFinite(v) ? Math.max(0, v) : 0), 0));
+}
+
 /** Stacked bars per group, bottom-up in input order, with a 1.5px gap between segments. */
 export function stackedBarsLayout(groups: ReadonlyArray<readonly number[]>, plot: PlotBox, axis: BarAxis): StackedBarsLayout {
   const n = Math.max(1, groups.length);
