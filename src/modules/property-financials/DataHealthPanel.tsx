@@ -22,6 +22,8 @@ import { NOI_DISCLOSURE, mentionsExcluded, shortSha, unattachedLeaseGaps } from 
 import { usePfDataset, usePfMapping } from './hooks';
 import { excludedNotes, fmtLongDate } from './model';
 import type { PfDataHealthMeta, PfDatasetResponse, PfMappingResponse, PfMappingRow } from './types';
+import { sfProvenance, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
+import type { PfDataset } from '@contracts/property-financials';
 import './pf.css';
 
 const AVAILABILITY_WHY = {
@@ -150,6 +152,79 @@ function MappingTable({ mapping }: { mapping: PfMappingResponse }) {
   );
 }
 
+const fmtInt = (n: number | null) => (n === null ? '—' : n.toLocaleString('en-US'));
+const fmtPct = (n: number | null) => (n === null ? '—' : `${(n * 100).toFixed(1)}%`);
+
+/**
+ * Square-footage source (T9b part 2): per entity, the SF the module divides by right now and where it
+ * came from — the live Master Workbook (Spine A) when the server's block is present and fresh (≤ 7
+ * days behind), else the dataset's static read. Staleness is always an icon AND a word.
+ */
+function SfSourceSection({ dataset, liveSf }: { dataset: PfDataset; liveSf: PfLiveSfBlock | null | undefined }) {
+  const rows = sfProvenance(dataset, liveSf);
+  const liveCount = rows.filter((r) => r.using === 'live').length;
+  const headline =
+    liveSf === null || liveSf === undefined
+      ? 'The server sent no live square-footage block; all figures use the dataset’s static SF.'
+      : liveSf.source === 'spine-a' && !liveSf.stale
+        ? `${liveSf.label} is fresh (${liveSf.ageDays} day${liveSf.ageDays === 1 ? '' : 's'} old); ${liveCount} of ${rows.length} entities use live SF.`
+        : liveSf.source === 'spine-a'
+          ? `${liveSf.label} is STALE (${liveSf.ageDays ?? '?'} days old, limit ${liveSf.staleDays}); figures use the dataset’s static SF.`
+          : `Live Master Workbook unavailable; figures use the ${liveSf.label}.`;
+  return (
+    <section className="pf-sec pf-dh-print" aria-labelledby="pf-dh-sf-h" data-testid="pf-dh-sf">
+      <h2 id="pf-dh-sf-h">Square footage source</h2>
+      <p className="pf-note" data-testid="pf-dh-sf-headline">
+        {liveSf?.source === 'spine-a' && liveSf.stale ? (
+          <span className="pf-fresh pf-fresh-stale" role="status">
+            <AlertTriangle size={14} aria-hidden="true" /> <b>Stale</b>
+          </span>
+        ) : liveSf?.source === 'spine-a' ? (
+          <span className="pf-fresh">
+            <CheckCircle2 size={14} aria-hidden="true" /> <b>Live</b>
+          </span>
+        ) : null}{' '}
+        {headline}
+        {liveSf?.staleReason ? ` ${liveSf.staleReason}.` : ''}
+      </p>
+      {liveSf?.source === 'spine-a' && <p className="pf-note">Leased SF basis: {liveSf.leasedSfBasis}.</p>}
+      <div className="pf-tbl pf-dh-print">
+        <table aria-label="Square footage source per entity">
+          <thead>
+            <tr>
+              <th scope="col">Dataset entity</th>
+              <th scope="col">SF</th>
+              <th scope="col">Leased SF</th>
+              <th scope="col">Occupancy</th>
+              <th scope="col">Source</th>
+              <th scope="col">As of</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.entity} data-testid="pf-sf-row" data-entity={r.entity} data-using={r.using}>
+                <td>{r.entity}</td>
+                <td>{fmtInt(r.sf)}</td>
+                <td>{fmtInt(r.leasedSf)}</td>
+                <td>{fmtPct(r.occupancy)}</td>
+                <td className="pf-wrap">
+                  <span className={`pf-dh-tag${r.using === 'live' ? '' : r.using === 'none' ? ' pf-mut' : ' pf-dh-tag-warn'}`}>
+                    {r.using === 'live' ? 'Live (Spine A)' : r.using === 'none' ? 'n/a' : 'Static dataset'}
+                  </span>{' '}
+                  {r.source}
+                  {r.fields && r.fields.leasedSf !== 'live' ? ' · leased SF static' : ''}
+                  {r.note ? <span className="pf-mut"> · {r.note}</span> : null}
+                </td>
+                <td>{r.asOf ? fmtLongDate(r.asOf) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function MappingSection({ datasetOk }: { datasetOk: boolean }) {
   const q = usePfMapping();
   let body: ReactNode;
@@ -245,6 +320,7 @@ export function PfDataHealthPanel() {
             </ul>
           )}
         </section>
+        <SfSourceSection dataset={d} liveSf={q.data.liveSf} />
         <MappingSection datasetOk />
         <section className="pf-sec" aria-labelledby="pf-dh-dq-h">
           <h2 id="pf-dh-dq-h">Data quality and gaps</h2>
@@ -292,12 +368,15 @@ export function PfDataHealthSummary({ response }: { response: PfDatasetResponse 
   const inferred = rows?.filter((r) => r.method === 'inferred').length ?? 0;
   const unmatched = rows?.filter((r) => r.method === 'unmatched').length ?? 0;
   const sfFlags = rows?.reduce((n, r) => n + r.flags.filter((f) => f.code === 'SF_MISMATCH').length, 0) ?? 0;
+  const live = response.liveSf;
+  const sfWord =
+    live?.source === 'spine-a' && !live.stale ? `SF live (Spine A, ${fmtLongDate(live.asOf ?? meta.as_of)})` : live?.source === 'spine-a' ? 'SF static (live read STALE)' : `SF static dataset`;
   return (
     <aside className="pf-dh-summary" data-testid="pf-dh-summary" aria-label="Data health summary">
       <div>
         <h2>Data health</h2>
         <p className="pf-note">
-          Dataset {meta.version} · as of {fmtLongDate(meta.as_of)} · <PfFreshness meta={meta} />
+          Dataset {meta.version} · as of {fmtLongDate(meta.as_of)} · <PfFreshness meta={meta} /> · <span data-testid="pf-dh-summary-sf">{sfWord}</span>
         </p>
         <p className="pf-note">
           {d.data_quality.length} data-quality notes

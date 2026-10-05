@@ -10,6 +10,7 @@
 // The one mutation (PUT insight-status) carries the X-ORA-Client header (server/host-guard.ts).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parsePropertyFinancialsDataset } from '@contracts/property-financials';
+import type { PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { fetchJson, isWarehouseUnavailable, QUERY_OPTS } from '../intel/hooks';
 import type {
@@ -50,7 +51,24 @@ export function parseDatasetResponse(raw: unknown): PfDatasetResponse {
     issues,
     meta: isRecord(raw.meta) ? (raw.meta as unknown as PfDatasetResponse['meta']) : null,
     dataset: raw.dataset === null || raw.dataset === undefined ? null : parsePropertyFinancialsDataset(raw.dataset),
+    liveSf: parseLiveSfBlock(raw.liveSf),
   };
+}
+
+const LIVE_SF_SOURCES: ReadonlySet<string> = new Set(['spine-a', 'static-dataset']);
+
+/**
+ * The additive liveSf block: a malformed one is dropped to null (the module then keeps the dataset's
+ * static SF) rather than failing the whole dataset read — it is provenance, not the figures.
+ */
+export function parseLiveSfBlock(raw: unknown): PfLiveSfBlock | null {
+  if (!isRecord(raw) || typeof raw.source !== 'string' || !LIVE_SF_SOURCES.has(raw.source)) return null;
+  if (typeof raw.label !== 'string' || typeof raw.stale !== 'boolean' || !isRecord(raw.entries)) return null;
+  for (const e of Object.values(raw.entries)) {
+    if (!isRecord(e) || typeof e.entity !== 'string' || !isRecord(e.fields)) return null;
+    if (!(e.sf === null || typeof e.sf === 'number')) return null;
+  }
+  return raw as unknown as PfLiveSfBlock;
 }
 
 const MAPPING_METHODS: ReadonlySet<string> = new Set(['exact', 'inferred', 'unmatched']);

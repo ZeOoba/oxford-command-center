@@ -12,6 +12,7 @@ import { useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tab, TabList, TabPanel, Tabs, type Key } from 'react-aria-components';
 import { PF_ENTITY_IDS, type PfEntityId } from '@contracts/property-financials';
+import { applyLiveSf } from '@analytics/property-financials/live-sf';
 import { useTabParam } from '@/lib/useTabParam';
 import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable } from '../intel/hooks';
@@ -149,7 +150,10 @@ export function PropertyFinancialsModule() {
     );
   }
 
-  const d = q.data?.dataset ?? null;
+  // The ONE place live square footage enters the figures (T9b part 2): every view below divides by
+  // the SF in this dataset; applyLiveSf swaps in Spine A values only when the block is present,
+  // live and fresh, otherwise the dataset's static SF stands. Provenance is shown in data health.
+  const d = useMemo(() => (q.data?.dataset ? applyLiveSf(q.data.dataset, q.data.liveSf ?? null) : null), [q.data]);
   return (
     <div className="pf-root" ref={rootRef}>
       <Masthead response={q.data} />

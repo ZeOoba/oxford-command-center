@@ -12,6 +12,8 @@ import { warehouseEndpointPlan } from '../../scripts/bake-warehouse';
 import { buildMountPrefixMap } from '../../scripts/check-write-schema-drift';
 import { allowedHosts, requestBoundary } from '../../server/host-guard';
 import { propertyFinancialsApi } from '../../server/property-financials/property-financials-api';
+import type { LiveSfSnapshot } from '../../server/property-financials/live-sf';
+import { ENTITY_TO_CANONICAL } from '../../server/property-financials/mapping';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { warehouseJsonError } from '../../server/warehouse/json-errors';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
@@ -25,7 +27,7 @@ const noDb = (): WarehouseDb => {
   throw new Error('warehouse unopenable');
 };
 
-function setup(opts: { dataset?: boolean } = {}) {
+function setup(opts: { dataset?: boolean; snapshot?: () => Promise<LiveSfSnapshot | null> } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'pf-api-'));
   const dir = join(root, 'pf');
   if (opts.dataset !== false) {
@@ -33,7 +35,8 @@ function setup(opts: { dataset?: boolean } = {}) {
     for (const f of ['dataset.json', 'monthly-long.csv']) copyFileSync(join(DATA_DIR, f), join(dir, f));
   }
   const statusPath = join(root, 'status.json');
-  const app = propertyFinancialsApi(noDb, { dir: () => dir, statusPath: () => statusPath, now: () => NOW });
+  // Default: no Spine A snapshot in this process (the real default dynamically imports server/brain).
+  const app = propertyFinancialsApi(noDb, { dir: () => dir, statusPath: () => statusPath, now: () => NOW, snapshot: opts.snapshot ?? (async () => null) });
   app.onError(warehouseJsonError);
   return { app, root, dir, statusPath };
 }
@@ -44,6 +47,48 @@ const put = (app: Hono, id: string, body: unknown, contentType = 'application/js
     headers: { 'content-type': contentType },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
+
+describe('GET /dataset liveSf (T9b part 2 — additive, dataset shape unchanged)', () => {
+  const rarig = ENTITY_TO_CANONICAL['1100 Rarig']!.id;
+  const snap = (asOf: string): LiveSfSnapshot =>
+    ({
+      meta: { schemaVersion: 1, asOf, generatedAt: `${asOf}T08:00:00.000Z`, source: 'wb', scenario: 'base' },
+      properties: [{ id: rarig, sf: 21000, occPct: 0.9, tenantCount: 9 }],
+      leases: [
+        { id: 'a', propertyId: rarig, propertyKey: '1100 Rarig', tenantName: 't', unit: null, company: null, sf: 18900, monthlyRent: 1, rentPerSf: null, leaseStart: null, leaseEnd: null, escalationDate: null, escalationPct: null, status: 'Active', annualRent: 12, monthsToExpiry: null, flags: [] },
+      ],
+    }) as unknown as LiveSfSnapshot;
+
+  it('with a fresh Spine A snapshot: liveSf is spine-a, fresh, carries live SF per entity; the dataset itself is byte-identical to the committed file', async () => {
+    const { app } = setup({ snapshot: async () => snap('2026-10-04') });
+    const body = (await (await app.request('/dataset')).json()) as { dataset: unknown; liveSf: { source: string; stale: boolean; asOf: string; ageDays: number; entries: Record<string, { sf: number | null; leasedSf: number | null; fields: { sf: string } }> } };
+    expect(body.liveSf).toMatchObject({ source: 'spine-a', stale: false, asOf: '2026-10-04', ageDays: 1, staleDays: 7 });
+    expect(body.liveSf.entries['1100 Rarig']).toMatchObject({ sf: 21000, leasedSf: 18900, fields: { sf: 'live', leasedSf: 'live', occupancy: 'live' } });
+    expect(body.liveSf.entries['3540 E 5th']!.fields.sf).toBe('static');
+    // Structural compare after a JSON round-trip: the committed file holds three Python `-0.0` literals that
+    // JSON.stringify writes as 0 (README), and Zod re-emits keys in schema order.
+    const norm = (x: unknown) => JSON.parse(JSON.stringify(x)) as unknown;
+    expect(norm(body.dataset)).toEqual(norm(JSON.parse(readFileSync(join(DATA_DIR, 'dataset.json'), 'utf8'))));
+  });
+
+  it('with a stale snapshot (> 7 days) the block says STALE and why', async () => {
+    const { app } = setup({ snapshot: async () => snap('2026-09-20') });
+    const body = (await (await app.request('/dataset')).json()) as { liveSf: { stale: boolean; staleReason: string; ageDays: number } };
+    expect(body.liveSf).toMatchObject({ stale: true, ageDays: 15 });
+    expect(body.liveSf.staleReason).toMatch(/2026-09-20 is 15 day\(s\) old/);
+  });
+
+  it('with no snapshot it falls back to the dataset and labels it "static dataset (2026-10-02)"; the route never fails on a snapshot error', async () => {
+    const { app } = setup();
+    const body = (await (await app.request('/dataset')).json()) as { liveSf: { source: string; label: string; staleReason: string } };
+    expect(body.liveSf).toMatchObject({ source: 'static-dataset', label: 'static dataset (2026-10-02)' });
+    expect(body.liveSf.staleReason).toMatch(/no snapshot/);
+    const { app: missing } = setup({ dataset: false, snapshot: async () => snap('2026-10-05') });
+    const res = await missing.request('/dataset');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { liveSf: { source: string } }).liveSf.source).toBe('spine-a');
+  });
+});
 
 describe('GET /dataset', () => {
   it('serves the validated dataset + data-health meta, without the warehouse DB', async () => {
