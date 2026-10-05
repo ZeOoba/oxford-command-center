@@ -1,0 +1,3 @@
+# CLI outputs (normalize-raw.ts / build-dataset.ts default --out). Promotion into
+# data/property-financials/ is a deliberate manual copy, never an automatic write.
+_out/
