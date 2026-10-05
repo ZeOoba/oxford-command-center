@@ -1,0 +1,1447 @@
+{
+  "$schema_note": "Versioned account -> category mapping for the Property Financials refresh pipeline (plan T9a). Applied by src/analytics/property-financials/normalize.ts to raw P&L records [entity, period, layout, section, group, account, amount, isTotal]. Rules are tried IN ORDER; the first rule whose `when` clauses all match wins and its `id` is recorded per row for audit. `then` is either {line_type, category} or {exclude: reason}. `sign: -1` negates the amount. Regexes are JavaScript, case-insensitive, matched with .test() (anchor explicitly). A `when` field that is absent matches anything; `null` matches a null section/group. A record no rule matches FAILS the run — never defaulted.",
+  "version": "v2",
+  "generated": "2026-10-05",
+  "reverse_engineered_from": "OneDrive Business/Property Financials/outputs/_raw_monthly_records.json vs data/property-financials/monthly-long.csv (15,439 monthly-entity rows reproduced exactly); v2 adds the QB (QuickBooks entity statement) rules reproducing config/annual-statements.csv (54 rows) from the parsed P&L <year> -- 55 New Plant (EGFLLC).xlsx / 1851 South Club Solar.xlsm files (T9b). AF / CF / A12 rules are byte-identical to v1.",
+  "categories": {
+    "revenue": [
+      "Base rent",
+      "Vacancy / waivers / bad debt",
+      "Recoveries (CAM/tax/ins)",
+      "Utility reimbursements",
+      "Other income",
+      "Solar / energy income"
+    ],
+    "opex": [
+      "Real estate & property tax",
+      "Insurance",
+      "Management fees",
+      "Utilities",
+      "Grounds / snow / lot",
+      "Repairs & maintenance",
+      "Turnover / make-ready",
+      "Professional / admin"
+    ],
+    "below_line": {
+      "capex": "Capex / leasing / non-recurring",
+      "dist": "Owner distributions (net)",
+      "debt": "Debt service",
+      "inctax": "Entity income tax",
+      "noncash": "Depreciation/amortization",
+      "nonop": "Interest income"
+    }
+  },
+  "excludedEntities": [
+    {
+      "pattern": "2203",
+      "reason": "2203-2207 Northwood excluded by instruction (financials pending)"
+    },
+    {
+      "pattern": "northwood",
+      "reason": "2203-2207 Northwood excluded by instruction (financials pending)"
+    }
+  ],
+  "rules": [
+    {
+      "id": "AF-INC-UNALLOCATED-PREPAYS",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "account": "^Unallocated Prepays$"
+      },
+      "then": {
+        "exclude": "unallocated prepays are a liability movement, not revenue (noi_definition)"
+      }
+    },
+    {
+      "id": "AF-INC-SECDEP-FORFEIT",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "SECURITY DEPOSIT",
+        "account": "forfeit"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "AF-INC-SECDEP-ACTIVITY",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "SECURITY DEPOSIT"
+      },
+      "then": {
+        "exclude": "security-deposit receipts/refunds are a liability movement, not revenue (noi_definition)"
+      }
+    },
+    {
+      "id": "AF-INC-RENT",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "RENTAL INCOME",
+        "account": "^Rent$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      }
+    },
+    {
+      "id": "AF-INC-RENTAL-OTHER",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "RENTAL INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "AF-INC-COMMERCIAL-RECOVERY",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "COMMERCIAL INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "AF-INC-OTHER-UTILITY",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "OTHER INCOME",
+        "account": "^(Electric|Gas|Utilities|Water)$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Utility reimbursements"
+      }
+    },
+    {
+      "id": "AF-INC-OTHER",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "OTHER INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "AF-INC-MISC-UTILITY-REIMB",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "MISC INCOME",
+        "account": "Utility Reimbursement"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Utility reimbursements"
+      }
+    },
+    {
+      "id": "AF-INC-MISC",
+      "when": {
+        "layout": "AF",
+        "section": "INCOME",
+        "group": "MISC INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "AF-EXP-ADMIN-MGMT",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "ADMINISTRATIVE",
+        "account": "^Management Fee$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      }
+    },
+    {
+      "id": "AF-EXP-ADMIN-CAPEX",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "ADMINISTRATIVE",
+        "account": "^(Appraisal|Commission|Consulting|Engineer|Environmental|Survey)"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "AF-EXP-ADMIN-PROF",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "ADMINISTRATIVE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "AF-EXP-REPAIR-PARKING",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "REPAIR",
+        "account": "Parking Lot"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "AF-EXP-REPAIR-LIGHT-FIXTURES",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "REPAIR",
+        "account": "^Light Fixtures$"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "AF-EXP-REPAIR",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "REPAIR"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "AF-EXP-MAINT-GROUNDS",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "MAINTENANCE",
+        "account": "^(Grounds|Landscaping|Light Bulb|Parking Lot|Snow)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "AF-EXP-MAINT",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "MAINTENANCE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "AF-EXP-OPER-CAPEX",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "OPERATING",
+        "account": "^(Architects|Demolition)"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "AF-EXP-OPER-SUPPLIES",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "OPERATING",
+        "account": "^Supplies"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "AF-EXP-OPER-TREE",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "OPERATING",
+        "account": "^Tree"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "AF-EXP-OPER-TURNOVER",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "OPERATING",
+        "account": "Turnover"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Turnover / make-ready"
+      }
+    },
+    {
+      "id": "AF-EXP-OPER",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "OPERATING"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "AF-EXP-TURNOVER",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "TURNOVER"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Turnover / make-ready"
+      }
+    },
+    {
+      "id": "AF-EXP-UTILITIES",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "UTILITIES"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "AF-EXP-INSURANCE",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "TAX - INSURANCE",
+        "account": "Insurance"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "AF-EXP-RE-TAX",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "TAX - INSURANCE",
+        "account": "Tax"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "AF-EXP-REPLACEMENT-ELECTRICAL-UPDATE",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "REPLACEMENT",
+        "account": "^Electrical Update$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "AF-EXP-REPLACEMENT-CAPEX",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "REPLACEMENT"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "AF-EXP-DEBT-SERVICE-DIST",
+      "when": {
+        "layout": "AF",
+        "section": "EXPENSE",
+        "group": "DEBT SERVICE",
+        "account": "Distribution"
+      },
+      "then": {
+        "line_type": "dist",
+        "category": "Owner distributions (net)"
+      }
+    },
+    {
+      "id": "AF-NONOP-DIST",
+      "when": {
+        "layout": "AF",
+        "section": "NON OPERATING EXPENSE",
+        "account": "Distribution"
+      },
+      "then": {
+        "line_type": "dist",
+        "category": "Owner distributions (net)"
+      }
+    },
+    {
+      "id": "AF-NONOP-MORTGAGE",
+      "when": {
+        "layout": "AF",
+        "section": "NON OPERATING EXPENSE",
+        "account": "Mortgage"
+      },
+      "then": {
+        "line_type": "debt",
+        "category": "Debt service"
+      }
+    },
+    {
+      "id": "CF-ADJ-OWNER-DIST",
+      "when": {
+        "layout": "CF",
+        "group": "^ADJUSTMENTS$",
+        "account": "^Owner Distributions$"
+      },
+      "then": {
+        "line_type": "dist",
+        "category": "Owner distributions (net)"
+      },
+      "sign": -1,
+      "note": "Cash-flow adjustments carry distributions as a negative cash adjustment; the dataset's dist field is net owner cash OUT, so the sign is flipped (data_quality note on layout sign differences)."
+    },
+    {
+      "id": "CF-ADJ-BALANCE-SHEET",
+      "when": {
+        "layout": "CF",
+        "group": "^ADJUSTMENTS$"
+      },
+      "then": {
+        "exclude": "cash-flow balance-sheet adjustments (A/R, deposits payable, prepaid, escrow, capital contributions, capitalised TI/LC) are not P&L lines"
+      }
+    },
+    {
+      "id": "CF-ADMIN-MGMT",
+      "when": {
+        "layout": "CF",
+        "group": "^ADMINISTRATIVE EXPENSES$",
+        "account": "^Management Fee$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      }
+    },
+    {
+      "id": "CF-ADMIN-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^ADMINISTRATIVE EXPENSES$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-CAPITAL-ACTIVITY",
+      "when": {
+        "layout": "CF",
+        "group": "^CAPITAL/NON-OPERATING ACTIVITY$"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "CF-DEBT-SERVICE",
+      "when": {
+        "layout": "CF",
+        "group": "^DEBT SERVICE$"
+      },
+      "then": {
+        "line_type": "debt",
+        "category": "Debt service"
+      }
+    },
+    {
+      "id": "CF-GA-REC-MGMT",
+      "when": {
+        "layout": "CF",
+        "group": "^GENERAL & ADMINISTRATIVE - RECOVERABLE$",
+        "account": "Management Fees"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      }
+    },
+    {
+      "id": "CF-GA-REC-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^GENERAL & ADMINISTRATIVE - RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-GA-NONREC-LEASING-COMMISSION",
+      "when": {
+        "layout": "CF",
+        "group": "^GENERAL AND ADMINISTRATIVE - NON-RECOVERABLE$",
+        "account": "Leasing Commission"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "CF-GA-NONREC-SUITE-PREP",
+      "when": {
+        "layout": "CF",
+        "group": "^GENERAL AND ADMINISTRATIVE - NON-RECOVERABLE$",
+        "account": "Suite Cleaning"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Turnover / make-ready"
+      }
+    },
+    {
+      "id": "CF-GA-NONREC-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^GENERAL AND ADMINISTRATIVE - NON-RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-GROUNDS-REC",
+      "when": {
+        "layout": "CF",
+        "group": "^GROUNDS EXPENSE - RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "CF-INSURANCE",
+      "when": {
+        "layout": "CF",
+        "group": "^INSURANCE EXPENSE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "CF-LESS-ADJUSTMENTS-CONTRA",
+      "when": {
+        "layout": "CF",
+        "group": "^LESS: ADJUSTMENTS$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Vacancy / waivers / bad debt"
+      }
+    },
+    {
+      "id": "CF-MAINT-REDECORATION-CAPEX",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^Common Area Redecoration$"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "CF-MAINT-EXPENSE-REIMBURSEMENTS",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^Expense Reimbursements$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "CF-MAINT-INSURANCE",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^(Insurance Escrow|Reimbursements/Insurance Claims|Repairs Covered by Insurance)$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "CF-MAINT-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^(Miscellaneous Tax and License|R\\.E\\. Tax Appeal Expense)$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-MAINT-GROUNDS",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^(Pavement and Grounds|Snow Removal)$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "CF-MAINT-RE-TAX",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$",
+        "account": "^(Personal Property Tax|Real Estate Tax)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "CF-MAINT-RM",
+      "when": {
+        "layout": "CF",
+        "group": "^MAINTENANCE EXPENSES$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "CF-NONSTAB-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^NON-STABILIZED EXPENSES$",
+        "account": "^(Legal Fees - Leasing|Miscellaneous/Non Escalation)$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-NONSTAB-CAPEX",
+      "when": {
+        "layout": "CF",
+        "group": "^NON-STABILIZED EXPENSES$"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "CF-OTHER-INCOME-BAD-DEBT",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER INCOME$",
+        "account": "Bad Debt"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Vacancy / waivers / bad debt"
+      }
+    },
+    {
+      "id": "CF-OTHER-INCOME",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER INCOME$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "CF-OTHER-REVENUE-RECOVERIES",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER REVENUE$",
+        "account": "^(CAM Income|Insurance Income|PY |R\\.E Tax Income)"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "CF-OTHER-REVENUE-INTEREST",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER REVENUE$",
+        "account": "^Interest Income$"
+      },
+      "then": {
+        "line_type": "nonop",
+        "category": "Interest income"
+      }
+    },
+    {
+      "id": "CF-OTHER-REVENUE-UTILITY",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER REVENUE$",
+        "account": "^Utility Income$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Utility reimbursements"
+      }
+    },
+    {
+      "id": "CF-OTHER-REVENUE",
+      "when": {
+        "layout": "CF",
+        "group": "^OTHER REVENUE$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "CF-OWNER-BAD-DEBT-PY",
+      "when": {
+        "layout": "CF",
+        "group": "^OWNER ACTIVITY$",
+        "account": "^Bad Debt-Prior Year$"
+      },
+      "then": {
+        "exclude": "prior-year bad-debt write-off booked as owner activity: neither current-period revenue nor owner cash"
+      }
+    },
+    {
+      "id": "CF-OWNER-CASH-BALANCE",
+      "when": {
+        "layout": "CF",
+        "group": "^OWNER ACTIVITY$",
+        "account": "^(Operating Cash|Total Cash)"
+      },
+      "then": {
+        "exclude": "cash-balance lines printed after OWNER ACTIVITY on the annual Cash Flow Statement export (balance sheet, not P&L; cross-check files only)"
+      }
+    },
+    {
+      "id": "CF-OWNER-ACTIVITY-DIST",
+      "when": {
+        "layout": "CF",
+        "group": "^OWNER ACTIVITY$",
+        "account": "^(Owner Contribution|Owners Draw)$"
+      },
+      "then": {
+        "line_type": "dist",
+        "category": "Owner distributions (net)"
+      }
+    },
+    {
+      "id": "CF-OWNERS-EXPENSES-NONREC",
+      "when": {
+        "layout": "CF",
+        "group": "^OWNER'S EXPENSES - NON-RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      },
+      "note": "Same account label ('Miscellaneous Admin Expense') as the G&A-recoverable group; the normalizer sums rows sharing (entity, period, line_type, category, source_account) into one CSV row, which is how the committed CSV carries 80.78 for 2025-07 (74.78 recoverable + 6.00 owner's)."
+    },
+    {
+      "id": "CF-PY-RECOVERIES",
+      "when": {
+        "layout": "CF",
+        "group": "^PRIOR YEAR RECOVERIES$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "CF-PROPERTY-TAXES-REC",
+      "when": {
+        "layout": "CF",
+        "group": "^PROPERTY TAXES - RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "CF-RENTAL-OPERATIONS-GPR",
+      "when": {
+        "layout": "CF",
+        "group": "^RENTAL OPERATIONS$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      }
+    },
+    {
+      "id": "CF-RENTAL-RECOVERIES",
+      "when": {
+        "layout": "CF",
+        "group": "^RENTAL RECOVERIES$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "CF-RENTAL-REVENUE-BASE",
+      "when": {
+        "layout": "CF",
+        "group": "^RENTAL REVENUE$",
+        "account": "^Rental Revenue$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      }
+    },
+    {
+      "id": "CF-RENTAL-REVENUE-CONTRA",
+      "when": {
+        "layout": "CF",
+        "group": "^RENTAL REVENUE$",
+        "account": "^(Bad Debt|COVID Waivers|Commercial Rental Waiver|Prepaid Rental Income|Vacancy)"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Vacancy / waivers / bad debt"
+      }
+    },
+    {
+      "id": "CF-RM-ASSOCIATION-FEE",
+      "when": {
+        "layout": "CF",
+        "group": "^REPAIRS AND MAINTENANCE - (NON-)?RECOVERABLE$",
+        "account": "^Association Fee"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-RM-REC-CLEANING-CONTRACT",
+      "when": {
+        "layout": "CF",
+        "group": "^REPAIRS AND MAINTENANCE - RECOVERABLE$",
+        "account": "^Cleaning - Contract$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Turnover / make-ready"
+      }
+    },
+    {
+      "id": "CF-RM-REC-TRASH",
+      "when": {
+        "layout": "CF",
+        "group": "^REPAIRS AND MAINTENANCE - RECOVERABLE$",
+        "account": "^Trash Removal"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "CF-RM",
+      "when": {
+        "layout": "CF",
+        "group": "^REPAIRS AND MAINTENANCE - (NON-)?RECOVERABLE$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "CF-SERVICE-GROUNDS",
+      "when": {
+        "layout": "CF",
+        "group": "^SERVICE CONTRACTS EXPENSES$",
+        "account": "^(Exterior Landscaping|Grounds Cleaning|Snow Removal)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "CF-SERVICE-MISC-PROF",
+      "when": {
+        "layout": "CF",
+        "group": "^SERVICE CONTRACTS EXPENSES$",
+        "account": "^Misc\\. Service Contract$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "CF-SERVICE-TRASH",
+      "when": {
+        "layout": "CF",
+        "group": "^SERVICE CONTRACTS EXPENSES$",
+        "account": "^Trash Removal"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "CF-SERVICE-RM",
+      "when": {
+        "layout": "CF",
+        "group": "^SERVICE CONTRACTS EXPENSES$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "CF-UTILITIES",
+      "when": {
+        "layout": "CF",
+        "group": "^UTILITIES"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "A12-NOSECTION-RENTAL-INCOME",
+      "when": {
+        "layout": "A12",
+        "section": null,
+        "account": "^Rental Income$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      },
+      "note": "REFERENCE-PARITY: the single 2025-09 recap for 9620 carries no section headers; the reference pipeline mapped every row of it as income."
+    },
+    {
+      "id": "A12-NOSECTION-CAM",
+      "when": {
+        "layout": "A12",
+        "section": null,
+        "account": "^CAM"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      },
+      "note": "REFERENCE-PARITY: 'CAM - Grounds/Trash/Utilities' under group '5500 CAM EXPENSES' total to the statement's own EXPENSE line ($4,547.93) yet the reference mapped them as recoveries. Reproduced here so the committed CSV rebuilds exactly; flagged as a probable misclassification in scripts/property-financials/README.md (fix = a v2 of this file, no code)."
+    },
+    {
+      "id": "A12-NOSECTION-OTHER",
+      "when": {
+        "layout": "A12",
+        "section": null
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      },
+      "note": "REFERENCE-PARITY: 'REPAIRS & MAINTENANCE', 'MANAGEMENT FEE EXPENSE', 'Legal Fees', 'Bank Fees', 'Vacant Utilities' of the 2025-09 recap total to its EXPENSE / N/O EXPENSE lines yet the reference mapped them as other income. See README."
+    },
+    {
+      "id": "A12-INC-RENTAL-INCOME",
+      "when": {
+        "layout": "A12",
+        "section": "INCOME",
+        "group": "RENTAL PROPERTY INCOME",
+        "account": "^Rental Income$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      }
+    },
+    {
+      "id": "A12-INC-RENTAL-FEES",
+      "when": {
+        "layout": "A12",
+        "section": "INCOME",
+        "group": "RENTAL PROPERTY INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "A12-INC-CAM-WRITEOFFS",
+      "when": {
+        "layout": "A12",
+        "section": "INCOME",
+        "group": "CAM INCOME",
+        "account": "Write-Offs"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Vacancy / waivers / bad debt"
+      }
+    },
+    {
+      "id": "A12-INC-CAM-SECDEP-FORFEIT",
+      "when": {
+        "layout": "A12",
+        "section": "INCOME",
+        "group": "CAM INCOME",
+        "account": "Forfeit"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      }
+    },
+    {
+      "id": "A12-INC-CAM",
+      "when": {
+        "layout": "A12",
+        "section": "INCOME",
+        "group": "CAM INCOME"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Recoveries (CAM/tax/ins)"
+      }
+    },
+    {
+      "id": "A12-EXP-INSURANCE-GROUP",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "INSURANCE EXPENSE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "A12-EXP-RM-CLEANING",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "REPAIRS & MAINTENANCE",
+        "account": "^Cleaning$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Turnover / make-ready"
+      }
+    },
+    {
+      "id": "A12-EXP-RM-INSURANCE",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "REPAIRS & MAINTENANCE",
+        "account": "INSURANCE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "A12-EXP-RM-GROUNDS",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "REPAIRS & MAINTENANCE",
+        "account": "^(Landscaping|Parking Lot)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "A12-EXP-RM-MGMT",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "REPAIRS & MAINTENANCE",
+        "account": "MANAGEMENT FEE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      }
+    },
+    {
+      "id": "A12-EXP-RM",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "REPAIRS & MAINTENANCE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "A12-EXP-TAXES",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "TAXES EXPENSE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "A12-EXP-CAM-GROUNDS",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "CAM EXPENSES",
+        "account": "^CAM - (Grounds|Parking Lot|Snow)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Grounds / snow / lot"
+      }
+    },
+    {
+      "id": "A12-EXP-CAM-PROPERTY-TAX",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "CAM EXPENSES",
+        "account": "Property Tax"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "A12-EXP-CAM-UTILITIES",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "CAM EXPENSES",
+        "account": "^CAM - (Trash|Utilities)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "A12-EXP-CAM-RM",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "CAM EXPENSES"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "A12-EXP-OTHER",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "group": "Other Expenses"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "A12-NONOP-LEASING-CAPEX",
+      "when": {
+        "layout": "A12",
+        "section": "NON OPERATING EXPENSE",
+        "account": "^(Commissions Expense|Tenant Improvements)$"
+      },
+      "then": {
+        "line_type": "capex",
+        "category": "Capex / leasing / non-recurring"
+      }
+    },
+    {
+      "id": "A12-NONOP-VACANT-UTILITIES",
+      "when": {
+        "layout": "A12",
+        "section": "NON OPERATING EXPENSE",
+        "account": "^Vacant Utilities$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Utilities"
+      }
+    },
+    {
+      "id": "A12-NONOP-PROF",
+      "when": {
+        "layout": "A12",
+        "section": "NON OPERATING EXPENSE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      }
+    },
+    {
+      "id": "QB-INC-RENTS",
+      "when": {
+        "layout": "QB",
+        "section": "Income",
+        "account": "^Rents?$"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Base rent"
+      }
+    },
+    {
+      "id": "QB-INC-SOLAR",
+      "when": {
+        "layout": "QB",
+        "section": "Income",
+        "account": "^(Electricity Income|SREC Income)"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Solar / energy income"
+      }
+    },
+    {
+      "id": "QB-INC-INTEREST",
+      "when": {
+        "layout": "QB",
+        "section": "Income",
+        "account": "^Interest Inc"
+      },
+      "then": {
+        "line_type": "nonop",
+        "category": "Interest income"
+      },
+      "note": "55 New Plant 2026 YTD interest income on the entity cash; below the line (nonop), never revenue."
+    },
+    {
+      "id": "QB-INC-OTHER",
+      "when": {
+        "layout": "QB",
+        "section": "Income"
+      },
+      "then": {
+        "line_type": "rev",
+        "category": "Other income"
+      },
+      "note": "Tax Refund and any other QuickBooks income line."
+    },
+    {
+      "id": "QB-EXP-INTEREST",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "^Interest Expense$"
+      },
+      "then": {
+        "line_type": "debt",
+        "category": "Debt service"
+      }
+    },
+    {
+      "id": "QB-EXP-NONCASH",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "^(Amortization|Depreciation)"
+      },
+      "then": {
+        "line_type": "noncash",
+        "category": "Depreciation/amortization"
+      }
+    },
+    {
+      "id": "QB-EXP-INSURANCE",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "^Insurance"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Insurance"
+      }
+    },
+    {
+      "id": "QB-EXP-MGMT",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "Management Fee"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      },
+      "note": "Asset Management Fees (entity-level) carried as management fees, as in the hand-normalised annual-statements.csv."
+    },
+    {
+      "id": "QB-EXP-RM",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "^(Repairs and Maintenance|REPAIR & MAINT)"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Repairs & maintenance"
+      }
+    },
+    {
+      "id": "QB-EXP-TAX-INCOME",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "group": "^Tax$",
+        "account": "^(Fed|State)$"
+      },
+      "then": {
+        "line_type": "inctax",
+        "category": "Entity income tax"
+      }
+    },
+    {
+      "id": "QB-EXP-TAX-PROPERTY",
+      "when": {
+        "layout": "QB",
+        "section": "Expense",
+        "account": "^(Property|Personal Property|Tax - Other|Tax -- Personal Property)$"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Real estate & property tax"
+      }
+    },
+    {
+      "id": "QB-EXP-PROF",
+      "when": {
+        "layout": "QB",
+        "section": "Expense"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Professional / admin"
+      },
+      "note": "Professional Fees, Bank Charge / Bank Service Charges / Wire Fee, Misc."
+    },
+    {
+      "id": "QB-OTHER-EXP-STATE-TAX",
+      "when": {
+        "layout": "QB",
+        "section": "Other Expense",
+        "account": "^Tax"
+      },
+      "then": {
+        "line_type": "inctax",
+        "category": "Entity income tax"
+      },
+      "note": "1851 South Club Solar \"Tax -- Md State\" under Other Income/Expense › Other Expense."
+    }
+  ]
+}

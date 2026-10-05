@@ -52,8 +52,13 @@ function main(): number {
       if (!(r.entity in kinds)) throw new Error(`annual-statements.csv entity "${r.entity}" is not in the entity registry`);
       if (kinds[r.entity] !== 'annual') throw new Error(`annual-statements.csv entity "${r.entity}" is not kind=annual in the registry`);
     }
-    rows = [...rows, ...annual];
-    console.log(`normalize-raw: appended ${annual.length} hand-normalised annual-statement rows from ${annualPath}`);
+    // An annual entity whose QuickBooks statements were PARSED (parse-sources.ts, T9b) is already in
+    // the raw records; the hand-normalised rows are only the fallback for entities that are not.
+    const parsedAnnual = new Set(rows.map((r) => r.entity).filter((e) => kinds[e] === 'annual'));
+    const fallback = annual.filter((r) => !parsedAnnual.has(r.entity));
+    rows = [...rows, ...fallback];
+    for (const e of [...parsedAnnual].sort()) console.log(`normalize-raw: ${e} came from parsed QuickBooks statements; its annual-statements.csv rows were not appended`);
+    if (fallback.length > 0) console.log(`normalize-raw: appended ${fallback.length} hand-normalised annual-statement rows from ${annualPath}`);
   }
   const sorted = sortMonthlyLongRows(rows, kinds);
   const csv = renderMonthlyLongCsv(sorted);

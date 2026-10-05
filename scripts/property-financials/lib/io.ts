@@ -1,7 +1,7 @@
 // scripts/property-financials/lib/io.ts — file IO shared by the two Property Financials CLIs.
 // All pure logic lives in src/analytics/property-financials/; this file only reads config, writes to
 // the --out directory and prints diff summaries against the committed data/property-financials files.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseCuratedInputs, parseDerivationConfig, parseEntityRegistry, type CuratedInputs, type DerivationConfig, type EntityRegistry } from '../../../src/analytics/property-financials/build-dataset';
@@ -27,9 +27,20 @@ export interface PipelineConfig {
   readonly mappingFile: string;
 }
 
-/** Load every versioned config file. `mappingVersion` picks account-mapping.<v>.json (default: highest). */
+/** The highest `account-mapping.vN.json` present in config/ (v2 adds the QuickBooks rules; AF/CF/A12 rules are identical across versions). */
+export function latestMappingVersion(dir: string = CONFIG_DIR): string {
+  const versions = readdirSync(dir)
+    .map((f) => /^account-mapping\.v(\d+)\.json$/.exec(f)?.[1])
+    .filter((v): v is string => v !== undefined)
+    .map(Number)
+    .sort((a, b) => b - a);
+  if (versions.length === 0) throw new Error(`no account-mapping.vN.json in ${dir}`);
+  return `v${versions[0]}`;
+}
+
+/** Load every versioned config file. `mappingVersion` picks account-mapping.<v>.json (default: highest present). */
 export function loadConfig(opts: { mappingVersion?: string; derivationVersion?: string } = {}): PipelineConfig {
-  const mappingFile = resolve(CONFIG_DIR, `account-mapping.${opts.mappingVersion ?? 'v1'}.json`);
+  const mappingFile = resolve(CONFIG_DIR, `account-mapping.${opts.mappingVersion ?? latestMappingVersion()}.json`);
   const derivationFile = resolve(CONFIG_DIR, `derivation.${opts.derivationVersion ?? 'v1'}.json`);
   const curatedDir = resolve(CONFIG_DIR, 'curated');
   return {
