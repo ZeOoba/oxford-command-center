@@ -118,7 +118,7 @@ export function OverviewView({ dataset: d, onOpenProperty }: { dataset: PfDatase
           {statuses.isError && ' Owner, due date and status are unavailable right now (status store unreachable).'}
         </div>
         {money.map((i) => (
-          <InsightRow key={i.id} insight={i} record={byId.get(i.id)} workflowAvailable={!statuses.isError} onOpenProperty={onOpenProperty} />
+          <InsightRow key={i.id} insight={i} record={byId.get(i.id)} workflowAvailable={statuses.isSuccess} onOpenProperty={onOpenProperty} />
         ))}
       </section>
     </div>

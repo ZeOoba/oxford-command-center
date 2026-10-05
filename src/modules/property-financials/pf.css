@@ -636,6 +636,210 @@
   color: var(--pf-ink);
 }
 
+/* ---------- T6: levers / watchlist / evaluation ---------- */
+.pf-lede-sm {
+  font-size: 19px;
+}
+.pf-root td.pf-wrap {
+  text-align: left;
+  white-space: normal;
+}
+.pf-sens td:nth-child(2),
+.pf-sens th:nth-child(2) {
+  text-align: left;
+  white-space: normal;
+  min-width: 240px;
+}
+.pf-sens td:nth-child(4),
+.pf-sens th:nth-child(4) {
+  text-align: left;
+  min-width: 220px;
+}
+
+/* review item card (artifact item()) */
+.pf-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 6px 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--pf-rule);
+  min-width: 0;
+}
+.pf-item > .pf-form {
+  grid-column: 1 / -1;
+}
+.pf-item-main {
+  min-width: 0;
+}
+.pf-item h3 {
+  font-size: 19px;
+  line-height: 1.25;
+  margin: 6px 0;
+}
+.pf-item p {
+  margin: 0 0 8px;
+  max-width: 78ch;
+  color: var(--pf-ink2);
+  overflow-wrap: anywhere;
+}
+.pf-item p.pf-do {
+  color: var(--pf-ink);
+}
+.pf-do-l {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-gold-ink);
+  margin-right: 6px;
+}
+.pf-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  color: var(--pf-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.pf-imp {
+  text-align: right;
+  font-family: var(--pf-f-mono);
+  font-size: 12px;
+  color: var(--pf-ink2);
+  min-width: 0;
+}
+.pf-imp strong {
+  display: block;
+  font-family: var(--pf-f-display);
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+.pf-imp small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--pf-muted);
+  line-height: 1.35;
+  margin-top: 4px;
+  font-family: var(--pf-f-body);
+}
+@media (max-width: 700px) {
+  .pf-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-imp {
+    text-align: left;
+  }
+}
+
+/* watchlist filters */
+.pf-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--pf-ink2);
+}
+.pf-root .pf-filters select {
+  width: auto;
+  max-width: 100%;
+  margin-right: 12px;
+}
+
+/* RAG cell: icon shape + value text (+ hidden status word); never colour alone */
+.pf-rag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--pf-f-mono);
+  font-size: 11.5px;
+}
+.pf-rag::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+.pf-rag[data-status='g']::before {
+  background: var(--pf-good);
+  border-radius: 50%;
+}
+.pf-rag[data-status='a']::before {
+  background: var(--pf-warn);
+  transform: rotate(45deg);
+}
+.pf-rag[data-status='r']::before {
+  background: var(--pf-crit);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.pf-rag[data-status='n'] {
+  color: var(--pf-muted);
+  cursor: help;
+}
+.pf-rag[data-status='n']::before {
+  border: 1.5px solid var(--pf-muted);
+  border-radius: 50%;
+}
+/* the n/m reason is readable by keyboard too, not only on mouse hover (title) */
+.pf-rag[data-reason] {
+  position: relative;
+}
+.pf-rag[data-reason]:focus-visible::after {
+  content: attr(data-reason);
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  max-width: min(260px, 80vw);
+  white-space: normal;
+  text-align: left;
+  padding: 6px 8px;
+  font: 12px/1.35 var(--pf-f-body);
+  color: var(--pf-ink);
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+}
+.pf-rag-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.pf-root .pf-eval th[scope='row'] {
+  font-family: var(--pf-f-body);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--pf-ink);
+  font-weight: 400;
+  text-align: left;
+  border-bottom: 1px solid var(--pf-rule);
+}
+
+/* review rhythm */
+.pf-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 28px;
+}
+.pf-two > * {
+  min-width: 0;
+}
+.pf-dq {
+  padding-left: 18px;
+  margin: 8px 0;
+  max-width: 86ch;
+}
+.pf-dq li {
+  margin-bottom: 6px;
+  color: var(--pf-ink2);
+}
+
 /* ---------- empty state ---------- */
 .pf-empty {
   border: 1px dashed var(--pf-rule);
