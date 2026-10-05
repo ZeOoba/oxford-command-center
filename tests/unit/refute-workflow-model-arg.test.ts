@@ -52,18 +52,18 @@ const clean = (lens: string) => ({ lens, foundRealDefect: false, maxSeverity: 'n
 const lensOf = (label: string) => label.replace(/^refute:/, '').replace(/:opus-fallback$/, '');
 
 describe('refute-financial-change — model argument', () => {
-  it('defaults to fable for every lens and never falls back when fable answers', async () => {
+  it('defaults to opus (Opus 5.5 floor) for every lens with no fallback configured', async () => {
     const { calls, result } = await run('a change set', (c) => clean(lensOf(c.label)));
     expect(calls.length).toBe(5);
-    expect(new Set(calls.map((c) => c.model))).toEqual(new Set(['fable']));
+    expect(new Set(calls.map((c) => c.model))).toEqual(new Set(['opus']));
     expect(result.succeeded).toBe(5);
     expect(result.allFailed).toBe(false);
-    expect(result.models).toEqual({ primary: 'fable', fallback: 'opus' });
+    expect(result.models).toEqual({ primary: 'opus', fallback: null });
     expect(result.modelFloorMet).toBe(true);
   });
 
-  it('keeps the per-lens opus fallback when a fable call returns null', async () => {
-    const { calls, result } = await run('a change set', (c) =>
+  it('keeps the per-lens opus fallback when an explicit model:fable call returns null', async () => {
+    const { calls, result } = await run({ changeSet: 'x', model: 'fable' }, (c) =>
       c.label === 'refute:edges' ? null : clean(lensOf(c.label)),
     );
     const fb = calls.filter((c) => c.label === 'refute:edges:opus-fallback');
@@ -72,7 +72,7 @@ describe('refute-financial-change — model argument', () => {
     expect(result.succeeded).toBe(5);
   });
 
-  it('model: opus runs every lens on opus, makes no redundant same-model retry, and reports the floor as unmet', async () => {
+  it('model: opus runs every lens on opus, makes no redundant same-model retry, and reports the floor as met', async () => {
     const { calls, result } = await run({ changeSet: 'x', model: 'opus' }, (c) =>
       c.label === 'refute:determinism' ? null : clean(lensOf(c.label)),
     );
@@ -81,7 +81,7 @@ describe('refute-financial-change — model argument', () => {
     expect(calls).toHaveLength(5);
     expect(result.succeeded).toBe(4); // the failed lens is dropped, not silently counted clean
     expect(result.models).toEqual({ primary: 'opus', fallback: null });
-    expect(result.modelFloorMet).toBe(false);
+    expect(result.modelFloorMet).toBe(true);
   });
 
   it('all lenses failing is still a tooling failure, never clean, under an override', async () => {
