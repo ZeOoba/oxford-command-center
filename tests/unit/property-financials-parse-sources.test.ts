@@ -295,7 +295,8 @@ describe.skipIf(!HAVE_SOURCES)(`ground truth against ${SOURCE_DIR}`, () => {
     180_000,
   );
 
-  it.skipIf(!existsSync(resolve(SOURCE_DIR, 'outputs', '_raw_monthly_records.json')))(
+  // Needs the converted .xls tree (PF_CONVERTED_DIR): without it every binary .xls is unreadable by design.
+  it.skipIf(!CONVERTED_DIR || !existsSync(resolve(SOURCE_DIR, 'outputs', '_raw_monthly_records.json')))(
     'non-total raw records equal the reference Python export, except the stale-group quirk on 9620 Commissions Expense',
     async () => {
       const got = await collectSourceRecords(SOURCES, { sourceDir: SOURCE_DIR, convertedDir: CONVERTED_DIR, mapping: MAPPING, registry: REGISTRY });
