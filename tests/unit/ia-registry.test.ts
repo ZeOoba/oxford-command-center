@@ -278,9 +278,11 @@ describe('rail composition', () => {
 });
 
 describe('final rail (IA decongestion Phase 4 complete)', () => {
-  const RAIL = ['overview', 'pipeline', 'worklist', 'command-brain', 'portfolio', 'intel', 'leasing', 'capital', 'obligations', 'market', 'lease-market', 'data'];
+  // 'property-financials' joined Assets on Gabriel's in-turn ruling (2026-10-05, standalone destination;
+  // docs/superpowers/plans/2026-10-05-property-financials-module.md).
+  const RAIL = ['overview', 'pipeline', 'worklist', 'command-brain', 'portfolio', 'property-financials', 'intel', 'leasing', 'capital', 'obligations', 'market', 'lease-market', 'data'];
   for (const profile of ['acquisitions', 'principal'] as const) {
-    it(`${profile}: exactly the 12 ratified destinations, none empty, none over 5 tabs`, () => {
+    it(`${profile}: exactly the 13 ratified destinations, none empty, none over 5 tabs`, () => {
       const rail = railModules(profile);
       expect(rail.map((m) => m.id).sort()).toEqual([...RAIL].sort());
       for (const m of rail) expect((m.tabs ?? []).length, m.id).toBeLessThanOrEqual(MAX_TABS_PER_DESTINATION);
@@ -289,12 +291,12 @@ describe('final rail (IA decongestion Phase 4 complete)', () => {
       for (const id of RAIL) expect(MODULE_ORDER[profile], id).toContain(id);
     });
   }
-  it('rail groups are Command(4) / Assets(3) / Capital(2) / Market(2) / System(1)', () => {
+  it('rail groups are Command(4) / Assets(4) / Capital(2) / Market(2) / System(1)', () => {
     const counts: Record<string, number> = {};
     for (const m of railModules('acquisitions')) counts[m.group] = (counts[m.group] ?? 0) + 1;
-    expect(counts).toEqual({ Command: 4, Assets: 3, Capital: 2, Market: 2, System: 1 });
+    expect(counts).toEqual({ Command: 4, Assets: 4, Capital: 2, Market: 2, System: 1 });
   });
-  it('every legacy id (26) still resolves to one of the 12 (or Health)', () => {
+  it('every legacy id (26) still resolves to a rail destination (or Health)', () => {
     for (const id of LEGACY_MODULE_IDS) {
       const target = byId(id)?.id ?? LEGACY_ALIASES[id]?.destination;
       expect([...RAIL, 'health'], id).toContain(target);
@@ -323,10 +325,13 @@ describe('every rail destination declares its tab strip in the registry', () => 
   };
   /** The only rail destinations that legitimately render no strip. */
   const TABLESS = ['overview'];
+  /** Rail destinations whose views are an in-module `?view=` strip ABOVE the 5-tab cap, so they
+   *  declare no registry tabs (the palette indexes the destination itself). */
+  const INTERNAL_VIEW_STRIP = ['property-financials'];
 
-  it('the 12 rail destinations split exactly into the tabbed ones and the tabless one', () => {
+  it('the rail destinations split exactly into the tabbed ones, the tabless one and the internal-strip one', () => {
     expect(railModules('acquisitions').map((m) => m.id).sort()).toEqual(
-      [...Object.keys(DESTINATION_TABS), ...TABLESS].sort(),
+      [...Object.keys(DESTINATION_TABS), ...TABLESS, ...INTERNAL_VIEW_STRIP].sort(),
     );
   });
 
@@ -341,7 +346,7 @@ describe('every rail destination declares its tab strip in the registry', () => 
     });
   }
 
-  for (const id of TABLESS) {
+  for (const id of [...TABLESS, ...INTERNAL_VIEW_STRIP]) {
     it(`${id} declares no tabs`, () => expect(byId(id)?.tabs).toBeUndefined());
   }
 
@@ -360,5 +365,28 @@ describe('TopBar page titles (src/shell/titles.ts)', () => {
     expect(TITLES.leasing).toBe('Leasing & Tenants');
     expect(TITLES.obligations).toBe('Insurance & Taxes');
     expect(TITLES['command-brain']).toBe('Brain');
+  });
+});
+
+describe('Property Financials destination (plan 2026-10-05 T5)', () => {
+  it('is registered in Assets as "Property Financials", routable, on the rail, with no registry tabs', () => {
+    const m = byId('property-financials');
+    expect(m).toBeDefined();
+    expect(m!.label).toBe('Property Financials');
+    expect(m!.group).toBe('Assets');
+    expect(m!.rail).not.toBe(false);
+    expect(m!.tabs).toBeUndefined();
+    expect(parseRoute('/property-financials', IDS)).toMatchObject({ moduleId: 'property-financials', known: true });
+    expect(resolveLegacyRoute('/property-financials', '?view=scorecard')).toBeNull();
+  });
+
+  it('sits right after Portfolio in both profiles and carries its page title', () => {
+    for (const profile of ['acquisitions', 'principal'] as const) {
+      const order = MODULE_ORDER[profile];
+      expect(order.indexOf('property-financials'), profile).toBe(order.indexOf('portfolio') + 1);
+      const rail = railModules(profile).map((m) => m.id);
+      expect(rail.indexOf('property-financials'), profile).toBe(rail.indexOf('portfolio') + 1);
+    }
+    expect(TITLES['property-financials']).toBe('Property Financials');
   });
 });
