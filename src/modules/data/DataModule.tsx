@@ -9,11 +9,16 @@
 // and Documents own inner switches; they render as a SegmentedControl on `?view=` (R5 — no nested
 // tab strips). On the static mirror the /api/warehouse routes are absent, so the three warehouse
 // tabs degrade to one informational card each — Calibration/Documents keep their own fallbacks.
+// Quality carries a `?view=` SegmentedControl (plan T8, property financials): Warehouse (default) ·
+// Property Financials — the PF data-health panel, which reads its own local route (not the warehouse),
+// so neither the warehouse offline gate nor the data-ops KPI band applies to it. It is a view, not a
+// sixth tab: the strip is at MAX_TABS_PER_DESTINATION.
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Database } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
@@ -32,10 +37,19 @@ import { DataQualityView } from '../intel/DataQualityView';
 import { MappingsView } from '../intel/MappingsView';
 import { DataOpsKpiRow } from './DataOpsKpiRow';
 import { latestPeriod } from './latestPeriod';
-import { DATA_TABS, DATA_TAB_KEYS, DATA_OPS_TABS, type DataTab } from './tabs';
+import {
+  DATA_TABS,
+  DATA_TAB_KEYS,
+  DATA_OPS_TABS,
+  DATA_QUALITY_VIEWS,
+  DATA_QUALITY_VIEW_KEYS,
+  type DataQualityViewKey,
+  type DataTab,
+} from './tabs';
 
 const CalibrationModule = lazy(() => import('../calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
 const DocumentsModule = lazy(() => import('../documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
+const PfDataHealthPanel = lazy(() => import('../property-financials/DataHealthPanel').then((m) => ({ default: m.PfDataHealthPanel })));
 
 function WarehouseOfflineCard({ what }: { what: string }) {
   return (
@@ -55,6 +69,8 @@ function WarehouseOfflineCard({ what }: { what: string }) {
 export function DataModule() {
   warnIfTooManyTabs('data', DATA_TABS);
   const [tab, setTab] = useTabParam<DataTab>(DATA_TAB_KEYS, 'imports', 'tab', CLEAR_VIEW);
+  const [qualityView, setQualityView] = useTabParam<DataQualityViewKey>(DATA_QUALITY_VIEW_KEYS, 'warehouse', 'view');
+  const pfHealth = tab === 'quality' && qualityView === 'property-financials';
   // R4: badges declared on DATA_TABS reach the strip (useTabSpecs is the one mapping).
   const tabSpecs = useTabSpecs(DATA_TABS);
   const imports = useWarehouseImports();
@@ -84,7 +100,7 @@ export function DataModule() {
             )
           }
         />
-        {DATA_OPS_TABS.has(tab) && !unavailable && (
+        {DATA_OPS_TABS.has(tab) && !pfHealth && !unavailable && (
           <div className="px-4 py-3">
             <DataOpsKpiRow
               committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
@@ -103,7 +119,16 @@ export function DataModule() {
           {warehousePanel('Imports', () => <ImportsView imports={imports.data ?? []} />)}
         </TabPanel>
         <TabPanel id="quality">
-          {warehousePanel('Data quality', () => <DataQualityView issues={issues.data ?? []} />)}
+          <div className="flex flex-col gap-3">
+            <SegmentedControl options={DATA_QUALITY_VIEWS} value={qualityView} onChange={setQualityView} aria-label="Data quality source" />
+            {pfHealth ? (
+              <Suspense fallback={<ModuleLoading />}>
+                <PfDataHealthPanel />
+              </Suspense>
+            ) : (
+              warehousePanel('Data quality', () => <DataQualityView issues={issues.data ?? []} />)
+            )}
+          </div>
         </TabPanel>
         <TabPanel id="mappings">
           {warehousePanel('Mappings', () => <MappingsView imports={imports.data ?? []} />)}
