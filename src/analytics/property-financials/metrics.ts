@@ -32,6 +32,24 @@ export function pctChange(prior: number | null | undefined, current: number | nu
   return ok(current / prior - 1);
 }
 
+/**
+ * Compound annual growth from `first` to `last` over `years`. Refuses a non-positive base or end
+ * (the growth rate is undefined there) and a non-positive span.
+ */
+export function cagr(first: number | null | undefined, last: number | null | undefined, years: number): MetricResult {
+  if (first === null || first === undefined || !Number.isFinite(first) || first <= 0) return notMeaningful('starting base is zero or negative');
+  if (last === null || last === undefined || !Number.isFinite(last) || last <= 0) return notMeaningful('ending value is zero or negative');
+  if (!(years > 0) || !Number.isFinite(years)) return notMeaningful('no span of years');
+  return ok(Math.pow(last / first, 1 / years) - 1);
+}
+
+/** num / den as a MetricResult; refuses a zero / negative / missing denominator. */
+export function ratio(num: number | null | undefined, den: number | null | undefined, reason = 'no revenue in the period'): MetricResult {
+  if (num === null || num === undefined || !Number.isFinite(num)) return notMeaningful('no amount');
+  if (den === null || den === undefined || !Number.isFinite(den) || den <= 0) return notMeaningful(reason);
+  return ok(num / den);
+}
+
 export interface PeriodWindow {
   readonly id: string;
   readonly n_months: number;
