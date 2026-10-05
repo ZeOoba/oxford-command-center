@@ -26,6 +26,7 @@ import {
   driverNature,
   driverTiming,
   evaluationInputs,
+  evaluationResults,
   fvcSepichMappingFlag,
   median,
   pctChange,
@@ -453,12 +454,22 @@ describe('THRESHOLDS + ragStatus', () => {
     expect(evaluationInputs(r).rentRunRateGrowth).toBe(r.base_rent_runrate_q3.yoy_2026);
     expect(v.utilityGrowth).toBeCloseTo(r.periods.YTD26.opex_by.Utilities / r.periods.YTD25.opex_by.Utilities - 1, 10);
     expect(v.repairsGrowth).toBeCloseTo(r.periods.YTD26.opex_by['Repairs & maintenance'] / r.periods.YTD25.opex_by['Repairs & maintenance'] - 1, 10);
-    // Livingston: Jan-Sep 2025 utilities / repairs are below the $1,000 prior floor -> n/m, and no Q3-2025 -> n/m.
-    const l = evaluationInputs(monthlyProp('3883 Livingston'), D.monthly['3883 Livingston']);
+    // Livingston: no Q3-2025 -> run-rate n/m. Its Jan-Sep 2025 window holds only 3 of 9 months, so the
+    // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which both prior
+    // bases clear (utilities $REDACTED-AMT, repairs $REDACTED-AMT). A 3-month vs 9-month comparison would
+    // have read +489.6% / -66.8%; the partial rule refuses before any arithmetic.
+    const liv = monthlyProp('3883 Livingston');
+    const l = evaluationInputs(liv, D.monthly['3883 Livingston']);
     expect(l.rentRunRateGrowth).toBeNull();
-    const ly = monthlyProp('3883 Livingston').periods.YTD25.opex_by;
-    expect(l.utilityGrowth === null).toBe(ly.Utilities <= 1000);
-    expect(l.repairsGrowth === null).toBe(ly['Repairs & maintenance'] <= 1000);
+    const ly = liv.periods.YTD25.opex_by;
+    expect(liv.periods.YTD25.n_months).toBe(3);
+    expect(ly.Utilities).toBeCloseTo(REDACTED-AMT, 2);
+    expect(ly['Repairs & maintenance']).toBeCloseTo(REDACTED-AMT, 2);
+    expect(l.utilityGrowth).toBeNull();
+    expect(l.repairsGrowth).toBeNull();
+    const lr = evaluationResults(liv, D.monthly['3883 Livingston']);
+    expect(lr.utilityGrowth.reason).toBe('YTD25: partial period: 3 of 9 months');
+    expect(lr.repairsGrowth.reason).toBe('YTD25: partial period: 3 of 9 months');
   });
 
   it('changing ONE threshold flips exactly the cells it governs and nothing else', () => {

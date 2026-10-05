@@ -78,8 +78,8 @@ export function EvaluationView({
     <div>
       <h2>Evaluation scorecard</h2>
       <p className="pf-lede pf-lede-sm">
-        {n[0]!.toUpperCase() + n.slice(1)} tests to run on every property each month. Status is computed from trailing-twelve-month data using the thresholds below.
-        Change a threshold in the source file and the status moves.
+        {n[0]!.toUpperCase() + n.slice(1)} tests to run on every property each month. The five ratios are computed from trailing-twelve-month data, the base-rent run-rate from Q3
+        vs Q3, and utility and repairs growth from Jan-Sep vs Jan-Sep, each against the thresholds below. Change a threshold in the source file and the status moves.
       </p>
       <p className="pf-note" style={{ marginBottom: 10 }}>
         Ratios are computed from unrounded figures, so a value within rounding of a threshold can read differently from a 2-decimal summary; a value that would round onto a

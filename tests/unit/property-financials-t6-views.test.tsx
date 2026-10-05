@@ -233,6 +233,13 @@ describe('Evaluation scorecard', () => {
   it('definitions table is generated from THRESHOLDS; notes and review rhythm render', () => {
     renderView('evaluation');
     const p = panel();
+    // The intro states the three bases actually used (TTM ratios, Q3 vs Q3 run-rate, Jan-Sep growth),
+    // not "every status from trailing-twelve-month data".
+    const intro = within(p).getByText(/tests to run on every property each month/).textContent!;
+    expect(intro).not.toMatch(/computed from trailing-twelve-month data using/);
+    expect(intro).toMatch(/trailing-twelve-month/);
+    expect(intro).toMatch(/Q3/);
+    expect(intro).toMatch(/Jan-Sep/);
     const defs = within(within(p).getByTestId('pf-eval-defs')).getAllByRole('row').slice(1);
     expect(defs.map((r) => r.querySelectorAll('td')[2]!.textContent)).toEqual(EVALUATION_TEST_IDS.map((t) => thresholdText(THRESHOLDS[t])));
     expect(within(p).getByText(/lease-up/).textContent).toMatch(/9620 State 350.*3034 Westerville Rd.*3875-3883 E Livingston/);

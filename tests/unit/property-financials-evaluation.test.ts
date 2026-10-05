@@ -36,7 +36,7 @@ describe('generated threshold text', () => {
   });
 
   it('the growth tests state their prior-base guard in the definition, generated from minPriorBase', () => {
-    expect(thresholdDefinition(THRESHOLDS.utilityGrowth)).toBe('Jan-Sep 2026 vs 2025; n/m when the prior-period base is $1,000 or less');
+    expect(thresholdDefinition(THRESHOLDS.utilityGrowth)).toBe('Jan-Sep 2026 vs 2025; n/m when either period is partial or the prior-period base is $1,000 or less');
     expect(thresholdDefinition(THRESHOLDS.noiMargin)).toBe('TTM NOI / revenue');
     expect(thresholdDefinition({ ...THRESHOLDS.repairsGrowth, minPriorBase: 2500 })).toMatch(/\$2,500 or less/);
   });
@@ -82,6 +82,31 @@ describe('evaluationResults (value + n/m reason)', () => {
     for (const id of PF_MONTHLY_ENTITY_IDS) {
       const r = evaluationResults(monthly(id), D.monthly[id]);
       for (const t of EVALUATION_TEST_IDS) if (r[t].value === null) expect(r[t].reason, `${id}/${t}`).toBeTruthy();
+    }
+  });
+
+  it('a partial period never produces a YoY, even when the prior base clears the floor (rule 1 before the $1,000 guard)', () => {
+    const liv = monthly('3883 Livingston');
+    expect(liv.periods.YTD25.n_months).toBe(3);
+    expect(liv.periods.YTD25.opex_by.Utilities).toBeGreaterThan(1000);
+    expect(liv.periods.YTD25.opex_by['Repairs & maintenance']).toBeGreaterThan(1000);
+    const r = evaluationResults(liv, D.monthly['3883 Livingston']);
+    expect(r.utilityGrowth).toEqual({ value: null, reason: 'YTD25: partial period: 3 of 9 months' });
+    expect(r.repairsGrowth).toEqual({ value: null, reason: 'YTD25: partial period: 3 of 9 months' });
+    expect(ragStatus('utilityGrowth', r.utilityGrowth.value)).toBe('n');
+    expect(ragStatus('repairsGrowth', r.repairsGrowth.value)).toBe('n');
+    // A partial CURRENT side refuses too, and the partial reason wins over the floor reason.
+    const cur = { ...liv, periods: { ...liv.periods, YTD26: { ...liv.periods.YTD26, n_months: 4 }, YTD25: { ...liv.periods.YTD25, n_months: 9 } } };
+    const c = evaluationResults(cur, D.monthly['3883 Livingston']);
+    expect(c.utilityGrowth).toEqual({ value: null, reason: 'YTD26: partial period: 4 of 9 months' });
+    const both = { ...liv, periods: { ...liv.periods, YTD25: { ...liv.periods.YTD25, n_months: 3, opex_by: { ...liv.periods.YTD25.opex_by, Utilities: 500 } } } };
+    expect(evaluationResults(both, D.monthly['3883 Livingston']).utilityGrowth.reason).toMatch(/partial period/);
+    // Every complete Jan-Sep pair still produces the growth figure (the floor is the only other refusal).
+    for (const id of PF_MONTHLY_ENTITY_IDS) {
+      const p = monthly(id);
+      if (p.periods.YTD25.n_months !== 9 || p.periods.YTD26.n_months !== 9) continue;
+      const u = evaluationResults(p, D.monthly[id]).utilityGrowth;
+      if (p.periods.YTD25.opex_by.Utilities > 1000) expect(u.value, `${id}/utilityGrowth`).toBeCloseTo(p.periods.YTD26.opex_by.Utilities / p.periods.YTD25.opex_by.Utilities - 1, 10);
     }
   });
 

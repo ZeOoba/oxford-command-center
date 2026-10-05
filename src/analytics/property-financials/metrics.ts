@@ -333,9 +333,18 @@ export function rentStepEvents(
 // Scorecard inputs
 // -------------------------------------------------------------------------------------------------
 
-function growthWithFloor(prior: number, current: number, floor: number): MetricResult {
-  if (!(prior > floor)) return notMeaningful(`prior-period base is $${Math.round(floor).toLocaleString('en-US')} or less`);
-  return ok(current / prior - 1);
+/**
+ * Jan-Sep growth: rule 1 first (a partial period on EITHER side never produces a YoY — periods.ts),
+ * then the test's prior-base floor. The order matters for the reason shown: Livingston's 3-month 2025
+ * window is refused as partial, not as a small base.
+ */
+function growthWithFloor(prior: PeriodWindow & { amount: number }, current: PeriodWindow & { amount: number }, floor: number): MetricResult {
+  for (const side of [current, prior]) {
+    const reason = partialReason(side.id, side.n_months);
+    if (reason !== null) return notMeaningful(`${side.id}: ${reason}`);
+  }
+  if (!(prior.amount > floor)) return notMeaningful(`prior-period base is $${Math.round(floor).toLocaleString('en-US')} or less`);
+  return ok(current.amount / prior.amount - 1);
 }
 
 function ratioOf(num: number, den: number, reason: string): MetricResult {
@@ -347,17 +356,21 @@ type ThresholdConfig = Readonly<Record<EvaluationTestId, EvaluationThreshold>>;
 /**
  * The eight evaluation-test inputs for one monthly property, exactly as the reference artifact
  * computes them, each as a MetricResult so an n/m carries its reason: ratios on TTM26, run-rate
- * Q3-26 vs Q3-25, utility / repairs growth Jan-Sep vs Jan-Sep gated on a prior base above the
- * test's minPriorBase (read from the `thresholds` passed in, so the guard and the RAG boundaries
- * come from one config).
+ * Q3-26 vs Q3-25, utility / repairs growth Jan-Sep vs Jan-Sep — n/m when either Jan-Sep window is
+ * partial (rule 1), then gated on a prior base above the test's minPriorBase (read from the
+ * `thresholds` passed in, so the guard and the RAG boundaries come from one config).
  *
  * Pass the property's monthly cube to compute the run-rate growth exactly; without it the
  * dataset's 2-dp `base_rent_runrate_q3.yoy_2026` is used (what the artifact displays).
  */
 export function evaluationResults(p: PfMonthlyProperty, monthly?: MonthlyBaseRent, thresholds: ThresholdConfig = THRESHOLDS): Record<EvaluationTestId, MetricResult> {
   const t = p.periods.TTM26;
-  const y25 = p.periods.YTD25.opex_by;
-  const y26 = p.periods.YTD26.opex_by;
+  const y25 = p.periods.YTD25;
+  const y26 = p.periods.YTD26;
+  const ytd = (c: OpexCategory) => [
+    { id: 'YTD25', n_months: y25.n_months, amount: y25.opex_by[c] },
+    { id: 'YTD26', n_months: y26.n_months, amount: y26.opex_by[c] },
+  ] as const;
   const noRevenue = 'no revenue in the period';
   const ttmPartial = partialReason('TTM26', t.n_months);
   const onTtm = (r: MetricResult): MetricResult => (ttmPartial !== null && r.value !== null ? notMeaningful(`TTM: ${ttmPartial}`) : r);
@@ -373,8 +386,8 @@ export function evaluationResults(p: PfMonthlyProperty, monthly?: MonthlyBaseRen
     mgmtFeePct: onTtm(ratioOf(t.opex_by['Management fees'], t.revenue, noRevenue)),
     contraRevenue: onTtm(ratioOf(Math.abs(t.vacancy_waivers), t.base_rent, 'no base rent in the period')),
     rentRunRateGrowth: runRate,
-    utilityGrowth: growthWithFloor(y25.Utilities, y26.Utilities, thresholds.utilityGrowth.minPriorBase ?? 0),
-    repairsGrowth: growthWithFloor(y25['Repairs & maintenance'], y26['Repairs & maintenance'], thresholds.repairsGrowth.minPriorBase ?? 0),
+    utilityGrowth: growthWithFloor(...ytd('Utilities'), thresholds.utilityGrowth.minPriorBase ?? 0),
+    repairsGrowth: growthWithFloor(...ytd('Repairs & maintenance'), thresholds.repairsGrowth.minPriorBase ?? 0),
   };
 }
 
