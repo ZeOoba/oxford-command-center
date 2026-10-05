@@ -5,12 +5,13 @@
 // (cash basis) served by /api/warehouse/property-financials. This is a THIRD NOI basis, separate from
 // Financials (warehouse) and Portfolio (Master Workbook); the masthead says so on every view.
 //
-// Views: Overview, Scorecard (T5), Levers, Watchlist, Evaluation (T6) are built; the Explorer (T7)
-// renders an honest "not built yet" state until its task lands.
+// Views: Overview, Scorecard (T5), Levers, Watchlist, Evaluation (T6), Property explorer (T7). The
+// explorer's selection lives in the URL (?view=explorer&p=<entity id>) so Overview / Scorecard /
+// review-item links deep-link to a property and a refresh keeps it.
 import { useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tab, TabList, TabPanel, Tabs, type Key } from 'react-aria-components';
-import { PF_ENTITY_IDS, type PfDataset, type PfEntityId } from '@contracts/property-financials';
+import { PF_ENTITY_IDS, type PfEntityId } from '@contracts/property-financials';
 import { useTabParam } from '@/lib/useTabParam';
 import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable } from '../intel/hooks';
@@ -22,6 +23,7 @@ import { ScorecardView } from './ScorecardView';
 import { LeversView } from './LeversView';
 import { WatchlistView } from './WatchlistView';
 import { EvaluationView } from './EvaluationView';
+import { ExplorerView } from './ExplorerView';
 import { PF_PROPERTY_PARAM, PF_VIEWS, PF_VIEW_IDS, type PfViewId } from './views';
 import type { PfDatasetResponse } from './types';
 import './pf.css';
@@ -66,22 +68,6 @@ function Masthead({ response }: { response: PfDatasetResponse | undefined }) {
   );
 }
 
-function NotBuilt({ view, dataset, selected }: { view: PfViewId; dataset: PfDataset; selected: PfEntityId | null }) {
-  const label = PF_VIEWS.find((v) => v.id === view)!.label;
-  return (
-    <EmptyState title={`${label}: not built yet`}>
-      <p>
-        This view is being rebuilt from the review artifact and is not available yet. Nothing here is estimated or placeholder data: the other views are live.
-      </p>
-      {view === 'explorer' && selected && (
-        <p>
-          Selected property: <b>{dataset.properties[selected].label}</b>. Its category detail, movers and lease terms are in the Scorecard table row for now.
-        </p>
-      )}
-    </EmptyState>
-  );
-}
-
 export function PropertyFinancialsModule() {
   const q = usePfDataset();
   const [view, setView] = useTabParam<PfViewId>(PF_VIEW_IDS, 'overview', 'view', CLEAR_ON_VIEW_CHANGE);
@@ -106,6 +92,21 @@ export function PropertyFinancialsModule() {
         { replace: false },
       );
       scrollToTop(rootRef.current);
+    },
+    [setParams],
+  );
+  /** Card selection inside the explorer: rewrite ?p= in place (no history entry per click). */
+  const selectProperty = useCallback(
+    (entity: PfEntityId) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('view', 'explorer');
+          next.set(PF_PROPERTY_PARAM, entity);
+          return next;
+        },
+        { replace: true },
+      );
     },
     [setParams],
   );
@@ -171,7 +172,7 @@ export function PropertyFinancialsModule() {
               ) : v.id === 'evaluation' ? (
                 <EvaluationView dataset={d} />
               ) : (
-                <NotBuilt view={v.id} dataset={d} selected={selected} />
+                <ExplorerView dataset={d} selected={selected} onSelect={selectProperty} onOpenProperty={openProperty} />
               )}
             </TabPanel>
           ))}
