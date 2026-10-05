@@ -12,7 +12,8 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { PF_ENTITY_IDS } from '@contracts/property-financials';
-import { buildEntityMapping } from '../../server/property-financials/mapping';
+import { buildEntityMapping, ENTITY_TO_CANONICAL } from '../../server/property-financials/mapping';
+import { buildLiveSf, type LiveSfSnapshot } from '../../server/property-financials/live-sf';
 import { PfDataHealthPanel, PfDataHealthSummary } from '../../src/modules/property-financials/DataHealthPanel';
 import { PF_KEYS, parseMappingResponse } from '../../src/modules/property-financials/hooks';
 import { NOI_DISCLOSURE } from '../../src/modules/property-financials/data-health';
@@ -196,6 +197,50 @@ describe('PfDataHealthPanel — live data health (replaces the artifact’s stat
     renderPanel(response(), null);
     expect(await screen.findByTestId('pf-dh-mapping-error')).toBeTruthy();
     expect(screen.queryByTestId('pf-map-row')).toBeNull();
+  });
+});
+
+describe('square footage source (T9b part 2)', () => {
+  const rarig = ENTITY_TO_CANONICAL['1100 Rarig']!.id;
+  const snapshot = (asOf: string): LiveSfSnapshot =>
+    ({
+      meta: { schemaVersion: 1, asOf, generatedAt: `${asOf}T08:00:00.000Z`, source: 'wb', scenario: 'base' },
+      properties: [{ id: rarig, sf: 21000, occPct: 0.9, tenantCount: 9 }],
+      leases: [{ id: 'a', propertyId: rarig, propertyKey: '1100 Rarig', tenantName: 't', unit: null, company: null, sf: 18900, monthlyRent: 1, rentPerSf: null, leaseStart: null, leaseEnd: null, escalationDate: null, escalationPct: null, status: 'Active', annualRent: 12, monthsToExpiry: null, flags: [] }],
+    }) as unknown as LiveSfSnapshot;
+  const NOW = new Date(2026, 9, 5, 12, 0, 0);
+
+  it('fresh live block: Rarig shown as Live (Spine A) with the live leased SF; the others as Static dataset; headline says how many are live', () => {
+    renderPanel(response({ liveSf: buildLiveSf(snapshot('2026-10-04'), D, NOW) }));
+    const sec = screen.getByTestId('pf-dh-sf');
+    expect(within(sec).getByTestId('pf-dh-sf-headline').textContent).toMatch(/Live.*Master Workbook \(live Spine A\) as of 2026-10-04 is fresh \(1 day old\); 1 of 11 entities use live SF/);
+    const rows = within(sec).getAllByTestId('pf-sf-row');
+    expect(rows).toHaveLength(PF_ENTITY_IDS.length);
+    const rarigRow = rows.find((r) => r.getAttribute('data-entity') === '1100 Rarig')!;
+    expect(rarigRow.getAttribute('data-using')).toBe('live');
+    expect(rarigRow.textContent).toMatch(/21,000/);
+    expect(rarigRow.textContent).toMatch(/18,900/);
+    expect(rarigRow.textContent).toMatch(/Live \(Spine A\)/);
+    const e5 = rows.find((r) => r.getAttribute('data-entity') === '3540 E 5th')!;
+    expect(e5.getAttribute('data-using')).toBe('static');
+    expect(e5.textContent).toMatch(/Static dataset/);
+    expect(e5.textContent).toMatch(/static dataset \(2026-10-02\)/);
+    expect(rows.find((r) => r.getAttribute('data-entity') === '1851 South Club Solar')!.getAttribute('data-using')).toBe('none');
+  });
+
+  it('stale live block: headline says Stale with the reason and every row falls back to the static dataset', () => {
+    renderPanel(response({ liveSf: buildLiveSf(snapshot('2026-09-01'), D, NOW) }));
+    const sec = screen.getByTestId('pf-dh-sf');
+    expect(within(sec).getByTestId('pf-dh-sf-headline').textContent).toMatch(/Stale.*is STALE \(34 days old, limit 7\)/);
+    expect(within(sec).getAllByTestId('pf-sf-row').every((r) => r.getAttribute('data-using') !== 'live')).toBe(true);
+  });
+
+  it('no block (older server) and the static fallback block both read as static, without error', () => {
+    renderPanel(response({ liveSf: null }));
+    expect(screen.getByTestId('pf-dh-sf-headline').textContent).toMatch(/no live square-footage block/);
+    cleanup();
+    renderPanel(response({ liveSf: buildLiveSf(null, D, NOW) }));
+    expect(screen.getByTestId('pf-dh-sf-headline').textContent).toMatch(/Live Master Workbook unavailable; figures use the static dataset \(2026-10-02\)/);
   });
 });
 

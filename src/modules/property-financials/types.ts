@@ -8,6 +8,7 @@
 // tests/unit/property-financials-insight-workflow.test.ts assigns the server types to these and back,
 // so tsc fails if the two drift.
 import type { PfDataset } from '@contracts/property-financials';
+import type { PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 
 export type PfAvailability = 'ok' | 'missing' | 'unreadable' | 'invalid';
 
@@ -32,6 +33,12 @@ export interface PfDatasetResponse {
   issues: string[];
   meta: PfDataHealthMeta | null;
   dataset: PfDataset | null;
+  /**
+   * Live square footage from Spine A (T9b part 2; server/property-financials/live-sf.ts). Additive:
+   * absent on older servers, null when the envelope carried no readable block. The preference rule
+   * (live only when present, Spine A and fresh) lives in @analytics/property-financials/live-sf.
+   */
+  liveSf?: PfLiveSfBlock | null;
 }
 
 export type PfInsightStatus = 'open' | 'in_progress' | 'resolved' | 'dismissed';
