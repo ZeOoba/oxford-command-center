@@ -91,12 +91,10 @@ describe('masthead + view strip', () => {
     expect(new URLSearchParams(lastSearch).get('view')).toBe('explorer');
   });
 
-  it('unbuilt views render an honest not-built state, never fake content', () => {
-    for (const [view, label] of [['explorer', 'Property explorer']] as const) {
-      renderModule(`?view=${view}`);
-      expect(screen.getByRole('heading', { name: `${label}: not built yet` })).toBeTruthy();
-      cleanup();
-    }
+  it('every view is built: the explorer renders the property explorer, no not-built placeholder (T7)', () => {
+    renderModule('?view=explorer');
+    expect(screen.getByRole('heading', { name: 'Property explorer' })).toBeTruthy();
+    expect(screen.queryByText(/not built yet/)).toBeNull();
   });
 
   it('no dataset → empty state with the loader issues, no tab strip', () => {
@@ -199,7 +197,9 @@ describe('Overview (real dataset)', () => {
     const q = new URLSearchParams(lastSearch);
     expect(q.get('view')).toBe('explorer');
     expect(q.get('p')).toBe('FVC');
-    expect(screen.getByText(D.properties.FVC.label)).toBeTruthy();
+    const fvcCard = screen.getByTestId('pf-explorer').querySelector('.pf-pcard[data-entity="FVC"]')!;
+    expect(fvcCard.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('pf-explorer-lede').textContent!.startsWith(`${D.properties.FVC.label}: NOI`)).toBe(true);
   });
 
   it('Portfolio-level items have no property link', () => {

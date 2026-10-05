@@ -854,6 +854,272 @@
   color: var(--pf-ink2);
 }
 
+/* ---------- property explorer (plan T7; artifact CSS "explorer") ---------- */
+.pf-pgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+.pf-pcard {
+  appearance: none;
+  text-align: left;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+  color: var(--pf-ink);
+  padding: 10px 12px;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.pf-pcard:hover {
+  border-color: var(--pf-ink2);
+}
+.pf-pcard[aria-pressed='true'] {
+  border-color: var(--pf-gold);
+  box-shadow: inset 0 -3px 0 var(--pf-gold);
+  background: var(--pf-surface2);
+}
+.pf-pcard-n {
+  font-weight: 600;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pf-pcard-v {
+  font-family: var(--pf-f-display);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pf-pcard-s {
+  font-size: 11px;
+  color: var(--pf-muted);
+}
+.pf-spark {
+  display: block;
+  margin-top: 2px;
+}
+.pf-xdetail {
+  scroll-margin-top: 56px;
+}
+.pf-xlede {
+  margin-top: 22px;
+  font-size: 21px;
+}
+.pf-xpanel {
+  margin-top: 28px;
+}
+.pf-grid2-even {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.pf-grid2-even > .pf-xpanel {
+  margin-top: 0;
+}
+.pf-xchart {
+  min-width: 0;
+}
+.pf-chart.pf-chart-sx {
+  overflow-x: auto;
+  min-height: 0;
+  max-width: 100%;
+}
+.pf-cin {
+  position: relative;
+}
+.pf-tip-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--pf-rule);
+  font-weight: 600;
+}
+.pf-seg {
+  display: inline-flex;
+  border: 1px solid var(--pf-rule);
+  margin: 0 0 8px;
+}
+.pf-seg button {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--pf-ink2);
+  font: 500 12px var(--pf-f-body);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.pf-seg button[aria-pressed='true'] {
+  background: var(--pf-ink);
+  color: var(--pf-bg);
+}
+.pf-flag {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 22px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--pf-warn-ink);
+  border-left-width: 4px;
+  background: var(--pf-surface);
+  font-size: 13px;
+  max-width: 100ch;
+}
+.pf-flag-l {
+  flex: none;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-warn-ink);
+}
+.pf-flag-l::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  background: var(--pf-warn);
+  transform: rotate(45deg);
+}
+.pf-gap {
+  margin: 14px 0 0;
+  border-left: 2px solid var(--pf-rule);
+  padding-left: 10px;
+}
+/* effect-on-NOI bars: helps solid, hurts hatched (pattern + arrow, never colour alone) */
+.pf-bars {
+  display: grid;
+  gap: 6px;
+}
+.pf-brow {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(120px, 210px) minmax(0, 1fr) 76px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.pf-brow:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+.pf-bl {
+  overflow-wrap: anywhere;
+}
+.pf-bt {
+  height: 14px;
+  background: var(--pf-surface2);
+  display: block;
+}
+.pf-bt i,
+.pf-legend i.pf-helps,
+.pf-legend i.pf-hurts {
+  display: block;
+  height: 100%;
+}
+.pf-legend i.pf-helps,
+.pf-legend i.pf-hurts {
+  display: inline-block;
+}
+.pf-helps {
+  background: var(--pf-c1);
+}
+.pf-hurts {
+  background: repeating-linear-gradient(135deg, var(--pf-c2) 0 4px, color-mix(in srgb, var(--pf-c2) 45%, transparent) 4px 7px);
+}
+.pf-bv {
+  font-family: var(--pf-f-mono);
+  font-size: 11.5px;
+  text-align: right;
+  white-space: nowrap;
+}
+.pf-tip-row {
+  top: calc(100% + 4px);
+  left: 0;
+  max-width: min(240px, 100%);
+}
+.pf-drv {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--pf-rule);
+}
+.pf-drv-h {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+}
+.pf-drv-n {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  margin: 3px 0;
+}
+.pf-drv p {
+  margin: 0;
+  color: var(--pf-ink2);
+  max-width: 86ch;
+  font-size: 13px;
+}
+.pf-pill.pf-helps-pill {
+  color: var(--pf-good-ink);
+}
+.pf-pill.pf-hurts-pill {
+  color: var(--pf-crit-ink);
+}
+.pf-pill.pf-helps-pill::before,
+.pf-pill.pf-hurts-pill::before {
+  display: none;
+}
+.pf-nat {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px dashed var(--pf-rule);
+  padding: 1px 6px;
+  color: var(--pf-ink2);
+}
+.pf-small {
+  font-size: 11px;
+}
+.pf-ins {
+  display: grid;
+  gap: 2px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--pf-rule);
+}
+.pf-ins span {
+  color: var(--pf-ink2);
+  max-width: 90ch;
+}
+.pf-root tr.pf-tsec > td {
+  background: var(--pf-surface2);
+  text-align: left;
+}
+.pf-root tr.pf-current > td {
+  background: var(--pf-surface2);
+}
+@media (max-width: 860px) {
+  .pf-grid2-even {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .pf-pgrid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+  .pf-pcard {
+    flex: 0 0 150px;
+  }
+  .pf-brow {
+    grid-template-columns: 100px minmax(0, 1fr) 64px;
+  }
+  .pf-flag {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pf-root *,
   .pf-root *::before,

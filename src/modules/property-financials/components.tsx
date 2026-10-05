@@ -4,7 +4,7 @@
 // alone), the n/m cell with its reason on hover / focus, and the module's honest empty state.
 import type { ReactNode } from 'react';
 import type { PfInsight } from '@contracts/property-financials';
-import { NM } from '@analytics/property-financials/format';
+import { NM, pctLevel } from '@analytics/property-financials/format';
 import type { MetricResult } from '@analytics/property-financials/periods';
 
 const SEVERITY_ICON_NAME: Readonly<Record<PfInsight['severity'], string>> = {
@@ -35,6 +35,22 @@ export function NotMeaningful({ reason }: { reason: string }) {
 export function MetricCell({ result, format, className }: { result: MetricResult; format: (v: number) => string; className?: (v: number) => string }) {
   if (result.value === null) return <NotMeaningful reason={result.reason} />;
   return <span className={className?.(result.value)}>{format(result.value)}</span>;
+}
+
+/**
+ * A change chip (the artifact's chip()): ▲ / ▼ + |percent|, toned good / bad (inverted for costs),
+ * or n/m with its reason. The arrow carries direction, so colour is never the only cue.
+ */
+export function ChangeChip({ result, invert = false }: { result: MetricResult; invert?: boolean }) {
+  if (result.value === null) return <NotMeaningful reason={result.reason} />;
+  const v = result.value;
+  const tone = Math.abs(v) < 0.0005 ? 'pf-mut' : (invert ? v < 0 : v > 0) ? 'pf-pos' : 'pf-neg';
+  return (
+    <span className={tone}>
+      {v > 0 ? '▲ ' : v < 0 ? '▼ ' : ''}
+      {pctLevel(Math.abs(v), 1)}
+    </span>
+  );
 }
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
