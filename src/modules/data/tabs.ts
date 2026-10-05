@@ -23,14 +23,14 @@ export const DATA_OPS_TABS: ReadonlySet<DataTab> = new Set<DataTab>(['imports', 
  * reference artifact's "Command center data" tab made live) is a second view of Quality rather than
  * a sixth tab: Warehouse (default) · Property Financials.
  */
-export type DataQualityView = 'warehouse' | 'property-financials';
+export type DataQualityViewKey = 'warehouse' | 'property-financials';
 
-export const DATA_QUALITY_VIEWS: ReadonlyArray<{ value: DataQualityView; label: string }> = [
+export const DATA_QUALITY_VIEWS: ReadonlyArray<{ value: DataQualityViewKey; label: string }> = [
   { value: 'warehouse', label: 'Warehouse' },
   { value: 'property-financials', label: 'Property Financials' },
 ];
 
-export const DATA_QUALITY_VIEW_KEYS: readonly DataQualityView[] = DATA_QUALITY_VIEWS.map((v) => v.value);
+export const DATA_QUALITY_VIEW_KEYS: readonly DataQualityViewKey[] = DATA_QUALITY_VIEWS.map((v) => v.value);
 
 /** Deep link to the Property Financials data-health panel (used by the module's summary card). */
 export const PF_DATA_HEALTH_HREF = '/data?tab=quality&view=property-financials';
