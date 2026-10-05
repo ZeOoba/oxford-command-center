@@ -15,6 +15,7 @@ import type { PfDataset, PfEntityId } from '@contracts/property-financials';
 import { NM, pct, usd } from '@analytics/property-financials/format';
 import { ChangeChip, NotMeaningful } from './components';
 import { InsightCardList } from './InsightWorkflow';
+import { PropertyGaps } from './PropertyGaps';
 import { GroupedBars, StackedBars } from './charts/PeriodBars';
 import { StepChart } from './charts/StepChart';
 import { TimelineChart } from './charts/TimelineChart';
@@ -460,6 +461,8 @@ function Detail({ d, m, onOpenProperty }: { d: PfDataset; m: ExplorerModel; onOp
           {m.annualOnlyNote}
         </p>
       )}
+      {/* The FVC square-footage inference is already in the Confirm flag above. */}
+      <PropertyGaps dataset={d} id={m.id} omitMapping />
       <p className="pf-lede pf-xlede" data-testid="pf-explorer-lede">
         {m.lede}
       </p>

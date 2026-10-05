@@ -261,6 +261,6 @@ describe('Scorecard (real dataset)', () => {
     const detail = screen.getByTestId('pf-detail-55 New Plant (EGFLLC)');
     expect(within(detail).getByText('2026 YTD to 6/12')).toBeTruthy();
     expect(within(detail).getByText(/Interest expense:/)).toBeTruthy();
-    expect(within(detail).getByText(/Lease/)).toBeTruthy();
+    expect(within(detail).getByRole('heading', { name: 'Lease' })).toBeTruthy();
   });
 });
