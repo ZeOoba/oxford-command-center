@@ -52,13 +52,13 @@ const clean = (lens: string) => ({ lens, foundRealDefect: false, maxSeverity: 'n
 const lensOf = (label: string) => label.replace(/^refute:/, '').replace(/:opus-fallback$/, '');
 
 describe('refute-financial-change — model argument', () => {
-  it('defaults to opus (Opus 5.5 floor) for every lens with no fallback configured', async () => {
+  it('defaults to opus (Opus 5.5 floor) for every lens and retries a failed lens once by default', async () => {
     const { calls, result } = await run('a change set', (c) => clean(lensOf(c.label)));
     expect(calls.length).toBe(5);
     expect(new Set(calls.map((c) => c.model))).toEqual(new Set(['opus']));
     expect(result.succeeded).toBe(5);
     expect(result.allFailed).toBe(false);
-    expect(result.models).toEqual({ primary: 'opus', fallback: null });
+    expect(result.models).toEqual({ primary: 'opus', fallback: 'opus' });
     expect(result.modelFloorMet).toBe(true);
   });
 
@@ -72,15 +72,15 @@ describe('refute-financial-change — model argument', () => {
     expect(result.succeeded).toBe(5);
   });
 
-  it('model: opus runs every lens on opus, makes no redundant same-model retry, and reports the floor as met', async () => {
+  it('model: opus runs every lens on opus, retries a failed lens once on opus (never drops it silently), and reports the floor as met', async () => {
     const { calls, result } = await run({ changeSet: 'x', model: 'opus' }, (c) =>
       c.label === 'refute:determinism' ? null : clean(lensOf(c.label)),
     );
     expect(new Set(calls.map((c) => c.model))).toEqual(new Set(['opus']));
-    expect(calls.some((c) => c.label.endsWith(':opus-fallback'))).toBe(false); // would retry opus with opus
-    expect(calls).toHaveLength(5);
-    expect(result.succeeded).toBe(4); // the failed lens is dropped, not silently counted clean
-    expect(result.models).toEqual({ primary: 'opus', fallback: null });
+    expect(calls.filter((c) => c.label === 'refute:determinism:opus-fallback')).toHaveLength(1);
+    expect(calls).toHaveLength(6);
+    expect(result.succeeded).toBe(5); // the retry recovered the lens
+    expect(result.models).toEqual({ primary: 'opus', fallback: 'opus' });
     expect(result.modelFloorMet).toBe(true);
   });
 
@@ -113,5 +113,23 @@ describe('refute-financial-change — shape other code relies on', () => {
     for (const k of ['verdicts', 'anyRealDefect', 'worstSeverityRank', 'succeeded', 'allFailed']) {
       expect(result).toHaveProperty(k);
     }
+  });
+});
+
+describe('refute-financial-change — partial coverage is never reported as a full clean', () => {
+  it('fallbackModel:null disables the retry, drops the lens, and the log says PARTIAL', async () => {
+    const { calls, result, logs } = await run({ changeSet: 'x', fallbackModel: null }, (c) =>
+      c.label === 'refute:determinism' ? null : clean(lensOf(c.label)),
+    );
+    expect(calls).toHaveLength(5);
+    expect(result.succeeded).toBe(4);
+    expect(logs.join('\n')).toMatch(/PARTIAL/);
+    expect(logs.join('\n')).not.toMatch(/Clear to commit/);
+  });
+
+  it('a lens that fails even after the retry is reported as partial coverage', async () => {
+    const { result, logs } = await run('x', (c) => (lensOf(c.label) === 'edges' ? null : clean(lensOf(c.label))));
+    expect(result.succeeded).toBe(4);
+    expect(logs.join('\n')).toMatch(/PARTIAL/);
   });
 });
