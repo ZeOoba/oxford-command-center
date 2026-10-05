@@ -19,6 +19,7 @@ import type {
   PfInsightStatusRecord,
   PfInsightStatusResponse,
   PfMappingResponse,
+  PfMappingRow,
 } from './types';
 
 export const PF_API = '/api/warehouse/property-financials';
@@ -52,6 +53,34 @@ export function parseDatasetResponse(raw: unknown): PfDatasetResponse {
   };
 }
 
+const MAPPING_METHODS: ReadonlySet<string> = new Set(['exact', 'inferred', 'unmatched']);
+
+/**
+ * Validate the GET /mapping envelope (server-defined shape, no contract export): a malformed body
+ * fails loud — the panel shows an error rather than an empty or half-read table.
+ */
+export function parseMappingResponse(raw: unknown): PfMappingResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.rows)) throw new Error('property-financials: mapping response is malformed');
+  const availability = raw.availability as PfAvailability;
+  if (!AVAILABILITY.includes(availability)) throw new Error('property-financials: unknown mapping availability');
+  const rows = raw.rows.map((r, i): PfMappingRow => {
+    const bad = () => new Error(`property-financials: mapping row ${i} is malformed`);
+    if (!isRecord(r) || typeof r.entity !== 'string' || !(r.canonicalId === null || typeof r.canonicalId === 'string')) throw bad();
+    if (typeof r.method !== 'string' || !MAPPING_METHODS.has(r.method) || !Array.isArray(r.flags)) throw bad();
+    const flags = r.flags.map((f) => {
+      if (!isRecord(f) || typeof f.code !== 'string' || typeof f.detail !== 'string') throw bad();
+      return {
+        code: f.code,
+        detail: f.detail,
+        ...(typeof f.datasetSf === 'number' ? { datasetSf: f.datasetSf } : {}),
+        ...(typeof f.masterSf === 'number' ? { masterSf: f.masterSf } : {}),
+      };
+    });
+    return { entity: r.entity, canonicalId: r.canonicalId, method: r.method as PfMappingRow['method'], flags };
+  });
+  return { availability, rows };
+}
+
 /** One retry for a real failure; none when the Brain Server is absent (mirror / server down). */
 function retryUnlessUnavailable(failureCount: number, error: unknown): boolean {
   return !isWarehouseUnavailable(error) && failureCount < 1;
@@ -69,7 +98,7 @@ export function usePfDataset() {
 export function usePfMapping(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: PF_KEYS.mapping,
-    queryFn: async () => fetchJson<PfMappingResponse>(`${PF_API}/mapping`),
+    queryFn: async () => parseMappingResponse(await fetchJson<unknown>(`${PF_API}/mapping`)),
     staleTime: 5 * 60_000,
     retry: retryUnlessUnavailable,
     enabled: opts.enabled ?? true,
