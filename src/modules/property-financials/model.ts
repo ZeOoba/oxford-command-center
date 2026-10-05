@@ -8,11 +8,15 @@
 //
 // Pinned in tests/unit/property-financials-model.test.ts. Pure TypeScript: no React, no fetch.
 import {
+  LEASE_UP_EXCLUDED,
   OPEX_CATEGORIES,
   PF_ENTITY_IDS,
+  PF_MONTHLY_ENTITY_IDS,
   PF_SEVERITIES,
   type OpexCategory,
+  type PfAccountMover,
   type PfDataset,
+  type PfMonthlyEntityId,
   type PfEntityId,
   type PfInsight,
   type PfLease,
@@ -21,7 +25,8 @@ import {
   type PfProperty,
 } from '@contracts/property-financials';
 import { notMeaningful, ok, partialReason, type MetricResult } from '@analytics/property-financials/periods';
-import { pctChange, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
+import { evaluationResults, pctChange, q3RunRate, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
+import { EVALUATION_TEST_IDS, THRESHOLDS, ragStatus, type EvaluationTestId, type EvaluationThreshold, type RagStatus } from '@analytics/property-financials/thresholds';
 import { pctLevel } from '@analytics/property-financials/format';
 
 const RE_TAX: OpexCategory = 'Real estate & property tax';
@@ -368,4 +373,131 @@ export function cubeMonths(d: PfDataset, entities: readonly string[]): string[] 
   const set = new Set<string>();
   for (const id of entities) for (const m of Object.keys((d.monthly as Record<string, Record<string, unknown>>)[id] ?? {})) set.add(m);
   return [...set].sort();
+}
+
+// -------------------------------------------------------------------------------------------------
+// Rent & NOI levers (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+/** Revenue and recovery review items for the Levers view, severity then |impact|. */
+export function leverInsights(insights: readonly PfInsight[]): PfInsight[] {
+  return sortInsights(insights.filter((i) => i.type === 'Revenue' || i.type === 'Recovery'));
+}
+
+export const RUN_RATE_YEARS = [2024, 2025, 2026] as const;
+export type RunRateYear = (typeof RUN_RATE_YEARS)[number];
+
+export interface RunRateRow {
+  readonly id: PfMonthlyEntityId;
+  readonly label: string;
+  /** Average Jul-Sep base rent x 12, or n/m when a month of the quarter is missing. */
+  readonly q3: Readonly<Record<RunRateYear, MetricResult>>;
+  readonly yoy2025: MetricResult;
+  readonly yoy2026: MetricResult;
+}
+
+/** Base-rent run-rate by PM asset, computed from the monthly cube (exact, not the dataset's 2-dp yoy). */
+export function runRateRows(d: PfDataset): RunRateRow[] {
+  return PF_MONTHLY_ENTITY_IDS.map((id) => {
+    const cube = d.monthly[id];
+    const q3 = Object.fromEntries(
+      RUN_RATE_YEARS.map((y) => {
+        const v = q3RunRate(cube, y);
+        return [y, v === null ? notMeaningful(`no full Jul-Sep ${y} in the monthly exports`) : ok(v)];
+      }),
+    ) as Record<RunRateYear, MetricResult>;
+    const t = runRateQ3Table(cube);
+    return { id, label: d.properties[id].label, q3, yoy2025: t.yoy_2025, yoy2026: t.yoy_2026 };
+  });
+}
+
+// -------------------------------------------------------------------------------------------------
+// Expense watchlist (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+/** The "no filter" option value of both watchlist selects. */
+export const WATCHLIST_ALL = 'All';
+
+/** Property filter options: All, then each Expense item's property once, in dataset order. */
+export function watchlistPropertyOptions(insights: readonly PfInsight[]): string[] {
+  return [WATCHLIST_ALL, ...new Set(insights.filter((i) => i.type === 'Expense').map((i) => i.property))];
+}
+
+export interface WatchlistFilter {
+  readonly property: string;
+  readonly severity: string;
+}
+
+/** Expense items matching both filters, severity then |annual impact| (unknown impact last in band). */
+export function filterWatchlist(insights: readonly PfInsight[], f: WatchlistFilter): PfInsight[] {
+  return sortInsights(
+    insights.filter((i) => i.type === 'Expense' && (f.property === WATCHLIST_ALL || i.property === f.property) && (f.severity === WATCHLIST_ALL || i.severity === f.severity)),
+  );
+}
+
+/** "Largest account movers" table rules (reference artifact WATCH block). */
+export const WATCHLIST_MOVER_RULES = {
+  comparison: 'YTD26_vs_YTD25',
+  /** Accounts must move by more than this many dollars. */
+  minAbsDelta: 2500,
+  limit: 24,
+} as const satisfies { comparison: 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024'; minAbsDelta: number; limit: number };
+
+export interface MoverRow {
+  readonly entity: PfMonthlyEntityId;
+  readonly label: string;
+  readonly mover: PfAccountMover;
+}
+
+/** Operating-expense account movers across every PM asset, largest |delta| first. */
+export function topOpexMovers(
+  d: PfDataset,
+  rules: { readonly comparison: 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024'; readonly minAbsDelta: number; readonly limit: number } = WATCHLIST_MOVER_RULES,
+): MoverRow[] {
+  const opex = new Set<string>(OPEX_CATEGORIES);
+  const rows: MoverRow[] = [];
+  for (const id of PF_MONTHLY_ENTITY_IDS) {
+    for (const m of d.account_movers[id][rules.comparison]) {
+      if (opex.has(m.category) && Math.abs(m.delta) > rules.minAbsDelta) rows.push({ entity: id, label: d.properties[id].label, mover: m });
+    }
+  }
+  return rows.sort((a, b) => Math.abs(b.mover.delta) - Math.abs(a.mover.delta)).slice(0, rules.limit);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Evaluation scorecard (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+export interface EvaluationCell {
+  readonly result: MetricResult;
+  readonly status: RagStatus;
+}
+
+export interface EvaluationRow {
+  readonly id: PfMonthlyEntityId;
+  readonly label: string;
+  readonly cells: Readonly<Record<EvaluationTestId, EvaluationCell>>;
+}
+
+/** Eight tests x every PM asset; status ONLY via ragStatus over the given thresholds. */
+export function evaluationMatrix(d: PfDataset, thresholds: Readonly<Record<EvaluationTestId, EvaluationThreshold>> = THRESHOLDS): EvaluationRow[] {
+  return PF_MONTHLY_ENTITY_IDS.map((id) => {
+    const p = d.properties[id];
+    if (p.kind !== 'monthly') throw new Error(`${id} is not a monthly entity`);
+    const res = evaluationResults(p, d.monthly[id], thresholds);
+    const cells = Object.fromEntries(EVALUATION_TEST_IDS.map((t) => [t, { result: res[t], status: ragStatus(t, res[t].value, thresholds) }])) as Record<EvaluationTestId, EvaluationCell>;
+    return { id, label: p.label, cells };
+  });
+}
+
+/** Labels of the lease-up assets (contract LEASE_UP_EXCLUDED), for the evaluation note. */
+export function leaseUpLabels(d: PfDataset): string[] {
+  return LEASE_UP_EXCLUDED.map((id) => d.properties[id].label);
+}
+
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'] as const;
+
+/** 9 → 'nine' (0-12), digits beyond. For prose counts read from the data. */
+export function countWord(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
 }

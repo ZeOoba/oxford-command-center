@@ -92,7 +92,7 @@ describe('masthead + view strip', () => {
   });
 
   it('unbuilt views render an honest not-built state, never fake content', () => {
-    for (const [view, label] of [['levers', 'Rent & NOI levers'], ['watchlist', 'Expense watchlist'], ['evaluation', 'Evaluation scorecard'], ['explorer', 'Property explorer']] as const) {
+    for (const [view, label] of [['explorer', 'Property explorer']] as const) {
       renderModule(`?view=${view}`);
       expect(screen.getByRole('heading', { name: `${label}: not built yet` })).toBeTruthy();
       cleanup();

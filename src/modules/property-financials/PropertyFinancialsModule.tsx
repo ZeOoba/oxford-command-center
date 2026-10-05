@@ -5,8 +5,8 @@
 // (cash basis) served by /api/warehouse/property-financials. This is a THIRD NOI basis, separate from
 // Financials (warehouse) and Portfolio (Master Workbook); the masthead says so on every view.
 //
-// Views: Overview and Scorecard are built here; Explorer (T7) and Levers / Watchlist / Evaluation (T6)
-// render an honest "not built yet" state until their tasks land.
+// Views: Overview, Scorecard (T5), Levers, Watchlist, Evaluation (T6) are built; the Explorer (T7)
+// renders an honest "not built yet" state until its task lands.
 import { useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tab, TabList, TabPanel, Tabs, type Key } from 'react-aria-components';
@@ -19,6 +19,9 @@ import { usePfDataset } from './hooks';
 import { excludedNotes, fmtLongDate } from './model';
 import { OverviewView } from './OverviewView';
 import { ScorecardView } from './ScorecardView';
+import { LeversView } from './LeversView';
+import { WatchlistView } from './WatchlistView';
+import { EvaluationView } from './EvaluationView';
 import { PF_PROPERTY_PARAM, PF_VIEWS, PF_VIEW_IDS, type PfViewId } from './views';
 import type { PfDatasetResponse } from './types';
 import './pf.css';
@@ -68,8 +71,7 @@ function NotBuilt({ view, dataset, selected }: { view: PfViewId; dataset: PfData
   return (
     <EmptyState title={`${label}: not built yet`}>
       <p>
-        This view is being rebuilt from the review artifact and is not available yet. Nothing here is estimated or placeholder data: the Overview and the Scorecard
-        table are live.
+        This view is being rebuilt from the review artifact and is not available yet. Nothing here is estimated or placeholder data: the other views are live.
       </p>
       {view === 'explorer' && selected && (
         <p>
@@ -162,6 +164,12 @@ export function PropertyFinancialsModule() {
                 <OverviewView dataset={d} onOpenProperty={openProperty} />
               ) : v.id === 'scorecard' ? (
                 <ScorecardView dataset={d} onOpenProperty={openProperty} />
+              ) : v.id === 'levers' ? (
+                <LeversView dataset={d} onOpenProperty={openProperty} />
+              ) : v.id === 'watchlist' ? (
+                <WatchlistView dataset={d} onOpenProperty={openProperty} />
+              ) : v.id === 'evaluation' ? (
+                <EvaluationView dataset={d} />
               ) : (
                 <NotBuilt view={v.id} dataset={d} selected={selected} />
               )}
