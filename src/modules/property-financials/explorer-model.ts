@@ -654,18 +654,44 @@ function driverLine(dr: PfDriver, rules: ExplorerRules): DriverLine {
   };
 }
 
-export function whyView(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES): WhyView {
+interface ComparisonPair {
+  readonly a: PeriodRow;
+  readonly b: PeriodRow;
+  readonly la: string;
+  readonly lb: string;
+}
+
+/**
+ * The two COMPLETE periods behind a drv key ('YTD26' = the Jan-Sep pair, '2025' = 2025 vs 2024), or
+ * null when either side is missing or partial — the same guard periodGroups applies (rule 1: a partial
+ * period is never compared year over year). Monthly entities need every month of the window on both
+ * sides; annual statements need both years non-partial. The dataset may still carry drv[] for a
+ * partial pair (Livingston's 3-month Jan-Sep 2025); the view refuses it rather than show 3 vs 9 months.
+ */
+function comparisonPair(d: PfDataset, id: PfEntityId, key: string): ComparisonPair | null {
   const h = d.history[id];
   const cal = calendar(d);
+  if (key === 'YTD26') {
+    const a = h.ytd[String(cal.year - 1)];
+    const b = h.ytd[String(cal.year)];
+    if (!a || !b || a.n !== cal.ytdLength || b.n !== cal.ytdLength) return null;
+    return { a, b, la: cal.longPrior, lb: cal.longCurrent };
+  }
+  const a = h.yr[String(Number(key) - 1)];
+  const b = h.yr[key];
+  if (!a || !b) return null;
+  if (h.monthly ? a.n !== 12 || b.n !== 12 : a.partial || b.partial) return null;
+  return { a, b, la: String(Number(key) - 1), lb: key };
+}
+
+export function whyView(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES): WhyView {
+  const h = d.history[id];
   const keys = Object.keys(h.drv);
   const ordered = [...(keys.includes('YTD26') ? ['YTD26'] : []), ...keys.filter((k) => k !== 'YTD26').sort().reverse()];
   const pairs: WhyPair[] = [];
   for (const k of ordered) {
-    const pair =
-      k === 'YTD26'
-        ? { a: h.ytd[String(cal.year - 1)], b: h.ytd[String(cal.year)], la: cal.longPrior, lb: cal.longCurrent }
-        : { a: h.yr[String(Number(k) - 1)], b: h.yr[k], la: String(Number(k) - 1), lb: k };
-    if (!pair.a || !pair.b) continue;
+    const pair = comparisonPair(d, id, k);
+    if (!pair) continue;
     const { a, b } = pair;
     const ranked = [
       ...REVENUE_CATEGORIES.map((c) => ({ name: c as string, prior: a.rc[c] ?? 0, current: b.rc[c] ?? 0, sign: 1 })),
@@ -909,24 +935,30 @@ export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRu
     });
   }
 
-  // Per-SF benchmark + vacancy
+  // Per-SF benchmark + vacancy. Every per-SF figure goes through the calc lib's perSf(): a zero / missing
+  // SF is n/m, so a peer without usable SF is left out and a subject without it gets no per-SF line.
   const sf0 = sfOf(d, id);
-  if (sf0 !== null) {
-    const peers = PF_ENTITY_IDS.filter((q) => q !== id && sfOf(d, q) !== null).flatMap((q) => {
+  const subj = { br: perSf(lr.br, sf0).value, ox: perSf(lr.opex, sf0).value, no: perSf(lr.noi, sf0).value };
+  if (sf0 !== null && subj.br !== null && subj.ox !== null && subj.no !== null) {
+    const peers = PF_ENTITY_IDS.filter((q) => q !== id).flatMap((q) => {
       const qg = fullYears(periodGroups(d, q, rules)).find((x) => x.key === last.key);
-      const qsf = sfOf(d, q)!;
-      return qg ? [{ br: qg.row.br / qsf, ox: qg.row.opex / qsf, no: qg.row.noi / qsf }] : [];
+      if (!qg) return [];
+      const qsf = sfOf(d, q);
+      const br = perSf(qg.row.br, qsf).value;
+      const ox = perSf(qg.row.opex, qsf).value;
+      const no = perSf(qg.row.noi, qsf).value;
+      return br !== null && ox !== null && no !== null ? [{ br, ox, no }] : [];
     });
-    const brSf = lr.br / sf0;
+    const brSf = subj.br;
     if (peers.length >= rules.benchmark.minPeers) {
       const mb = median(peers.map((q) => q.br));
       const mo = median(peers.map((q) => q.ox));
       const mn = median(peers.map((q) => q.no));
-      const oxSf = lr.opex / sf0;
+      const oxSf = subj.ox;
       L.push({
         heading: `Per-SF benchmark (${last.label})`,
         text:
-          `Base rent $${brSf.toFixed(2)}/SF against a portfolio median of $${mb.toFixed(2)}; operating expense $${oxSf.toFixed(2)}/SF against $${mo.toFixed(2)}; NOI $${(lr.noi / sf0).toFixed(2)}/SF against $${mn.toFixed(2)}. ` +
+          `Base rent $${brSf.toFixed(2)}/SF against a portfolio median of $${mb.toFixed(2)}; operating expense $${oxSf.toFixed(2)}/SF against $${mo.toFixed(2)}; NOI $${subj.no.toFixed(2)}/SF against $${mn.toFixed(2)}. ` +
           (brSf < mb * rules.benchmark.rentBelowMedian
             ? `Rent per SF is more than ${pctLevel(1 - rules.benchmark.rentBelowMedian)} below the median: test the rent roll for below-market leases at renewal. `
             : '') +
@@ -1025,10 +1057,10 @@ export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRu
     });
   }
 
-  // Drivers
-  const dk = h.drv.YTD26 ? 'YTD26' : Object.keys(h.drv).sort().pop();
+  // Drivers: the latest drv key whose two periods are both complete (partial pairs are never quoted).
+  const dk = [...(h.drv.YTD26 ? ['YTD26'] : []), ...Object.keys(h.drv).filter((k) => k !== 'YTD26').sort().reverse()].find((k) => comparisonPair(d, id, k) !== null);
   if (dk) {
-    const when = dk === 'YTD26' ? cal.longCurrent : dk;
+    const when = comparisonPair(d, id, dk)!.lb;
     for (const dr of (h.drv[dk] ?? []).filter((x) => x.lt === 'opex' && x.d > 0).slice(0, rules.driverInsights)) {
       L.push({
         heading: `Driver: ${dr.a}`,
