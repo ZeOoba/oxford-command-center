@@ -84,7 +84,7 @@ function mkLease(o: Partial<Lease> & { id: string }): Lease {
     unit: null,
     company: 'Fixture Co',
     sf: 10000,
-    monthlyRent: 1000,
+    monthlyRent: o.annualRent !== undefined ? o.annualRent / 12 : 1000, // contract rent consistent with an overridden annualRent
     rentPerSf: 1.2,
     leaseStart: '2022-06-21',
     leaseEnd: '2027-06-21',

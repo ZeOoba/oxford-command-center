@@ -2,6 +2,7 @@ import type { PortfolioSnapshot } from '@contracts/index';
 import { fmtUsd, fmtDate } from '@analytics/index';
 import type { Insight } from '@analytics/index';
 import type { EntityRef } from './ui-context';
+import { contractAnnualRent } from '@analytics/lease-rent';
 
 /**
  * Draft-only email generation for closed-loop CTAs (Phase 5). Produces a firm-voice draft from
@@ -47,7 +48,7 @@ export function buildDraft(s: PortfolioSnapshot, req: DraftRequest): DraftResult
         body:
           `${tenant} team,\n\n` +
           `Your lease at ${where} expires ${expires}. We value the tenancy and would like to discuss a renewal ahead of expiration. ` +
-          `Current annual rent is ${fmtUsd(l.annualRent)}.\n\n` +
+          `Current annual rent is ${fmtUsd(contractAnnualRent(l))}.\n\n` +
           `Please let us know your interest and availability this week to review terms.` +
           SIGN_OFF,
       };

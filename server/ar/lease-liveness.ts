@@ -31,13 +31,21 @@ export interface LeaseLivenessFields {
   /** Annualized rent from the roster. `null`/`undefined` means UNKNOWN, which is not zero -- see
    *  isDeadLease. */
   annualRent?: number | null;
+  /** Contract monthly rent. annualRent is NET of abated months, so a live fully-abated lease reads
+   *  annualRent 0 with monthlyRent > 0; absent/null/0 = no contract rent known. */
+  monthlyRent?: number | null;
 }
 
 /** True when the lease is not a live fresh-match candidate: status 'Expired' or 'Vacant', or an
- *  annualRent of exactly 0. An absent/null annualRent is treated as unknown and does NOT make the
+ *  annualRent of exactly 0 with no contract monthlyRent either (annualRent is year-1 cash net of
+ *  abated months, so annualRent 0 alone also describes a live lease abated all 12 months). An absent/null annualRent is treated as unknown and does NOT make the
  *  lease dead -- a loader that does not project the field (or a snapshot row missing it) keeps
  *  the pre-existing status-only behaviour rather than silently declaring every lease dead. */
 export function isDeadLease(lease: LeaseLivenessFields): boolean {
   if (lease.status === 'Expired' || lease.status === 'Vacant') return true;
-  return lease.annualRent === 0;
+  if (lease.annualRent !== 0) return false;
+  // annualRent 0 is ambiguous (placeholder / zeroed cell / fully abated). Only a LIVE-status row with a
+  // contract monthlyRent is trusted as abated; Unknown or any other status stays dead -> review (Fix A).
+  const live = lease.status === 'Active' || lease.status === 'Expiring Soon';
+  return !(live && typeof lease.monthlyRent === 'number' && Number.isFinite(lease.monthlyRent) && lease.monthlyRent > 0);
 }
