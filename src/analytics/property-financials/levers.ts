@@ -28,9 +28,9 @@ export type LeverCategory = 'Rent' | 'Recovery' | 'Cost';
 export type LeverUnit = 'pct' | 'points' | 'bps' | 'usdPerSf';
 
 export type LeverBase =
-  /** Sum of one period field over every PM-reported (monthly) asset. */
+  /** Sum of one period field over every PM-reported (monthly) asset whose period is complete. */
   | { readonly kind: 'pmField'; readonly field: 'base_rent' | 'revenue'; readonly period: StandardPeriodId; readonly shareOf?: OpexCategory }
-  /** Sum of one opex category over every PM-reported asset. */
+  /** Sum of one opex category over every PM-reported asset whose period is complete. */
   | { readonly kind: 'pmOpex'; readonly category: OpexCategory; readonly period: StandardPeriodId }
   /** One asset's recoverable cost pool (tax + insurance + utilities + grounds + R&M). */
   | { readonly kind: 'recoveryPool'; readonly entity: PfMonthlyEntityId; readonly period: StandardPeriodId }
@@ -101,20 +101,30 @@ export interface LeverResult {
   readonly basis: string;
 }
 
-function pmSum(d: PfDataset, period: StandardPeriodId, pick: (f: PfPeriodFigures) => number): { total: number; partial: string[] } {
+/**
+ * Sum over the PM assets whose `period` is COMPLETE. A partial member is left out of the total and
+ * returned in `excluded` with its partial-period reason (rule 1 in periods.ts: a partial period is never
+ * annualized — summing six months of tax into an annual value would be). Same rule as the recoveryPool
+ * lever, which is n/m when its single member is partial; a portfolio sum stays a value on the rest.
+ */
+function pmSum(d: PfDataset, period: StandardPeriodId, pick: (f: PfPeriodFigures) => number): { total: number; excluded: string[] } {
   let total = 0;
-  const partial: string[] = [];
+  const excluded: string[] = [];
   for (const id of PF_MONTHLY_ENTITY_IDS) {
     const p = d.properties[id];
     if (p.kind !== 'monthly') continue;
     const f = p.periods[period];
+    const partial = partialReason(period, f.n_months);
+    if (partial !== null) {
+      excluded.push(`${id} (${partial})`);
+      continue;
+    }
     total += pick(f);
-    if (partialReason(period, f.n_months) !== null) partial.push(`${id} ${f.n_months} of 12 months`);
   }
-  return { total, partial };
+  return { total, excluded };
 }
 
-const partialNote = (partial: readonly string[]): string => (partial.length ? `; includes ${partial.join(', ')}` : '');
+const excludedNote = (excluded: readonly string[]): string => (excluded.length ? `; excludes ${excluded.join(', ')}` : '');
 
 function leaseFor(leases: readonly PfLease[], property: string): PfLease | null {
   return leases.find((l) => l.property === property || l.property.startsWith(`${property} `) || l.property.startsWith(`${property}(`)) ?? null;
@@ -138,20 +148,20 @@ function leverValue(def: LeverDef, d: PfDataset): { base: number | null; value: 
   const per = (p: StandardPeriodId) => periodLabel(p);
   switch (b.kind) {
     case 'pmField': {
-      const { total, partial } = pmSum(d, b.period, (f) => f[b.field]);
+      const { total, excluded } = pmSum(d, b.period, (f) => f[b.field]);
       let basis = `${b.field === 'base_rent' ? 'Base rent' : 'Revenue'} ${per(b.period)} ${usd(total)}`;
       if (b.shareOf) {
         const share = pmSum(d, b.period, (f) => f.opex_by[b.shareOf!]).total;
         const name = CATEGORY_BASIS[b.shareOf] ?? b.shareOf;
         basis = `${name} ${per(b.period)} ${usd(share)} (${total > 0 ? pctLevel(share / total, 1) : 'n/m'} of revenue)`;
       }
-      return { base: total, value: ok(total * def.rate), basis: basis + partialNote(partial), sf: null };
+      return { base: total, value: ok(total * def.rate), basis: basis + excludedNote(excluded), sf: null };
     }
     case 'pmOpex': {
-      const { total, partial } = pmSum(d, b.period, (f) => f.opex_by[b.category]);
+      const { total, excluded } = pmSum(d, b.period, (f) => f.opex_by[b.category]);
       const name = CATEGORY_BASIS[b.category];
       const basis = name ? `${per(b.period)} ${name} ${usd(total)}` : `${per(b.period)} ${usd(total)}`;
-      return { base: total, value: ok(total * def.rate), basis: basis + partialNote(partial), sf: null };
+      return { base: total, value: ok(total * def.rate), basis: basis + excludedNote(excluded), sf: null };
     }
     case 'recoveryPool': {
       const p = d.properties[b.entity];

@@ -16,14 +16,23 @@ const RAW = JSON.parse(loadDatasetText()) as {
 };
 const PM = Object.keys(RAW.properties).filter((k) => RAW.properties[k]!.kind === 'monthly');
 
+// RULE (pmField / pmOpex levers): a portfolio sum covers only the members whose period is COMPLETE
+// (rule 1 in periods.ts: a partial period is displayed, never annualized — and a 6-month tax figure
+// summed under an "annual value" column is an annualization by omission). A partial member is left out
+// of the base and named in the basis ("excludes ..."); the lever itself stays a value. This is the same
+// rule the recoveryPool lever applies to its single member (n/m on a partial period). It departs from the
+// reference artifact, whose sumP() summed every PM asset regardless of n_months (FY2025 tax including
+// 3883 Livingston's 6-month $10,677.34).
+const FULL_MONTHS = 12;
+const complete = (id: string, period: string) => RAW.properties[id]!.periods[period]!.n_months === FULL_MONTHS;
 function sumField(period: string, field: string): number {
   let s = 0;
-  for (const id of PM) s += RAW.properties[id]!.periods[period]![field] as number;
+  for (const id of PM) if (complete(id, period)) s += RAW.properties[id]!.periods[period]![field] as number;
   return s;
 }
 function sumOpex(period: string, cat: string): number {
   let s = 0;
-  for (const id of PM) s += RAW.properties[id]!.periods[period]!.opex_by[cat]!;
+  for (const id of PM) if (complete(id, period)) s += RAW.properties[id]!.periods[period]!.opex_by[cat]!;
   return s;
 }
 function pool(id: string, period: string): number {
@@ -112,10 +121,28 @@ describe('lever arithmetic (independent spot-checks from the raw dataset)', () =
     expect(r.get('mgmtFee')!.basis).toBe(`Fees TTM Sep-26 ${usd(fees)} (${((fees / rev) * 100).toFixed(1)}% of revenue)`);
   });
 
-  it('a sum that includes a partial-year member says so in its basis (FY2025: 3883 Livingston has 6 months)', () => {
+  it('a partial-period member is EXCLUDED from the sum and named in the basis (FY2025: 3883 Livingston has 6 months)', () => {
     expect(RAW.properties['3883 Livingston']!.periods.FY2025!.n_months).toBe(6);
-    expect(r.get('reTaxAppeal')!.basis).toMatch(/3883 Livingston 6 of 12 months/);
-    expect(r.get('utilities')!.basis).not.toMatch(/of 12 months/);
+    const tax = r.get('reTaxAppeal')!;
+    const full = sumOpex('FY2025', 'Real estate & property tax');
+    const livingston = RAW.properties['3883 Livingston']!.periods.FY2025!.opex_by['Real estate & property tax']!;
+    expect(livingston).toBeGreaterThan(0); // not vacuous: leaving it out moves the base
+    expect(tax.base).toBeCloseTo(full, 6);
+    expect(tax.value.value).toBeCloseTo(full * 0.05, 6);
+    expect(tax.basis).toBe(`FY25 tax ${usd(full)}; excludes 3883 Livingston (partial period: 6 of 12 months)`);
+    expect(r.get('utilities')!.basis).not.toMatch(/excludes|of 12 months/);
+  });
+
+  it('the same rule on a pmField lever: a partial TTM member leaves the base-rent and revenue sums', () => {
+    const p = D.properties['1100 Rarig'];
+    if (p.kind !== 'monthly') throw new Error('Rarig is monthly');
+    const short = { ...D, properties: { ...D.properties, '1100 Rarig': { ...p, periods: { ...p.periods, TTM26: { ...p.periods.TTM26, n_months: 11 } } } } };
+    const s = byId(computeLevers(short));
+    const rarig = p.periods.TTM26;
+    expect(s.get('rentGrowth')!.base).toBeCloseTo(sumField('TTM26', 'base_rent') - rarig.base_rent, 6);
+    expect(s.get('rentGrowth')!.basis).toMatch(/; excludes 1100 Rarig \(partial period: 11 of 12 months\)$/);
+    expect(s.get('mgmtFee')!.base).toBeCloseTo(sumField('TTM26', 'revenue') - rarig.revenue, 6);
+    expect(s.get('utilities')!.base).toBeCloseTo(sumOpex('TTM26', 'Utilities') - rarig.opex_by.Utilities, 6);
   });
 });
 
