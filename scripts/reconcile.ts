@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
-import { parseWorkbook } from '../server/workbook/parse';
-import { checkCashInvariants } from '../server/reconcile-runtime';
+import { findRentRollColumns, parseWorkbook, rentTotalColumns } from '../server/workbook/parse';
+import { annualRentGapIsExplainedByAbatement, checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
 import { loadCache, validateMappingCache } from '../server/ar/mapping-cache';
@@ -36,10 +36,10 @@ async function main() {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(workbookPath());
 
-  const find = (sheet: string, pred: (c1: string) => boolean, col: number): number | null => {
+  const find = (sheet: string, pred: (c1: string) => boolean, col: number, fromRow = 1): number | null => {
     const ws = wb.getWorksheet(sheet);
     if (!ws) return null;
-    for (let r = 1; r <= ws.rowCount; r++) {
+    for (let r = fromRow; r <= ws.rowCount; r++) {
       const c1 = String(cv(ws.getRow(r).getCell(1).value) ?? '');
       const c2 = String(cv(ws.getRow(r).getCell(2).value) ?? '');
       if (pred(`${c1} ${c2}`)) return num(cv(ws.getRow(r).getCell(col).value));
@@ -52,7 +52,28 @@ async function main() {
   // Workbook's own totals cells (independent re-read).
   const wbNoi = find('Property NOI', (c) => /portfolio total/i.test(c), 13) ?? NaN;
   const wbValue = find('Property NOI', (c) => /portfolio total/i.test(c), 10) ?? NaN;
-  const wbRent = find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), 14) ?? NaN;
+  // The rent roll's Portfolio Total sits in the "Annual Rent" column. Locate it by header (the same
+  // rule parse.ts uses) so a column insert cannot make the gate and the runtime read different cells;
+  // col 14 is only the fallback for a sheet with no recognisable header.
+  // Same candidate columns, in the same order, as parseLeases (rentTotalColumns): the header column, plus
+  // the one-column-right offset ONLY for the documented pre-2026-10 layout.
+  const rentRollWs = wb.getWorksheet('Master Tenant Rent Roll');
+  const rentRollCols = rentRollWs ? findRentRollColumns(rentRollWs) : null;
+  const rentTotalCols = rentTotalColumns(rentRollCols?.annualCol ?? null, rentRollCols?.abatedCol ?? null);
+  const wbRent =
+    rentTotalCols
+      // Start below the header row: a Portfolio Total line at/above it is a summary line (same rule as parseLeases).
+      .map((col) => find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), col, (rentRollCols?.headerRow ?? 0) + 1))
+      .find((v) => v !== null) ??
+    // Totals-on-top: no numeric total below the header, so fall back to the one above it (as parseLeases does).
+    rentTotalCols
+      .map((col) => find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), col))
+      .find((v) => v !== null) ??
+    NaN;
+
+  const annualRentSum = sum(snapshot.leases.map((l) => l.annualRent));
+  const monthlyX12Sum = sum(snapshot.leases.map((l) => l.monthlyRent * 12));
+  const annualRentExplained = annualRentGapIsExplainedByAbatement(snapshot.leases);
 
   // Persimmon residence is excluded from the workbook's SF subtotal but included in value.
   const residenceSf = sum(snapshot.properties.filter((p) => p.type === 'Residence').map((p) => p.sf));
@@ -97,9 +118,17 @@ async function main() {
     },
     {
       label: 'Σ(monthly rent × 12) = Σ annual rent',
-      expected: sum(snapshot.leases.map((l) => l.annualRent)),
-      actual: sum(snapshot.leases.map((l) => l.monthlyRent * 12)),
+      expected: annualRentSum,
+      // Abated months make Σ annual rent legitimately lower than Σ(monthly × 12). The gap is excused
+      // only when EVERY lease's own annual rent is possible under an abatement (0 up to monthly × 12),
+      // so an overstatement above 12 months or a negative still fails here even if the workbook's
+      // total (a SUM of the same cells) contains it. In-range typos are caught per lease at parse
+      // time (see parseLeases). Otherwise the strict check stands.
+      actual: annualRentExplained ? annualRentSum : monthlyX12Sum,
       tol: 5,
+      note: annualRentExplained && Math.abs(annualRentSum - monthlyX12Sum) > 5
+        ? `gap vs Σ monthly×12 (${Math.round(monthlyX12Sum - annualRentSum).toLocaleString()}) is abated months; every lease's annual rent is within 0..monthly×12`
+        : undefined,
     },
   ];
 
