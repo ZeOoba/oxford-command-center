@@ -49,6 +49,7 @@ import {
   type FvcMappingFlag,
 } from '@analytics/property-financials/metrics';
 import { fmtResult, pct, pctLevel, usd } from '@analytics/property-financials/format';
+import { liveSfUsable, occupancyBasis, type OccupancyBasis, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import type { ScheduleStep } from './charts/geometry';
 import { countWord, fmtMonth, insightsForEntity, leaseForEntity, monthRangeLabel, OPEX_SHORT_LABEL } from './model';
 
@@ -336,7 +337,12 @@ function explorerLede(label: string, last: PeriodGroup | null): string {
   return `${label}: NOI ${last.row.noi >= prev.row.noi ? 'rose' : 'fell'} ${pctLevel(Math.abs(c.value), 1)} to ${noi} in ${last.label}${tail}`;
 }
 
-function explorerKpis(d: PfDataset, id: PfEntityId, gs: readonly PeriodGroup[], last: PeriodGroup | null): ExplorerKpi[] {
+/** The entity's occupancy on one basis (leased / leasable SF), with any disagreeing figure named. */
+function occupancyOf(d: PfDataset, id: PfEntityId, liveSf: PfLiveSfBlock | null): OccupancyBasis | null {
+  return occupancyBasis(d.sf[id], liveSfUsable(liveSf) ? (liveSf.entries[id] ?? null) : null);
+}
+
+function explorerKpis(d: PfDataset, id: PfEntityId, gs: readonly PeriodGroup[], last: PeriodGroup | null, liveSf: PfLiveSfBlock | null): ExplorerKpi[] {
   if (!last) return [];
   const sf = sfOf(d, id);
   const prev = last.prev;
@@ -361,12 +367,15 @@ function explorerKpis(d: PfDataset, id: PfEntityId, gs: readonly PeriodGroup[], 
       note: `Rent ${perSfText(perSf(r.br, sf))} · Opex ${perSfText(perSf(r.opex, sf))} per SF`,
     });
     const s = d.sf[id];
-    if (s.occ !== undefined && s.leased_sf !== undefined) {
+    const ob = occupancyOf(d, id, liveSf);
+    if (ob) {
       out.push({
         id: 'occupancy',
         label: 'Occupancy (rent roll)',
-        value: pctLevel(s.occ, 1),
-        note: `${s.leased_sf.toLocaleString('en-US')} of ${sf.toLocaleString('en-US')} SF${s.tenants !== undefined ? ` · ${s.tenants} tenant${s.tenants === 1 ? '' : 's'}` : ''}`,
+        value: pctLevel(ob.occ, 1),
+        note:
+          `${ob.leased.toLocaleString('en-US')} of ${ob.leasable.toLocaleString('en-US')} SF leased${s.tenants !== undefined ? ` · ${s.tenants} tenant${s.tenants === 1 ? '' : 's'}` : ''}` +
+          (ob.conflict ? ` · ${ob.conflict.source} says ${pctLevel(ob.conflict.otherOcc, 1)}: sources disagree` : ''),
       });
     }
   }
@@ -928,7 +937,7 @@ export interface ExplorerInsight {
 }
 
 /** The artifact's insightsFor(): computed from the data, each rule's threshold in EXPLORER_RULES. */
-export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES): ExplorerInsight[] {
+export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES, liveSf: PfLiveSfBlock | null = null): ExplorerInsight[] {
   const h = d.history[id];
   const gs = periodGroups(d, id, rules);
   const fy = fullYears(gs);
@@ -1011,11 +1020,16 @@ export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRu
           'Mix differs (flex, retail, NNN versus gross), so use this to choose where to look, not as a verdict.',
       });
     }
-    const s = d.sf[id];
-    if (s.occ !== undefined && s.leased_sf !== undefined && s.occ < rules.vacancyBelowOccupancy) {
+    const ob = occupancyOf(d, id, liveSf);
+    if (ob?.conflict) {
       L.push({
         heading: 'Vacancy',
-        text: `${(sf0 - s.leased_sf).toLocaleString('en-US')} SF is unleased (${pctLevel(1 - s.occ, 1)}). At the current base rent of $${brSf.toFixed(2)}/SF on total SF, each ${rules.vacancyQuoteSf.toLocaleString('en-US')} SF leased adds about $${Math.round(
+        text: `Occupancy sources disagree: leased SF is ${ob.leased.toLocaleString('en-US')} of ${ob.leasable.toLocaleString('en-US')} leasable SF (${pctLevel(ob.occ, 1)}), but ${ob.conflict.source} is ${pctLevel(ob.conflict.otherOcc, 1)}. Reconcile the rent roll with the Property NOI tab before quoting vacancy.`,
+      });
+    } else if (ob && ob.occ < rules.vacancyBelowOccupancy) {
+      L.push({
+        heading: 'Vacancy',
+        text: `${ob.unleased.toLocaleString('en-US')} SF is unleased (${pctLevel(1 - ob.occ, 1)}). At the current base rent of $${brSf.toFixed(2)}/SF on total SF, each ${rules.vacancyQuoteSf.toLocaleString('en-US')} SF leased adds about $${Math.round(
           brSf * rules.vacancyQuoteSf,
         ).toLocaleString('en-US')} a year before recoveries.`,
       });
@@ -1140,7 +1154,11 @@ export interface ExplorerModel {
   readonly fvcFlag: FvcMappingFlag | null;
 }
 
-export function buildExplorer(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES): ExplorerModel {
+/**
+ * The whole explorer for one entity. `liveSf` is the raw live block (the dataset passed in already has
+ * it applied); it is read only to name a Spine A occupancy that disagrees with leased SF.
+ */
+export function buildExplorer(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES, liveSf: PfLiveSfBlock | null = null): ExplorerModel {
   const p = d.properties[id];
   const h = d.history[id];
   const gs = periodGroups(d, id, rules);
@@ -1157,7 +1175,7 @@ export function buildExplorer(d: PfDataset, id: PfEntityId, rules: ExplorerRules
     sf: sfOf(d, id),
     groups: gs,
     lede: explorerLede(p.label, last),
-    kpis: explorerKpis(d, id, gs, last),
+    kpis: explorerKpis(d, id, gs, last, liveSf),
     yoy: yoyTable(d, id, gs),
     categories: categoryTable(gs),
     why: whyView(d, id, rules),
@@ -1169,7 +1187,7 @@ export function buildExplorer(d: PfDataset, id: PfEntityId, rules: ExplorerRules
           ? `No persistent step of ${usd(rules.rentStepMinDollars)} a month or more was detected.`
           : 'Annual statements only: see the year-over-year table for the rent change.',
     lease: leasePanel(d, id),
-    insights: explorerInsights(d, id, rules),
+    insights: explorerInsights(d, id, rules, liveSf),
     openItems: insightsForEntity(d.insights, id),
     annualOnlyNote: h.monthly
       ? null

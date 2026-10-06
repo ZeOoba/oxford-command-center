@@ -77,8 +77,12 @@ export function applyLiveSf(dataset: PfDataset, block: PfLiveSfBlock | null | un
     const live = block.entries[id];
     const base = dataset.sf[id];
     if (!live || live.fields.sf !== 'live' || live.sf === null || live.sf <= 0) continue;
-    const leased = live.fields.leasedSf === 'live' && live.leasedSf !== null ? live.leasedSf : base.leased_sf;
-    const occ = live.fields.occupancy === 'live' && live.occupancy !== null ? Math.min(1, Math.max(0, live.occupancy)) : base.occ;
+    // ONE basis for leased SF and occupancy: with live leased SF, occupancy is derived from it (the
+    // Spine A occPct is a separate figure, surfaced by occupancyBasis when it disagrees, never mixed
+    // in); without it, the dataset's own leased SF / occupancy pair stays together.
+    const liveLeased = live.fields.leasedSf === 'live' && live.leasedSf !== null;
+    const leased = liveLeased ? live.leasedSf! : base.leased_sf;
+    const occ = liveLeased ? derivedOcc(live.leasedSf!, live.sf - (base.common_area_sf ?? 0)) : base.occ;
     const entry: PfSfEntry = {
       ...base,
       sf: live.sf,
@@ -100,6 +104,42 @@ export function applyLiveSf(dataset: PfDataset, block: PfLiveSfBlock | null | un
   return changed ? { ...dataset, sf: sf as PfDataset['sf'], properties: properties as PfDataset['properties'] } : dataset;
 }
 
+/** Occupancy figures more than half a point apart are two different stories, not rounding. */
+export const OCC_BASIS_TOLERANCE = 0.005;
+
+function derivedOcc(leased: number, leasable: number): number | undefined {
+  return leasable > 0 ? Math.min(1, Math.max(0, leased / leasable)) : undefined;
+}
+
+export interface OccupancyBasis {
+  readonly leased: number;
+  /** Total SF less common area. */
+  readonly leasable: number;
+  /** leased / leasable, clamped to 0-1: the ONE occupancy the module prints. */
+  readonly occ: number;
+  readonly unleased: number;
+  /** A second occupancy figure that disagrees beyond OCC_BASIS_TOLERANCE (shown as a disagreement, never as the figure). */
+  readonly conflict: { readonly otherOcc: number; readonly source: string } | null;
+}
+
+/**
+ * Occupancy on ONE basis: leased SF over leasable SF (total less common area). Flags a conflict when
+ * the entry's stored occupancy, or (live leased SF) the Spine A Property NOI occupancy, differs by
+ * more than OCC_BASIS_TOLERANCE. Null when the entity has no SF or no leased SF on file.
+ */
+export function occupancyBasis(entry: PfSfEntry, live?: PfLiveSfEntry | null): OccupancyBasis | null {
+  if (entry.sf === null || entry.leased_sf === undefined) return null;
+  const leasable = entry.sf - (entry.common_area_sf ?? 0);
+  const occ = derivedOcc(entry.leased_sf, leasable);
+  if (occ === undefined) return null;
+  const far = (x: number) => Math.abs(x - occ) > OCC_BASIS_TOLERANCE;
+  let conflict: OccupancyBasis['conflict'] = null;
+  if (entry.occ !== undefined && far(entry.occ)) conflict = { otherOcc: entry.occ, source: 'occupancy on file' };
+  else if (live && live.fields.leasedSf === 'live' && live.fields.occupancy === 'live' && live.occupancy !== null && far(live.occupancy))
+    conflict = { otherOcc: live.occupancy, source: 'Property NOI occupancy (Spine A)' };
+  return { leased: entry.leased_sf, leasable, occ, unleased: Math.max(0, leasable - entry.leased_sf), conflict };
+}
+
 export interface PfSfProvenanceRow {
   readonly entity: PfEntityId;
   /** The SF the module is using right now (after the preference rule). */
@@ -113,6 +153,8 @@ export interface PfSfProvenanceRow {
   readonly asOf: string | null;
   readonly stale: boolean;
   readonly note: string | null;
+  /** A second occupancy figure that disagrees with leased SF / leasable SF (occupancyBasis), or null. */
+  readonly occupancyConflict: OccupancyBasis['conflict'];
 }
 
 /** Per entity: which SF the module shows and where it came from — for the data-health panel. */
@@ -136,6 +178,7 @@ export function sfProvenance(dataset: PfDataset, block: PfLiveSfBlock | null | u
       asOf: liveUsed ? block.asOf : eff.sf === null ? null : staticDate,
       stale: liveUsed ? block.stale : !!block && block.source === 'spine-a' && block.stale,
       note: live?.note ?? (block && block.source === 'spine-a' && block.stale ? block.staleReason : null),
+      occupancyConflict: occupancyBasis(eff, usable ? live : null)?.conflict ?? null,
     };
   });
 }

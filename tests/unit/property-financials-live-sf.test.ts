@@ -6,7 +6,7 @@
 // must still pass the strict contract.
 import { describe, expect, it } from 'vitest';
 import { parsePropertyFinancialsDataset, PF_ENTITY_IDS } from '@contracts/property-financials';
-import { applyLiveSf, LIVE_SF_STALE_DAYS, liveSfUsable, sfProvenance, staticSfDate, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
+import { applyLiveSf, LIVE_SF_STALE_DAYS, liveSfUsable, occupancyBasis, sfProvenance, staticSfDate, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import { perSf } from '@analytics/property-financials/metrics';
 import { buildLiveSf, LEASED_SF_BASIS, type LiveSfSnapshot } from '../../server/property-financials/live-sf';
 import { ENTITY_TO_CANONICAL } from '../../server/property-financials/mapping';
@@ -137,6 +137,65 @@ describe('applyLiveSf (client preference, one place)', () => {
     const noi = D.properties['1100 Rarig'].periods.FY2025.noi;
     expect(perSf(noi, out.sf['1100 Rarig'].sf)).toEqual(perSf(noi, 24000));
     expect(perSf(noi, D.sf['1100 Rarig'].sf).value).not.toEqual(perSf(noi, out.sf['1100 Rarig'].sf).value);
+  });
+});
+
+describe('M2: one occupancy basis per entity', () => {
+  const rarigId = ENTITY_TO_CANONICAL['1100 Rarig']!.id;
+  /** Every rent-roll lease Active (leased SF = total SF) while the Property NOI tab says 85.7%. */
+  const contradictory = () =>
+    buildLiveSf(snapshot('2026-10-05', { properties: [property(rarigId, 21000, 0.857, 9)], leases: [lease(rarigId, 21000, 'Active')] }), D, NOW);
+
+  it('live leased SF: occupancy is DERIVED as leased SF / leasable SF, never the Spine A occPct', () => {
+    const block = contradictory();
+    expect(block.entries['1100 Rarig']).toMatchObject({ sf: 21000, leasedSf: 21000, occupancy: 0.857 });
+    const out = applyLiveSf(D, block);
+    expect(out.sf['1100 Rarig']).toMatchObject({ sf: 21000, leased_sf: 21000, occ: 1 });
+    expect(out.properties['1100 Rarig']).toMatchObject({ leased_sf: 21000, occupancy: 1 });
+    expect(() => parsePropertyFinancialsDataset(out)).not.toThrow();
+  });
+
+  it('the Spine A occPct that disagrees with the derived figure is surfaced, not printed as a second number', () => {
+    const block = contradictory();
+    const out = applyLiveSf(D, block);
+    const b = occupancyBasis(out.sf['1100 Rarig'], block.entries['1100 Rarig'])!;
+    expect(b).toMatchObject({ leased: 21000, leasable: 21000, occ: 1, unleased: 0 });
+    expect(b.conflict).toEqual({ otherOcc: 0.857, source: 'Property NOI occupancy (Spine A)' });
+    // within tolerance: no conflict
+    const ok = buildLiveSf(snapshot('2026-10-05', { properties: [property(rarigId, 21000, 0.998, 9)], leases: [lease(rarigId, 21000, 'Active')] }), D, NOW);
+    expect(occupancyBasis(applyLiveSf(D, ok).sf['1100 Rarig'], ok.entries['1100 Rarig'])!.conflict).toBeNull();
+  });
+
+  it('live leased SF absent: the dataset occ / leased SF pair stays together (live occupancy is not mixed in)', () => {
+    const block = buildLiveSf(snapshot('2026-10-05', { properties: [property(rarigId, 21000, 0.5, 9)], leases: [] }), D, NOW);
+    expect(block.entries['1100 Rarig']!.fields).toEqual({ sf: 'live', leasedSf: 'static', occupancy: 'live' });
+    const out = applyLiveSf(D, block);
+    expect(out.sf['1100 Rarig']).toMatchObject({ sf: 21000, leased_sf: D.sf['1100 Rarig'].leased_sf, occ: D.sf['1100 Rarig'].occ });
+  });
+
+  it('a static pair that no longer matches a different live total SF is flagged as a conflict', () => {
+    const block = buildLiveSf(snapshot('2026-10-05', { properties: [property(rarigId, 24000, 0.5, 9)], leases: [] }), D, NOW);
+    const out = applyLiveSf(D, block);
+    const b = occupancyBasis(out.sf['1100 Rarig'], block.entries['1100 Rarig'])!;
+    expect(b.occ).toBeCloseTo(18000 / 24000, 10);
+    expect(b.conflict).toEqual({ otherOcc: D.sf['1100 Rarig'].occ, source: 'occupancy on file' });
+  });
+
+  it('common area is not leasable: 1900 Broadway static 27,171 of 27,671 SF with 500 SF common = 100%, no conflict', () => {
+    const b = occupancyBasis(D.sf['1900 Broadway'])!;
+    expect(b).toMatchObject({ leased: 27171, leasable: 27171, occ: 1, unleased: 0, conflict: null });
+    for (const id of PF_ENTITY_IDS) {
+      const x = occupancyBasis(D.sf[id]);
+      if (x) expect(x.conflict, id).toBeNull();
+    }
+    expect(occupancyBasis(D.sf['1851 South Club Solar'])).toBeNull();
+  });
+
+  it('data-health provenance rows carry the disagreement next to the one occupancy figure', () => {
+    const block = contradictory();
+    const row = sfProvenance(D, block).find((r) => r.entity === '1100 Rarig')!;
+    expect(row).toMatchObject({ leasedSf: 21000, occupancy: 1, occupancyConflict: { otherOcc: 0.857, source: 'Property NOI occupancy (Spine A)' } });
+    expect(sfProvenance(D, null).every((r) => r.occupancyConflict === null)).toBe(true);
   });
 });
 

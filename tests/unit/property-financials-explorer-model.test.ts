@@ -27,6 +27,7 @@ import {
   whyView,
   type ExplorerModel,
 } from '../../src/modules/property-financials/explorer-model';
+import { applyLiveSf, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
@@ -225,7 +226,7 @@ describe('buildExplorer: every property', () => {
   it('occupancy KPI from the rent-roll block', () => {
     const k = models['9620 State 350'].kpis.find((x) => x.id === 'occupancy')!;
     expect(k.value).toBe('83.3%');
-    expect(k.note).toBe('28,555 of 34,300 SF · 9 tenants');
+    expect(k.note).toBe('28,555 of 34,300 SF leased · 9 tenants');
   });
 
   it('RULE: lease panel ONLY for the four entities with a lease', () => {
@@ -577,5 +578,54 @@ describe('computed insights (rules from the artifact, thresholds in EXPLORER_RUL
 
   it('percent changes in insights refuse a non-positive base (never a raw ratio)', () => {
     expect(pctChange(-1, 5).value).toBeNull();
+  });
+});
+
+describe('M2: occupancy and leased SF from one basis on the Explorer', () => {
+  /** Rent roll says all 21,000 SF leased; the Property NOI tab says 85.7%: the '0 SF unleased (14.3%)' case. */
+  const block: PfLiveSfBlock = {
+    source: 'spine-a',
+    label: 'Master Workbook (live Spine A) as of 2026-10-05',
+    asOf: '2026-10-05',
+    ageDays: 0,
+    staleDays: 7,
+    stale: false,
+    staleReason: null,
+    leasedSfBasis: 'Active + Expiring Soon leases',
+    entries: {
+      '1100 Rarig': {
+        entity: '1100 Rarig',
+        canonicalId: 'x',
+        mappingMethod: 'exact',
+        sf: 21000,
+        leasedSf: 21000,
+        occupancy: 0.857,
+        tenants: 9,
+        fields: { sf: 'live', leasedSf: 'live', occupancy: 'live' },
+        note: null,
+      },
+    },
+  };
+
+  it('never prints "0 SF is unleased (14.3%)"; the disagreement is named instead', () => {
+    const d = applyLiveSf(D, block);
+    const m = buildExplorer(d, '1100 Rarig', EXPLORER_RULES, block);
+    const text = m.insights.map((i) => i.text).join(' ');
+    expect(text).not.toMatch(/\b0 SF is unleased/);
+    expect(text).not.toMatch(/14\.3%/);
+    const v = m.insights.find((i) => i.heading === 'Vacancy')!;
+    expect(v.text).toBe(
+      'Occupancy sources disagree: leased SF is 21,000 of 21,000 leasable SF (100.0%), but Property NOI occupancy (Spine A) is 85.7%. Reconcile the rent roll with the Property NOI tab before quoting vacancy.',
+    );
+    const k = m.kpis.find((x) => x.id === 'occupancy')!;
+    expect(k.value).toBe('100.0%');
+    expect(k.note).toBe('21,000 of 21,000 SF leased · 9 tenants · Property NOI occupancy (Spine A) says 85.7%: sources disagree');
+  });
+
+  it('consistent figures keep the plain vacancy text, on leasable SF', () => {
+    const m = buildExplorer(D, '1100 Rarig');
+    const v = m.insights.find((i) => i.heading === 'Vacancy')!;
+    expect(v.text).toMatch(/^3,000 SF is unleased \(14\.3%\)\./);
+    expect(m.kpis.find((x) => x.id === 'occupancy')!.value).toBe('85.7%');
   });
 });
