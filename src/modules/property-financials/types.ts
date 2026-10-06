@@ -53,6 +53,13 @@ export interface PfInsightStatusRecord {
   status: PfInsightStatus;
   dismissReason: string | null;
   updatedAt: string;
+  /** sha256 of the insight's finding + impact text when the status was saved; absent on older records. */
+  insightHash?: string;
+  /**
+   * Served by GET / PUT (L4): 'current' = set against the insight as loaded; 'earlier' = the insight
+   * was restated since; 'unknown' = an older record with no hash. Absent on older servers.
+   */
+  version?: 'current' | 'earlier' | 'unknown';
 }
 
 /** GET /api/warehouse/property-financials/insight-status */

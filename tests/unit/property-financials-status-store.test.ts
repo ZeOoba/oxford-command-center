@@ -7,10 +7,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  insightFingerprint,
   InsightStatusInput,
   putInsightStatus,
   readInsightStatuses,
   StatusStoreCorruptError,
+  withVersion,
 } from '../../server/property-financials/status-store';
 
 const KNOWN = new Set(['REV-01', 'EXP-02', 'REC-01']);
@@ -117,5 +119,52 @@ describe('putInsightStatus / readInsightStatuses', () => {
     const src = readFileSync(resolve(__dirname, '..', '..', 'server', 'property-financials', 'status-store.ts'), 'utf8');
     const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
     expect(code).not.toMatch(/dataset\.json|monthly-long\.csv|propertyFinancialsDir/);
+  });
+});
+
+describe('L4: records remember which version of the insight they were set against', () => {
+  const ins = { finding: 'TTM26 is +21.0% against TTM25.', annual_impact_usd: 13267, impact_basis: '8% savings [SPECULATIVE]' };
+
+  it('insightFingerprint is a sha256 of the finding + impact text; changes when either is restated', () => {
+    const h = insightFingerprint(ins);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+    expect(insightFingerprint({ ...ins })).toBe(h);
+    expect(insightFingerprint({ ...ins, finding: 'TTM26 is -1.8% against TTM25.' })).not.toBe(h);
+    expect(insightFingerprint({ ...ins, annual_impact_usd: 13268 })).not.toBe(h);
+    expect(insightFingerprint({ ...ins, impact_basis: null })).not.toBe(h);
+  });
+
+  it('a put stores the hash; withVersion reads current / earlier / unknown', () => {
+    const path = storePath();
+    const h = insightFingerprint(ins);
+    const r = putInsightStatus(path, 'REV-01', { owner: 'G', dueDate: null, status: 'resolved' }, KNOWN, NOW, h);
+    expect(r.ok && r.record.insightHash).toBe(h);
+    const stored = readInsightStatuses(path)['REV-01']!;
+    expect(withVersion(stored, h).version).toBe('current');
+    expect(withVersion(stored, insightFingerprint({ ...ins, finding: 'restated' })).version).toBe('earlier');
+    // the record is kept as it was: status, owner and hash untouched by the read
+    expect(withVersion(stored, 'f'.repeat(64))).toMatchObject({ status: 'resolved', owner: 'G', insightHash: h, version: 'earlier' });
+  });
+
+  it('backward compatible: a store written before hashes existed reads fine and its records are "unknown"', () => {
+    const path = storePath();
+    putInsightStatus(path, 'REV-01', { owner: null, dueDate: null, status: 'open' }, KNOWN, NOW);
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as { records: Record<string, Record<string, unknown>> };
+    expect(raw.records['REV-01']).not.toHaveProperty('insightHash');
+    const rec = readInsightStatuses(path)['REV-01']!;
+    expect(withVersion(rec, insightFingerprint(ins)).version).toBe('unknown');
+  });
+
+  it('the PUT body stays strict: a client cannot send its own insightHash', () => {
+    expect(InsightStatusInput.safeParse({ owner: null, dueDate: null, status: 'open', insightHash: 'a'.repeat(64) }).success).toBe(false);
+  });
+
+  it('a malformed stored hash makes the store corrupt (fails loud, never overwritten)', () => {
+    const path = storePath();
+    putInsightStatus(path, 'REV-01', { owner: null, dueDate: null, status: 'open' }, KNOWN, NOW, 'a'.repeat(64));
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as { records: Record<string, Record<string, unknown>> };
+    raw.records['REV-01']!.insightHash = 'not-a-hash';
+    writeFileSync(path, JSON.stringify(raw));
+    expect(() => readInsightStatuses(path)).toThrow(StatusStoreCorruptError);
   });
 });

@@ -14,6 +14,7 @@ import { allowedHosts, requestBoundary } from '../../server/host-guard';
 import { propertyFinancialsApi } from '../../server/property-financials/property-financials-api';
 import type { LiveSfSnapshot } from '../../server/property-financials/live-sf';
 import { ENTITY_TO_CANONICAL } from '../../server/property-financials/mapping';
+import { insightFingerprint } from '../../server/property-financials/status-store';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { warehouseJsonError } from '../../server/warehouse/json-errors';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
@@ -22,6 +23,12 @@ import { ORA_CLIENT_HEADER, ORA_CLIENT_HEADER_VALUE } from '../../src/contracts/
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const DATA_DIR = join(REPO_ROOT, 'data', 'property-financials');
 const NOW = new Date(2026, 9, 5, 12, 0, 0);
+
+/** An insight of the committed dataset, as the router reads it. */
+const datasetInsight = (id: string) =>
+  (JSON.parse(readFileSync(join(DATA_DIR, 'dataset.json'), 'utf8')) as { insights: Array<{ id: string; finding: string; annual_impact_usd: number | null; impact_basis: string | null }> }).insights.find(
+    (i) => i.id === id,
+  )!;
 
 const noDb = (): WarehouseDb => {
   throw new Error('warehouse unopenable');
@@ -141,6 +148,7 @@ describe('insight status', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       insightId: 'REV-01', owner: 'Gabriel', dueDate: '2026-10-31', status: 'in_progress', dismissReason: null, updatedAt: NOW.toISOString(),
+      insightHash: insightFingerprint(datasetInsight('REV-01')), version: 'current',
     });
     const all = (await (await app.request('/insight-status')).json()) as { records: Array<{ insightId: string }> };
     expect(all.records.map((r) => r.insightId)).toEqual(['REV-01']);
@@ -212,6 +220,36 @@ describe('insight status', () => {
     raw.records['OLD-01'] = { ...raw.records['REV-01'], insightId: 'OLD-01' };
     writeFileSync(statusPath, JSON.stringify(raw));
     expect(await (await app.request('/insight-status')).json()).toMatchObject({ records: [{ insightId: 'REV-01' }], orphanedIds: ['OLD-01'] });
+  });
+
+  it('L4: a record set before the insight was restated reads "earlier": kept, visible, not reopened or orphaned', async () => {
+    const { app, dir } = setup();
+    await put(app, 'REV-01', { owner: 'G', dueDate: null, status: 'resolved' });
+    const first = (await (await app.request('/insight-status')).json()) as { records: Array<Record<string, unknown>> };
+    expect(first.records[0]).toMatchObject({ insightId: 'REV-01', status: 'resolved', version: 'current' });
+    // restate REV-01's figures under the same id (as a dataset promotion would)
+    const path = join(dir, 'dataset.json');
+    const ds = JSON.parse(readFileSync(path, 'utf8')) as { insights: Array<{ id: string; finding: string }> };
+    ds.insights.find((i) => i.id === 'REV-01')!.finding += ' Restated.';
+    writeFileSync(path, JSON.stringify(ds));
+    const after = (await (await app.request('/insight-status')).json()) as { records: Array<Record<string, unknown>>; orphanedIds: string[] };
+    expect(after.orphanedIds).toEqual([]);
+    expect(after.records).toHaveLength(1);
+    expect(after.records[0]).toMatchObject({ insightId: 'REV-01', status: 'resolved', owner: 'G', version: 'earlier' });
+    // saving again re-anchors it to the current version
+    const res = await put(app, 'REV-01', { owner: 'G', dueDate: null, status: 'resolved' });
+    expect(((await res.json()) as { version: string }).version).toBe('current');
+  });
+
+  it('L4: a legacy record without a hash is served as "unknown"', async () => {
+    const { app, statusPath } = setup();
+    writeFileSync(
+      statusPath,
+      JSON.stringify({ version: 1, records: { 'REV-01': { insightId: 'REV-01', owner: null, dueDate: null, status: 'open', dismissReason: null, updatedAt: NOW.toISOString() } } }),
+    );
+    const body = (await (await app.request('/insight-status')).json()) as { records: Array<Record<string, unknown>> };
+    expect(body.records[0]).toMatchObject({ insightId: 'REV-01', version: 'unknown' });
+    expect(body.records[0]).not.toHaveProperty('insightHash');
   });
 
   it('concurrent PUTs through the router leave a valid store with every record', async () => {
