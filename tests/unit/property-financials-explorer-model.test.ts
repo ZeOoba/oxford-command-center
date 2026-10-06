@@ -28,6 +28,8 @@ import {
   type ExplorerModel,
 } from '../../src/modules/property-financials/explorer-model';
 import { applyLiveSf, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
+import { computeLevers, describeLeverRate, LEVERS } from '@analytics/property-financials/levers';
+import { periodLabel } from '@analytics/property-financials/periods';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
@@ -633,5 +635,32 @@ describe('M2: occupancy and leased SF from one basis on the Explorer', () => {
     const v = m.insights.find((i) => i.heading === 'Vacancy')!;
     expect(v.text).toMatch(/^3,000 SF is unleased \(14\.3%\)\./);
     expect(m.kpis.find((x) => x.id === 'occupancy')!.value).toBe('85.7%');
+  });
+});
+
+describe('L1: recovery "+10 points" sensitivity is ONE number per entity', () => {
+  // Decision: where a recovery lever exists the Explorer READS the lever (same period, same value as
+  // Rent & NOI levers); every other entity's figure is labelled with the Explorer's own period.
+  it('entities with a recovery lever quote the lever value and its period (9620: $11,402 on TTM Sep-26, not $13,072)', () => {
+    const levers = computeLevers(D);
+    let seen = 0;
+    for (const def of LEVERS) {
+      if (def.base.kind !== 'recoveryPool') continue;
+      const lv = levers.find((l) => l.id === def.id)!;
+      const text = explorerInsights(D, def.base.entity).find((i) => i.heading === 'Recovery')!.text;
+      expect(text, def.id).toContain(
+        `Each ${describeLeverRate(def)} recovered is worth ${usd(lv.value.value!, 'f')} a year on the ${periodLabel(def.base.period)} pool (${usd(lv.base!, 'f')}), the Rent & NOI levers figure.`,
+      );
+      seen++;
+    }
+    expect(seen).toBe(3);
+    const t9620 = explorerInsights(D, '9620 State 350').find((i) => i.heading === 'Recovery')!.text;
+    expect(t9620).toContain('$11,402');
+    expect(t9620).not.toContain('$13,072');
+  });
+
+  it('entities without a lever label the period of their own figure', () => {
+    const text = explorerInsights(D, '29000 Info Lane').find((i) => i.heading === 'Recovery')!.text;
+    expect(text).toContain('Each 10 points recovered is worth $13,062 a year on the 2025 pool.');
   });
 });
