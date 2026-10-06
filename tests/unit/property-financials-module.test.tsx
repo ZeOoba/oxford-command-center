@@ -285,6 +285,18 @@ describe('Scorecard (real dataset)', () => {
     expect(within(screen.getByTestId('pf-detail-FVC')).queryByTestId('pf-movers-nm')).toBeNull();
   });
 
+  it('M3: margin / opex ratio / fee columns name their period; an annual-only row marks its different period', () => {
+    const { container } = renderModule('?view=scorecard');
+    for (const name of ['NOI margin, TTM Sep-26', 'Opex / revenue, TTM Sep-26', 'Mgmt fee, TTM Sep-26']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    const cell = (id: string, col: string) => rowFor(container, id).querySelector(`td[data-col="${col}"]`) as HTMLElement;
+    expect(cell('FVC', 'margin').getAttribute('title')).toBe('NOI margin, TTM Sep-26');
+    expect(cell('FVC', 'opexRatio').getAttribute('title')).toBe('Opex / revenue, TTM Sep-26');
+    expect(cell('FVC', 'margin').querySelector('small')).toBeNull();
+    const annual = cell('55 New Plant (EGFLLC)', 'margin');
+    expect(annual.getAttribute('title')).toBe('NOI margin, FY25');
+    expect(annual.querySelector('small')!.textContent).toBe('FY25');
+  });
+
   it('annual entities show their statement periods and below-NOI items', () => {
     const { container } = renderModule('?view=scorecard');
     fireEvent.click(within(rowFor(container, '55 New Plant (EGFLLC)')).getByRole('button', { expanded: false }));

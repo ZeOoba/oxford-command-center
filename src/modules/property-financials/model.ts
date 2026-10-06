@@ -349,6 +349,8 @@ export interface ScorecardRow {
   readonly mgmtFee: MetricResult;
   readonly recovery: MetricResult;
   readonly flags: number;
+  /** The period behind margin / opex ratio / mgmt fee / recovery: TTM26 (monthly) or FY2025 (annual-only). */
+  readonly ratioPeriod: 'TTM26' | 'FY2025';
 }
 
 const ANNUAL_ONLY = 'annual statements only: no monthly detail';
@@ -411,6 +413,7 @@ export function scorecardRows(d: PfDataset): ScorecardRow[] {
         mgmtFee: mgmtFeeOf('TTM26', t),
         recovery: refusePartial('TTM26', t, recoveryRatio(t)),
         flags,
+        ratioPeriod: 'TTM26',
       };
     }
     const fy = p.periods.FY2025;
@@ -428,6 +431,7 @@ export function scorecardRows(d: PfDataset): ScorecardRow[] {
       mgmtFee: mgmtFeeOf('FY2025', fy),
       recovery: notMeaningful(`${ANNUAL_ONLY}, so no recovery split`),
       flags,
+      ratioPeriod: 'FY2025',
     };
   });
 }
