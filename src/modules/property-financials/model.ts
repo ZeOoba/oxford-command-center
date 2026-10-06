@@ -9,12 +9,14 @@
 // Pinned in tests/unit/property-financials-model.test.ts. Pure TypeScript: no React, no fetch.
 import {
   LEASE_UP_EXCLUDED,
+  MONTHLY_COMPARISONS,
   OPEX_CATEGORIES,
   PF_ENTITY_IDS,
   PF_MONTHLY_ENTITY_IDS,
   PF_SEVERITIES,
   type OpexCategory,
   type PfAccountMover,
+  type PfComparisonId,
   type PfDataset,
   type PfMonthlyEntityId,
   type PfEntityId,
@@ -24,7 +26,7 @@ import {
   type PfPortfolioView,
   type PfProperty,
 } from '@contracts/property-financials';
-import { notMeaningful, ok, partialReason, type MetricResult } from '@analytics/property-financials/periods';
+import { COMPARISONS, notMeaningful, ok, partialReason, periodLabel, type MetricResult } from '@analytics/property-financials/periods';
 import { evaluationResults, pctChange, q3RunRate, ratio, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
 import { EVALUATION_TEST_IDS, THRESHOLDS, ragStatus, type EvaluationTestId, type EvaluationThreshold, type RagStatus } from '@analytics/property-financials/thresholds';
 import { pctLevel } from '@analytics/property-financials/format';
@@ -224,24 +226,55 @@ export interface OverviewKpis {
   readonly high: { readonly count: number; readonly grossSwing: number };
 }
 
-function kpi(prior: number, current: number): KpiFigure {
-  return { prior, current, change: pctChange(prior, current) };
+/** A YoY of two sums: n/m with the member's partial reason when any member is partial on either side. */
+function kpi(prior: number, current: number, partial: string | null = null): KpiFigure {
+  return { prior, current, change: partial !== null ? notMeaningful(partial) : pctChange(prior, current) };
 }
 
-function opexExTax(view: PfPortfolioView['view']): KpiFigure {
-  return kpi(view.opex.prior - view.opex_by[RE_TAX].prior, view.opex.current - view.opex_by[RE_TAX].current);
+function opexExTax(view: PfPortfolioView['view'], partial: string | null): KpiFigure {
+  return kpi(view.opex.prior - view.opex_by[RE_TAX].prior, view.opex.current - view.opex_by[RE_TAX].current, partial);
+}
+
+export type PfPortfolioViewKey = Exclude<keyof PfDataset['portfolio'], 'note'>;
+
+/** The comparison a portfolio view key carries: `same_store_YTD26_vs_YTD25` -> YTD26 vs YTD25. */
+function viewComparison(key: PfPortfolioViewKey): PfComparisonId {
+  const c = MONTHLY_COMPARISONS.find((id) => key.endsWith(`_${id}`));
+  if (!c) throw new Error(`portfolio view ${key} names no known comparison`);
+  return c;
+}
+
+/**
+ * Why a portfolio view's YoY is not meaningful, or null when every member is complete on both sides.
+ * The views are plain sums of their members' period figures (build-dataset `view()`), so ONE member
+ * with a partial current or prior period makes every percent change of the sum a partial-period YoY
+ * (data-dictionary rule 1). Reason: `<member>: partial period: n of N months`.
+ */
+export function portfolioViewPartial(d: PfDataset, key: PfPortfolioViewKey): string | null {
+  const { current, prior } = COMPARISONS[viewComparison(key)];
+  for (const member of d.portfolio[key].members) {
+    const periods = (d.properties as Record<string, { periods: Record<string, PfPeriodFigures | undefined> }>)[member]?.periods;
+    for (const per of [current, prior]) {
+      const f = periods?.[per];
+      const reason = f === undefined ? `no ${per} figures` : partialReason(per, f.n_months);
+      if (reason !== null) return `${member}: ${reason}`;
+    }
+  }
+  return null;
 }
 
 /** The four Overview KPI tiles. Percent changes come from pctChange, never the view's rounded pct. */
 export function overviewKpis(d: PfDataset): OverviewKpis {
   const ytd = d.portfolio.same_store_YTD26_vs_YTD25;
   const fy = d.portfolio.pm_only_FY2025_vs_FY2024;
+  const ytdPartial = portfolioViewPartial(d, 'same_store_YTD26_vs_YTD25');
+  const fyPartial = portfolioViewPartial(d, 'pm_only_FY2025_vs_FY2024');
   const high = d.insights.filter((i) => i.severity === 'High');
   return {
     periodLabel: monthRangeLabel(d.meta.periods.YTD26.months),
-    baseRent: { ...kpi(ytd.view.base_rent.prior, ytd.view.base_rent.current), members: ytd.members.length },
-    opexExTax: opexExTax(ytd.view),
-    noiFy: { ...kpi(fy.view.noi.prior, fy.view.noi.current), members: fy.members.length },
+    baseRent: { ...kpi(ytd.view.base_rent.prior, ytd.view.base_rent.current, ytdPartial), members: ytd.members.length },
+    opexExTax: opexExTax(ytd.view, ytdPartial),
+    noiFy: { ...kpi(fy.view.noi.prior, fy.view.noi.current, fyPartial), members: fy.members.length },
     high: { count: high.length, grossSwing: high.reduce((a, i) => a + Math.abs(i.annual_impact_usd ?? 0), 0) },
   };
 }
@@ -287,11 +320,14 @@ export interface OpexDeltaItem {
   readonly change: MetricResult;
 }
 
-/** Chart 2: dollar change by opex category (current - prior), largest increase first. */
-export function opexDeltaItems(view: PfPortfolioView['view']): OpexDeltaItem[] {
+/**
+ * Chart 2: dollar change by opex category (current - prior), largest increase first. `partial` is the
+ * view's portfolioViewPartial reason: when set, every percent change is n/m with it.
+ */
+export function opexDeltaItems(view: PfPortfolioView['view'], partial: string | null = null): OpexDeltaItem[] {
   return OPEX_CATEGORIES.map((c) => {
     const o = view.opex_by[c];
-    return { category: c, label: OPEX_SHORT_LABEL[c], value: o.current - o.prior, prior: o.prior, current: o.current, change: pctChange(o.prior, o.current) };
+    return { category: c, label: OPEX_SHORT_LABEL[c], value: o.current - o.prior, prior: o.prior, current: o.current, change: partial !== null ? notMeaningful(partial) : pctChange(o.prior, o.current) };
   }).sort((a, b) => b.value - a.value);
 }
 
@@ -477,19 +513,54 @@ export interface MoverRow {
   readonly mover: PfAccountMover;
 }
 
-/** Operating-expense account movers across every PM asset, largest |delta| first. */
+export type MoverComparisonId = 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024';
+
+/**
+ * Why an entity's account movers for a comparison are not meaningful (either side partial), or null.
+ * account_movers are built from the raw month sums whatever n_months says, so a mover on a partial
+ * side is a partial-period YoY. Reason: `partial period: n of N months (<period label>)`.
+ */
+export function moverComparisonPartial(d: PfDataset, entity: PfMonthlyEntityId, comparison: MoverComparisonId): string | null {
+  const p = d.properties[entity];
+  const { current, prior } = COMPARISONS[comparison];
+  for (const per of [current, prior]) {
+    const reason = partialReason(per, p.periods[per].n_months);
+    if (reason !== null) return `${reason} (${periodLabel(per)})`;
+  }
+  return null;
+}
+
+export interface MoverExclusion {
+  readonly entity: PfMonthlyEntityId;
+  readonly label: string;
+  readonly reason: string;
+}
+
+export interface OpexMovers {
+  readonly rows: readonly MoverRow[];
+  /** PM assets left out because a side of the comparison is partial, in dataset order. */
+  readonly excluded: readonly MoverExclusion[];
+}
+
+/** Operating-expense account movers across every PM asset with complete comparison periods, largest |delta| first. */
 export function topOpexMovers(
   d: PfDataset,
-  rules: { readonly comparison: 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024'; readonly minAbsDelta: number; readonly limit: number } = WATCHLIST_MOVER_RULES,
-): MoverRow[] {
+  rules: { readonly comparison: MoverComparisonId; readonly minAbsDelta: number; readonly limit: number } = WATCHLIST_MOVER_RULES,
+): OpexMovers {
   const opex = new Set<string>(OPEX_CATEGORIES);
   const rows: MoverRow[] = [];
+  const excluded: MoverExclusion[] = [];
   for (const id of PF_MONTHLY_ENTITY_IDS) {
+    const partial = moverComparisonPartial(d, id, rules.comparison);
+    if (partial !== null) {
+      excluded.push({ entity: id, label: d.properties[id].label, reason: partial });
+      continue;
+    }
     for (const m of d.account_movers[id][rules.comparison]) {
       if (opex.has(m.category) && Math.abs(m.delta) > rules.minAbsDelta) rows.push({ entity: id, label: d.properties[id].label, mover: m });
     }
   }
-  return rows.sort((a, b) => Math.abs(b.mover.delta) - Math.abs(a.mover.delta)).slice(0, rules.limit);
+  return { rows: rows.sort((a, b) => Math.abs(b.mover.delta) - Math.abs(a.mover.delta)).slice(0, rules.limit), excluded };
 }
 
 // -------------------------------------------------------------------------------------------------
