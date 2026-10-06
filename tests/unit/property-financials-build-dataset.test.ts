@@ -6,13 +6,16 @@
 // history series) from the committed CSV plus scripts/property-financials/config/**, and its output must
 // pass the strict contract. A block that cannot be regenerated is a finding: the diff printer below names
 // every path, nothing is loosened.
+//
+// monthly-long.csv is LOCAL-ONLY (Gabriel ruling 2026-10-06): without it the whole file skips with a visible
+// marker. The CSV is still the builder's input on this machine, where every test runs for real.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { parsePropertyFinancialsDataset, PF_ENTITY_IDS } from '@contracts/property-financials';
 import { parseMonthlyLong } from '@analytics/property-financials/aggregate';
 import { buildDataset, parseCuratedInputs, parseDerivationConfig, parseEntityRegistry } from '@analytics/property-financials/build-dataset';
-import { loadCsvText, loadDatasetText } from './property-financials-helpers';
+import { HAVE_AUDIT_CSV, auditCsvSkipMarker, describeWithAuditCsv, loadCsvText, loadDatasetText } from './property-financials-helpers';
 
 const root = process.cwd();
 const CONFIG_DIR = resolve(root, 'scripts', 'property-financials', 'config');
@@ -29,7 +32,8 @@ const CURATED = parseCuratedInputs({
 });
 const MAPPING = readJson(resolve(CONFIG_DIR, 'account-mapping.v1.json')) as { categories: { revenue: string[]; opex: string[]; below_line: Record<string, string> } };
 
-const ROWS = parseMonthlyLong(loadCsvText());
+// Empty stand-in when the CSV is absent: everything that reads ROWS / BUILT is CSV-gated.
+const ROWS = HAVE_AUDIT_CSV ? parseMonthlyLong(loadCsvText()) : [];
 const COMMITTED_RAW = JSON.parse(loadDatasetText()) as Record<string, unknown>;
 
 /**
@@ -48,7 +52,11 @@ function normalizeNegativeZero(v: unknown, count: { n: number }): unknown {
 }
 const NEG_ZEROS = { n: 0 };
 const COMMITTED = normalizeNegativeZero(COMMITTED_RAW, NEG_ZEROS) as Record<string, unknown>;
-const BUILT = buildDataset({ rows: ROWS, registry: REGISTRY, curated: CURATED, derivation: DERIVATION, categories: MAPPING.categories }) as unknown as Record<string, unknown>;
+const BUILT: Record<string, unknown> = HAVE_AUDIT_CSV
+  ? (buildDataset({ rows: ROWS, registry: REGISTRY, curated: CURATED, derivation: DERIVATION, categories: MAPPING.categories }) as unknown as Record<string, unknown>)
+  : {};
+
+auditCsvSkipMarker();
 
 /** Every leaf path where two JSON values differ (type, value or key set). */
 function diffPaths(a: unknown, b: unknown, path = '', out: string[] = [], limit = 40): string[] {
@@ -79,7 +87,7 @@ function expectBlockEqual(block: string): void {
   expect(diffs, `${block}: ${diffs.length} difference(s)\n${diffs.join('\n')}`).toEqual([]);
 }
 
-describe('buildDataset regenerates the committed dataset.json from the CSV + config', () => {
+describeWithAuditCsv('buildDataset regenerates the committed dataset.json from the CSV + config', () => {
   for (const block of ['meta', 'portfolio', 'properties', 'monthly', 'account_movers', 'history', 'sf', 'insights', 'leases', 'data_quality']) {
     it(`${block} block is identical`, () => expectBlockEqual(block));
   }
@@ -107,7 +115,7 @@ describe('buildDataset regenerates the committed dataset.json from the CSV + con
   });
 });
 
-describe('builder fails loud instead of guessing', () => {
+describeWithAuditCsv('builder fails loud instead of guessing', () => {
   it('rejects a CSV entity missing from the registry, and a registry entity with no CSV rows', () => {
     const extraRow = { ...ROWS[0]!, entity: 'Ghost Plaza' };
     expect(() => buildDataset({ rows: [...ROWS, extraRow], registry: REGISTRY, curated: CURATED, derivation: DERIVATION, categories: MAPPING.categories })).toThrow(/Ghost Plaza.*registry/);

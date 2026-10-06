@@ -12,7 +12,7 @@ import { parseMonthlyLong } from '@analytics/property-financials/aggregate';
 import { buildDataset, parseCuratedInputs, parseDerivationConfig, parseEntityRegistry } from '@analytics/property-financials/build-dataset';
 import { pct } from '@analytics/property-financials/format';
 import { opexDeltaItems, overviewKpis, overviewLede, portfolioViewPartial, moverComparisonPartial, topOpexMovers, WATCHLIST_MOVER_RULES } from '../../src/modules/property-financials/model';
-import { loadCsvText, loadDataset } from './property-financials-helpers';
+import { auditCsvSkipMarker, itWithAuditCsv, loadCsvText, loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
 
@@ -69,7 +69,9 @@ describe('F1: Overview same-store views refuse a YoY when any member is partial'
     for (const x of items) expect(x.change).toEqual({ value: null, reason: '1100 Rarig: partial period: 8 of 9 months' });
   });
 
-  it('refute repro: drop 1100 Rarig 2026-03 from the CSV, rebuild -> rent growth is n/m, not 1.9%', () => {
+  // Rebuilds from the local-only monthly-long.csv (Gabriel ruling 2026-10-06): skipped with a visible marker without it.
+  auditCsvSkipMarker();
+  itWithAuditCsv('refute repro: drop 1100 Rarig 2026-03 from the CSV, rebuild -> rent growth is n/m, not 1.9%', () => {
     const CONFIG_DIR = resolve(process.cwd(), 'scripts', 'property-financials', 'config');
     const readJson = (p: string): unknown => JSON.parse(readFileSync(p, 'utf8'));
     const rows = parseMonthlyLong(loadCsvText()).filter((r) => !(r.entity === '1100 Rarig' && r.period === '2026-03'));

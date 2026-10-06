@@ -2,9 +2,10 @@
 //
 // tests/unit/property-financials-loader.test.ts — read-only dataset loader (plan T4; pattern copied
 // from tests/unit/edge-loader.test.ts). Fake fs deps for retry/memo/last-good; a real tmpdir copy for
-// the no-write guarantees.
+// the no-write guarantees. The CSV bytes are synthetic (SYNTHETIC_CSV_TEXT): monthly-long.csv is local-only
+// (Gabriel ruling 2026-10-06) and the loader only hashes it, so these tests run on every checkout.
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -13,11 +14,11 @@ import {
   resetPropertyFinancialsLoaderCache,
   type PfFsDeps,
 } from '../../server/property-financials/loader';
-import { loadCsvText, loadDatasetText } from './property-financials-helpers';
+import { PF_DATA_DIR, SYNTHETIC_CSV_TEXT, loadDatasetText } from './property-financials-helpers';
 
-const DATA_DIR = resolve(__dirname, '..', '..', 'data', 'property-financials');
+const DATA_DIR = PF_DATA_DIR;
 const DATASET_TEXT = loadDatasetText();
-const CSV_TEXT = loadCsvText();
+const CSV_TEXT = SYNTHETIC_CSV_TEXT;
 const NOW = new Date(2026, 9, 5, 12, 0, 0); // local 2026-10-05 noon
 const LOADER_SRC = readFileSync(resolve(__dirname, '..', '..', 'server', 'property-financials', 'loader.ts'), 'utf8');
 const sha = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
@@ -241,7 +242,8 @@ describe('no-write guarantees', () => {
 
   it('leaves dataset.json and monthly-long.csv bytes and mtimes unchanged after a real load', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'pf-nowrite-'));
-    for (const f of ['dataset.json', 'monthly-long.csv']) copyFileSync(join(DATA_DIR, f), join(dir, f));
+    copyFileSync(join(DATA_DIR, 'dataset.json'), join(dir, 'dataset.json'));
+    writeFileSync(join(dir, 'monthly-long.csv'), CSV_TEXT);
     const before = ['dataset.json', 'monthly-long.csv'].map((f) => statSync(join(dir, f)));
     const r = await loadPropertyFinancials(dir, NOW);
     expect(r.availability).toBe('ok');
@@ -251,5 +253,17 @@ describe('no-write guarantees', () => {
       expect(after.mtimeMs).toBe(before[i]!.mtimeMs);
       expect(after.size).toBe(before[i]!.size);
     });
+  });
+});
+
+describe('monthly-long.csv is local-only (Gabriel ruling 2026-10-06): a checkout without it', () => {
+  it('still serves the dataset from a real directory holding only dataset.json; csvSha256 null, csvError names ENOENT', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pf-nocsv-'));
+    copyFileSync(join(DATA_DIR, 'dataset.json'), join(dir, 'dataset.json'));
+    const r = await loadPropertyFinancials(dir, NOW);
+    expect(r.availability).toBe('ok');
+    expect(r.dataset?.meta.version).toBe('v03');
+    expect(r.meta).toMatchObject({ sha256: sha(readFileSync(join(DATA_DIR, 'dataset.json'))), csvSha256: null, csvError: 'monthly-long.csv: stat failed (ENOENT)' });
+    expect(JSON.stringify(r)).not.toContain('pf-nocsv-');
   });
 });

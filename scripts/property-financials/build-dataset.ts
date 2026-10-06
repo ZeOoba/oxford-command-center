@@ -3,7 +3,8 @@
 //   npx tsx scripts/property-financials/build-dataset.ts [--csv <monthly-long.csv>] [--out <dir>] [--generated YYYY-MM-DD]
 //
 // --csv        input CSV (default data/property-financials/monthly-long.csv; pass _out/monthly-long.csv
-//              to build from a fresh normalisation).
+//              to build from a fresh normalisation). The CSV is LOCAL-ONLY (gitignored, kept off the remote;
+//              Gabriel ruling 2026-10-06): on a checkout without it, run normalize-raw.ts first and pass --csv.
 // --out        output directory (default scripts/property-financials/_out, gitignored). Writes
 //              dataset.json. Never writes into data/property-financials/.
 // --generated  override meta.generated (default: the value in config/curated/meta.json, so builds are
@@ -11,7 +12,7 @@
 //
 // The built dataset is validated through the strict contract before it is written; a contract
 // refusal (e.g. an entity the architect-owned constants do not yet admit) exits 3 with the issue list.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parsePropertyFinancialsDataset } from '../../src/contracts/property-financials';
 import { parseMonthlyLong } from '../../src/analytics/property-financials/aggregate';
@@ -26,6 +27,11 @@ function main(): number {
     derivationVersion: typeof args.derivation === 'string' ? args.derivation : undefined,
   });
   const curated = typeof args.generated === 'string' ? { ...config.curated, meta: { ...config.curated.meta, generated: args.generated } } : config.curated;
+  if (!existsSync(csvPath)) {
+    console.error(`build-dataset: ${csvPath} not present. monthly-long.csv is a local-only audit layer (gitignored, kept off the remote);`);
+    console.error('regenerate it with scripts/property-financials/normalize-raw.ts and pass --csv <_out/monthly-long.csv>.');
+    return 2;
+  }
   const rows = parseMonthlyLong(readFileSync(csvPath, 'utf8'));
   console.log(`build-dataset: ${rows.length} rows from ${csvPath}; as_of ${curated.meta.as_of}; mapping ${config.mapping.version}; derivation ${config.derivation.version}`);
 
