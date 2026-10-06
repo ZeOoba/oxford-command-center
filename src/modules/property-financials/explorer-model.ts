@@ -542,17 +542,21 @@ export function opexStack(gs: readonly PeriodGroup[]): BarsData {
     series: OPEX_CATEGORIES.map((c, i) => ({ id: c, label: OPEX_SHORT_LABEL[c], slot: i + 1 })),
     values: gs.map((x) => OPEX_CATEGORIES.map((c) => x.row.cats[c] ?? 0)),
     tips: gs.map((x) => {
-      const total = OPEX_CATEGORIES.reduce((a, c) => a + Math.max(0, x.row.cats[c] ?? 0), 0);
+      // Signed throughout, like categoryRow: a category can net to a credit (a refund or reversal
+      // larger than the period's charges), and clamping it to $0 printed a fake -100% change.
+      const total = OPEX_CATEGORIES.reduce((a, c) => a + (x.row.cats[c] ?? 0), 0);
       return OPEX_CATEGORIES.map((c) => {
-        const v = Math.max(0, x.row.cats[c] ?? 0);
-        const lines = [`${x.label} · ${OPEX_SHORT_LABEL[c]}`, usd(v, 'f')];
-        if (x.prev) {
-          const pv = x.prev.row.cats[c] ?? 0;
-          const ch = pctChange(pv, v);
-          if (ch.value !== null) lines.push(`${pct(ch.value)} vs ${x.prev.label} (${usd(v - pv, 'f')})`);
+        const pick = (r: PeriodRow) => r.cats[c] ?? 0;
+        const v = pick(x.row);
+        const lines = [`${x.label} · ${OPEX_SHORT_LABEL[c]}`, v < 0 ? `${usd(v, 'f')} (net credit)` : usd(v, 'f')];
+        const ch = x.change(pick);
+        if (x.prev && ch.value !== null) lines.push(`${pct(ch.value)} vs ${x.prev.label} (${usd(v - pick(x.prev.row), 'f')})`);
+        if (x.partial) lines.push('Partial period: not comparable');
+        if (v < 0) lines.push('Share of operating expense: n/m (net credit)');
+        else {
+          const share = ratio(v, total, 'no operating expense');
+          if (share.value !== null) lines.push(`${pctLevel(share.value)} of operating expense`);
         }
-        const share = ratio(v, total, 'no operating expense');
-        if (share.value !== null) lines.push(`${pctLevel(share.value)} of operating expense`);
         return lines;
       });
     }),

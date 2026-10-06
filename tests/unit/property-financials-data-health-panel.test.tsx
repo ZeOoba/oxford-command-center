@@ -117,6 +117,19 @@ describe('PfDataHealthPanel — live data health (replaces the artifact’s stat
     expect(f.querySelector('svg')).not.toBeNull();
   });
 
+  it('F5: a future as-of reads Stale with the server reason, never a negative day count', () => {
+    renderPanel(response({ meta: { ...response().meta!, ageDays: -2, staleness: 'stale', stalenessReason: 'as-of date is in the future' } }));
+    const f = screen.getByTestId('pf-dh-freshness');
+    expect(f.textContent).toBe(`Stale · as-of date is in the future (${'30 Sep 2026'}); not current`);
+    expect(f.textContent).not.toMatch(/-2/);
+  });
+
+  it('F5: one day ahead (inside the clock slack) reads Fresh with the date, never "-1 days"', () => {
+    renderPanel(response({ meta: { ...response().meta!, ageDays: -1, staleness: 'fresh', stalenessReason: null } }));
+    const f = screen.getByTestId('pf-dh-freshness');
+    expect(f.textContent).toBe('Fresh · as of 30 Sep 2026');
+  });
+
   it('a CSV hash failure shows the sanitized error instead of a sha', () => {
     renderPanel(response({ meta: { ...response().meta!, csvSha256: null, csvError: 'monthly-long.csv: read failed (EBUSY)' } }));
     expect(within(screen.getByTestId('pf-dh-facts')).getByText(/read failed \(EBUSY\)/)).toBeTruthy();
@@ -233,6 +246,13 @@ describe('square footage source (T9b part 2)', () => {
     const sec = screen.getByTestId('pf-dh-sf');
     expect(within(sec).getByTestId('pf-dh-sf-headline').textContent).toMatch(/Stale.*is STALE \(34 days old, limit 7\)/);
     expect(within(sec).getAllByTestId('pf-sf-row').every((r) => r.getAttribute('data-using') !== 'live')).toBe(true);
+  });
+
+  it('F5: a future-dated live block reads STALE with the future reason and no negative day count', () => {
+    renderPanel(response({ liveSf: buildLiveSf(snapshot('2026-10-10'), D, NOW) }));
+    const h = within(screen.getByTestId('pf-dh-sf')).getByTestId('pf-dh-sf-headline').textContent!;
+    expect(h).toMatch(/is STALE \(as-of date 2026-10-10 is in the future, limit 7 days\)/);
+    expect(h).not.toMatch(/-\d+ days?/);
   });
 
   it('no block (older server) and the static fallback block both read as static, without error', () => {

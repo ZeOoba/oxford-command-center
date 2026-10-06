@@ -27,6 +27,7 @@ import { EvaluationView } from './EvaluationView';
 import { ExplorerView } from './ExplorerView';
 import { PF_PROPERTY_PARAM, PF_VIEWS, PF_VIEW_IDS, type PfViewId } from './views';
 import { PfDataHealthSummary } from './DataHealthPanel';
+import { freshnessAge } from './data-health';
 import type { PfDatasetResponse } from './types';
 import './pf.css';
 
@@ -58,7 +59,7 @@ function Masthead({ response }: { response: PfDatasetResponse | undefined }) {
           <span>Prepared {fmtLongDate(d.meta.generated)}</span>
           {meta?.staleness === 'stale' && (
             <span className="pf-stale" role="status">
-              STALE · {meta.ageDays} days since {fmtLongDate(meta.as_of)}; not current
+              STALE · {freshnessAge(meta)}; not current
             </span>
           )}
           {response?.readError && (

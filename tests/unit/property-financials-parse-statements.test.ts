@@ -333,6 +333,23 @@ describe('layout CF — 12-month cash flow statement', () => {
     expect(() => parseCashFlow12(sheet(rows), 'X')).toThrow(/2026-03/);
   });
 
+  it('F7: a TOTAL naming an EARLIER opened group (parent total) is verified against every account since that group opened', () => {
+    const out = parseCashFlow12(sheet(CF_ROWS), 'X');
+    // per month: TOTAL RENTAL REVENUE, TOTAL REVENUE, TOTAL MAINTENANCE EXPENSES, TOTAL OPERATING EXPENSES, TOTAL OWNER ACTIVITY
+    expect(out.totalChecks).toBe(5 * 12);
+    // never-opened totals (mixed-case header not promoted; Yardi's closing TOTAL ADJUSTMENTS) are counted, not silently passed
+    expect(out.unmatchedTotals).toEqual(['TOTAL TAXES and RESERVES', 'TOTAL ADJUSTMENTS']);
+  });
+
+  it('F7: a parent total that does not tie fails with file › sheet › row context (it was silently skipped)', () => {
+    const rev = CF_ROWS.map((r) => ({ ...r }));
+    rev[12] = { ...rev[12], M: 111 }; // TOTAL REVENUE Sep 2026: accounts sum to 110
+    expect(() => parseCashFlow12(sheet(rev, { file: 'f.xlsx', sheet: 'Report1' }), 'X')).toThrow(/f\.xlsx › Report1 › row 13: TOTAL REVENUE \(2026-09\) states 111\.00 but its accounts sum to 110\.00/);
+    const opex = CF_ROWS.map((r) => ({ ...r }));
+    opex[23] = { ...opex[23], C: 6 }; // TOTAL OPERATING EXPENSES Nov 2025: HVAC 5 + RE tax 0
+    expect(() => parseCashFlow12(sheet(opex, { file: 'f.xlsx', sheet: 'Report1' }), 'X')).toThrow(/row 24: TOTAL OPERATING EXPENSES \(2025-11\)/);
+  });
+
   it('an export that says "No activity for given filter criteria" is an EMPTY statement, reported as such (not a failure, not a silent skip)', () => {
     const rows: Row[] = [...CF_ROWS.slice(0, 5), { A: 'No activity for given filter criteria' }];
     const out = parseCashFlow12(sheet(rows), 'X');

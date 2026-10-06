@@ -36,8 +36,10 @@ export interface PfDataHealthMeta {
   csvError: string | null;
   /** Whole calendar days from as_of to today (server local date). */
   ageDays: number;
-  /** `fresh` while ageDays <= PF_STALE_DAYS. */
+  /** `fresh` while -1 <= ageDays <= PF_STALE_DAYS (see isFutureAsOf for the lower bound). */
   staleness: PfStaleness;
+  /** Why the dataset is stale, or null when fresh. */
+  stalenessReason: string | null;
 }
 
 export interface PfLoadResult {
@@ -195,6 +197,17 @@ export function ageDaysFrom(isoDate: string, now: Date): number {
   return Math.round((localDayUtc(now) - Date.UTC(y, m - 1, d)) / DAY_MS);
 }
 
+/**
+ * An as-of date more than one day ahead of the server's local date. One day of slack absorbs a
+ * time-zone / clock difference between the machine that stamped the date and this one; beyond that
+ * a future date is an error (a typo'd year, a mis-set clock) and must never read as fresh forever.
+ */
+export function isFutureAsOf(ageDays: number): boolean {
+  return ageDays < -1;
+}
+
+export const FUTURE_AS_OF_REASON = 'as-of date is in the future';
+
 async function loadCsvHash(dir: string, deps: PfFsDeps): Promise<{ sha256: string | null; error: string | null }> {
   const memo = csvCache.get(dir) ?? null;
   try {
@@ -218,6 +231,7 @@ export async function loadPropertyFinancials(dir: string, now: Date, deps: PfFsD
     const csv = await loadCsvHash(dir, deps);
     const m = p.dataset.meta;
     const ageDays = ageDaysFrom(m.as_of, now);
+    const stalenessReason = isFutureAsOf(ageDays) ? FUTURE_AS_OF_REASON : ageDays > PF_STALE_DAYS ? `as-of date is ${ageDays} days old (> ${PF_STALE_DAYS})` : null;
     return {
       availability: 'ok',
       readError,
@@ -233,7 +247,8 @@ export async function loadPropertyFinancials(dir: string, now: Date, deps: PfFsD
         csvSha256: csv.sha256,
         csvError: csv.error,
         ageDays,
-        staleness: ageDays <= PF_STALE_DAYS ? 'fresh' : 'stale',
+        staleness: stalenessReason === null ? 'fresh' : 'stale',
+        stalenessReason,
       },
     };
   };

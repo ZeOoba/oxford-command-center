@@ -123,6 +123,8 @@ export interface SourceFileResult {
   readonly records: number;
   readonly totalChecks: number;
   readonly ignoredHeaders: readonly string[];
+  /** CF `TOTAL X` lines naming no group opened in the statement: printed and counted, not verified. */
+  readonly unmatchedTotals: readonly string[];
   /** The export carried no rows ("No activity for given filter criteria"). */
   readonly emptyReason: string | null;
 }
@@ -282,6 +284,7 @@ export async function collectSourceRecords(cfg: SourcesConfig, opts: CollectOpti
       records: parsed.records.length,
       totalChecks: parsed.totalChecks,
       ignoredHeaders: parsed.ignoredHeaders,
+      unmatchedTotals: parsed.unmatchedTotals,
       emptyReason: parsed.emptyReason,
     });
   };

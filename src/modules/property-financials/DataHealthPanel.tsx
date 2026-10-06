@@ -18,7 +18,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { PF_DATA_HEALTH_HREF } from '../data/tabs';
 import { EmptyState } from './components';
-import { NOI_DISCLOSURE, mentionsExcluded, shortSha, unattachedLeaseGaps } from './data-health';
+import { NOI_DISCLOSURE, freshnessAge, mentionsExcluded, shortSha, unattachedLeaseGaps } from './data-health';
 import { usePfDataset, usePfMapping } from './hooks';
 import { excludedNotes, fmtLongDate } from './model';
 import type { PfDataHealthMeta, PfDatasetResponse, PfMappingResponse, PfMappingRow } from './types';
@@ -35,7 +35,7 @@ const AVAILABILITY_WHY = {
 
 /** Fresh / stale per the server's `staleness`: always an icon AND a label, never colour alone. */
 export function PfFreshness({ meta }: { meta: PfDataHealthMeta }) {
-  const age = `${meta.ageDays} day${meta.ageDays === 1 ? '' : 's'} since ${fmtLongDate(meta.as_of)}`;
+  const age = freshnessAge(meta);
   if (meta.staleness === 'stale') {
     return (
       <span className="pf-fresh pf-fresh-stale" role="status" data-testid="pf-dh-freshness">
@@ -163,13 +163,16 @@ const fmtPct = (n: number | null) => (n === null ? '—' : `${(n * 100).toFixed(
 function SfSourceSection({ dataset, liveSf }: { dataset: PfDataset; liveSf: PfLiveSfBlock | null | undefined }) {
   const rows = sfProvenance(dataset, liveSf);
   const liveCount = rows.filter((r) => r.using === 'live').length;
+  // A future as-of (negative age) never prints a negative day count: fresh inside the one-day clock
+  // slack reads "as of <date>", beyond it the server marks the block stale for a future date.
+  const ahead = liveSf?.ageDays !== null && liveSf?.ageDays !== undefined && liveSf.ageDays < 0;
   const headline =
     liveSf === null || liveSf === undefined
       ? 'The server sent no live square-footage block; all figures use the dataset’s static SF.'
       : liveSf.source === 'spine-a' && !liveSf.stale
-        ? `${liveSf.label} is fresh (${liveSf.ageDays} day${liveSf.ageDays === 1 ? '' : 's'} old); ${liveCount} of ${rows.length} entities use live SF.`
+        ? `${liveSf.label} is fresh (${ahead ? `as of ${liveSf.asOf ?? '?'}` : `${liveSf.ageDays} day${liveSf.ageDays === 1 ? '' : 's'} old`}); ${liveCount} of ${rows.length} entities use live SF.`
         : liveSf.source === 'spine-a'
-          ? `${liveSf.label} is STALE (${liveSf.ageDays ?? '?'} days old, limit ${liveSf.staleDays}); figures use the dataset’s static SF.`
+          ? `${liveSf.label} is STALE (${ahead ? `as-of date ${liveSf.asOf ?? '?'} is in the future, limit ${liveSf.staleDays} days` : `${liveSf.ageDays ?? '?'} days old, limit ${liveSf.staleDays}`}); figures use the dataset’s static SF.`
           : `Live Master Workbook unavailable; figures use the ${liveSf.label}.`;
   return (
     <section className="pf-sec pf-dh-print" aria-labelledby="pf-dh-sf-h" data-testid="pf-dh-sf">
@@ -185,7 +188,7 @@ function SfSourceSection({ dataset, liveSf }: { dataset: PfDataset; liveSf: PfLi
           </span>
         ) : null}{' '}
         {headline}
-        {liveSf?.staleReason ? ` ${liveSf.staleReason}.` : ''}
+        {liveSf?.staleReason && !(ahead && liveSf.source === 'spine-a') ? ` ${liveSf.staleReason}.` : ''}
       </p>
       {liveSf?.source === 'spine-a' && <p className="pf-note">Leased SF basis: {liveSf.leasedSfBasis}.</p>}
       <div className="pf-tbl pf-dh-print">

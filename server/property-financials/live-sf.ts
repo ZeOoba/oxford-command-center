@@ -23,7 +23,7 @@
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { PF_ENTITY_IDS, type PfDataset } from '../../src/contracts/property-financials';
 import { LIVE_SF_STALE_DAYS, staticSfDate, type PfLiveSfBlock, type PfLiveSfEntry, type PfSfFieldSource } from '../../src/analytics/property-financials/live-sf';
-import { ageDaysFrom } from './loader';
+import { ageDaysFrom, FUTURE_AS_OF_REASON, isFutureAsOf } from './loader';
 import { ENTITY_TO_CANONICAL } from './mapping';
 
 /** Rent-roll statuses that mean the suite is leased today. */
@@ -71,8 +71,10 @@ export function buildLiveSf(snapshot: LiveSfSnapshot | null, dataset: PfDataset 
       asOf: staticDate,
       ageDays,
       staleDays: LIVE_SF_STALE_DAYS,
-      stale: ageDays !== null && ageDays > LIVE_SF_STALE_DAYS,
-      staleReason: 'live Master Workbook unavailable: the Brain Server holds no snapshot (not parsed yet, or running off the mirror)',
+      stale: ageDays !== null && (isFutureAsOf(ageDays) || ageDays > LIVE_SF_STALE_DAYS),
+      staleReason: `live Master Workbook unavailable: the Brain Server holds no snapshot (not parsed yet, or running off the mirror)${
+        ageDays !== null && isFutureAsOf(ageDays) ? `; the static dataset's ${FUTURE_AS_OF_REASON} (${staticDate})` : ''
+      }`,
       leasedSfBasis: 'static dataset: rent-roll rows classed "Occupied" on the read date',
       entries,
     };
@@ -80,7 +82,7 @@ export function buildLiveSf(snapshot: LiveSfSnapshot | null, dataset: PfDataset 
 
   const asOf = isoDay(snapshot.meta.asOf);
   const ageDays = asOf ? ageDaysFrom(asOf, now) : null;
-  const stale = ageDays === null || ageDays > LIVE_SF_STALE_DAYS;
+  const stale = ageDays === null || isFutureAsOf(ageDays) || ageDays > LIVE_SF_STALE_DAYS;
   const byId = new Map(snapshot.properties.map((p) => [p.id, p]));
   const leasedByProperty = new Map<string, { sf: number; n: number }>();
   for (const l of snapshot.leases) {
@@ -128,9 +130,11 @@ export function buildLiveSf(snapshot: LiveSfSnapshot | null, dataset: PfDataset 
     staleDays: LIVE_SF_STALE_DAYS,
     stale,
     staleReason: stale
-      ? asOf === null
+      ? asOf === null || ageDays === null
         ? 'the live snapshot carries no readable as-of date'
-        : `the live workbook's as-of date ${asOf} is ${ageDays} day(s) old (> ${LIVE_SF_STALE_DAYS}); figures use the static dataset`
+        : isFutureAsOf(ageDays)
+          ? FUTURE_AS_OF_REASON
+          : `the live workbook's as-of date ${asOf} is ${ageDays} day(s) old (> ${LIVE_SF_STALE_DAYS}); figures use the static dataset`
       : null,
     leasedSfBasis: LEASED_SF_BASIS,
     entries,

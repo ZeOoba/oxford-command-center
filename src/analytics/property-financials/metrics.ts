@@ -233,18 +233,23 @@ export interface DriverTiming {
 /** Timing profile of one account over the months of a period. */
 export function driverTiming(amountsByMonth: ReadonlyArray<{ month: string; amount: number }>): DriverTiming {
   let total = 0;
-  let gross = 0;
+  // The share is taken in integer cents: summing float dollars drifts (0.10 + 0.20 + 0.30 =
+  // 0.6000000000000001), which turned an exact 50% top month into 49.999...% and 'mixed'.
+  let grossCents = 0;
   let activeMonths = 0;
   let top: { month: string; amount: number } | null = null;
   for (const x of amountsByMonth) {
     if (x.amount !== 0) activeMonths++;
     total += x.amount;
-    gross += Math.abs(x.amount);
+    grossCents += Math.round(Math.abs(x.amount) * 100);
     if (top === null || Math.abs(x.amount) > Math.abs(top.amount)) top = x;
   }
-  const topShare = gross > 0 && top !== null ? Math.abs(top.amount) / gross : 0;
+  const topShare = grossCents > 0 && top !== null ? Math.round(Math.abs(top.amount) * 100) / grossCents : 0;
   return { activeMonths, topShare, topMonth: top && top.amount !== 0 ? top.month : null, total };
 }
+
+/** Float slack for share-vs-threshold comparisons: far below a cent of any real period total. */
+const SHARE_EPSILON = 1e-9;
 
 /**
  * 'annual' for annual-only entities; 'lumpy' when one month holds >= 50% of the period over <= 6
@@ -255,7 +260,7 @@ export function driverNature(input: { annualOnly?: boolean; activeMonths: number
   if (input.annualOnly) return 'annual';
   const r = DRIVER_NATURE_RULES;
   if (input.activeMonths <= r.lumpyFewMonths) return 'lumpy';
-  if (input.topShare >= r.lumpyTopShare && input.activeMonths <= r.lumpyMaxActiveMonths) return 'lumpy';
+  if (input.topShare >= r.lumpyTopShare - SHARE_EPSILON && input.activeMonths <= r.lumpyMaxActiveMonths) return 'lumpy';
   if (input.activeMonths >= r.recurringMinMonths) return 'recurring';
   return 'mixed';
 }

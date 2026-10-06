@@ -322,6 +322,32 @@ describe('driver nature', () => {
     expect(driverNature({ activeMonths: 3, topShare: 0.49 })).toBe('mixed');
   });
 
+  it('F4: an exact-cents 50% top month is lumpy, not mixed (no float-summation drift)', () => {
+    // 0.10 + 0.20 + 0.30 sums to 0.6000000000000001 in floating point: 0.30 / that = 0.49999999999999994
+    const t = driverTiming([
+      { month: '2026-01', amount: 0.1 },
+      { month: '2026-02', amount: 0.2 },
+      { month: '2026-03', amount: 0.3 },
+      { month: '2026-04', amount: 0 },
+    ]);
+    expect(t.activeMonths).toBe(3);
+    expect(t.topShare).toBe(0.5);
+    expect(driverNature({ activeMonths: t.activeMonths, topShare: t.topShare })).toBe('lumpy');
+    // the threshold comparison itself tolerates float noise below the boundary ...
+    expect(driverNature({ activeMonths: 3, topShare: 0.49999999999999994 })).toBe('lumpy');
+    // ... but not a real cent below it
+    expect(driverNature({ activeMonths: 3, topShare: 0.4999 })).toBe('mixed');
+    // signed postings still share by gross cents: |-25.50| of (10.25 + 25.50 + 15.25) = 50%
+    const s = driverTiming([
+      { month: '2026-01', amount: 10.25 },
+      { month: '2026-02', amount: -25.5 },
+      { month: '2026-03', amount: 15.25 },
+    ]);
+    expect(s.topShare).toBe(0.5);
+    expect(s.topMonth).toBe('2026-02');
+    expect(s.total).toBeCloseTo(0, 10);
+  });
+
   it('driverTiming counts active months and the top-month share', () => {
     const t = driverTiming([
       { month: '2025-01', amount: 100 },
