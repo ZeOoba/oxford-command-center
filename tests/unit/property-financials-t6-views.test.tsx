@@ -183,8 +183,13 @@ describe('Expense watchlist', () => {
     const p = panel();
     const t = within(p).getByTestId('pf-movers');
     const rows = within(t).getAllByRole('row').slice(1);
-    const want = topOpexMovers(D);
+    const { rows: want, excluded } = topOpexMovers(D);
     expect(rows).toHaveLength(want.length);
+    expect(rows.some((r) => r.textContent!.includes('Livingston'))).toBe(false);
+    expect(excluded.map((e) => e.entity)).toEqual(['3883 Livingston']);
+    expect(within(p).getByTestId('pf-movers-excluded').textContent).toBe(
+      `Left out (partial comparison period, no year-over-year): ${D.properties['3883 Livingston'].label}: partial period: 3 of 9 months (Jan-Sep 25).`,
+    );
     want.forEach((w, k) => {
       const cells = rows[k]!.querySelectorAll('td');
       expect(cells[0]!.textContent).toBe(w.label);

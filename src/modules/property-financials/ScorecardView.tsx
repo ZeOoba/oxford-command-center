@@ -21,7 +21,7 @@ import { DASH, pct, pctLevel, usd } from '@analytics/property-financials/format'
 import { linePath, linearScale } from './charts/geometry';
 import { MetricCell, NotMeaningful, SeverityPill } from './components';
 import { PropertyGaps } from './PropertyGaps';
-import { cubeMonths, fmtMonth, insightsForEntity, leaseForEntity, scorecardRows, sortInsights, toneClass, type ScorecardRow } from './model';
+import { cubeMonths, fmtMonth, insightsForEntity, leaseForEntity, moverComparisonPartial, scorecardRows, sortInsights, toneClass, type ScorecardRow } from './model';
 
 interface Column {
   readonly key: string;
@@ -288,7 +288,14 @@ function BaseRentSpark({ dataset: d, id }: { dataset: PfDataset; id: (typeof PF_
   );
 }
 
-function MoverTable({ title, movers }: { title: string; movers: readonly PfAccountMover[] }) {
+function MoverTable({ title, movers, partial }: { title: string; movers: readonly PfAccountMover[]; partial: string | null }) {
+  if (partial !== null) {
+    return (
+      <p className="pf-note" style={{ marginTop: 10 }} data-testid="pf-movers-nm">
+        {title}: n/m ({partial}); a year-over-year account comparison needs both periods complete.
+      </p>
+    );
+  }
   if (movers.length === 0) return null;
   return (
     <>
@@ -379,8 +386,8 @@ function PropertyDetail({ dataset: d, id, onOpenProperty }: { dataset: PfDataset
         <div>
           {p.kind === 'monthly' ? (
             <>
-              <MoverTable title={`Largest account movers, ${ytdLabel}`} movers={d.account_movers[p.id].YTD26_vs_YTD25} />
-              <MoverTable title={`Largest account movers, ${periodLabel('FY2025')} vs ${periodLabel('FY2024')}`} movers={d.account_movers[p.id].FY2025_vs_FY2024} />
+              <MoverTable title={`Largest account movers, ${ytdLabel}`} movers={d.account_movers[p.id].YTD26_vs_YTD25} partial={moverComparisonPartial(d, p.id, 'YTD26_vs_YTD25')} />
+              <MoverTable title={`Largest account movers, ${periodLabel('FY2025')} vs ${periodLabel('FY2024')}`} movers={d.account_movers[p.id].FY2025_vs_FY2024} partial={moverComparisonPartial(d, p.id, 'FY2025_vs_FY2024')} />
             </>
           ) : (
             <div className="pf-note">Account movers need monthly exports; entity statements are annual only.</div>

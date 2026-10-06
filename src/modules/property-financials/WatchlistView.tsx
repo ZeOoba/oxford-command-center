@@ -20,7 +20,7 @@ export function WatchlistView({ dataset: d, onOpenProperty }: { dataset: PfDatas
   const sevId = useId();
   const options = useMemo(() => watchlistPropertyOptions(d.insights), [d.insights]);
   const items = useMemo(() => filterWatchlist(d.insights, { property, severity }), [d.insights, property, severity]);
-  const movers = useMemo(() => topOpexMovers(d), [d]);
+  const { rows: movers, excluded } = useMemo(() => topOpexMovers(d), [d]);
   const current = monthRangeLabel(d.meta.periods.YTD26.months);
   const priorYear = d.meta.periods.YTD25.months[d.meta.periods.YTD25.months.length - 1]?.slice(0, 4) ?? '';
   const taxDown = movers.some((m) => m.mover.category === RE_TAX && m.mover.delta < 0);
@@ -92,6 +92,11 @@ export function WatchlistView({ dataset: d, onOpenProperty }: { dataset: PfDatas
             </tbody>
           </table>
         </div>
+        {excluded.length > 0 && (
+          <p className="pf-note" data-testid="pf-movers-excluded">
+            Left out (partial comparison period, no year-over-year): {excluded.map((e) => `${e.label}: ${e.reason}`).join('; ')}.
+          </p>
+        )}
         {taxDown && (
           <p className="pf-note">Real estate tax lines show large decreases because installments paid later in the year are not yet in the {current.split(' ').pop()} figures.</p>
         )}

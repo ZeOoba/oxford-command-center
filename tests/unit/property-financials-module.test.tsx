@@ -111,6 +111,22 @@ describe('Overview (real dataset)', () => {
   it('lede is the computed sentence', () => {
     renderModule();
     expect(screen.getByTestId('pf-lede').textContent).toBe(overviewLede(D));
+    expect(screen.queryByTestId('pf-partial-note')).toBeNull();
+  });
+
+  it('F1: a partial same-store member -> KPI changes n/m, lede prints no %, chart note names the member', () => {
+    const m = structuredClone(D);
+    (m.properties['1100 Rarig'].periods as Record<string, { n_months: number }>).YTD26!.n_months = 8;
+    renderModule('', { data: response({ dataset: m }) });
+    const lede = screen.getByTestId('pf-lede').textContent!;
+    expect(lede).toBe(overviewLede(m));
+    expect(lede).not.toMatch(/\d+\.\d%/);
+    const kpis = screen.getByTestId('pf-kpis');
+    expect(within(kpis).queryByText('+2.6%')).toBeNull();
+    expect(within(kpis).queryByText('+6.6%')).toBeNull();
+    expect(screen.getByTestId('pf-partial-note').textContent).toBe(
+      'Percent changes are n/m: 1100 Rarig: partial period: 8 of 9 months. The dollar bars compare unequal month counts; read them as indicative only.',
+    );
   });
 
   it('KPI tiles equal the calc-lib outputs: base rent +2.6%, opex excl. RE tax +6.6%', () => {
@@ -253,6 +269,20 @@ describe('Scorecard (real dataset)', () => {
     const q = new URLSearchParams(lastSearch);
     expect(q.get('view')).toBe('explorer');
     expect(q.get('p')).toBe('FVC');
+  });
+
+  it('F2: a partial comparison shows a labelled n/m note instead of account movers', () => {
+    const { container } = renderModule('?view=scorecard');
+    fireEvent.click(within(rowFor(container, '3883 Livingston')).getByRole('button', { expanded: false }));
+    const detail = screen.getByTestId('pf-detail-3883 Livingston');
+    const notes = within(detail).getAllByTestId('pf-movers-nm');
+    expect(notes.map((n) => n.textContent)).toEqual([
+      'Largest account movers, Jan-Sep 26 vs Jan-Sep 25: n/m (partial period: 3 of 9 months (Jan-Sep 25)); a year-over-year account comparison needs both periods complete.',
+      'Largest account movers, FY25 vs FY24: n/m (partial period: 6 of 12 months (FY25)); a year-over-year account comparison needs both periods complete.',
+    ]);
+    // a complete entity still lists its movers, no n/m note
+    fireEvent.click(within(rowFor(container, 'FVC')).getByRole('button', { expanded: false }));
+    expect(within(screen.getByTestId('pf-detail-FVC')).queryByTestId('pf-movers-nm')).toBeNull();
   });
 
   it('annual entities show their statement periods and below-NOI items', () => {

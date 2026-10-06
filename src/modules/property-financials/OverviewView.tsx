@@ -12,7 +12,7 @@ import { DivergingBars } from './charts/DivergingBars';
 import { MetricCell } from './components';
 import { InsightRow } from './InsightWorkflow';
 import { usePfInsightStatuses } from './hooks';
-import { cubeMonths, fmtMonth, monthRangeLabel, opexDeltaItems, overviewKpis, overviewLede, toneClass, whereTheMoneyIs } from './model';
+import { cubeMonths, fmtMonth, monthRangeLabel, opexDeltaItems, overviewKpis, overviewLede, portfolioViewPartial, toneClass, whereTheMoneyIs } from './model';
 
 const kUsd = (v: number) => usd(v, 'k').replace('.0K', 'K');
 const signedK = (v: number) => `${v >= 0 ? '+' : '-'}${kUsd(Math.abs(v))}`;
@@ -36,7 +36,8 @@ export function OverviewView({ dataset: d, onOpenProperty }: { dataset: PfDatase
     const months = cubeMonths(d, ytd.members);
     return sameStoreSeries(d.monthly, ytd.members, months);
   }, [d, ytd.members]);
-  const deltas = useMemo(() => opexDeltaItems(ytd.view), [ytd.view]);
+  const ytdPartial = useMemo(() => portfolioViewPartial(d, 'same_store_YTD26_vs_YTD25'), [d]);
+  const deltas = useMemo(() => opexDeltaItems(ytd.view, ytdPartial), [ytd.view, ytdPartial]);
   const money = useMemo(() => whereTheMoneyIs(d.insights), [d.insights]);
   const statuses = usePfInsightStatuses();
   const byId = useMemo(() => new Map((statuses.data?.records ?? []).map((r) => [r.insightId, r])), [statuses.data]);
@@ -102,6 +103,11 @@ export function OverviewView({ dataset: d, onOpenProperty }: { dataset: PfDatase
             negative={{ label: 'Cost down', color: 'var(--pf-s1)' }}
             ariaLabel={`Change in operating cost by category, ${k.periodLabel} versus ${priorLabel}`}
           />
+          {ytdPartial !== null && (
+            <p className="pf-note" style={{ marginTop: 6 }} data-testid="pf-partial-note">
+              Percent changes are n/m: {ytdPartial}. The dollar bars compare unequal month counts; read them as indicative only.
+            </p>
+          )}
           <p className="pf-note" style={{ marginTop: 6 }} data-testid="pf-tax-note">
             {tax && tax.value < 0
               ? `Real estate tax reads ${signedK(tax.value)}: this is cash basis, so installments not yet paid are missing from the current period; compare tax on full years. `

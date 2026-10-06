@@ -91,17 +91,18 @@ describe('Watchlist: largest account movers', () => {
   it('opex accounts only, all PM assets, |delta| > $2,500, top 24 by |delta|', () => {
     expect(WATCHLIST_MOVER_RULES).toMatchObject({ minAbsDelta: 2500, limit: 24 });
     const all: Array<{ id: string; delta: number; category: string }> = [];
-    for (const id of PF_MONTHLY_ENTITY_IDS) for (const m of D.account_movers[id].YTD26_vs_YTD25) all.push({ id, delta: m.delta, category: m.category });
+    // F2: 3883 Livingston's YTD25 is partial (3 of 9 months), so its movers are no YoY and are left out
+    for (const id of PF_MONTHLY_ENTITY_IDS) if (id !== '3883 Livingston') for (const m of D.account_movers[id].YTD26_vs_YTD25) all.push({ id, delta: m.delta, category: m.category });
     const want = all.filter((x) => Math.abs(x.delta) > 2500 && (OPEX_CATEGORIES as readonly string[]).includes(x.category)).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 24);
-    const got = topOpexMovers(D);
+    const got = topOpexMovers(D).rows;
     expect(got).toHaveLength(24);
     expect(got.map((g) => [g.entity, g.mover.delta])).toEqual(want.map((w) => [w.id, w.delta]));
     expect(new Set(got.map((g) => g.entity)).size).toBeGreaterThan(1);
   });
 
   it('the dollar floor and the limit come from the rules object', () => {
-    expect(topOpexMovers(D, { ...WATCHLIST_MOVER_RULES, limit: 5 })).toHaveLength(5);
-    const big = topOpexMovers(D, { ...WATCHLIST_MOVER_RULES, minAbsDelta: 20_000, limit: 100 });
+    expect(topOpexMovers(D, { ...WATCHLIST_MOVER_RULES, limit: 5 }).rows).toHaveLength(5);
+    const big = topOpexMovers(D, { ...WATCHLIST_MOVER_RULES, minAbsDelta: 20_000, limit: 100 }).rows;
     expect(big.every((g) => Math.abs(g.mover.delta) > 20_000)).toBe(true);
   });
 });
