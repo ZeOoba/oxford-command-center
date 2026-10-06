@@ -14,9 +14,14 @@
 //     the repo's Windows AV/indexer-safe publish), so a reader or a crash never sees a partial file;
 //   - a corrupt or schema-invalid store FAILS LOUD (StatusStoreCorruptError) and is never overwritten
 //     — silently resetting would erase every owner/due date (cf. server/brief/state.ts).
+// Versioning (L4): each record stores insightHash, a sha256 of the insight's finding + impact text at
+// the time it was saved (computed by the server from the loaded dataset, never sent by the client).
+// When an insight is restated under the same id the hash differs and the record is served as
+// version 'earlier' (kept, labelled, never silently reopened or deleted); a record written before
+// hashes existed has none and reads as 'unknown'.
 // Known limit: two separate PROCESSES writing at the same instant can lose one update (last rename
 // wins); the file itself stays valid. Only the Brain Server writes this file.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
@@ -70,10 +75,33 @@ export const InsightStatusRecord = z
     status: z.enum(PF_INSIGHT_STATUSES),
     dismissReason: Reason.nullable(),
     updatedAt: z.string().datetime(),
+    /** sha256 of the insight's finding + impact text when saved; absent on records written before L4. */
+    insightHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   })
   .strict()
   .superRefine(dismissRule);
 export type InsightStatusRecord = z.infer<typeof InsightStatusRecord>;
+
+/** The insight text a status was decided on: finding + impact (amount and basis). */
+export interface InsightVersionFields {
+  readonly finding: string;
+  readonly annual_impact_usd: number | null;
+  readonly impact_basis: string | null;
+}
+
+/** sha256 (hex) of the insight's finding + impact text: changes whenever its figures are restated. */
+export function insightFingerprint(i: InsightVersionFields): string {
+  return createHash('sha256').update(JSON.stringify([i.finding, i.annual_impact_usd, i.impact_basis])).digest('hex');
+}
+
+export type InsightRecordVersion = 'current' | 'earlier' | 'unknown';
+export type InsightStatusView = InsightStatusRecord & { readonly version: InsightRecordVersion };
+
+/** The stored record plus which version of the insight it was set against (the record itself is unchanged). */
+export function withVersion(record: InsightStatusRecord, currentHash: string | undefined): InsightStatusView {
+  const version: InsightRecordVersion = !record.insightHash || !currentHash ? 'unknown' : record.insightHash === currentHash ? 'current' : 'earlier';
+  return { ...record, version };
+}
 
 const StoreFile = z
   .object({
@@ -140,6 +168,7 @@ export type PutInsightStatusResult =
 /**
  * Validate and persist one insight's workflow state. `knownIds` is the loaded dataset's insights[]
  * id set: an id outside it is `not_found` and nothing is written. Issues carry Zod path + code only.
+ * `insightHash` (insightFingerprint of the insight as loaded) is stored with the record.
  */
 export function putInsightStatus(
   path: string,
@@ -147,6 +176,7 @@ export function putInsightStatus(
   body: unknown,
   knownIds: ReadonlySet<string>,
   now: Date,
+  insightHash?: string,
 ): PutInsightStatusResult {
   if (!INSIGHT_ID_RE.test(insightId) || !knownIds.has(insightId)) return { ok: false, reason: 'not_found' };
   const parsed = InsightStatusInput.safeParse(body);
@@ -161,6 +191,7 @@ export function putInsightStatus(
     status: parsed.data.status,
     dismissReason: parsed.data.dismissReason ?? null,
     updatedAt: now.toISOString(),
+    ...(insightHash !== undefined ? { insightHash } : {}),
   };
   writeStore(path, { version: 1, records: { ...store.records, [insightId]: record } });
   return { ok: true, record };

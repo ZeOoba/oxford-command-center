@@ -27,7 +27,7 @@ import { propertyFinancialsDir, propertyFinancialsStatusPath } from './config';
 import { buildLiveSf, type LiveSfSnapshot } from './live-sf';
 import { loadPropertyFinancials, NODE_PF_FS, type PfFsDeps } from './loader';
 import { buildEntityMapping } from './mapping';
-import { putInsightStatus, readInsightStatuses, StatusStoreCorruptError } from './status-store';
+import { insightFingerprint, putInsightStatus, readInsightStatuses, StatusStoreCorruptError, withVersion } from './status-store';
 
 export interface PropertyFinancialsApiDeps {
   dir?: () => string;
@@ -92,10 +92,11 @@ export function propertyFinancialsApi(_getDb: () => WarehouseDb, deps: PropertyF
       if (e instanceof StatusStoreCorruptError) return c.json(CORRUPT, 500);
       throw e;
     }
-    const known = r.dataset ? new Set(r.dataset.insights.map((i) => i.id)) : null;
+    const known = r.dataset ? new Map(r.dataset.insights.map((i) => [i.id, insightFingerprint(i)])) : null;
     const ids = Object.keys(stored).sort();
     return c.json({
-      records: ids.filter((id) => !known || known.has(id)).map((id) => stored[id]!),
+      // Each record says whether it was set against the insight as currently loaded (L4).
+      records: ids.filter((id) => !known || known.has(id)).map((id) => withVersion(stored[id]!, known?.get(id))),
       orphanedIds: known ? ids.filter((id) => !known.has(id)) : [],
     });
   });
@@ -113,13 +114,16 @@ export function propertyFinancialsApi(_getDb: () => WarehouseDb, deps: PropertyF
     const r = await load();
     if (!r.dataset) return c.json({ error: 'property financials dataset unavailable' }, 503);
     let result;
+    const id = c.req.param('id');
+    const insight = r.dataset.insights.find((i) => i.id === id);
+    const hash = insight ? insightFingerprint(insight) : undefined;
     try {
-      result = putInsightStatus(statusPathOf(), c.req.param('id'), body, new Set(r.dataset.insights.map((i) => i.id)), now());
+      result = putInsightStatus(statusPathOf(), id, body, new Set(r.dataset.insights.map((i) => i.id)), now(), hash);
     } catch (e) {
       if (e instanceof StatusStoreCorruptError) return c.json(CORRUPT, 500);
       throw e;
     }
-    if (result.ok) return c.json(result.record, 200);
+    if (result.ok) return c.json(withVersion(result.record, hash), 200);
     if (result.reason === 'not_found') return c.json({ error: 'unknown insight id' }, 404);
     return c.json({ error: 'invalid insight status', issues: result.issues }, 400);
   });

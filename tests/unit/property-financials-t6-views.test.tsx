@@ -129,6 +129,30 @@ describe('Rent & NOI levers', () => {
   });
 });
 
+describe('L4: status set against an earlier version of an item', () => {
+  const rec = (version?: 'current' | 'earlier' | 'unknown') => ({
+    records: [{ insightId: 'REC-01', owner: 'Asset mgmt', dueDate: null, status: 'resolved' as const, dismissReason: null, updatedAt: '2026-10-05T00:00:00Z', ...(version ? { version } : {}) }],
+    orphanedIds: [],
+  });
+
+  it('"earlier": the record is shown with a visible label, status kept (not reopened)', () => {
+    renderView('levers', rec('earlier'));
+    const card = panel().querySelector('article[data-insight="REC-01"]') as HTMLElement;
+    expect(within(card).getByText('Resolved')).toBeTruthy();
+    expect(within(card).getByTestId('pf-status-version').textContent).toBe('Status set against an earlier dataset version: figures restated since');
+  });
+
+  it('"unknown": labelled as an unknown version; "current" or absent: no label', () => {
+    renderView('levers', rec('unknown'));
+    expect(within(panel().querySelector('article[data-insight="REC-01"]') as HTMLElement).getByTestId('pf-status-version').textContent).toBe(
+      'Status set against an unknown dataset version',
+    );
+    cleanup();
+    renderView('levers', rec('current'));
+    expect(within(panel().querySelector('article[data-insight="REC-01"]') as HTMLElement).queryByTestId('pf-status-version')).toBeNull();
+  });
+});
+
 describe('Expense watchlist', () => {
   const ids = (root: HTMLElement) => [...root.querySelectorAll('article[data-insight]')].map((c) => c.getAttribute('data-insight'));
 

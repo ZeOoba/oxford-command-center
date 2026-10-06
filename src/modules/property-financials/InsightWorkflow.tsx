@@ -76,6 +76,16 @@ function useInsightWorkflow({ insight, record, workflowAvailable, onOpenProperty
       {record?.owner && <span>Owner: {record.owner}</span>}
       {record?.dueDate && <span>Due {record.dueDate}</span>}
       {record?.status === 'dismissed' && record.dismissReason && <span>Reason: {record.dismissReason}</span>}
+      {record?.version === 'earlier' && (
+        <span className="pf-neg" data-testid="pf-status-version">
+          Status set against an earlier dataset version: figures restated since
+        </span>
+      )}
+      {record?.version === 'unknown' && (
+        <span className="pf-mut" data-testid="pf-status-version">
+          Status set against an unknown dataset version
+        </span>
+      )}
       {entity && (
         <button type="button" className="pf-link" onClick={() => onOpenProperty(entity)}>
           View property
