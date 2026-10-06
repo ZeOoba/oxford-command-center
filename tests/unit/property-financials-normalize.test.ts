@@ -19,7 +19,7 @@ import {
   type RawRecord,
 } from '@analytics/property-financials/normalize';
 import { parseMonthlyLong, type MonthlyLongRow } from '@analytics/property-financials/aggregate';
-import { loadCsvText } from './property-financials-helpers';
+import { HAVE_AUDIT_CSV, auditCsvSkipMarker, loadCsvText } from './property-financials-helpers';
 
 const root = process.cwd();
 const CONFIG_DIR = resolve(root, 'scripts', 'property-financials', 'config');
@@ -216,7 +216,8 @@ describe('parseRawRecords', () => {
 const RAW_PATH = process.env.PF_RAW_RECORDS;
 const rawAvailable = typeof RAW_PATH === 'string' && RAW_PATH.length > 0 && existsSync(RAW_PATH);
 
-describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (PF_RAW_RECORDS)', () => {
+// Also needs the local-only monthly-long.csv (Gabriel ruling 2026-10-06) to compare against.
+describe.skipIf(!rawAvailable || !HAVE_AUDIT_CSV)('real raw records -> local monthly-long.csv (PF_RAW_RECORDS)', () => {
   // v03.1 (Gabriel ruling 2026-10-05): the committed 9620 State 350 2025-09 rows were re-parsed from the
   // statement (README "Known difference", now promoted). The reference raw export carries that recap with
   // no sections, so it reproduces every OTHER row; for 2025-09 the same lines are only reclassified.
@@ -225,7 +226,7 @@ describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (
   // "Prepaid Rental Income" rows that v1/v2 counted as contra-revenue. The reproduction therefore uses v3 (v3 =
   // v2 + that one exclusion; v2 = v1 for every AF / CF / A12 rule), not the v1 file pinned above.
   const MAPPING_V3 = parseAccountMapping(JSON.parse(readFileSync(resolve(CONFIG_DIR, 'account-mapping.v3.json'), 'utf8')));
-  it('reproduces every monthly-entity row of data/property-financials/monthly-long.csv exactly, in the committed order, except the corrected 9620 2025-09 period', () => {
+  it('reproduces every monthly-entity row of data/property-financials/monthly-long.csv exactly, in file order, except the corrected 9620 2025-09 period', () => {
     const raw = parseRawRecords(JSON.parse(readFileSync(RAW_PATH as string, 'utf8')));
     const registry = JSON.parse(readFileSync(resolve(CONFIG_DIR, 'entities.json'), 'utf8')) as { entities: Array<{ id: string; kind: 'monthly' | 'annual' }> };
     const kinds = Object.fromEntries(registry.entities.map((e) => [e.id, e.kind]));
@@ -272,6 +273,9 @@ describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (
     );
   });
 });
+
+// Only when the raw export is opted in: otherwise the placeholder below already explains the skip.
+if (rawAvailable) auditCsvSkipMarker();
 
 if (!rawAvailable) {
   it('real raw export test SKIPPED: set PF_RAW_RECORDS to the path of _raw_monthly_records.json (OneDrive Business/Property Financials/outputs) to run it', () => {

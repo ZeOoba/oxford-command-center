@@ -16,7 +16,7 @@ import type { CellValue, SheetSource } from '@analytics/property-financials/pars
 import { parseEntityRegistry } from '@analytics/property-financials/build-dataset';
 import { latestMappingVersion, loadConfig } from '../../scripts/property-financials/lib/io';
 import { collectSourceRecords, convertedName, parseSourcesConfig, resolveSourceDir, type SourcesConfig } from '../../scripts/property-financials/lib/sources';
-import { loadCsvText } from './property-financials-helpers';
+import { HAVE_AUDIT_CSV, auditCsvSkipMarker, loadCsvText } from './property-financials-helpers';
 
 const root = process.cwd();
 const CONFIG_DIR = resolve(root, 'scripts', 'property-financials', 'config');
@@ -239,6 +239,9 @@ const SOURCE_DIR = resolveSourceDir(SOURCES);
 const HAVE_SOURCES = GROUND_TRUTH_OPT_IN && existsSync(SOURCE_DIR);
 const CONVERTED_DIR = process.env.PF_CONVERTED_DIR?.trim() || null;
 
+// Only when the ground truth is opted in: the default run never reads the CSV here, so it needs no marker.
+if (HAVE_SOURCES) auditCsvSkipMarker();
+
 if (!HAVE_SOURCES) {
   it(`ground-truth parse of the real exports SKIPPED: set PF_GROUND_TRUTH=1 (or ${SOURCES.sourceDirEnv}=<statement folder>) to run it${
     GROUND_TRUTH_OPT_IN ? ` — opted in, but ${SOURCE_DIR} does not exist` : ''
@@ -278,8 +281,9 @@ function byEntityPeriod(rows: readonly MonthlyLongRow[]): Map<string, Map<string
 }
 
 describe.skipIf(!HAVE_SOURCES)(`ground truth against ${SOURCE_DIR}`, () => {
-  it(
-    'every readable statement normalises to the committed monthly-long.csv rows (0.005 tolerance), with no known differences; coverage is printed',
+  // Compares against the local-only monthly-long.csv (Gabriel ruling 2026-10-06): skipped without it.
+  it.skipIf(!HAVE_AUDIT_CSV)(
+    'every readable statement normalises to the local monthly-long.csv rows (0.005 tolerance), with no known differences; coverage is printed',
     async () => {
       const got = await collectSourceRecords(SOURCES, { sourceDir: SOURCE_DIR, convertedDir: CONVERTED_DIR, mapping: MAPPING, registry: REGISTRY });
       const rep = got.report;

@@ -19,9 +19,12 @@ import type { WarehouseDb } from '../../server/warehouse/db';
 import { warehouseJsonError } from '../../server/warehouse/json-errors';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
 import { ORA_CLIENT_HEADER, ORA_CLIENT_HEADER_VALUE } from '../../src/contracts/client-header';
+import { PF_DATA_DIR, SYNTHETIC_CSV_TEXT } from './property-financials-helpers';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
-const DATA_DIR = join(REPO_ROOT, 'data', 'property-financials');
+// PF_DATA_DIR honours PROPERTY_FINANCIALS_DIR (helpers). The CSV written into each temp dir is synthetic:
+// monthly-long.csv is local-only (Gabriel ruling 2026-10-06) and the API only surfaces its hash.
+const DATA_DIR = PF_DATA_DIR;
 const NOW = new Date(2026, 9, 5, 12, 0, 0);
 
 /** An insight of the committed dataset, as the router reads it. */
@@ -34,12 +37,13 @@ const noDb = (): WarehouseDb => {
   throw new Error('warehouse unopenable');
 };
 
-function setup(opts: { dataset?: boolean; snapshot?: () => Promise<LiveSfSnapshot | null> } = {}) {
+function setup(opts: { dataset?: boolean; csv?: boolean; snapshot?: () => Promise<LiveSfSnapshot | null> } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'pf-api-'));
   const dir = join(root, 'pf');
   if (opts.dataset !== false) {
     mkdirSync(dir);
-    for (const f of ['dataset.json', 'monthly-long.csv']) copyFileSync(join(DATA_DIR, f), join(dir, f));
+    copyFileSync(join(DATA_DIR, 'dataset.json'), join(dir, 'dataset.json'));
+    if (opts.csv !== false) writeFileSync(join(dir, 'monthly-long.csv'), SYNTHETIC_CSV_TEXT);
   }
   const statusPath = join(root, 'status.json');
   // Default: no Spine A snapshot in this process (the real default dynamically imports server/brain).
@@ -108,6 +112,19 @@ describe('GET /dataset', () => {
     expect(body.meta).toMatchObject({ version: 'v03', as_of: '2026-09-30', basis: 'cash', ageDays: 5, staleness: 'fresh' });
     expect(body.meta.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(body.meta.csvSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('no audit CSV (local-only by policy) → still 200 ok with the dataset; csvSha256 null, sanitized csvError', async () => {
+    const { app, root } = setup({ csv: false });
+    const res = await app.request('/dataset');
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const body = JSON.parse(text) as { availability: string; dataset: { insights: unknown[] } | null; meta: Record<string, unknown> };
+    expect(body.availability).toBe('ok');
+    expect(body.dataset?.insights).toHaveLength(21);
+    expect(body.meta).toMatchObject({ csvSha256: null, csvError: 'monthly-long.csv: stat failed (ENOENT)' });
+    expect(text).not.toContain('pf-api-');
+    expect(text).not.toContain(root.replace(/\\/g, '\\\\'));
   });
 
   it('missing dataset dir → 200 availability missing, dataset null', async () => {

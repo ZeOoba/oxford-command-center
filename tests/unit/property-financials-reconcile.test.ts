@@ -5,6 +5,9 @@
 // and requires each to tie to the cent (|diff| < 0.005) for all 11 entities and all periods. Ratios the
 // dataset stores rounded to 2 dp tie at that precision. Nothing here is tolerance-tuned: a miss is a
 // finding, not a flake.
+//
+// monthly-long.csv is LOCAL-ONLY (Gabriel ruling 2026-10-06): without it every CSV-backed suite here skips
+// with a visible marker (auditCsvSkipMarker); the parser and dataset-only checks still run.
 import { describe, expect, it } from 'vitest';
 import {
   ANNUAL_PERIODS,
@@ -28,12 +31,22 @@ import {
   type MonthlyLongRow,
 } from '@analytics/property-financials/aggregate';
 import { driverNature, driverTiming } from '@analytics/property-financials/metrics';
-import { loadCsvText, loadDataset } from './property-financials-helpers';
+import {
+  HAVE_AUDIT_CSV,
+  auditCsvSkipMarker,
+  describeWithAuditCsv,
+  itWithAuditCsv,
+  loadCsvText,
+  loadDataset,
+} from './property-financials-helpers';
 
 const D = loadDataset();
-const CSV_TEXT = loadCsvText();
-const ROWS = parseMonthlyLong(CSV_TEXT);
+// Empty stand-ins when the CSV is absent: every consumer below is CSV-gated, so these are never asserted on.
+const CSV_TEXT = HAVE_AUDIT_CSV ? loadCsvText() : '';
+const ROWS: MonthlyLongRow[] = HAVE_AUDIT_CSV ? parseMonthlyLong(CSV_TEXT) : [];
 const INDEX = indexRows(ROWS);
+
+auditCsvSkipMarker();
 
 const CENT = 0.005;
 const RATIO_2DP = 0.005 + 1e-9;
@@ -74,7 +87,7 @@ describe('parseCsv (dependency-free, RFC 4180 quoting)', () => {
 
   // v03.2 (prepaid-rent ruling 2026-10-06, mapping v3): 15,493 -> 15,227 rows; the 266 Yardi
   // "Prepaid Rental Income" rows (133 Broadway + 133 Red Branch) are excluded upstream.
-  it('parses the committed monthly-long.csv: 15,227 rows x 6 columns under the documented header', () => {
+  itWithAuditCsv('parses the local monthly-long.csv: 15,227 rows x 6 columns under the documented header', () => {
     const grid = parseCsv(CSV_TEXT);
     expect(grid[0]).toEqual(['entity', 'period', 'line_type', 'category', 'source_account', 'amount_usd']);
     expect(grid.length - 1).toBe(15_227);
@@ -83,7 +96,7 @@ describe('parseCsv (dependency-free, RFC 4180 quoting)', () => {
 });
 
 describe('parseMonthlyLong', () => {
-  it('types every row and only knows the 8 documented line types', () => {
+  itWithAuditCsv('types every row and only knows the 8 documented line types', () => {
     expect(ROWS).toHaveLength(15_227); // 15,493 before v03.2
     expect(LINE_TYPES).toEqual(['rev', 'opex', 'capex', 'dist', 'debt', 'nonop', 'inctax', 'noncash']);
     for (const r of ROWS) {
@@ -107,7 +120,7 @@ describe('parseMonthlyLong', () => {
 // Period keys
 // -------------------------------------------------------------------------------------------------
 
-describe('period keys', () => {
+describeWithAuditCsv('period keys', () => {
   it('monthly entities use meta.periods month lists; annual entities use the <year>-FY / 2026-YTD(thru ...) CSV keys', () => {
     expect(periodKeysFor('FY2024', 'monthly', D.meta.periods)).toEqual(D.meta.periods.FY2024.months);
     expect(periodKeysFor('TTM26', 'monthly', D.meta.periods)).toHaveLength(12);
@@ -129,11 +142,12 @@ describe('period keys', () => {
 // properties[id].periods — every figure, every entity, every period
 // -------------------------------------------------------------------------------------------------
 
-describe('properties[id].periods rebuild from the CSV alone', () => {
+describeWithAuditCsv('properties[id].periods rebuild from the CSV alone', () => {
   for (const id of PF_ENTITY_IDS) {
     const prop = D.properties[id];
     const periods = prop.kind === 'monthly' ? STANDARD_PERIODS : ANNUAL_PERIODS;
-    const rebuilt = rebuildPeriods(INDEX, id, prop.kind, D.meta.periods);
+    // Collection still runs inside a skipped describe: never rebuild from the empty stand-in.
+    const rebuilt: Partial<ReturnType<typeof rebuildPeriods>> = HAVE_AUDIT_CSV ? rebuildPeriods(INDEX, id, prop.kind, D.meta.periods) : {};
 
     for (const per of periods) {
       it(`${id} / ${per} ties to the cent`, () => {
@@ -195,7 +209,7 @@ describe('properties[id].periods rebuild from the CSV alone', () => {
 // monthly[id][YYYY-MM] — every month, every monthly entity
 // -------------------------------------------------------------------------------------------------
 
-describe('monthly[id][YYYY-MM] rebuild from the CSV alone', () => {
+describeWithAuditCsv('monthly[id][YYYY-MM] rebuild from the CSV alone', () => {
   for (const id of PF_MONTHLY_ENTITY_IDS) {
     it(`${id}: every cube month ties to the cent and no 2024+ CSV month is missing from the cube`, () => {
       const cube = D.monthly[id];
@@ -224,7 +238,7 @@ describe('monthly[id][YYYY-MM] rebuild from the CSV alone', () => {
 // history[id].yr / ytd totals (bonus parity: same CSV, full history back to the first month on file)
 // -------------------------------------------------------------------------------------------------
 
-describe('history[id].yr and .ytd totals rebuild from the CSV', () => {
+describeWithAuditCsv('history[id].yr and .ytd totals rebuild from the CSV', () => {
   for (const id of PF_MONTHLY_ENTITY_IDS) {
     it(`${id}: br / rev / opex / noi / n tie for every year and Jan-Sep slice`, () => {
       const h = D.history[id];
@@ -274,7 +288,7 @@ describe('history[id].yr.partial is NOT a usable flag for monthly entities', () 
 // history[id].drv nature tags recomputed from CSV timing (T2 rule, CSV-derived inputs)
 // -------------------------------------------------------------------------------------------------
 
-describe('history[id].drv[period][].nat from CSV account timing', () => {
+describeWithAuditCsv('history[id].drv[period][].nat from CSV account timing', () => {
   it('every driver of every monthly entity gets the dataset nature tag from CSV-derived activeMonths / topShare', () => {
     let checked = 0;
     for (const id of PF_MONTHLY_ENTITY_IDS) {

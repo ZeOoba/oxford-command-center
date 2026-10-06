@@ -23,7 +23,7 @@ import { parseMonthlyLong, type MonthlyLongRow } from '@analytics/property-finan
 import { buildDataset, parseCuratedInputs, parseDerivationConfig, parseEntityRegistry } from '@analytics/property-financials/build-dataset';
 import { parseAccountMapping } from '@analytics/property-financials/normalize';
 import { pyRound } from '@analytics/property-financials/pyfloat';
-import { loadCsvText, loadDataset } from './property-financials-helpers';
+import { HAVE_AUDIT_CSV, auditCsvSkipMarker, describeWithAuditCsv, loadCsvText, loadDataset } from './property-financials-helpers';
 
 const root = process.cwd();
 const CONFIG_DIR = resolve(root, 'scripts', 'property-financials', 'config');
@@ -73,8 +73,12 @@ describe('entities.json agrees with the contract constants', () => {
   });
 });
 
-describe('a 12th entity added to the registry + CSV only flows through the builder with no code change', () => {
-  const ROWS = parseMonthlyLong(loadCsvText());
+// Builds from the local-only monthly-long.csv (Gabriel ruling 2026-10-06): skipped with a visible marker without it.
+auditCsvSkipMarker();
+
+describeWithAuditCsv('a 12th entity added to the registry + CSV only flows through the builder with no code change', () => {
+  // Collection still runs inside a skipped describe: nothing below may touch the CSV when it is absent.
+  const ROWS: MonthlyLongRow[] = HAVE_AUDIT_CSV ? parseMonthlyLong(loadCsvText()) : [];
   const NEW_ID = 'Zeta Flex Park';
   // Synthetic rows: 1100 Rarig's rows re-labelled and scaled, so every layout path (periods, cube,
   // movers, history, run-rate) is exercised with plausible shapes. Not real data.
@@ -87,7 +91,7 @@ describe('a 12th entity added to the registry + CSV only flows through the build
     ],
   };
   const curated = { ...CURATED, sf: { ...CURATED.sf, [NEW_ID]: { sf: 12000, leased_sf: 11000, occ: 0.9167, note: 'synthetic' } } };
-  const built = buildDataset({ rows: [...ROWS, ...synthetic], registry, curated, derivation: DERIVATION, categories: MAPPING.categories }) as Record<string, Record<string, unknown>>;
+  const built = (HAVE_AUDIT_CSV ? buildDataset({ rows: [...ROWS, ...synthetic], registry, curated, derivation: DERIVATION, categories: MAPPING.categories }) : {}) as Record<string, Record<string, unknown>>;
 
   it('appears in properties, monthly, account_movers, history and sf with the full derived shape', () => {
     const p = built.properties![NEW_ID] as Record<string, unknown>;
