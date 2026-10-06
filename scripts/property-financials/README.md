@@ -62,7 +62,8 @@ copy followed by the property-financials test files (reconcile / golden / build-
 | File | Purpose |
 |---|---|
 | `config/sources.json` | where the statement files live (`sourceDirDefault`, `$PF_SOURCE_DIR`), which PM folder feeds which entity in which layout, the `P&L <year>[ YTD] -- <entity>` file pattern, which extensions are readable and which need conversion. A folder / file whose entity matches an `excludedEntities` pattern (Northwood) is never opened. |
-| `config/account-mapping.v2.json` | account → (line_type, category) rules, first match wins, every hit audited by `id`; `excludedEntities` (Northwood patterns `2203`, `northwood`); the category lists. v2 = v1 byte-identical for AF / CF / A12 + the `QB-*` QuickBooks rules (reproduce `annual-statements.csv`) + `CF-OWNER-CASH-BALANCE` (cash-balance lines on the annual Yardi export, cross-check files only). The CLIs default to the highest version present. An account no rule matches **fails the run**. |
+| `config/account-mapping.v3.json` | **current default.** v2 byte-identical (same rules, same order) + `CF-RENTAL-REVENUE-PREPAID`, placed ahead of `CF-RENTAL-REVENUE-CONTRA`: the Yardi cash-flow `RENTAL REVENUE › Prepaid Rental Income` line is EXCLUDED, like AppFolio `Unallocated Prepays` (Gabriel ruling 2026-10-06 — one prepaid-rent treatment for every layout; dataset v03.2). Pinned by `tests/unit/property-financials-mapping-v3.test.ts`. |
+| `config/account-mapping.v2.json` | account → (line_type, category) rules, first match wins, every hit audited by `id`; `excludedEntities` (Northwood patterns `2203`, `northwood`); the category lists. v2 = v1 byte-identical for AF / CF / A12 + the `QB-*` QuickBooks rules (reproduce `annual-statements.csv`) + `CF-OWNER-CASH-BALANCE` (cash-balance lines on the annual Yardi export, cross-check files only). Superseded by v3; still loadable with `--mapping v2`. The CLIs default to the highest version present. An account no rule matches **fails the run**. |
 | `config/account-mapping.v1.json` | kept verbatim: the version the committed CSV was reproduced with (T9a). |
 | `config/entities.json` | entity registry: id, label, kind (`monthly` / `annual`), source layout (`AF` AppFolio, `CF` Yardi cash-flow, `A12` 12-month recap, `QB` QuickBooks), same-store / FY-same-store / lease-up flags, warehouse `canonicalId` (read-only join hint). |
 | `config/derivation.v1.json` | selection thresholds: account movers (`|Δ| ≥ 3,000` FY / `≥ 2,500` YTD), drivers (`|Δ| ≥ 1,500`, top 16). |
@@ -175,6 +176,19 @@ lease-up-excluded so no portfolio view moved. The recap's MANAGEMENT FEE EXPENSE
 `5500 CAM EXPENSES` group, so mapping v2 gained `A12-EXP-MGMT-ANY-GROUP` to file it as Management fees like
 every other month. The committed CSV now ties to the statements everywhere (the gated test has no known
 differences); before/after figures are in `data/property-financials/data-dictionary.md` (v03.1 correction).
+
+### Prepaid rent, one treatment for every layout — PROMOTED 2026-10-06 (Gabriel ruling; dataset v03.2, mapping v3)
+
+Before v3 the AppFolio `Unallocated Prepays` line was excluded (`AF-INC-UNALLOCATED-PREPAYS`) while the Yardi
+cash-flow `RENTAL REVENUE › Prepaid Rental Income` line was revenue under "Vacancy / waivers / bad debt"
+(`CF-RENTAL-REVENUE-CONTRA`). v3 excludes the Yardi line too. It exists only for 1900 Broadway and 9050 Red Branch
+(133 rows each, 2015-09..2026-09; net +$REDACTED-AMT and +$REDACTED-AMT over the whole history, but swinging up to $27.8K in a
+month). 29000 Info Lane carries its prepaid rent only as `ADJUSTMENTS › Prepaid Rent`, already excluded by
+`CF-ADJ-BALANCE-SHEET`, so it does not move. The rebuild removed exactly those 266 CSV rows (15,493 → 15,227) and
+differed from the committed dataset only under Broadway, Red Branch and the four same-store / PM-only portfolio
+views (revenue and NOI only; base rent, reimbursements, opex and capex unchanged). The FY2024 / FY2025 Yardi annual
+statements still tie to the monthly CSV to the dollar (the annual files carry the same line, excluded by the same
+rule). Before/after figures: `data/property-financials/data-dictionary.md` (v03.2).
 
 ## Live square footage (T9b part 2; `server/property-financials/live-sf.ts`, `src/analytics/property-financials/live-sf.ts`)
 

@@ -102,12 +102,14 @@ describe('gapsForEntity — data_quality matcher over the 11 entities', () => {
     const shape = Object.fromEntries(PF_ENTITY_IDS.map((id) => [id, gapsForEntity(D, id).map((x) => x.source)]));
     expect(shape).toEqual({
       '1100 Rarig': ['data_quality'],
-      '1900 Broadway': ['data_quality'],
+      // v03.2 (prepaid-rent ruling 2026-10-06): the NOI-definition note now names Broadway and Red Branch
+      // (their Yardi Prepaid Rental Income is excluded), so each gains that note — was ['data_quality'].
+      '1900 Broadway': ['data_quality', 'data_quality'],
       '29000 Info Lane': ['data_quality'],
       '3034 Westerville': ['data_quality'],
       '3540 E 5th': ['data_quality', 'lease'],
       '3883 Livingston': ['data_quality', 'data_quality'],
-      '9050 Red Branch': ['data_quality'],
+      '9050 Red Branch': ['data_quality', 'data_quality'],
       '9620 State 350': ['data_quality', 'data_quality'],
       FVC: ['data_quality', 'data_quality', 'data_quality', 'data_quality', 'mapping'],
       '55 New Plant (EGFLLC)': ['data_quality', 'lease'],

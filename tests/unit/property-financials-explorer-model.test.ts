@@ -128,12 +128,14 @@ describe('property cards', () => {
   it('golden latest FULL-year NOI on each card (rounded dollars)', () => {
     const golden: Record<PfEntityId, [string, number]> = {
       '1100 Rarig': ['2025', REDACTED-AMT],
-      '1900 Broadway': ['2025', 365_562],
+      // v03.2 (prepaid-rent ruling 2026-10-06): Yardi Prepaid Rental Income excluded from revenue; was 365_562.
+      '1900 Broadway': ['2025', 366_902],
       '29000 Info Lane': ['2025', 487_373],
       '3034 Westerville': ['2025', REDACTED-AMT],
       '3540 E 5th': ['2025', 279_963],
       '3883 Livingston': ['2026 (9 mo)', REDACTED-AMT],
-      '9050 Red Branch': ['2025', 905_390],
+      // v03.2 prepaid-rent ruling: was 905_390.
+      '9050 Red Branch': ['2025', 912_337],
       // REDACTED-AMT since the v03.1 correction (2026-10-05): the 2025-09 recap's $REDACTED-AMT of expense lines,
       // previously read as revenue, are opex now (was REDACTED-AMT = REDACTED-AMT + 2 x REDACTED-AMT).
       '9620 State 350': ['2025', REDACTED-AMT],

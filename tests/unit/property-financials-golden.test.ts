@@ -61,10 +61,13 @@ function monthlyProp(id: (typeof PF_MONTHLY_ENTITY_IDS)[number]): PfMonthlyPrope
 describe('golden normalized NOI (USD, rounded)', () => {
   const GOLDEN: Record<string, [fy24: number, fy25: number]> = {
     '1100 Rarig': [129_656, REDACTED-AMT],
-    '1900 Broadway': [360_191, 365_562],
+    // v03.2 (Gabriel ruling 2026-10-06, mapping v3): Yardi "Prepaid Rental Income" is excluded from revenue
+    // like AppFolio unallocated prepays. Was [360_191, 365_562] when it counted as contra-revenue.
+    '1900 Broadway': [358_852, 366_902],
     '29000 Info Lane': [466_052, 487_373],
     '3540 E 5th': [271_807, 279_963],
-    '9050 Red Branch': [837_125, 905_390],
+    // v03.2 prepaid-rent ruling: was [837_125, 905_390].
+    '9050 Red Branch': [838_196, 912_337],
     FVC: [793_335, 837_090],
     '55 New Plant (EGFLLC)': [404_495, 422_488],
     '1851 South Club Solar': [630_825, 507_472],
@@ -88,7 +91,9 @@ describe('golden normalized NOI (USD, rounded)', () => {
     }
   });
 
-  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent +2.6%, opex excl. RE tax +6.6%, NOI +5.3%', () => {
+  // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; NOI moved
+  // +5.3% -> +4.9% (YTD25 2,288,999 -> 2,297,654; YTD26 2,409,726 -> 2,409,530).
+  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent +2.6%, opex excl. RE tax +6.6%, NOI +4.9%', () => {
     const sum = (per: 'YTD25' | 'YTD26', f: (x: PfMonthlyProperty['periods']['YTD25']) => number) =>
       SAME_STORE.reduce((a, id) => a + f(monthlyProp(id).periods[per]), 0);
     const baseRent = pctChange(sum('YTD25', (x) => x.base_rent), sum('YTD26', (x) => x.base_rent));
@@ -99,7 +104,7 @@ describe('golden normalized NOI (USD, rounded)', () => {
     const noi = pctChange(sum('YTD25', (x) => x.noi), sum('YTD26', (x) => x.noi));
     expect(pct(baseRent.value)).toBe('+2.6%');
     expect(pct(opexExTax.value)).toBe('+6.6%');
-    expect(pct(noi.value)).toBe('+5.3%');
+    expect(pct(noi.value)).toBe('+4.9%'); // was +5.3% before v03.2
   });
 });
 

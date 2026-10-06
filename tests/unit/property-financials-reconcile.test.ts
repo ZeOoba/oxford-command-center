@@ -72,17 +72,19 @@ describe('parseCsv (dependency-free, RFC 4180 quoting)', () => {
     expect(() => parseCsv('a,"b\n')).toThrow(/unterminated/i);
   });
 
-  it('parses the committed monthly-long.csv: 15,493 rows x 6 columns under the documented header', () => {
+  // v03.2 (prepaid-rent ruling 2026-10-06, mapping v3): 15,493 -> 15,227 rows; the 266 Yardi
+  // "Prepaid Rental Income" rows (133 Broadway + 133 Red Branch) are excluded upstream.
+  it('parses the committed monthly-long.csv: 15,227 rows x 6 columns under the documented header', () => {
     const grid = parseCsv(CSV_TEXT);
     expect(grid[0]).toEqual(['entity', 'period', 'line_type', 'category', 'source_account', 'amount_usd']);
-    expect(grid.length - 1).toBe(15_493);
+    expect(grid.length - 1).toBe(15_227);
     expect(grid.every((r) => r.length === 6)).toBe(true);
   });
 });
 
 describe('parseMonthlyLong', () => {
   it('types every row and only knows the 8 documented line types', () => {
-    expect(ROWS).toHaveLength(15_493);
+    expect(ROWS).toHaveLength(15_227); // 15,493 before v03.2
     expect(LINE_TYPES).toEqual(['rev', 'opex', 'capex', 'dist', 'debt', 'nonop', 'inctax', 'noncash']);
     for (const r of ROWS) {
       expect(Number.isFinite(r.amount_usd)).toBe(true);
@@ -173,15 +175,19 @@ describe('properties[id].periods rebuild from the CSV alone', () => {
     expect(ROWS.some((x) => x.line_type === 'debt')).toBe(true);
   });
 
-  it('security-deposit receipts are absent from the CSV revenue rows (excluded upstream), prepaid rent rows are present and counted', () => {
+  it('security-deposit receipts and prepaid rent are absent from the CSV revenue rows (both excluded upstream, every layout)', () => {
     const revAccounts = new Set(ROWS.filter((x) => x.line_type === 'rev').map((x) => x.source_account));
     // Deposit RECEIPTS would be a liability movement; only forfeiture INCOME accounts appear.
     for (const acc of revAccounts) {
       if (/deposit/i.test(acc)) expect(acc, acc).toMatch(/forfeit/i);
     }
-    const prepaid = ROWS.filter((x) => /prepaid/i.test(x.source_account));
-    expect(prepaid.length).toBeGreaterThan(0);
-    expect(new Set(prepaid.map((x) => `${x.line_type}|${x.category}`))).toEqual(new Set(['rev|Vacancy / waivers / bad debt']));
+    // Gabriel ruling 2026-10-06 (v03.2, mapping v3): prepaid rent is excluded for every layout — AppFolio
+    // "Unallocated Prepays" and Yardi "Prepaid Rental Income" alike. Before v03.2 the 266 Yardi rows were
+    // revenue under "Vacancy / waivers / bad debt".
+    for (const acc of revAccounts) {
+      expect(/prepaid|prepay/i.test(acc), acc).toBe(false);
+    }
+    expect(ROWS.some((x) => /prepaid|prepay/i.test(x.source_account))).toBe(false);
   });
 });
 

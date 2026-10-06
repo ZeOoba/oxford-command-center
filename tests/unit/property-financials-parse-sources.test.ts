@@ -68,8 +68,10 @@ describe('sources.json', () => {
     const added = v2.rules.filter((r) => !v1.rules.some((x) => x.id === r.id));
     expect(added.length).toBeGreaterThan(0);
     for (const r of added) expect(r.when.layout === 'QB' || r.id === 'CF-OWNER-CASH-BALANCE' || r.id === 'A12-EXP-MGMT-ANY-GROUP', r.id).toBe(true);
-    expect(latestMappingVersion()).toBe('v2');
-    expect(loadConfig().mapping.version).toBe('v2');
+    // v3 (2026-10-06, prepaid-rent ruling) is now the default; its own invariants are pinned in
+    // property-financials-mapping-v3.test.ts. v2 stays loadable by name.
+    expect(latestMappingVersion()).toBe('v3');
+    expect(loadConfig({ mappingVersion: 'v2' }).mapping.version).toBe('v2');
   });
 
   it('a 9620 recap MANAGEMENT FEE EXPENSE line is a management fee whatever EXPENSE group it is carried under', () => {

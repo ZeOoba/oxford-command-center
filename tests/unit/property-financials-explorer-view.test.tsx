@@ -74,7 +74,7 @@ describe('card grid', () => {
     expect(pressed.map((c) => c.getAttribute('data-entity'))).toEqual(['1900 Broadway']);
     expect(card('1100 Rarig').textContent).toContain('$REDACTED-AMT');
     expect(card('1100 Rarig').textContent).toContain('NOI 2025');
-    expect(card('9050 Red Branch').textContent).toContain('$905,390');
+    expect(card('9050 Red Branch').textContent).toContain('$912,337'); // was $905,390 before the v03.2 prepaid-rent ruling
     expect(card('FVC').textContent).toContain('$837,090');
     expect(card('55 New Plant (EGFLLC)').textContent).toContain('$422,488');
     expect(card('1851 South Club Solar').textContent).toContain('$507,472');
