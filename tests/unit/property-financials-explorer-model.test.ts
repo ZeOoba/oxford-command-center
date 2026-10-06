@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { PF_ENTITY_IDS, type PfDataset, type PfEntityId } from '@contracts/property-financials';
 import { cagr, pctChange, ratio } from '@analytics/property-financials/metrics';
+import { pct, pctLevel, usd } from '@analytics/property-financials/format';
 import {
   DEFAULT_EXPLORER_ENTITY,
   EXPLORER_RULES,
@@ -286,6 +287,58 @@ describe('chart data (series slots, tooltips)', () => {
     expect(s.series[0]!.id).toBe('Real estate & property tax');
     const i25 = s.columns.findIndex((c) => c.key === '2025');
     expect(s.tips[i25]![0]!.join(' ')).toMatch(/% of operating expense/);
+  });
+
+  it('F3: a net-credit category tooltip shows the signed value, the categoryTable change and no fake -100%', () => {
+    const cases = [
+      { id: '9620 State 350' as const, col: 'S26', cat: 'Real estate & property tax' as const, value: -6583.05 },
+      { id: '3540 E 5th' as const, col: '2024', cat: 'Grounds / snow / lot' as const, value: -230 },
+    ];
+    for (const c of cases) {
+      const gs = periodGroups(D, c.id);
+      const s = opexStack(gs);
+      const i = s.columns.findIndex((x) => x.key === c.col);
+      const k = s.series.findIndex((x) => x.id === c.cat);
+      expect(i).toBeGreaterThanOrEqual(0);
+      expect(s.values[i]![k]).toBe(c.value);
+      const tip = s.tips[i]![k]!;
+      // pinned against the category table the Explorer prints beside the chart
+      const row = buildExplorer(D, c.id).categories.opex.find((r) => r.label === c.cat)!;
+      const cell = row.cells[i]!;
+      expect(cell.value).toBe(c.value);
+      expect(tip[1]).toBe(`${usd(c.value, 'f')} (net credit)`);
+      const g = gs[i]!;
+      const pv = g.prev!.row.cats[c.cat] ?? 0;
+      expect(cell.change).not.toBeNull();
+      expect(tip[2]).toBe(`${pct(cell.change!.value)} vs ${g.prev!.label} (${usd(c.value - pv, 'f')})`);
+      expect(tip.join(' ')).not.toMatch(/-100\.0%/);
+      expect(tip.join(' ')).not.toMatch(/\$0\b/);
+      expect(tip[3]).toBe('Share of operating expense: n/m (net credit)');
+    }
+  });
+
+  it('F3: a partial period says why it carries no change line (like the revenue / opex / NOI bars)', () => {
+    let seen = 0;
+    for (const id of PF_ENTITY_IDS) {
+      const gs = periodGroups(D, id);
+      const s = opexStack(gs);
+      gs.forEach((g, i) => {
+        if (!g.partial) return;
+        seen++;
+        for (const tip of s.tips[i]!) expect(tip).toContain('Partial period: not comparable');
+      });
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  it('F3: a positive category share is taken against the signed category total', () => {
+    const gs = periodGroups(D, '9620 State 350');
+    const s = opexStack(gs);
+    const i = s.columns.findIndex((x) => x.key === 'S26');
+    const k = s.series.findIndex((x) => x.id === 'Insurance');
+    const cats = gs[i]!.row.cats;
+    const total = Object.values(cats).reduce((a, v) => a + (v ?? 0), 0);
+    expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / total)} of operating expense`);
   });
 
   it('timeline marker and lease step tooltips', () => {

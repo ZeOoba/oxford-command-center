@@ -1,8 +1,8 @@
 // scripts/property-financials/lib/io.ts — file IO shared by the two Property Financials CLIs.
 // All pure logic lives in src/analytics/property-financials/; this file only reads config, writes to
 // the --out directory and prints diff summaries against the committed data/property-financials files.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseCuratedInputs, parseDerivationConfig, parseEntityRegistry, type CuratedInputs, type DerivationConfig, type EntityRegistry } from '../../../src/analytics/property-financials/build-dataset';
 import { parseAccountMapping, type AccountMapping } from '../../../src/analytics/property-financials/normalize';
@@ -76,10 +76,58 @@ export function parseArgs(argv: readonly string[]): Record<string, string | true
   return out;
 }
 
-export function ensureOutDir(dir: string): string {
+/**
+ * The file-system identity of a path for comparison: the nearest EXISTING ancestor resolved through
+ * realpathSync.native (expands 8.3 short names, symlinks / junctions, and the on-disk letter case),
+ * the not-yet-created tail re-appended, `\` normalised to `/`, lower-cased on win32 (case-insensitive
+ * file system). Never used as a write target — only to compare.
+ */
+export function canonicalPath(p: string): string {
+  let head = resolve(p);
+  const tail: string[] = [];
+  while (!existsSync(head)) {
+    const parent = dirname(head);
+    if (parent === head) break;
+    tail.unshift(basename(head));
+    head = parent;
+  }
+  let real = head;
+  try {
+    real = realpathSync.native(head);
+  } catch {
+    // unreadable ancestor: compare the resolved spelling
+  }
+  const joined = (tail.length ? join(real, ...tail) : real).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (process.platform !== 'win32') return joined;
+  // Local-drive aliases: \\?\C:\..., \\.\C:\..., \\localhost\C$\..., \\127.0.0.1\C$\... all name C:\...
+  return joined.toLowerCase().replace(/^\/\/(?:\?|\.|localhost|127\.0\.0\.1)\/([a-z])(?::|\$)(?=\/|$)/, '$1:');
+}
+
+const COMMITTED_FILES = ['dataset.json', 'monthly-long.csv'] as const;
+
+/**
+ * Create and return the --out directory, refusing (a) this checkout's committed dataset directory or
+ * anything under it, however the path is spelled, and (b) any directory under a
+ * `.../data/property-financials` path that already holds a committed dataset file (another
+ * checkout's, or a worktree's). Promotion into data/property-financials is a reviewed manual copy.
+ */
+export function ensureOutDir(dir: string, committedDir: string = COMMITTED_DIR): string {
   const abs = resolve(dir);
-  if (abs === COMMITTED_DIR || abs.startsWith(`${COMMITTED_DIR}\\`) || abs.startsWith(`${COMMITTED_DIR}/`)) {
-    throw new Error(`refusing to write into ${COMMITTED_DIR}: promotion is a manual copy (see README.md)`);
+  const target = canonicalPath(abs);
+  const committed = canonicalPath(committedDir);
+  if (target === committed || target.startsWith(`${committed}/`)) {
+    throw new Error(`refusing to write into ${committedDir}: promotion is a manual copy (see README.md)`);
+  }
+  // Any checkout's committed dataset directory: the target itself, or any ancestor of it, that is a
+  // data/property-financials directory already holding a committed dataset file.
+  for (let at = abs; ; at = dirname(at)) {
+    if (/(^|\/)data\/property-financials$/i.test(canonicalPath(at))) {
+      const held = COMMITTED_FILES.filter((f) => existsSync(join(at, f)));
+      if (held.length > 0) {
+        throw new Error(`refusing to write into ${abs}: ${at} already holds a committed dataset file (${held.join(', ')}); promotion is a manual copy (see README.md)`);
+      }
+    }
+    if (dirname(at) === at) break;
   }
   mkdirSync(abs, { recursive: true });
   return abs;

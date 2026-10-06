@@ -178,6 +178,21 @@ describe('collectSourceRecords on a synthetic tree', () => {
     expect(got.crosscheck).toEqual([]);
   });
 
+  it('F7: each file result carries its unverifiable CF TOTAL lines so the parse report can count them', async () => {
+    const { sourceDir, convertedDir } = tree();
+    const withAdj = [...CF_SINGLE('Oct 2025', 110), { A: '    TOTAL ADJUSTMENTS', B: 0, C: 0 }];
+    const reader = async (path: string): Promise<SheetSource> => {
+      const name = path.split(/[\\/]/).pop()!;
+      return sheetOf(path, name === 'b.xlsx' ? withAdj : FAKE_SHEETS[name]!);
+    };
+    const got = await collectSourceRecords(minimalConfig(), { sourceDir, convertedDir, mapping: MAPPING, registry: REGISTRY, readSheets: reader });
+    expect(got.report.files.map((f) => [f.file.split('/').pop(), f.unmatchedTotals])).toEqual([
+      ['a.xlsx', []],
+      ['b.xlsx', ['TOTAL ADJUSTMENTS']],
+      ['c.xls', []],
+    ]);
+  });
+
   it('without a converted directory every binary .xls is unreadable, and nothing else changes', async () => {
     const { sourceDir } = tree();
     const got = await collectSourceRecords(minimalConfig(), { sourceDir, convertedDir: null, mapping: MAPPING, registry: REGISTRY, readSheets: fakeReader([]) });

@@ -88,6 +88,11 @@ async function main(): Promise<number> {
   for (const f of empty) console.log(`  EMPTY       ${f.file} — ${f.emptyReason} (${f.periods[0]}..${f.periods[f.periods.length - 1]})`);
   const ignoredHeaders = [...new Set(rep.files.flatMap((f) => f.ignoredHeaders))];
   if (ignoredHeaders.length) console.log(`  note: CF headers not promoted to a group (mixed case): ${ignoredHeaders.join(' | ')}`);
+  const unmatchedTotals = rep.files.reduce((a, f) => a + f.unmatchedTotals.length, 0);
+  if (unmatchedTotals > 0) {
+    const labels = [...new Set(rep.files.flatMap((f) => f.unmatchedTotals))];
+    console.log(`  note: ${unmatchedTotals} CF TOTAL line(s) name no opened group and were not verified: ${labels.join(' | ')}`);
+  }
 
   const xc = crossCheck(got, config.mapping.version, kinds);
   if (xc.unmapped) console.log(`parse-sources: cross-check records have unmapped accounts (the dataset records are unaffected):\n${xc.unmapped}`);
@@ -99,7 +104,7 @@ async function main(): Promise<number> {
   const outDir = ensureOutDir(typeof args.out === 'string' ? args.out : DEFAULT_OUT_DIR);
   writeText(resolve(outDir, 'raw-records.json'), `${JSON.stringify({ records: got.dataset.map(toTuple) })}\n`);
   writeText(resolve(outDir, 'crosscheck-records.json'), `${JSON.stringify({ records: got.crosscheck.map(toTuple) })}\n`);
-  writeText(resolve(outDir, 'parse-report.json'), `${JSON.stringify({ ...rep, mappingVersion: config.mapping.version, crossCheck: xc.lines, crossCheckUnmapped: xc.unmapped }, null, 2)}\n`);
+  writeText(resolve(outDir, 'parse-report.json'), `${JSON.stringify({ ...rep, unmatchedTotals, mappingVersion: config.mapping.version, crossCheck: xc.lines, crossCheckUnmapped: xc.unmapped }, null, 2)}\n`);
   console.log(`parse-sources: wrote ${resolve(outDir, 'raw-records.json')} (+ parse-report.json, crosscheck-records.json)`);
   console.log('Next: npx tsx scripts/property-financials/normalize-raw.ts --in scripts/property-financials/_out/raw-records.json');
   if (rep.unreadable.length > 0 || rep.unsupported.length > 0) {

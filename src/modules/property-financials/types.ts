@@ -23,6 +23,8 @@ export interface PfDataHealthMeta {
   csvError: string | null;
   ageDays: number;
   staleness: 'fresh' | 'stale';
+  /** Why the dataset is stale (e.g. 'as-of date is in the future'), null when fresh. Optional: older servers omit it. */
+  stalenessReason?: string | null;
 }
 
 /** GET /api/warehouse/property-financials/dataset */

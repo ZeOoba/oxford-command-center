@@ -75,6 +75,12 @@ export interface ParsedStatement {
   readonly totalChecks: number;
   /** CF only: 1-space headers that were not promoted to a group (mixed case). */
   readonly ignoredHeaders: readonly string[];
+  /**
+   * CF only: `TOTAL X` lines (one entry per line, not per month) whose X names no group opened in the
+   * statement, so nothing could verify them (a mixed-case header's total, Yardi's closing TOTAL
+   * ADJUSTMENTS). Reported, never silently passed.
+   */
+  readonly unmatchedTotals: readonly string[];
   /** Set when the export carries no rows at all ("No activity for given filter criteria"): records is empty. */
   readonly emptyReason: string | null;
 }
@@ -358,7 +364,7 @@ function parseAppFolioFamily(sheet: SheetSource, entity: string, layout: 'AF' | 
     pushAll(name, filled, false, r, row.label);
   }
   if (records.length === 0) fail(sheet, null, 'no account rows found');
-  return { layout, entity, periods: columns.map((c) => c.period), records, totalChecks: ledger.checks, ignoredHeaders: [], emptyReason: null };
+  return { layout, entity, periods: columns.map((c) => c.period), records, totalChecks: ledger.checks, ignoredHeaders: [], unmatchedTotals: [], emptyReason: null };
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -424,6 +430,14 @@ export function parseCashFlow12(sheet: SheetSource, entity: string): ParsedState
   const records: RawRecord[] = [];
   const ledger = new Ledger();
   const ignored: string[] = [];
+  const unmatchedTotals: string[] = [];
+  /**
+   * Every group opened so far, with the running per-period sum of every account read SINCE it opened.
+   * Yardi prints parent totals (TOTAL REVENUE over RENTAL + OTHER REVENUE, TOTAL OPERATING EXPENSES
+   * over its sub-groups) after the last sub-group, while the current group is the last child: such a
+   * total is verified against the parent's accumulated sum instead of being skipped.
+   */
+  const opened: Array<{ readonly name: string; readonly sums: Map<string, number> }> = [];
   let group: string | null = null;
   const key = (g: string | null, period: string) => `${g ?? ''}\u0001${period}`;
 
@@ -432,7 +446,7 @@ export function parseCashFlow12(sheet: SheetSource, entity: string): ParsedState
     const a = str(aRaw);
     if (a === null) continue;
     if (records.length === 0 && EMPTY_SENTINEL.test(a)) {
-      return { layout: 'CF', entity, periods: columns.map((c) => c.period), records: [], totalChecks: 0, ignoredHeaders: [], emptyReason: a };
+      return { layout: 'CF', entity, periods: columns.map((c) => c.period), records: [], totalChecks: 0, ignoredHeaders: [], unmatchedTotals: [], emptyReason: a };
     }
     const values = columns.map((pc) => num(cellAt(sheet, r, pc.col)));
     const hasNum = values.some((v) => v !== null);
@@ -442,27 +456,41 @@ export function parseCashFlow12(sheet: SheetSource, entity: string): ParsedState
     // header (ALL-CAPS -> group, mixed case -> ignored); anything else with numbers is an account.
     if (CF_COMPUTED_LABEL.test(a)) {
       const totalOf = /^TOTAL\s+(.+)$/.exec(a)?.[1] ?? null;
+      const ofCurrent = totalOf !== null && group !== null && totalOf === group;
+      let parent: (typeof opened)[number] | undefined;
+      if (totalOf !== null && !ofCurrent) {
+        for (let j = opened.length - 1; j >= 0 && parent === undefined; j--) if (opened[j]!.name === totalOf) parent = opened[j];
+        if (parent === undefined) unmatchedTotals.push(a);
+      }
       for (const [i, pc] of columns.entries()) {
         const amount: number = values[i] ?? 0; // a blank month on a total line is a zero total
-        if (totalOf !== null && group !== null && totalOf === group) ledger.check(sheet, r, key(group, pc.period), a, amount, ` (${pc.period})`);
+        if (ofCurrent) ledger.check(sheet, r, key(group, pc.period), a, amount, ` (${pc.period})`);
+        else if (parent !== undefined) {
+          const summed = parent.sums.get(pc.period) ?? 0;
+          if (!ties(amount, summed)) fail(sheet, r, `${a} (${pc.period}) states ${money(amount)} but its accounts sum to ${money(summed)}`);
+          ledger.checks++;
+        }
         records.push({ entity, period: pc.period, layout: 'CF', section: null, group, account: a, amount, isTotal: true });
       }
       continue;
     }
     if (!hasNum) {
-      if (isAllCaps(a)) group = a;
-      else ignored.push(a);
+      if (isAllCaps(a)) {
+        group = a;
+        opened.push({ name: a, sums: new Map() });
+      } else ignored.push(a);
       continue;
     }
     if (group === null) fail(sheet, r, `account "${a}" appears before any group header`);
     for (const [i, pc] of columns.entries()) {
       const amount = values[i] ?? 0; // a blank month on an account line is a zero posting
       ledger.add(key(group, pc.period), amount);
+      for (const g of opened) g.sums.set(pc.period, (g.sums.get(pc.period) ?? 0) + amount);
       records.push({ entity, period: pc.period, layout: 'CF', section: null, group, account: a, amount, isTotal: false });
     }
   }
   if (records.length === 0) fail(sheet, null, 'no account rows found');
-  return { layout: 'CF', entity, periods: columns.map((c) => c.period), records, totalChecks: ledger.checks, ignoredHeaders: ignored, emptyReason: null };
+  return { layout: 'CF', entity, periods: columns.map((c) => c.period), records, totalChecks: ledger.checks, ignoredHeaders: ignored, unmatchedTotals, emptyReason: null };
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -586,7 +614,7 @@ export function parseQuickBooks(sheet: SheetSource, entity: string): ParsedState
     records.push({ entity, period, layout: 'QB', section, group, account: label, amount, isTotal: false });
   }
   if (records.some((x) => !x.isTotal) === false) fail(sheet, null, 'no account rows found');
-  return { layout: 'QB', entity, periods: [period], records, totalChecks: checks, ignoredHeaders: [], emptyReason: null };
+  return { layout: 'QB', entity, periods: [period], records, totalChecks: checks, ignoredHeaders: [], unmatchedTotals: [], emptyReason: null };
 }
 
 // -------------------------------------------------------------------------------------------------

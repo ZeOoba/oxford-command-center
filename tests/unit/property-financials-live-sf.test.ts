@@ -70,6 +70,19 @@ describe('buildLiveSf (server)', () => {
     expect(stale.entries['1100 Rarig']!.fields.sf).toBe('live'); // still reported, for information
   });
 
+  it('F5: a live workbook dated in the future is STALE with the future reason; one day ahead is clock slack', () => {
+    const fut = buildLiveSf(snapshot('2026-10-07'), D, NOW);
+    expect(fut).toMatchObject({ stale: true, ageDays: -2, staleReason: 'as-of date is in the future' });
+    expect(liveSfUsable(fut)).toBe(false);
+    expect(buildLiveSf(snapshot('2026-10-06'), D, NOW)).toMatchObject({ stale: false, ageDays: -1, staleReason: null });
+  });
+
+  it('F5: with no snapshot, a future static date is STALE too', () => {
+    const b = buildLiveSf(null, D, new Date(2026, 8, 30, 12)); // static date 2026-10-02 is 2 days ahead
+    expect(b).toMatchObject({ source: 'static-dataset', ageDays: -2, stale: true });
+    expect(b.staleReason).toMatch(/as-of date is in the future/);
+  });
+
   it('with no snapshot it falls back to the dataset and labels the source "static dataset (2026-10-02)"', () => {
     const b = buildLiveSf(null, D, NOW);
     expect(b.source).toBe('static-dataset');

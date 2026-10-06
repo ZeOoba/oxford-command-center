@@ -74,6 +74,7 @@ describe('loadPropertyFinancials — happy path', () => {
       csvError: null,
       ageDays: 5,
       staleness: 'fresh',
+      stalenessReason: null,
     });
     expect(r.lastGoodLoadedAt).toBe(NOW.toISOString());
   });
@@ -84,6 +85,17 @@ describe('loadPropertyFinancials — happy path', () => {
     expect(at45.meta).toMatchObject({ ageDays: 45, staleness: 'fresh' });
     const at46 = await loadPropertyFinancials('mem://stale', new Date(2026, 10, 15, 9), deps);
     expect(at46.meta).toMatchObject({ ageDays: 46, staleness: 'stale' });
+  });
+
+  it('F5: an as_of in the future is STALE with a reason, never fresh forever; one day ahead is clock slack', async () => {
+    const { deps } = fakeFs();
+    // as_of 2026-09-30; "now" 2026-09-28 -> ageDays -2
+    const ahead2 = await loadPropertyFinancials('mem://future', new Date(2026, 8, 28, 9), deps);
+    expect(ahead2.meta).toMatchObject({ ageDays: -2, staleness: 'stale', stalenessReason: 'as-of date is in the future' });
+    const ahead1 = await loadPropertyFinancials('mem://future', new Date(2026, 8, 29, 9), deps);
+    expect(ahead1.meta).toMatchObject({ ageDays: -1, staleness: 'fresh', stalenessReason: null });
+    const old = await loadPropertyFinancials('mem://future', new Date(2026, 10, 15, 9), deps);
+    expect(old.meta).toMatchObject({ ageDays: 46, staleness: 'stale', stalenessReason: 'as-of date is 46 days old (> 45)' });
   });
 
   it('a missing CSV is non-fatal: dataset served, csvSha256 null, sanitized csvError', async () => {

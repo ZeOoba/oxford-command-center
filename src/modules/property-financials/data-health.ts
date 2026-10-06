@@ -19,7 +19,8 @@
 //   - an all-caps parenthetical alias of the id ("EGFLLC"), or a listed alias (FVC: "Sepich").
 import { PF_ENTITY_IDS, type PfDataset, type PfEntityId, type PfLease } from '@contracts/property-financials';
 import { fvcSepichMappingFlag } from '@analytics/property-financials/metrics';
-import { leaseForEntity } from './model';
+import { fmtLongDate, leaseForEntity } from './model';
+import type { PfDataHealthMeta } from './types';
 
 export type PfGapSource = 'data_quality' | 'lease' | 'mapping';
 
@@ -139,4 +140,10 @@ export function mentionsExcluded(text: string, excluded: readonly string[]): boo
 /** First 12 hex characters of a sha256, for display (the full value goes in the title). */
 export function shortSha(sha: string | null): string | null {
   return sha === null ? null : sha.slice(0, 12);
+}
+
+/** '5 days since 30 Sep 2026', or the server's reason for a future as-of (a negative day count is never shown). */
+export function freshnessAge(meta: PfDataHealthMeta): string {
+  if (meta.ageDays < 0) return meta.stalenessReason ? `${meta.stalenessReason} (${fmtLongDate(meta.as_of)})` : `as of ${fmtLongDate(meta.as_of)}`;
+  return `${meta.ageDays} day${meta.ageDays === 1 ? '' : 's'} since ${fmtLongDate(meta.as_of)}`;
 }
