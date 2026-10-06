@@ -4,7 +4,8 @@
 // exclusion, converted-twin lookup, duplicate handling) on a synthetic tree, then — only when the real
 // OneDrive exports are present — the ground-truth run: every statement file is parsed, normalised with
 // the current mapping and compared to the committed monthly-long.csv row for row (0.005 tolerance),
-// with the coverage printed. Skipped with a clear message when the folder is absent (CI).
+// with the coverage printed. Opt-in only (PF_GROUND_TRUTH=1 or PF_SOURCE_DIR): a visible SKIPPED
+// placeholder names the switch otherwise, so the gate never parses the OneDrive tree by accident.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -194,12 +195,26 @@ describe('collectSourceRecords on a synthetic tree', () => {
 });
 
 // -------------------------------------------------------------------------------------------------
-// Ground truth — real exports (skipped when absent)
+// Ground truth — real exports (EXPLICIT opt-in only)
 // -------------------------------------------------------------------------------------------------
+//
+// Runs only when PF_GROUND_TRUTH=1 or PF_SOURCE_DIR is set explicitly. The default OneDrive folder
+// existing on a laptop is NOT enough: that would make every gate / CI run parse 60+ workbooks (180 s
+// budget, cold-exceljs / EPERM flake class) and turn the gate red the moment a new P&L lands in the
+// folder. A visible SKIPPED placeholder below says how to run it (same pattern as the normalize test).
 
+const GROUND_TRUTH_OPT_IN = process.env.PF_GROUND_TRUTH?.trim() === '1' || Boolean(process.env[SOURCES.sourceDirEnv]?.trim());
 const SOURCE_DIR = resolveSourceDir(SOURCES);
-const HAVE_SOURCES = existsSync(SOURCE_DIR);
+const HAVE_SOURCES = GROUND_TRUTH_OPT_IN && existsSync(SOURCE_DIR);
 const CONVERTED_DIR = process.env.PF_CONVERTED_DIR?.trim() || null;
+
+if (!HAVE_SOURCES) {
+  it(`ground-truth parse of the real exports SKIPPED: set PF_GROUND_TRUTH=1 (or ${SOURCES.sourceDirEnv}=<statement folder>) to run it${
+    GROUND_TRUTH_OPT_IN ? ` — opted in, but ${SOURCE_DIR} does not exist` : ''
+  }`, () => {
+    expect(HAVE_SOURCES).toBe(false);
+  });
+}
 
 /**
  * Entity/periods where the parsers deliberately differ from the committed CSV. The committed file

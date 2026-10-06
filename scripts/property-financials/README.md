@@ -40,7 +40,11 @@ npx tsx scripts/property-financials/normalize-raw.ts --in <raw.json> --out <dir>
 npx tsx scripts/property-financials/build-dataset.ts
 npx tsx scripts/property-financials/build-dataset.ts --csv scripts/property-financials/_out/monthly-long.csv --generated 2026-11-03
 
-# 4. tests (the ground-truth and real-raw tests run only when the OneDrive folder / PF_RAW_RECORDS is present)
+# 4. tests. The ground-truth parse of the real exports is OPT-IN: it runs only with PF_GROUND_TRUTH=1 (or an
+#    explicit PF_SOURCE_DIR); the real-raw normalize test only with PF_RAW_RECORDS. Without the switch each prints a
+#    visible SKIPPED placeholder naming it, so a routine gate / CI run never opens the OneDrive tree (60+ workbooks,
+#    180 s budget) and a new P&L dropped in the folder cannot turn the gate red.
+$env:PF_GROUND_TRUTH = "1"        # add PF_CONVERTED_DIR (step 0) to cover the binary .xls exports too
 npx vitest run tests/unit/property-financials-parse-statements.test.ts tests/unit/property-financials-parse-sources.test.ts tests/unit/property-financials-pyfloat.test.ts tests/unit/property-financials-normalize.test.ts tests/unit/property-financials-build-dataset.test.ts tests/unit/property-financials-registry.test.ts tests/unit/property-financials-live-sf.test.ts
 ```
 
