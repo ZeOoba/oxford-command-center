@@ -9,7 +9,7 @@
 // insights with thresholds in ONE config, data gaps and the FVC confirm-me flag. Every property is
 // built without throwing, NaN or 'undefined'.
 import { describe, expect, it } from 'vitest';
-import { PF_ENTITY_IDS, type PfEntityId } from '@contracts/property-financials';
+import { PF_ENTITY_IDS, type PfDataset, type PfEntityId } from '@contracts/property-financials';
 import { cagr, pctChange, ratio } from '@analytics/property-financials/metrics';
 import {
   DEFAULT_EXPLORER_ENTITY,
@@ -351,6 +351,30 @@ describe('What changed and why', () => {
     expect(tax.helps).toBe(false);
   });
 
+  it('a partial period never forms a pair (same guard as periodGroups): Livingston Jan-Sep 2025 has 3 of 9 months', () => {
+    expect(D.history['3883 Livingston'].ytd['2025']!.n).toBe(3);
+    expect(D.history['3883 Livingston'].drv.YTD26).toBeDefined(); // the dataset carries the drivers; the view must still refuse
+    const w = whyView(D, '3883 Livingston');
+    expect(w.pairs).toEqual([]);
+    // Year pairs need 12 months on both sides; a short prior year drops that pair and nothing else.
+    const h = D.history['1100 Rarig'];
+    const short = { ...D, history: { ...D.history, '1100 Rarig': { ...h, yr: { ...h.yr, '2024': { ...h.yr['2024']!, n: 11 } } } } };
+    expect(whyView(short, '1100 Rarig').pairs.map((p) => p.key)).toEqual(['YTD26']);
+    expect(whyView(D, '1100 Rarig').pairs.map((p) => p.key)).toEqual(['YTD26', '2025']);
+    // A short current Jan-Sep window drops the YTD pair.
+    const shortYtd = { ...D, history: { ...D.history, '1100 Rarig': { ...h, ytd: { ...h.ytd, '2026': { ...h.ytd['2026']!, n: 8 } } } } };
+    expect(whyView(shortYtd, '1100 Rarig').pairs.map((p) => p.key)).toEqual(['2025']);
+    // Every pair that IS shown compares complete windows.
+    for (const id of PF_ENTITY_IDS) {
+      for (const p of whyView(D, id).pairs) {
+        const hh = D.history[id];
+        if (p.key === 'YTD26') expect([hh.ytd['2025']!.n, hh.ytd['2026']!.n]).toEqual([9, 9]);
+        else if (hh.monthly) expect([hh.yr[String(Number(p.key) - 1)]!.n, hh.yr[p.key]!.n]).toEqual([12, 12]);
+        else expect([hh.yr[String(Number(p.key) - 1)]!.partial, hh.yr[p.key]!.partial]).toEqual([false, false]);
+      }
+    }
+  });
+
   it('annual entities: nature "annual" and the annual-only text', () => {
     const w = whyView(D, '1851 South Club Solar');
     expect(w.pairs.map((p) => p.key)).toEqual(['2025']);
@@ -401,6 +425,21 @@ describe('computed insights (rules from the artifact, thresholds in EXPLORER_RUL
     expect(t.text).toContain(`${want > 0 ? '+' : ''}${(want * 100).toFixed(1)}%`);
   });
 
+  it('per-SF benchmark goes through perSf: a zero-SF peer is left out, a zero-SF subject has no benchmark or vacancy line (never Infinity/NaN)', () => {
+    const withSf = (id: PfEntityId, sf: number | null) => ({ ...D, sf: { ...D.sf, [id]: { ...D.sf[id], sf } } }) as PfDataset;
+    const bench = (d: PfDataset, id: PfEntityId) => explorerInsights(d, id).find((i) => i.heading.startsWith('Per-SF benchmark'));
+    // Peer with 0 SF: same text as a peer with no SF on file.
+    const zeroPeer = bench(withSf('1100 Rarig', 0), '9050 Red Branch');
+    expect(zeroPeer).toBeDefined();
+    expect(zeroPeer!.text).not.toMatch(/Infinity|NaN/);
+    expect(zeroPeer!.text).toBe(bench(withSf('1100 Rarig', null), '9050 Red Branch')!.text);
+    // Subject with 0 SF: no per-SF line at all, like a subject with no SF on file.
+    const subject = explorerInsights(withSf('9050 Red Branch', 0), '9050 Red Branch');
+    expect(subject.some((i) => i.heading.startsWith('Per-SF benchmark'))).toBe(false);
+    expect(subject.map((i) => i.heading)).not.toContain('Vacancy');
+    for (const i of subject) expect(i.text, i.heading).not.toMatch(/Infinity|NaN/);
+  });
+
   it('vacancy only below the occupancy threshold (Rarig 85.7% yes, Broadway 100% no)', () => {
     expect(heads('1100 Rarig')).toContain('Vacancy');
     expect(heads('1900 Broadway')).not.toContain('Vacancy');
@@ -414,6 +453,16 @@ describe('computed insights (rules from the artifact, thresholds in EXPLORER_RUL
   it('data gap item for missing months; short history for Livingston', () => {
     expect(heads('3034 Westerville')).toContain('Data gap');
     expect(heads('3883 Livingston')).toContain('Short history');
+  });
+
+  it('driver insights never quote a partial comparison: Livingston (Jan-Sep 2025 = 3 months) has none; Rarig keeps its YTD26 drivers', () => {
+    expect(heads('3883 Livingston').some((x) => x.startsWith('Driver: '))).toBe(false);
+    expect(heads('1100 Rarig').some((x) => x.startsWith('Driver: '))).toBe(true);
+    // Shortening Rarig's current Jan-Sep window to 8 months removes its YTD26 driver insights too.
+    const h = D.history['1100 Rarig'];
+    const shortYtd = { ...D, history: { ...D.history, '1100 Rarig': { ...h, ytd: { ...h.ytd, '2026': { ...h.ytd['2026']!, n: 8 } } } } };
+    const after = explorerInsights(shortYtd, '1100 Rarig').filter((i) => i.heading.startsWith('Driver: '));
+    for (const i of after) expect(i.text).not.toMatch(/Jan-Sep 2026/);
   });
 
   it('a threshold edit moves the rule (vacancy threshold 0.8 drops Rarig)', () => {
