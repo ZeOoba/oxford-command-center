@@ -1,0 +1,1274 @@
+/* src/modules/property-financials/pf.css
+ *
+ * Property Financials module styles (plan T5), scoped to .pf-root. Visual spec: the reference review
+ * artifact (tests/fixtures/property-financials/reference-artifact.html, ledger-style). The repo's
+ * data-theme tokens win: every artifact role maps onto a repo token where one exists; only the fixed
+ * 8-colour chart palette and the four status colours are literal, per the artifact.
+ *
+ * Fonts are self-hosted (Fontsource, no CDN). IBM Plex Mono 400/500 are already imported globally by
+ * src/tokens/theme.css; EB Garamond (display) and DM Sans (body) are imported here so they load only
+ * with this module's chunk.
+ */
+@import '@fontsource/eb-garamond/500.css';
+@import '@fontsource/eb-garamond/600.css';
+@import '@fontsource/dm-sans/400.css';
+@import '@fontsource/dm-sans/500.css';
+@import '@fontsource/dm-sans/600.css';
+
+.pf-root {
+  /* artifact role -> repo token */
+  --pf-bg: var(--surface-base);
+  --pf-surface: var(--surface-raised);
+  --pf-surface2: var(--surface-overlay);
+  --pf-ink: var(--text-primary);
+  --pf-ink2: var(--text-secondary);
+  --pf-muted: var(--text-tertiary);
+  --pf-rule: var(--border-subtle);
+  --pf-gold: var(--accent);
+  --pf-gold-ink: var(--text-accent);
+  --pf-grid: var(--border-subtle);
+  --pf-axis: var(--border-strong);
+  --pf-good-ink: var(--text-pos);
+  --pf-warn-ink: var(--text-warn);
+  --pf-crit-ink: var(--text-neg);
+  --pf-focus: var(--accent);
+  /* status colours: fixed, always paired with an icon + label */
+  --pf-good: #0ca30c;
+  --pf-warn: #fab219;
+  --pf-serious: #ec835a;
+  --pf-crit: #d03b3b;
+  /* fixed chart palette: light (parchment / warm) */
+  --pf-c1: #2a78d6;
+  --pf-c2: #eb6834;
+  --pf-c3: #1baf7a;
+  --pf-c4: #eda100;
+  --pf-c5: #e87ba4;
+  --pf-c6: #008300;
+  --pf-c7: #4a3aa7;
+  --pf-c8: #e34948;
+  --pf-s1: var(--pf-c1);
+  --pf-s2: var(--pf-c2);
+  --pf-f-display: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  --pf-f-body: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --pf-f-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  position: relative;
+  z-index: 0;
+  min-width: 0;
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-bottom: 56px;
+  background: var(--pf-bg);
+  color: var(--pf-ink);
+  font-family: var(--pf-f-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* fixed chart palette: dark (command) */
+[data-theme='command'] .pf-root {
+  --pf-c1: #3987e5;
+  --pf-c2: #d95926;
+  --pf-c3: #199e70;
+  --pf-c4: #c98500;
+  --pf-c5: #d55181;
+  --pf-c6: #008300;
+  --pf-c7: #9085e9;
+  --pf-c8: #e66767;
+}
+
+/* AppShell gives 12px below 640px; the module adds 4px for a 16px phone gutter. */
+@media (max-width: 639px) {
+  .pf-root {
+    padding-inline: 4px;
+  }
+}
+
+.pf-root *,
+.pf-root *::before,
+.pf-root *::after {
+  box-sizing: border-box;
+}
+.pf-root h1,
+.pf-root h2,
+.pf-root h3 {
+  font-family: var(--pf-f-display);
+  font-weight: 600;
+  margin: 0;
+  text-wrap: balance;
+  letter-spacing: 0.005em;
+}
+.pf-root h2 {
+  font-size: 26px;
+  margin-bottom: 6px;
+}
+.pf-root button:focus-visible,
+.pf-root a:focus-visible,
+.pf-root select:focus-visible,
+.pf-root input:focus-visible,
+.pf-root textarea:focus-visible,
+.pf-root [tabindex]:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- masthead ---------- */
+.pf-mast {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-block: 20px 16px;
+  border-bottom: 2px solid var(--pf-ink);
+}
+.pf-mast > * {
+  min-width: 0;
+}
+.pf-firm {
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--pf-gold-ink);
+}
+.pf-mast h1 {
+  font-size: clamp(28px, 5vw, 40px);
+  line-height: 1.05;
+  margin-top: 6px;
+}
+.pf-meta {
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  color: var(--pf-muted);
+  text-align: right;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pf-basis {
+  color: var(--pf-ink2);
+}
+.pf-stale {
+  color: var(--pf-warn-ink);
+}
+
+/* ---------- tab strip (sticky inside the shell's scroller) ---------- */
+.pf-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--pf-rule);
+  margin-bottom: 24px;
+  position: sticky;
+  top: 0;
+  background: var(--pf-bg);
+  z-index: 5;
+}
+.pf-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--pf-ink2);
+  font: 500 13px var(--pf-f-body);
+  padding: 12px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  outline: none;
+}
+.pf-tab[data-hovered] {
+  color: var(--pf-ink);
+}
+.pf-tab[data-selected] {
+  color: var(--pf-ink);
+  border-bottom-color: var(--pf-gold);
+}
+.pf-tab[data-focus-visible] {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: -2px;
+}
+
+/* ---------- shared text ---------- */
+.pf-lede {
+  font-family: var(--pf-f-display);
+  font-size: clamp(19px, 2.6vw, 24px);
+  line-height: 1.35;
+  max-width: 62ch;
+  margin: 0 0 20px;
+  font-weight: 500;
+}
+.pf-note {
+  font-size: 12px;
+  color: var(--pf-muted);
+  max-width: 80ch;
+}
+.pf-sec {
+  margin-bottom: 32px;
+}
+.pf-pos {
+  color: var(--pf-good-ink);
+}
+.pf-neg {
+  color: var(--pf-crit-ink);
+}
+.pf-mut {
+  color: var(--pf-muted);
+}
+.pf-nm {
+  color: var(--pf-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.pf-h4 {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+
+/* ---------- KPIs ---------- */
+.pf-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  border-block: 1px solid var(--pf-rule);
+  margin-bottom: 28px;
+}
+.pf-kpi {
+  padding: 14px 18px 14px 0;
+  min-width: 0;
+}
+.pf-kpi + .pf-kpi {
+  border-left: 1px solid var(--pf-rule);
+  padding-left: 18px;
+}
+.pf-kpi-l {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+}
+.pf-kpi-v {
+  font-family: var(--pf-f-display);
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pf-kpi-d {
+  font-size: 12px;
+  color: var(--pf-ink2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- layout ---------- */
+.pf-grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 32px;
+  margin-bottom: 28px;
+}
+.pf-panel {
+  min-width: 0;
+}
+.pf-panel h3 {
+  font-size: 20px;
+  margin-bottom: 2px;
+}
+.pf-sub {
+  font-size: 12px;
+  color: var(--pf-muted);
+  margin-bottom: 10px;
+}
+.pf-mini {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+}
+.pf-mini > * {
+  min-width: 0;
+}
+.pf-mini table {
+  font-size: 12px;
+}
+.pf-mini td,
+.pf-mini th {
+  padding: 6px 8px;
+}
+@media (max-width: 860px) {
+  .pf-grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-kpi + .pf-kpi {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .pf-meta {
+    text-align: left;
+  }
+}
+
+/* ---------- charts ---------- */
+.pf-chart {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+.pf-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.pf-chart text {
+  fill: var(--pf-muted);
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+}
+.pf-chart .pf-bar-label {
+  fill: var(--pf-ink2);
+  font-family: var(--pf-f-body);
+  font-size: 12px;
+}
+.pf-chart .pf-bar-value {
+  fill: var(--pf-ink);
+  font-size: 11px;
+}
+.pf-chart-focus:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+.pf-chart [data-mark]:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 1px;
+}
+.pf-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--pf-surface);
+  color: var(--pf-ink);
+  border: 1px solid var(--pf-rule);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 150px;
+  max-width: 240px;
+  z-index: 4;
+}
+.pf-tip b {
+  font-weight: 600;
+}
+.pf-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  margin-top: 6px;
+}
+.pf-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.pf-tablefb {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pf-tablefb summary {
+  cursor: pointer;
+  color: var(--pf-ink2);
+  width: max-content;
+}
+
+/* ---------- tables ---------- */
+.pf-tbl {
+  overflow-x: auto;
+  border-top: 1px solid var(--pf-rule);
+  max-width: 100%;
+}
+.pf-root table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.pf-root th {
+  font-family: var(--pf-f-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+  text-align: right;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--pf-ink);
+  white-space: nowrap;
+}
+.pf-root th:first-child,
+.pf-root td:first-child {
+  text-align: left;
+}
+.pf-root td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--pf-rule);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pf-root td small {
+  font-size: 11px;
+}
+.pf-sort {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pf-sort:hover {
+  color: var(--pf-ink);
+}
+.pf-score td:first-child {
+  white-space: normal;
+  min-width: 170px;
+}
+.pf-row {
+  cursor: pointer;
+}
+.pf-row:hover td {
+  background: var(--pf-surface2);
+}
+.pf-det > td {
+  background: var(--pf-surface);
+  white-space: normal;
+  text-align: left;
+  padding: 18px 14px;
+}
+.pf-toggle {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+}
+.pf-caret {
+  display: inline-block;
+  width: 10px;
+  color: var(--pf-gold-ink);
+  font-family: var(--pf-f-mono);
+}
+.pf-pn {
+  font-weight: 600;
+}
+.pf-pn small {
+  display: block;
+  font-weight: 400;
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+/* ---------- severity pill (icon + label, never colour alone) ---------- */
+.pf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.pf-pill.High {
+  color: var(--pf-crit-ink);
+}
+.pf-pill.Medium {
+  color: var(--pf-warn-ink);
+}
+.pf-pill.Low {
+  color: var(--pf-muted);
+}
+.pf-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: none;
+}
+.pf-pill.High::before {
+  border-radius: 50%;
+  background: currentColor;
+}
+.pf-pill.Medium::before {
+  transform: rotate(45deg);
+  background: currentColor;
+}
+.pf-pill.Low::before {
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+/* ---------- where the money is ---------- */
+.pf-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--pf-rule);
+  min-width: 0;
+}
+.pf-amt {
+  font-family: var(--pf-f-mono);
+  font-size: 12px;
+  min-width: 76px;
+  text-align: right;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.pf-act-t {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.pf-act-t b {
+  display: block;
+  font-weight: 600;
+}
+.pf-act-t span {
+  font-size: 12px;
+  color: var(--pf-ink2);
+}
+.pf-act-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  margin-top: 4px;
+}
+.pf-status {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pf-link {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--pf-gold-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.pf-form {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+  padding: 12px;
+  margin-top: 6px;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+}
+.pf-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--pf-ink2);
+  min-width: 0;
+}
+.pf-form .pf-wide {
+  grid-column: 1 / -1;
+}
+.pf-root input,
+.pf-root select,
+.pf-root textarea {
+  font: 13px var(--pf-f-body);
+  background: var(--pf-bg);
+  color: var(--pf-ink);
+  border: 1px solid var(--pf-rule);
+  padding: 6px 8px;
+  min-width: 0;
+  width: 100%;
+}
+.pf-err {
+  color: var(--pf-crit-ink);
+  font-size: 12px;
+}
+.pf-btn {
+  font: 500 12px var(--pf-f-body);
+  border: 1px solid var(--pf-ink);
+  background: var(--pf-ink);
+  color: var(--pf-bg);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.pf-btn:hover {
+  opacity: 0.9;
+}
+.pf-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.pf-btn.ghost {
+  background: none;
+  color: var(--pf-ink);
+}
+
+/* ---------- T6: levers / watchlist / evaluation ---------- */
+.pf-lede-sm {
+  font-size: 19px;
+}
+.pf-root td.pf-wrap {
+  text-align: left;
+  white-space: normal;
+}
+.pf-sens td:nth-child(2),
+.pf-sens th:nth-child(2) {
+  text-align: left;
+  white-space: normal;
+  min-width: 240px;
+}
+.pf-sens td:nth-child(4),
+.pf-sens th:nth-child(4) {
+  text-align: left;
+  min-width: 220px;
+}
+
+/* review item card (artifact item()) */
+.pf-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 6px 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--pf-rule);
+  min-width: 0;
+}
+.pf-item > .pf-form {
+  grid-column: 1 / -1;
+}
+.pf-item-main {
+  min-width: 0;
+}
+.pf-item h3 {
+  font-size: 19px;
+  line-height: 1.25;
+  margin: 6px 0;
+}
+.pf-item p {
+  margin: 0 0 8px;
+  max-width: 78ch;
+  color: var(--pf-ink2);
+  overflow-wrap: anywhere;
+}
+.pf-item p.pf-do {
+  color: var(--pf-ink);
+}
+.pf-do-l {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-gold-ink);
+  margin-right: 6px;
+}
+.pf-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  color: var(--pf-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.pf-imp {
+  text-align: right;
+  font-family: var(--pf-f-mono);
+  font-size: 12px;
+  color: var(--pf-ink2);
+  min-width: 0;
+}
+.pf-imp strong {
+  display: block;
+  font-family: var(--pf-f-display);
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+.pf-imp small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--pf-muted);
+  line-height: 1.35;
+  margin-top: 4px;
+  font-family: var(--pf-f-body);
+}
+@media (max-width: 700px) {
+  .pf-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pf-imp {
+    text-align: left;
+  }
+}
+
+/* watchlist filters */
+.pf-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--pf-ink2);
+}
+.pf-root .pf-filters select {
+  width: auto;
+  max-width: 100%;
+  margin-right: 12px;
+}
+
+/* RAG cell: icon shape + value text (+ hidden status word); never colour alone */
+.pf-rag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--pf-f-mono);
+  font-size: 11.5px;
+}
+.pf-rag::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  flex: none;
+}
+.pf-rag[data-status='g']::before {
+  background: var(--pf-good);
+  border-radius: 50%;
+}
+.pf-rag[data-status='a']::before {
+  background: var(--pf-warn);
+  transform: rotate(45deg);
+}
+.pf-rag[data-status='r']::before {
+  background: var(--pf-crit);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.pf-rag[data-status='n'] {
+  color: var(--pf-muted);
+  cursor: help;
+}
+.pf-rag[data-status='n']::before {
+  border: 1.5px solid var(--pf-muted);
+  border-radius: 50%;
+}
+/* the n/m reason is readable by keyboard too, not only on mouse hover (title) */
+.pf-rag[data-reason] {
+  position: relative;
+}
+.pf-rag[data-reason]:focus-visible::after {
+  content: attr(data-reason);
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  max-width: min(260px, 80vw);
+  white-space: normal;
+  text-align: left;
+  padding: 6px 8px;
+  font: 12px/1.35 var(--pf-f-body);
+  color: var(--pf-ink);
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+}
+.pf-rag-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.pf-root .pf-eval th[scope='row'] {
+  font-family: var(--pf-f-body);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--pf-ink);
+  font-weight: 400;
+  text-align: left;
+  border-bottom: 1px solid var(--pf-rule);
+}
+
+/* review rhythm */
+.pf-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 28px;
+}
+.pf-two > * {
+  min-width: 0;
+}
+.pf-dq {
+  padding-left: 18px;
+  margin: 8px 0;
+  max-width: 86ch;
+}
+.pf-dq li {
+  margin-bottom: 6px;
+  color: var(--pf-ink2);
+}
+
+/* ---------- empty state ---------- */
+.pf-empty {
+  border: 1px dashed var(--pf-rule);
+  padding: 28px 20px;
+  max-width: 70ch;
+}
+.pf-empty h2 {
+  font-size: 22px;
+}
+.pf-empty p {
+  margin: 6px 0 0;
+  color: var(--pf-ink2);
+}
+
+/* ---------- property explorer (plan T7; artifact CSS "explorer") ---------- */
+.pf-pgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+.pf-pcard {
+  appearance: none;
+  text-align: left;
+  background: var(--pf-surface);
+  border: 1px solid var(--pf-rule);
+  color: var(--pf-ink);
+  padding: 10px 12px;
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.pf-pcard:hover {
+  border-color: var(--pf-ink2);
+}
+.pf-pcard[aria-pressed='true'] {
+  border-color: var(--pf-gold);
+  box-shadow: inset 0 -3px 0 var(--pf-gold);
+  background: var(--pf-surface2);
+}
+.pf-pcard-n {
+  font-weight: 600;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pf-pcard-v {
+  font-family: var(--pf-f-display);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pf-pcard-s {
+  font-size: 11px;
+  color: var(--pf-muted);
+}
+.pf-spark {
+  display: block;
+  margin-top: 2px;
+}
+.pf-xdetail {
+  scroll-margin-top: 56px;
+}
+.pf-xlede {
+  margin-top: 22px;
+  font-size: 21px;
+}
+.pf-xpanel {
+  margin-top: 28px;
+}
+.pf-grid2-even {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.pf-grid2-even > .pf-xpanel {
+  margin-top: 0;
+}
+.pf-xchart {
+  min-width: 0;
+}
+.pf-chart.pf-chart-sx {
+  overflow-x: auto;
+  min-height: 0;
+  max-width: 100%;
+}
+.pf-cin {
+  position: relative;
+}
+.pf-tip-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--pf-rule);
+  font-weight: 600;
+}
+.pf-seg {
+  display: inline-flex;
+  border: 1px solid var(--pf-rule);
+  margin: 0 0 8px;
+}
+.pf-seg button {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--pf-ink2);
+  font: 500 12px var(--pf-f-body);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.pf-seg button[aria-pressed='true'] {
+  background: var(--pf-ink);
+  color: var(--pf-bg);
+}
+.pf-flag {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 22px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--pf-warn-ink);
+  border-left-width: 4px;
+  background: var(--pf-surface);
+  font-size: 13px;
+  max-width: 100ch;
+}
+.pf-flag-l {
+  flex: none;
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-warn-ink);
+}
+.pf-flag-l::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  background: var(--pf-warn);
+  transform: rotate(45deg);
+}
+.pf-gap {
+  margin: 14px 0 0;
+  border-left: 2px solid var(--pf-rule);
+  padding-left: 10px;
+}
+/* effect-on-NOI bars: helps solid, hurts hatched (pattern + arrow, never colour alone) */
+.pf-bars {
+  display: grid;
+  gap: 6px;
+}
+.pf-brow {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(120px, 210px) minmax(0, 1fr) 76px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.pf-brow:focus-visible {
+  outline: 2px solid var(--pf-focus);
+  outline-offset: 2px;
+}
+.pf-bl {
+  overflow-wrap: anywhere;
+}
+.pf-bt {
+  height: 14px;
+  background: var(--pf-surface2);
+  display: block;
+}
+.pf-bt i,
+.pf-legend i.pf-helps,
+.pf-legend i.pf-hurts {
+  display: block;
+  height: 100%;
+}
+.pf-legend i.pf-helps,
+.pf-legend i.pf-hurts {
+  display: inline-block;
+}
+.pf-helps {
+  background: var(--pf-c1);
+}
+.pf-hurts {
+  background: repeating-linear-gradient(135deg, var(--pf-c2) 0 4px, color-mix(in srgb, var(--pf-c2) 45%, transparent) 4px 7px);
+}
+.pf-bv {
+  font-family: var(--pf-f-mono);
+  font-size: 11.5px;
+  text-align: right;
+  white-space: nowrap;
+}
+.pf-tip-row {
+  top: calc(100% + 4px);
+  left: 0;
+  max-width: min(240px, 100%);
+}
+.pf-drv {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--pf-rule);
+}
+.pf-drv-h {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+}
+.pf-drv-n {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  margin: 3px 0;
+}
+.pf-drv p {
+  margin: 0;
+  color: var(--pf-ink2);
+  max-width: 86ch;
+  font-size: 13px;
+}
+.pf-pill.pf-helps-pill {
+  color: var(--pf-good-ink);
+}
+.pf-pill.pf-hurts-pill {
+  color: var(--pf-crit-ink);
+}
+.pf-pill.pf-helps-pill::before,
+.pf-pill.pf-hurts-pill::before {
+  display: none;
+}
+.pf-nat {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px dashed var(--pf-rule);
+  padding: 1px 6px;
+  color: var(--pf-ink2);
+}
+.pf-small {
+  font-size: 11px;
+}
+.pf-ins {
+  display: grid;
+  gap: 2px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--pf-rule);
+}
+.pf-ins span {
+  color: var(--pf-ink2);
+  max-width: 90ch;
+}
+.pf-root tr.pf-tsec > td {
+  background: var(--pf-surface2);
+  text-align: left;
+}
+.pf-root tr.pf-current > td {
+  background: var(--pf-surface2);
+}
+@media (max-width: 860px) {
+  .pf-grid2-even {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .pf-pgrid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+  .pf-pcard {
+    flex: 0 0 150px;
+  }
+  .pf-brow {
+    grid-template-columns: 100px minmax(0, 1fr) 64px;
+  }
+  .pf-flag {
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-root *,
+  .pf-root *::before,
+  .pf-root *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- data health (plan T8): Data destination panel + module summary card ---------- */
+.pf-dh {
+  padding-top: 4px;
+}
+.pf-dh-mast {
+  margin-bottom: 16px;
+}
+.pf-dh-mast h1 {
+  font-size: clamp(22px, 3vw, 28px);
+}
+.pf-dh-noi {
+  font-family: var(--pf-f-mono);
+  font-size: 12px;
+  margin: 0 0 20px;
+  max-width: 100ch;
+}
+.pf-dh-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.pf-dh-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 12px 24px;
+  margin: 12px 0 0;
+}
+.pf-dh-facts dt {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+}
+.pf-dh-facts dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+.pf-sha {
+  font-family: var(--pf-f-mono);
+  font-size: 12.5px;
+}
+.pf-fresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--pf-good-ink);
+}
+.pf-fresh-stale {
+  color: var(--pf-warn-ink);
+}
+.pf-dh-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.pf-dh-tag-warn {
+  color: var(--pf-warn-ink);
+}
+.pf-dh-tag-crit {
+  color: var(--pf-crit-ink);
+}
+.pf-dh-flags ul,
+.pf-dh-dq {
+  margin: 0;
+  padding-left: 18px;
+  text-align: left;
+}
+.pf-dh-flags {
+  min-width: 260px;
+  text-align: left;
+}
+.pf-dh-dq li {
+  margin: 6px 0;
+  max-width: 100ch;
+}
+.pf-dh-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 40px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--pf-rule);
+  background: var(--pf-surface);
+}
+.pf-dh-summary h2 {
+  font-size: 18px;
+}
+.pf-dh-summary .pf-note {
+  margin: 4px 0 0;
+}
+.pf-gaps {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--pf-rule);
+  font-size: 12.5px;
+  max-width: 100ch;
+}
+.pf-gaps ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.pf-gaps li {
+  margin: 4px 0;
+}
+.pf-gaps-src {
+  font-family: var(--pf-f-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pf-muted);
+  margin-right: 6px;
+}
+.pf-inferred {
+  font-family: var(--pf-f-mono);
+  font-size: 11px;
+  color: var(--pf-warn-ink);
+  margin-right: 6px;
+}
+@media print {
+  .pf-dh-noprint {
+    display: none !important;
+  }
+  .pf-dh .pf-tbl {
+    overflow: visible;
+  }
+  .pf-dh td,
+  .pf-dh th {
+    white-space: normal;
+    font-size: 10pt;
+  }
+  .pf-dh tr {
+    break-inside: avoid;
+  }
+}
