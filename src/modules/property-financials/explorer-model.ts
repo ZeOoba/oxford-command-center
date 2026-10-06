@@ -35,7 +35,7 @@ import {
   type PfRentStepEvent,
   type RevenueCategory,
 } from '@contracts/property-financials';
-import { notMeaningful, type MetricResult } from '@analytics/property-financials/periods';
+import { notMeaningful, periodLabel, type MetricResult } from '@analytics/property-financials/periods';
 import {
   cagr,
   fvcSepichMappingFlag,
@@ -50,6 +50,7 @@ import {
 } from '@analytics/property-financials/metrics';
 import { fmtResult, pct, pctLevel, usd } from '@analytics/property-financials/format';
 import { liveSfUsable, occupancyBasis, type OccupancyBasis, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
+import { computeLevers, describeLeverRate, LEVERS } from '@analytics/property-financials/levers';
 import type { ScheduleStep } from './charts/geometry';
 import { countWord, fmtMonth, insightsForEntity, leaseForEntity, monthRangeLabel, OPEX_SHORT_LABEL } from './model';
 
@@ -937,6 +938,22 @@ export interface ExplorerInsight {
   readonly text: string;
 }
 
+/**
+ * The "+N points of recovery" sensitivity, ONE number per entity: where Rent & NOI levers has a
+ * recovery lever for the entity, its value, rate and period are quoted (read from the lever config,
+ * never recomputed on another period); otherwise the Explorer's own figure on `label`'s pool, period named.
+ */
+function recoverySensitivity(d: PfDataset, id: PfEntityId, pool: number, label: string, rules: ExplorerRules): string {
+  const def = LEVERS.find((l) => l.base.kind === 'recoveryPool' && l.base.entity === id);
+  if (def && def.base.kind === 'recoveryPool') {
+    const lv = computeLevers(d, [def])[0]!;
+    if (lv.value.value !== null && lv.base !== null) {
+      return `Each ${describeLeverRate(def)} recovered is worth ${money(lv.value.value)} a year on the ${periodLabel(def.base.period)} pool (${money(lv.base)}), the Rent & NOI levers figure.`;
+    }
+  }
+  return `Each ${Math.round(rules.recovery.stepPoints * 100)} points recovered is worth ${money(pool * rules.recovery.stepPoints)} a year on the ${label} pool.`;
+}
+
 /** The artifact's insightsFor(): computed from the data, each rule's threshold in EXPLORER_RULES. */
 export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRules = EXPLORER_RULES, liveSf: PfLiveSfBlock | null = null): ExplorerInsight[] {
   const h = d.history[id];
@@ -1095,7 +1112,7 @@ export function explorerInsights(d: PfDataset, id: PfEntityId, rules: ExplorerRu
         heading: 'Recovery',
         text: `Tenants reimbursed ${pctLevel(rr.value)} of the recoverable cost pool (${money(rec)} of ${money(pool)}) in ${last.label}. ${
           rr.value < rules.recovery.lowRatio
-            ? `Each ${Math.round(rules.recovery.stepPoints * 100)} points recovered is worth ${money(pool * rules.recovery.stepPoints)} a year. Check lease structure first: single-tenant NNN assets pay these costs directly and will read low by design.`
+            ? `${recoverySensitivity(d, id, pool, last.label, rules)} Check lease structure first: single-tenant NNN assets pay these costs directly and will read low by design.`
             : 'This is in a healthy range for a multi-tenant structure; confirm annual reconciliations were billed.'
         }`,
       });
