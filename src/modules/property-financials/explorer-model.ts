@@ -354,9 +354,10 @@ function explorerKpis(d: PfDataset, id: PfEntityId, gs: readonly PeriodGroup[], 
     { id: 'noi', label: `NOI, ${last.label}`, value: usd(r.noi), ...(prev ? { change: last.change((x) => x.noi), versus } : {}) },
     {
       id: 'margin',
-      label: 'NOI margin',
+      // Named with its period: the Scorecard's margin column is TTM, this tile the latest full year.
+      label: `NOI margin, FY${last.key}`,
       value: fmtResult(ratio(r.noi, r.rev), (v) => pctLevel(v)),
-      note: `Opex ratio ${fmtResult(ratio(r.opex, r.rev), (v) => pctLevel(v))}`,
+      note: `Opex ratio, FY${last.key} ${fmtResult(ratio(r.opex, r.rev), (v) => pctLevel(v))}`,
     },
   ];
   if (sf !== null) {

@@ -26,6 +26,8 @@ import { cubeMonths, fmtMonth, insightsForEntity, leaseForEntity, moverCompariso
 interface Column {
   readonly key: string;
   readonly label: string;
+  /** Ratio columns: the metric name; the header and each cell's title add the period. */
+  readonly name?: string;
   readonly pick: (r: ScorecardRow) => MetricResult | number;
   readonly format: (v: number) => string;
   readonly tone?: (v: number) => string;
@@ -34,15 +36,22 @@ interface Column {
 const level0 = (v: number) => pctLevel(v);
 const level1 = (v: number) => pctLevel(v, 1);
 
+/**
+ * Ratio columns are TTM for monthly assets and FY2025 for annual-only ones (the Explorer's tiles use
+ * the latest full year): the header names TTM, each cell's title names its own period and an
+ * annual-only cell shows its period beside the value.
+ */
+const HEADER_RATIO_PERIOD = periodLabel('TTM26');
+
 const COLUMNS: readonly Column[] = [
   { key: 'noiFy24', label: `NOI ${periodLabel('FY2024')}`, pick: (r) => r.noiFy24, format: (v) => usd(v) },
   { key: 'noiFy25', label: `NOI ${periodLabel('FY2025')}`, pick: (r) => r.noiFy25, format: (v) => usd(v) },
   { key: 'noiTtm', label: `NOI ${periodLabel('TTM26')}`, pick: (r) => r.noiTtm, format: (v) => usd(v) },
-  { key: 'margin', label: 'NOI margin', pick: (r) => r.margin, format: level0 },
+  { key: 'margin', name: 'NOI margin', label: `NOI margin, ${HEADER_RATIO_PERIOD}`, pick: (r) => r.margin, format: level0 },
   { key: 'runRateYoy', label: 'Base rent run-rate YoY', pick: (r) => r.runRateYoy, format: (v) => pct(v), tone: (v) => toneClass(v) },
-  { key: 'opexRatio', label: 'Opex / revenue', pick: (r) => r.opexRatio, format: level0 },
-  { key: 'mgmtFee', label: 'Mgmt fee', pick: (r) => r.mgmtFee, format: level1 },
-  { key: 'recovery', label: 'Recovery', pick: (r) => r.recovery, format: level0 },
+  { key: 'opexRatio', name: 'Opex / revenue', label: `Opex / revenue, ${HEADER_RATIO_PERIOD}`, pick: (r) => r.opexRatio, format: level0 },
+  { key: 'mgmtFee', name: 'Mgmt fee', label: `Mgmt fee, ${HEADER_RATIO_PERIOD}`, pick: (r) => r.mgmtFee, format: level1 },
+  { key: 'recovery', name: 'Recovery', label: `Recovery, ${HEADER_RATIO_PERIOD}`, pick: (r) => r.recovery, format: level0 },
   { key: 'flags', label: 'Flags', pick: (r) => r.flags, format: (v) => (v ? String(v) : '') },
 ];
 
@@ -129,9 +138,16 @@ export function ScorecardView({ dataset: d, onOpenProperty }: { dataset: PfDatas
                     </td>
                     {COLUMNS.map((c) => {
                       const x = c.pick(r);
+                      const per = c.name ? periodLabel(r.ratioPeriod) : null;
                       return (
-                        <td key={c.key}>
+                        <td key={c.key} data-col={c.key} title={c.name ? `${c.name}, ${per}` : undefined}>
                           {typeof x === 'number' ? c.format(x) : <MetricCell result={x} format={c.format} className={c.tone} />}
+                          {per && per !== HEADER_RATIO_PERIOD ? (
+                            <>
+                              {' '}
+                              <small className="pf-mut">{per}</small>
+                            </>
+                          ) : null}
                         </td>
                       );
                     })}

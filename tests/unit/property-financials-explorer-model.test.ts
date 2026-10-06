@@ -223,6 +223,12 @@ describe('buildExplorer: every property', () => {
     });
   });
 
+  it('M3: the NOI margin tile names its period (the latest full year), as does its opex ratio', () => {
+    const k = models.FVC.kpis.find((x) => x.id === 'margin')!;
+    expect(k.label).toBe('NOI margin, FY2025');
+    expect(k.note).toMatch(/^Opex ratio, FY2025 \d+%$/);
+  });
+
   it('occupancy KPI from the rent-roll block', () => {
     const k = models['9620 State 350'].kpis.find((x) => x.id === 'occupancy')!;
     expect(k.value).toBe('83.3%');
