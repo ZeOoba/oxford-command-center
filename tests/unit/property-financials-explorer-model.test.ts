@@ -333,14 +333,54 @@ describe('chart data (series slots, tooltips)', () => {
     expect(seen).toBeGreaterThan(0);
   });
 
-  it('F3: a positive category share is taken against the signed category total', () => {
+  it('M1: a positive category share is taken against the DRAWN stack (gross charges) so it matches the bar proportions', () => {
     const gs = periodGroups(D, '9620 State 350');
     const s = opexStack(gs);
     const i = s.columns.findIndex((x) => x.key === 'S26');
     const k = s.series.findIndex((x) => x.id === 'Insurance');
     const cats = gs[i]!.row.cats;
-    const total = Object.values(cats).reduce((a, v) => a + (v ?? 0), 0);
-    expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / total)} of operating expense`);
+    const gross = Object.values(cats).reduce((a, v) => a + Math.max(0, v ?? 0), 0);
+    expect(gross).toBeCloseTo(71_496.78, 2);
+    expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / gross)} of gross charges, before the ${usd(-6583.05, 'f')} credit`);
+    // a column without a credit keeps the plain wording (gross = net there)
+    const j = s.columns.findIndex((x) => x.key === 'S25');
+    expect(s.tips[j]![k]!.at(-1)).toMatch(/^\d+% of operating expense$/);
+  });
+
+  it('M1: the stack total is the SIGNED operating expense (row.opex) for every entity and period', () => {
+    let checked = 0;
+    for (const id of PF_ENTITY_IDS) {
+      const gs = periodGroups(D, id);
+      const s = opexStack(gs);
+      expect(s.stack, id).toBeDefined();
+      gs.forEach((g, i) => {
+        checked++;
+        expect(s.stack!.totals[i], `${id} ${g.key}`).toBeCloseTo(g.row.opex, 6);
+        expect(s.values[i]!.reduce((a, v) => a + v, 0), `${id} ${g.key}`).toBeCloseTo(g.row.opex, 6);
+        const credit = s.values[i]!.reduce((a, v) => a + Math.min(0, v), 0);
+        expect(s.stack!.credits[i], `${id} ${g.key}`).toBeCloseTo(credit, 6);
+      });
+    }
+    expect(checked).toBeGreaterThan(40);
+  });
+
+  it('M1: net-credit columns are marked explicitly in the total text', () => {
+    const cases = [
+      { id: '9620 State 350' as const, col: 'S26', text: 'Total $64.9K (incl. -$6.6K credit)', table: '$64,914 (incl. -$6,583 credit)', note: 'incl. -$6.6K credit' },
+      { id: '3540 E 5th' as const, col: '2024', text: 'Total $42K (incl. -$230 credit)', table: '$42,033 (incl. -$230 credit)', note: 'incl. -$230 credit' },
+    ];
+    for (const c of cases) {
+      const s = opexStack(periodGroups(D, c.id));
+      const i = s.columns.findIndex((x) => x.key === c.col);
+      expect(s.stack!.text[i]).toBe(c.text);
+      expect(s.stack!.tableText[i]).toBe(c.table);
+      expect(s.stack!.creditNote[i]).toBe(c.note);
+    }
+    // a column without a credit has no note and a plain total
+    const s = opexStack(periodGroups(D, '1100 Rarig'));
+    const i = s.columns.findIndex((x) => x.key === '2025');
+    expect(s.stack!.creditNote[i]).toBeNull();
+    expect(s.stack!.text[i]).toBe(`Total ${usd(s.stack!.totals[i]!, 'k')}`);
   });
 
   it('timeline marker and lease step tooltips', () => {

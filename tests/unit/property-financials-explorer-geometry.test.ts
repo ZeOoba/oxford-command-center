@@ -13,7 +13,7 @@ import {
   markerPath,
   sparklineGeometry,
   stackedBarsLayout,
-  stackTotals,
+  stackHeights,
   stepChartLayout,
 } from '../../src/modules/property-financials/charts/geometry';
 
@@ -108,10 +108,10 @@ describe('stackedBarsLayout', () => {
   const axis = barAxis(groups.map((g) => g.reduce((a, v) => a + Math.max(0, v), 0)), { floorAtZero: true });
   const L = stackedBarsLayout(groups, PLOT, axis);
 
-  it('totals ignore negative segments (opex categories cannot stack below zero)', () => {
-    expect(L.totals).toEqual([175, 280]);
-    expect(stackTotals(groups)).toEqual([175, 280]);
-    expect(stackTotals([[Number.NaN, 5]])).toEqual([5]);
+  it('heights ignore negative segments (opex categories cannot stack below zero)', () => {
+    expect(L.heights).toEqual([175, 280]);
+    expect(stackHeights(groups)).toEqual([175, 280]);
+    expect(stackHeights([[Number.NaN, 5]])).toEqual([5]);
   });
 
   it('segments stack bottom-up in input order; zero / negative segments draw nothing', () => {
@@ -124,7 +124,7 @@ describe('stackedBarsLayout', () => {
   it('the stack top equals the scaled total', () => {
     const g0 = L.segments[0]!;
     const topSeg = g0[g0.length - 1]!;
-    const yTotal = L.totalY[0]!;
+    const yTotal = L.topY[0]!;
     expect(topSeg.y).toBeCloseTo(yTotal);
   });
 

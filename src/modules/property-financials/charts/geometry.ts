@@ -194,14 +194,17 @@ export interface StackedBarsLayout {
   readonly centers: readonly number[];
   /** [group][drawn segment]; zero / negative segments are not drawn. */
   readonly segments: ReadonlyArray<readonly StackSegment[]>;
-  /** Sum of the positive segments per group. */
-  readonly totals: readonly number[];
-  /** y of each group's total (the label sits above it). */
-  readonly totalY: readonly number[];
+  /**
+   * Drawn stack HEIGHT per group: the sum of the positive segments only. Not the group's total when
+   * a category nets to a credit; the label / data table use the signed total (StackTotalsData).
+   */
+  readonly heights: readonly number[];
+  /** y of each group's stack top (the total label sits above it). */
+  readonly topY: readonly number[];
 }
 
-/** Sum of the positive segments of each group (the stack heights). */
-export function stackTotals(groups: ReadonlyArray<readonly number[]>): number[] {
+/** Sum of the positive segments of each group: the drawn stack heights (axis sizing only, never a label). */
+export function stackHeights(groups: ReadonlyArray<readonly number[]>): number[] {
   return groups.map((g) => g.reduce((a, v) => a + (Number.isFinite(v) ? Math.max(0, v) : 0), 0));
 }
 
@@ -212,7 +215,7 @@ export function stackedBarsLayout(groups: ReadonlyArray<readonly number[]>, plot
   const y = barY(axis, plot);
   const centers = groups.map((_, i) => plot.left + slot * (i + 0.5));
   const bw = Math.min(34, slot * 0.62);
-  const totals: number[] = [];
+  const heights: number[] = [];
   const segments = groups.map((vals, gi) => {
     const cx = centers[gi]!;
     let acc = 0;
@@ -225,10 +228,10 @@ export function stackedBarsLayout(groups: ReadonlyArray<readonly number[]>, plot
       acc += v;
       out.push({ index, x: cx - bw / 2, y: y1, width: bw, height: Math.max(0, y0 - y1 - 1.5), value: v });
     });
-    totals.push(acc);
+    heights.push(acc);
     return out;
   });
-  return { slot, centers, segments, totals, totalY: totals.map((t) => y(t)) };
+  return { slot, centers, segments, heights, topY: heights.map((t) => y(t)) };
 }
 
 export interface ScheduleStep {
