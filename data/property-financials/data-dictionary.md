@@ -91,7 +91,7 @@ Dataset_v03.json adds a top-level `sf` block and `sf`, `leased_sf`, `occupancy` 
 
 Leased SF = rent-roll rows classed "Occupied" (vacant, notice-given and expired space excluded). Occupancy ties to the Property NOI tab for every property listed.
 
-Rules: $/SF = period amount / current total SF (not annualized for 9-month periods). FVC mapping rests on SF-sum and rent reconciliation (rent roll annualized $1.05M vs FVC TTM base rent $1.12M); confirm. Northwood (53,700 SF) is excluded pending financials. Dataset_v03 supersedes v02.
+Rules: $/SF = period amount / current total SF (not annualized for 9-month periods). FVC mapping rests on SF-sum and rent reconciliation (rent roll annualized $1.05M vs FVC TTM base rent $1.12M); confirm. Northwood is excluded pending financials. Dataset_v03 supersedes v02.
 
 ## v03.1 correction: 9620 State 350, 2025-09 (2026-10-05)
 
