@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseMonthlyLong, type MonthlyLongRow } from '@analytics/property-financials/aggregate';
-import { normalizeRecords, parseAccountMapping, parseRawRecords, type RawRecord } from '@analytics/property-financials/normalize';
+import { classifyRecord, normalizeRecords, parseAccountMapping, parseRawRecords, type RawRecord } from '@analytics/property-financials/normalize';
 import type { CellValue, SheetSource } from '@analytics/property-financials/parse-statements';
 import { parseEntityRegistry } from '@analytics/property-financials/build-dataset';
 import { latestMappingVersion, loadConfig } from '../../scripts/property-financials/lib/io';
@@ -60,16 +60,30 @@ describe('sources.json', () => {
     expect(convertedName('/a/9620 State 350/ProfitLoss12MonthRecap_2.xls')).toBe('9620 State 350__ProfitLoss12MonthRecap_2.xlsx');
   });
 
-  it('account-mapping.v2 keeps every v1 rule byte-identical and only adds QB rules + the cross-check cash-balance exclusion', () => {
+  it('account-mapping.v2 keeps every v1 rule byte-identical and only adds QB rules, the cross-check cash-balance exclusion and the A12 any-group management fee rule', () => {
     const v1 = JSON.parse(readFileSync(resolve(CONFIG_DIR, 'account-mapping.v1.json'), 'utf8')) as { rules: Array<{ id: string }> };
     const v2 = JSON.parse(readFileSync(resolve(CONFIG_DIR, 'account-mapping.v2.json'), 'utf8')) as { rules: Array<{ id: string; when: { layout?: string } }> };
     const v2ById = new Map(v2.rules.map((r) => [r.id, r]));
     for (const r of v1.rules) expect(v2ById.get(r.id), r.id).toEqual(r);
     const added = v2.rules.filter((r) => !v1.rules.some((x) => x.id === r.id));
     expect(added.length).toBeGreaterThan(0);
-    for (const r of added) expect(r.when.layout === 'QB' || r.id === 'CF-OWNER-CASH-BALANCE', r.id).toBe(true);
+    for (const r of added) expect(r.when.layout === 'QB' || r.id === 'CF-OWNER-CASH-BALANCE' || r.id === 'A12-EXP-MGMT-ANY-GROUP', r.id).toBe(true);
     expect(latestMappingVersion()).toBe('v2');
     expect(loadConfig().mapping.version).toBe('v2');
+  });
+
+  it('a 9620 recap MANAGEMENT FEE EXPENSE line is a management fee whatever EXPENSE group it is carried under', () => {
+    // The 12-month recaps print it after "Total REPAIRS & MAINTENANCE" (group 5100 carried); the single-month
+    // 2025-09 recap collapses R&M and prints it after "Total CAM EXPENSES" (group 5500 carried). Same account,
+    // same category: the 2025-09 correction (promoted 2026-10-05) must not file $2,450 of fees as R&M.
+    const rec = (group: string, account: string): RawRecord => ({
+      entity: '9620 State 350', period: '2025-09', layout: 'A12', section: 'EXPENSE', group, account, amount: 1, isTotal: false,
+    });
+    for (const g of ['5100 REPAIRS & MAINTENANCE', '5500 CAM EXPENSES']) {
+      expect(classifyRecord(rec(g, 'MANAGEMENT FEE EXPENSE'), MAPPING), g).toMatchObject({ kind: 'mapped', line_type: 'opex', category: 'Management fees' });
+    }
+    // the collapsed R&M line itself stays repairs & maintenance
+    expect(classifyRecord(rec('5500 CAM EXPENSES', 'REPAIRS & MAINTENANCE'), MAPPING)).toMatchObject({ kind: 'mapped', line_type: 'opex', category: 'Repairs & maintenance' });
   });
 });
 
@@ -217,14 +231,20 @@ if (!HAVE_SOURCES) {
 }
 
 /**
- * Entity/periods where the parsers deliberately differ from the committed CSV. The committed file
- * reproduces the reference (Python) export, which read the single-month 2025-09 recap of 9620 with no
- * section headers (it only looked in column A; that export prints everything in column C) and so
- * mapped every row as revenue (README "Findings worth a ruling" #1). The parser reads the sections
- * correctly, so CAM / R&M / management fee / legal / bank / vacant-utility lines become opex.
+ * Entity/periods where the parsers deliberately differ from the committed CSV: none since v03.1. The
+ * 9620 State 350 2025-09 recap was the only one (the reference export read it with no sections and
+ * mapped every row as revenue); Gabriel ruled on 2026-10-05 to promote the parser's reading, so the
+ * committed CSV ties to the statements everywhere.
  */
-const KNOWN_DIFFERENCES: Readonly<Record<string, string>> = {
-  '9620 State 350\u00012025-09': 'reference parser mis-sectioned the single-month recap (README finding 1); parser reads INCOME / EXPENSE / N/O EXPENSE correctly',
+const KNOWN_DIFFERENCES: Readonly<Record<string, string>> = {};
+
+/**
+ * Entity/periods where the parser's raw records differ from the reference (Python) raw export: the
+ * reference read the single-month 2025-09 recap of 9620 from column A only, found no section headers
+ * (that export prints everything in column C), and so carries its 11 rows with null sections.
+ */
+const REFERENCE_RAW_DIFFERENCES: Readonly<Record<string, string>> = {
+  '9620 State 350\u00012025-09': 'reference parser mis-sectioned the single-month recap; parser reads INCOME / EXPENSE / N/O EXPENSE correctly (promoted v03.1, 2026-10-05)',
 };
 
 const rowKey = (r: MonthlyLongRow) => [r.line_type, r.category, r.source_account].join('\u0001');
@@ -242,7 +262,7 @@ function byEntityPeriod(rows: readonly MonthlyLongRow[]): Map<string, Map<string
 
 describe.skipIf(!HAVE_SOURCES)(`ground truth against ${SOURCE_DIR}`, () => {
   it(
-    'every readable statement normalises to the committed monthly-long.csv rows (0.005 tolerance), except the documented known difference; coverage is printed',
+    'every readable statement normalises to the committed monthly-long.csv rows (0.005 tolerance), with no known differences; coverage is printed',
     async () => {
       const got = await collectSourceRecords(SOURCES, { sourceDir: SOURCE_DIR, convertedDir: CONVERTED_DIR, mapping: MAPPING, registry: REGISTRY });
       const rep = got.report;
@@ -321,11 +341,11 @@ describe.skipIf(!HAVE_SOURCES)(`ground truth against ${SOURCE_DIR}`, () => {
       const mineKeys = new Set(got.dataset.filter((r) => !r.isTotal && KINDS[r.entity] === 'monthly').map(key));
       const pyKeys = new Set(py.filter((r) => !r.isTotal).map(key));
       const pyPeriods = new Set(py.map((r) => `${r.entity}\u0001${r.period}`));
-      // Compared where the reference has the period, except the documented known difference (its 11
+      // Compared where the reference has the period, except REFERENCE_RAW_DIFFERENCES (its 11
       // rows carry null sections in the reference and real sections here).
       const covered = (k: string) => {
         const ep = k.split('\u0001').slice(0, 2).join('\u0001');
-        return pyPeriods.has(ep) && !(ep in KNOWN_DIFFERENCES);
+        return pyPeriods.has(ep) && !(ep in REFERENCE_RAW_DIFFERENCES);
       };
       expect([...pyKeys].filter((k) => covered(k) && !mineKeys.has(k)), 'reference records the parser did not produce').toEqual([]);
       expect([...mineKeys].filter((k) => covered(k) && !pyKeys.has(k)), 'parser records absent from the reference').toEqual([]);
