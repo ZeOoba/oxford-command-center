@@ -11,6 +11,13 @@ Excluded: 2203-2207 Northwood (financials pending).
 | 2026-10-05_Property-Financials_Monthly-Long_v01.csv | Flat table: entity, period, line_type, category, source_account, amount_usd. Load to a DB or warehouse. |
 | Property Financials Review (artifact) | Human view of the same data and insights. |
 
+In the command-center repo the dataset is `data/property-financials/dataset.json` (committed) and the flat table is
+`data/property-financials/monthly-long.csv`, which is **local-only**: Gabriel ruled on 2026-10-06 that the GL-level audit
+layer is gitignored and kept off the remote (the pre-push confidential scan blocks CSVs under `data/`), and it was purged
+from branch history. This dictionary and `dataset.json` stay committed. Regenerate the CSV with
+`scripts/property-financials/normalize-raw.ts` (see its README). Without it the module still serves the dataset, the
+data-health panel says the audit CSV is not present on this machine, and the CSV-backed tests skip with a visible marker.
+
 ## JSON top-level keys
 
 | Key | Content |

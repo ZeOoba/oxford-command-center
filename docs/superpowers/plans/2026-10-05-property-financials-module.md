@@ -3,6 +3,10 @@
 Lane L3 (large). Branch `feat/property-financials` (from origin/main 0d98bfc). Ruling (Gabriel, in-turn 2026-10-05):
 **standalone destination, Assets group, own in-module sticky tab strip; data committed under `data/property-financials/`
 (private repo), served by a read-only route, separate from the warehouse.**
+*Amended 2026-10-06 (Gabriel ruling): only `dataset.json` and `data-dictionary.md` are committed. `monthly-long.csv` (the
+GL-level audit layer) is local-only, gitignored and purged from branch history, because the pre-push confidential scan
+blocks CSVs under `data/`. CSV-backed tests skip with a visible marker on a checkout without it; the loader serves the
+dataset regardless and the data-health panel names the policy.*
 
 ## Capability audit (code, not docs) — component → owner
 
@@ -25,7 +29,7 @@ Single user, one dataset ≈ 350 KB JSON + 1.1 MB CSV, memoised by (mtime,size).
 failure = JSON parse on a 100x larger file, i.e. never at this scale).
 
 ## Pre-mortem (3)
-1. Dataset silently stale/edited → loader strict-validates + `as_of` + sha shown; reconciliation test fails CI if JSON ≠ CSV.
+1. Dataset silently stale/edited → loader strict-validates + `as_of` + sha shown; reconciliation test fails if JSON ≠ CSV (on a machine holding the local-only CSV since 2026-10-06; it skips visibly elsewhere).
 2. Second NOI definition read as the firm number → persistent "Normalized NOI · cash basis · not reconciled with Spine A/B" label + data-health row.
 3. Partial/lease-up periods shown as YoY → rule tests (partial never YoY, ≤0 base never %) + `n/m` with reason tooltip.
 

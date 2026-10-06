@@ -10,6 +10,15 @@ dataset.json                                    ── server/property-financial
 Spine A snapshot (live Master Workbook parse)   ── server/property-financials/live-sf.ts ──► GET /dataset `liveSf` (SF, leased SF, occupancy)
 ```
 
+**`monthly-long.csv` is LOCAL-ONLY (Gabriel ruling 2026-10-06).** The GL-level audit layer is gitignored and was
+purged from branch history: the repo's pre-push confidential scan blocks CSVs under `data/`. `dataset.json` and
+`data-dictionary.md` stay committed. A fresh clone or a hosted CI checkout therefore has no CSV: regenerate it with
+steps 1–2 below (`normalize-raw.ts`) and copy `_out/monthly-long.csv` to `data/property-financials/`. Without it the
+server still serves the dataset (the data-health panel says "Audit CSV not present on this machine"), every test
+that needs the CSV skips with a visible `monthly-long.csv not present (...)` marker, and `build-dataset.ts` exits `2`
+with the same instruction unless `--csv` names a file. Mentions of "the committed CSV" below that predate the
+ruling mean this local copy.
+
 Adding an entity is **data only**: a row in `config/entities.json`, its folder in `config/sources.json`, its
 rows in the CSV (and an entry in `config/curated/sf.json`). The builder carries it through every block; the
 architect-owned contract (`src/contracts/property-financials.ts`) is then the only gate
@@ -36,26 +45,29 @@ npx tsx scripts/property-financials/parse-sources.ts --source <dir> --converted 
 npx tsx scripts/property-financials/normalize-raw.ts --in scripts/property-financials/_out/raw-records.json   # -> _out/monthly-long.csv + _out/normalize-report.json
 npx tsx scripts/property-financials/normalize-raw.ts --in <raw.json> --out <dir> [--no-annual] [--mapping vN]
 
-# 3. CSV -> dataset.json   (default input: the committed CSV; pass the fresh one to chain)
+# 3. CSV -> dataset.json   (default input: the local data/property-financials/monthly-long.csv; pass the fresh one to chain)
 npx tsx scripts/property-financials/build-dataset.ts
 npx tsx scripts/property-financials/build-dataset.ts --csv scripts/property-financials/_out/monthly-long.csv --generated 2026-11-03
 
 # 4. tests. The ground-truth parse of the real exports is OPT-IN: it runs only with PF_GROUND_TRUTH=1 (or an
 #    explicit PF_SOURCE_DIR); the real-raw normalize test only with PF_RAW_RECORDS. Without the switch each prints a
 #    visible SKIPPED placeholder naming it, so a routine gate / CI run never opens the OneDrive tree (60+ workbooks,
-#    180 s budget) and a new P&L dropped in the folder cannot turn the gate red.
+#    180 s budget) and a new P&L dropped in the folder cannot turn the gate red. The CSV-backed suites (reconcile,
+#    build-dataset, registry 12th-entity, partial-yoy refute repro) need the local-only monthly-long.csv and skip with
+#    a visible marker without it. To exercise that skip path on a machine that has the CSV, point
+#    PROPERTY_FINANCIALS_DIR at a copy of data/property-financials holding only dataset.json.
 $env:PF_GROUND_TRUTH = "1"        # add PF_CONVERTED_DIR (step 0) to cover the binary .xls exports too
 npx vitest run tests/unit/property-financials-parse-statements.test.ts tests/unit/property-financials-parse-sources.test.ts tests/unit/property-financials-pyfloat.test.ts tests/unit/property-financials-normalize.test.ts tests/unit/property-financials-build-dataset.test.ts tests/unit/property-financials-registry.test.ts tests/unit/property-financials-live-sf.test.ts
 ```
 
 Exit codes: `0` built · `1` usage / IO / parse error (a parse failure names file › sheet › row; nothing written) ·
-`2` unmapped accounts (report printed, nothing written) · `3` built dataset fails the contract (nothing written) ·
+`2` unmapped accounts (report printed, nothing written), or (build-dataset) the input CSV is not present · `3` built dataset fails the contract (nothing written) ·
 `4` (parse-sources) outputs written but one or more files were unreadable / unsupported — the raw records are
 incomplete until each named file is converted or ruled out.
 
 **Nothing in `data/property-financials/` is ever written by a CLI.** Outputs go to `--out` (default
-`_out/`, gitignored here) with a diff summary against the committed files; promotion is a reviewed manual
-copy followed by the property-financials test files (reconcile / golden / build-dataset).
+`_out/`, gitignored here) with a diff summary against the files in `data/property-financials/` (`dataset.json`
+committed, `monthly-long.csv` local-only); promotion is a reviewed manual copy followed by the property-financials test files (reconcile / golden / build-dataset).
 
 ## Configuration (all versioned; change data, not code)
 
