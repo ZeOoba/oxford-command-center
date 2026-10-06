@@ -123,7 +123,8 @@ describe('evaluationResults (value + n/m reason)', () => {
 
 describe('pinned statuses (literal, computed from UNROUNDED figures)', () => {
   // The reference artifact read the dataset's 2-dp rounded ratios; the module computes from the raw
-  // figures (as the Scorecard table does). These three cells therefore differ from the artifact.
+  // figures, and so does the Scorecard table (scorecardRows via ratio(); Scorecard == Evaluation parity
+  // is pinned in property-financials-model.test.ts). These three cells therefore differ from the artifact.
   it('the three cells where exact math departs from the artifact', () => {
     const st = (id: (typeof PF_MONTHLY_ENTITY_IDS)[number], t: EvaluationTestId) => ragStatus(t, evaluationResults(monthly(id), D.monthly[id])[t].value);
     expect(st('3540 E 5th', 'rentRunRateGrowth')).toBe('r'); // -0.10%; artifact amber on a rounded 0

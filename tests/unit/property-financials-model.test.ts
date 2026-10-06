@@ -11,6 +11,7 @@ import { pctChange, recoveryRatio, runRateQ3Table } from '@analytics/property-fi
 import { pct, usd } from '@analytics/property-financials/format';
 import {
   entityForInsight,
+  evaluationMatrix,
   excludedNotes,
   fmtLongDate,
   fmtMonth,
@@ -216,7 +217,63 @@ describe('scorecardRows', () => {
       expect(m.value).toBeNull();
       expect(m.reason).toMatch(/annual/);
     }
-    expect(solar.margin.value).toBe(D.properties['1851 South Club Solar'].periods.FY2025.noi_margin);
+    const sfy = D.properties['1851 South Club Solar'].periods.FY2025;
+    expect(solar.margin.value).toBeCloseTo(sfy.noi / sfy.revenue, 12);
+  });
+
+  it('ratios come from the raw figures via ratio(), never the dataset\'s 2-dp fields (which must not be displayed anywhere)', () => {
+    // Monthly: Scorecard == Evaluation on every shared metric (value AND reason), for every PM asset.
+    for (const ev of evaluationMatrix(D)) {
+      const s = row(ev.id);
+      expect(s.margin, `${ev.id}/margin`).toEqual(ev.cells.noiMargin.result);
+      expect(s.mgmtFee, `${ev.id}/mgmtFee`).toEqual(ev.cells.mgmtFeePct.result);
+      expect(s.recovery, `${ev.id}/recovery`).toEqual(ev.cells.recoveryRatio.result);
+      expect(s.runRateYoy, `${ev.id}/runRateYoy`).toEqual(ev.cells.rentRunRateGrowth.result);
+      const t = monthlyProp(ev.id as (typeof SAME_STORE)[number]).periods.TTM26;
+      expect(s.opexRatio.value, `${ev.id}/opexRatio`).toBeCloseTo(t.opex / t.revenue, 12);
+    }
+    // The rounded fields really do differ from the raw ratios, so this test is not vacuous:
+    // 9620 TTM26 management fee REDACTED-AMT (rounded 5%), Livingston 4.467% (rounded 4%), Red Branch 3.500% (rounded 4%), 3540 E 5th 2.564% (rounded 3%).
+    const fee = (id: string) => row(id).mgmtFee.value!;
+    const rounded = (id: string) => (D.properties[id as keyof typeof D.properties] as PfMonthlyProperty).periods.TTM26.mgmt_fee_pct!;
+    expect(fee('9620 State 350')).toBeCloseTo(REDACTED-AMT, 5);
+    expect(fee('9620 State 350')).toBeGreaterThan(rounded('9620 State 350'));
+    expect(fee('3883 Livingston')).toBeCloseTo(0.04467, 4);
+    expect(fee('9050 Red Branch')).toBeCloseTo(0.035, 4);
+    expect(fee('9050 Red Branch')).toBeLessThan(rounded('9050 Red Branch'));
+    expect(fee('3540 E 5th')).toBeCloseTo(REDACTED-AMT, 4);
+    // Annual entities: FY2025 raw ratios.
+    for (const id of ['55 New Plant (EGFLLC)', '1851 South Club Solar'] as const) {
+      const fy = D.properties[id].periods.FY2025;
+      const s = row(id);
+      expect(s.margin.value, `${id}/margin`).toBeCloseTo(fy.noi / fy.revenue, 12);
+      expect(s.opexRatio.value, `${id}/opexRatio`).toBeCloseTo(fy.opex / fy.revenue, 12);
+      expect(s.mgmtFee.value, `${id}/mgmtFee`).toBeCloseTo(fy.opex_by['Management fees'] / fy.revenue, 12);
+    }
+    expect(row('55 New Plant (EGFLLC)').margin.value).not.toBe(D.properties['55 New Plant (EGFLLC)'].periods.FY2025.noi_margin);
+  });
+
+  it('a zero-revenue period is n/m with the ratio() reason, not Infinity', () => {
+    const id = '1100 Rarig';
+    const p = monthlyProp(id);
+    const zero = { ...D, properties: { ...D.properties, [id]: { ...p, periods: { ...p.periods, TTM26: { ...p.periods.TTM26, revenue: 0 } } } } } as PfDataset;
+    const s = scorecardRows(zero).find((r) => r.id === id)!;
+    for (const m of [s.margin, s.opexRatio, s.mgmtFee]) expect(m).toEqual({ value: null, reason: 'no revenue in the period' });
+  });
+
+  it('a partial TTM26 gives the SAME n/m reason as the Evaluation matrix (with and without revenue)', () => {
+    const id = '1100 Rarig';
+    const p = monthlyProp(id);
+    for (const revenue of [p.periods.TTM26.revenue, 0]) {
+      const part = { ...D, properties: { ...D.properties, [id]: { ...p, periods: { ...p.periods, TTM26: { ...p.periods.TTM26, n_months: 11, revenue } } } } } as PfDataset;
+      const s = scorecardRows(part).find((r) => r.id === id)!;
+      const ev = evaluationMatrix(part).find((r) => r.id === id)!;
+      expect(s.margin, `rev ${revenue}/margin`).toEqual(ev.cells.noiMargin.result);
+      expect(s.mgmtFee, `rev ${revenue}/mgmtFee`).toEqual(ev.cells.mgmtFeePct.result);
+      expect(s.recovery, `rev ${revenue}/recovery`).toEqual(ev.cells.recoveryRatio.result);
+      expect(s.opexRatio, `rev ${revenue}/opexRatio`).toEqual(ev.cells.noiMargin.result); // same TTM revenue base, same refusal
+      expect(s.margin.value).toBeNull();
+    }
   });
 
   it('flags = number of review items for the entity', () => {
