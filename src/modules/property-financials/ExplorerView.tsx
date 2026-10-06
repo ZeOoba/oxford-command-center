@@ -12,6 +12,7 @@
 // honest note; FVC carries the confirm-me SF mapping flag; missing months are noted on the page.
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PfDataset, PfEntityId } from '@contracts/property-financials';
+import type { PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import { NM, pct, usd } from '@analytics/property-financials/format';
 import { ChangeChip, NotMeaningful } from './components';
 import { InsightCardList } from './InsightWorkflow';
@@ -536,16 +537,18 @@ function Detail({ d, m, onOpenProperty }: { d: PfDataset; m: ExplorerModel; onOp
 
 export interface ExplorerViewProps {
   readonly dataset: PfDataset;
+  /** The raw live SF block (already applied to `dataset`); read only to name a disagreeing occupancy. */
+  readonly liveSf?: PfLiveSfBlock | null;
   /** From ?p=; null = the default selection. */
   readonly selected: PfEntityId | null;
   readonly onSelect: (entity: PfEntityId) => void;
   readonly onOpenProperty: (entity: PfEntityId) => void;
 }
 
-export function ExplorerView({ dataset: d, selected, onSelect, onOpenProperty }: ExplorerViewProps) {
+export function ExplorerView({ dataset: d, liveSf = null, selected, onSelect, onOpenProperty }: ExplorerViewProps) {
   const id = selected ?? DEFAULT_EXPLORER_ENTITY;
   const cards = useMemo(() => propertyCards(d), [d]);
-  const m = useMemo(() => buildExplorer(d, id), [d, id]);
+  const m = useMemo(() => buildExplorer(d, id, EXPLORER_RULES, liveSf), [d, id, liveSf]);
   const detailRef = useRef<HTMLDivElement>(null);
   const picked = useRef(false);
   useEffect(() => {

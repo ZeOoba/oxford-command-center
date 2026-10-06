@@ -180,7 +180,7 @@ export function PropertyFinancialsModule() {
               ) : v.id === 'evaluation' ? (
                 <EvaluationView dataset={d} />
               ) : (
-                <ExplorerView dataset={d} selected={selected} onSelect={selectProperty} onOpenProperty={openProperty} />
+                <ExplorerView dataset={d} liveSf={q.data?.liveSf ?? null} selected={selected} onSelect={selectProperty} onOpenProperty={openProperty} />
               )}
             </TabPanel>
           ))}

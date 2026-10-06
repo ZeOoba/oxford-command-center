@@ -209,7 +209,15 @@ function SfSourceSection({ dataset, liveSf }: { dataset: PfDataset; liveSf: PfLi
                 <td>{r.entity}</td>
                 <td>{fmtInt(r.sf)}</td>
                 <td>{fmtInt(r.leasedSf)}</td>
-                <td>{fmtPct(r.occupancy)}</td>
+                <td>
+                  {fmtPct(r.occupancy)}
+                  {r.occupancyConflict ? (
+                    <span className="pf-mut" data-testid="pf-occ-conflict">
+                      {' '}
+                      ({r.occupancyConflict.source} {fmtPct(r.occupancyConflict.otherOcc)}: disagrees)
+                    </span>
+                  ) : null}
+                </td>
                 <td className="pf-wrap">
                   <span className={`pf-dh-tag${r.using === 'live' ? '' : r.using === 'none' ? ' pf-mut' : ' pf-dh-tag-warn'}`}>
                     {r.using === 'live' ? 'Live (Spine A)' : r.using === 'none' ? 'n/a' : 'Static dataset'}
