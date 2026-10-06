@@ -221,11 +221,15 @@ describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (
   // statement (README "Known difference", now promoted). The reference raw export carries that recap with
   // no sections, so it reproduces every OTHER row; for 2025-09 the same lines are only reclassified.
   const CORRECTED_PERIOD = (r: MonthlyLongRow) => r.entity === '9620 State 350' && r.period === '2025-09';
+  // v03.2 (Gabriel ruling 2026-10-06): the committed CSV is normalised with mapping v3, which excludes the Yardi
+  // "Prepaid Rental Income" rows that v1/v2 counted as contra-revenue. The reproduction therefore uses v3 (v3 =
+  // v2 + that one exclusion; v2 = v1 for every AF / CF / A12 rule), not the v1 file pinned above.
+  const MAPPING_V3 = parseAccountMapping(JSON.parse(readFileSync(resolve(CONFIG_DIR, 'account-mapping.v3.json'), 'utf8')));
   it('reproduces every monthly-entity row of data/property-financials/monthly-long.csv exactly, in the committed order, except the corrected 9620 2025-09 period', () => {
     const raw = parseRawRecords(JSON.parse(readFileSync(RAW_PATH as string, 'utf8')));
     const registry = JSON.parse(readFileSync(resolve(CONFIG_DIR, 'entities.json'), 'utf8')) as { entities: Array<{ id: string; kind: 'monthly' | 'annual' }> };
     const kinds = Object.fromEntries(registry.entities.map((e) => [e.id, e.kind]));
-    const result = normalizeRecords(raw, MAPPING, kinds);
+    const result = normalizeRecords(raw, MAPPING_V3, kinds);
     const builtAll = sortMonthlyLongRows(result.rows, kinds);
 
     const committed = parseMonthlyLong(loadCsvText());

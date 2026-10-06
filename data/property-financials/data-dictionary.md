@@ -30,7 +30,7 @@ FY2024, FY2025, YTD25 and YTD26 (Jan–Sep), TTM25 (Oct 2024–Sep 2025), TTM26 
 
 ## Definitions
 
-- **Normalized NOI** = revenue (excluding security-deposit receipts and unallocated prepays) minus recurring opex. Excludes capex, leasing commissions, TI, owner distributions, debt service, interest, depreciation and entity income tax. Do not substitute PM-reported NOI.
+- **Normalized NOI** = revenue (excluding security-deposit receipts and prepaid rent) minus recurring opex. Prepaid rent has one treatment for every source layout: AppFolio unallocated prepays and the Yardi cash-flow Prepaid Rental Income line are both excluded (v03.2). Excludes capex, leasing commissions, TI, owner distributions, debt service, interest, depreciation and entity income tax. Do not substitute PM-reported NOI.
 - **Recovery ratio** = (recoveries + utility reimbursements) / (tax + insurance + utilities + grounds + R&M). Not meaningful for single-tenant NNN assets that pay taxes and insurance directly.
 - **Base rent run-rate (Q3)** = average of Jul–Sep base rent × 12; yoy compares Q3 to Q3.
 - **Same-store set** (PM monthly, full history): 1100 Rarig, 1900 N Broadway, 29000 Information Ln, 3540 E 5th, 9050 Red Branch, FVC; FY views add 55 New Plant and 1851 South Club Solar. Excluded from trend: 9620 State 350, 3034 Westerville, 3875-3883 Livingston (lease-up or partial history).
@@ -106,3 +106,31 @@ Gabriel ruled on 2026-10-05 to promote the re-parsed 2025-09 single-month recap 
 | TTM26 (2025-10..2026-09) | 268,388.28 (unchanged) | 148,685.77 (unchanged) | 119,702.51 (unchanged) |
 
 FY2025 revenue now ties to the annual file to the cent. FY2025 opex ties to the annual file except management fees: the monthly recaps sum to $14,400 and the annual file shows $13,150. The dependent blocks move with these figures: yoy, monthly, account_movers, history (yr, ytd, months, drv). 9620 is excluded from same-store, so no portfolio or same-store figure changes, and no other entity changes. `meta.version` stays `v03` because the contract requires two digits; this note records the correction.
+
+## v03.2 prepaid-rent: one treatment for every layout (2026-10-06)
+
+Gabriel ruled on 2026-10-06 that prepaid rent is excluded from revenue and NOI for every source layout, matching the NOI definition. AppFolio `Unallocated Prepays` was already excluded. The Yardi cash-flow line `RENTAL REVENUE › Prepaid Rental Income` had been counted as contra-revenue under "Vacancy / waivers / bad debt"; account mapping v3 (`CF-RENTAL-REVENUE-PREPAID`) now excludes it. Only 1900 Broadway and 9050 Red Branch carry that line: 133 monthly rows each (2015-09 to 2026-09), 266 rows in total, removed from monthly-long.csv (15,493 to 15,227 rows). Over the whole history it nets to +$444.65 (Broadway) and +$373.02 (Red Branch), but single months swing by up to $27.8K, so period figures move. 29000 Info Lane records prepaid rent only as a balance-sheet adjustment (`ADJUSTMENTS › Prepaid Rent`), which was already excluded, so it does not change.
+
+| Entity · period | Revenue (before → after) | NOI (before → after) |
+|---|---|---|
+| 1900 Broadway · FY2024 | 702,781.99 → 701,442.29 | 360,191.35 → 358,851.65 |
+| 1900 Broadway · FY2025 | 649,787.70 → 651,127.40 | 365,562.20 → 366,901.90 |
+| 1900 Broadway · YTD25 | 499,226.76 → 500,566.46 | 269,739.74 → 271,079.44 |
+| 1900 Broadway · YTD26 | 516,326.45 → 515,881.80 | 286,943.56 → 286,498.91 |
+| 1900 Broadway · TTM26 | 666,887.39 → 666,442.74 | 382,766.02 → 382,321.37 |
+| 9050 Red Branch · FY2024 | 1,141,704.85 → 1,142,775.80 | 837,125.45 → 838,196.40 |
+| 9050 Red Branch · FY2025 | 1,251,546.82 → 1,258,493.71 | 905,389.70 → 912,336.59 |
+| 9050 Red Branch · YTD25 | 949,092.31 → 956,407.99 | 684,622.46 → 691,938.14 |
+| 9050 Red Branch · YTD26 | 995,822.41 → 996,070.87 | 691,631.56 → 691,880.02 |
+| 9050 Red Branch · TTM26 | 1,298,276.92 → 1,298,156.59 | 912,398.80 → 912,278.47 |
+
+Base rent, reimbursements, opex and capex do not change for either property. Revenue and NOI move by the same amount in every period.
+
+| Portfolio view | Revenue prior / current (before → after) | NOI prior / current (before → after) | NOI change |
+|---|---|---|---|
+| Same-store FY2025 vs FY2024 | 5,175,501.67 / 5,317,079.29 → 5,175,232.92 / 5,325,365.88 | 3,893,486.78 / 3,970,362.29 → 3,893,218.03 / 3,978,648.88 | +1.97% → +2.19% |
+| PM-only FY2025 vs FY2024 (Overview NOI KPI) | 4,079,752.71 / 4,312,468.54 → 4,079,483.96 / 4,320,755.13 | 2,858,166.71 / 3,040,402.43 → 2,857,897.96 / 3,048,689.02 | +6.38% → +6.68% |
+| Same-store TTM26 vs TTM25 | 4,299,142.34 / 4,417,246.81 → 4,303,396.92 / 4,416,681.83 | 2,928,602.26 / 3,161,129.40 → 2,932,856.84 / 3,160,564.42 | +7.94% → +7.76% |
+| Same-store YTD26 vs YTD25 | 3,254,493.61 / 3,359,271.88 → 3,263,148.99 / 3,359,075.69 | 2,288,999.02 / 2,409,725.99 → 2,297,654.40 / 2,409,529.80 | +5.27% → +4.87% |
+
+Same-store base rent (+2.6% Jan–Sep) and opex excluding real estate tax (+6.6%) are unchanged. The FY2024 and FY2025 annual Yardi statements still tie to the monthly CSV to the dollar, because the annual files carry the same line and the same rule excludes it. The dependent blocks move with these figures: yoy, monthly, history (yr, ytd, rc, months, drv). Two curated insights were restated (REV-05 Red Branch contra-revenue: FY2025 $64.0K to $57.0K, TTM $33.7K to $33.8K, annual impact 33,685 to 33,805; REV-04 Broadway waivers: $13.8K / 2.8% to $14.3K / 2.9% TTM). No other entity changes. `meta.version` stays `v03` because the contract requires two digits; this note records the change.

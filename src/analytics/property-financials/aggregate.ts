@@ -7,9 +7,9 @@
 //
 // Normalized NOI (data-dictionary.md "Definitions") = sum of `rev` rows - sum of `opex` rows. Capex,
 // distributions, debt service, non-operating, entity income tax and non-cash rows are carried as
-// below-line figures or ignored, never netted into NOI. Security-deposit receipts do not exist as CSV
-// rows (excluded upstream); prepaid-rent rows are revenue rows under "Vacancy / waivers / bad debt"
-// and are counted, matching the dataset.
+// below-line figures or ignored, never netted into NOI. Security-deposit receipts and prepaid rent do not
+// exist as CSV rows: both are excluded upstream for every source layout (AppFolio unallocated prepays and,
+// since mapping v3 / dataset v03.2, the Yardi "Prepaid Rental Income" line — Gabriel ruling 2026-10-06).
 //
 // Pure TypeScript: no fs.
 import {
