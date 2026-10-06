@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
 import { evaluateConditions } from '../../src/analytics/conditions';
-import { checkSnapshot, checkStaleLeaseRows, checkDebtBasis } from '../../server/reconcile-runtime';
+import { annualRentGapIsExplainedByAbatement, checkSnapshot, checkStaleLeaseRows, checkDebtBasis } from '../../server/reconcile-runtime';
 import { isDebtBasisFlag } from '../../src/analytics/debt-basis';
 
 const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
@@ -28,8 +28,84 @@ describe('checkSnapshot — runtime reconciliation', () => {
   });
 
   it('flags annual rent ≠ Σ(monthly×12) (warn)', () => {
-    const flags = checkSnapshot(base({ leases: [{ id: 'l1', annualRent: 1000, monthlyRent: 100 }] }));
+    // 1,235 on $100/mo is 12.35 months: it is above monthly x 12 (more than 12 months) (1,000 would be a legitimate
+    // two-month abatement since 2026-10-06 -- see the 'abated months' block below).
+    const flags = checkSnapshot(base({ leases: [{ id: 'l1', annualRent: 1235, monthlyRent: 100 }] }));
     expect(flags.some((f) => f.field === 'leases.annualRent' && f.severity === 'warn')).toBe(true);
+  });
+
+  // Abated months (2026-10-06): the workbook's Annual Rent is monthly × (12 − Abated Months), so Σ
+  // annual rent is legitimately below Σ(monthly × 12). The gap is excused ONLY when every lease on its
+  // own is consistent with an abatement. The workbook's Portfolio Total is a SUM of the same cells, so
+  // it must NOT be treated as the authority: it ties to any bad cell by construction.
+  describe('abated months', () => {
+    const lease1 = (annualRent: number, monthlyRent = 100) => [{ id: 'l1', annualRent, monthlyRent }];
+    const annualFlags = (s: PortfolioSnapshot) => checkSnapshot(s).filter((f) => f.field === 'leases.annualRent');
+    const totalOf = (rent: number) => ({ noi: null, value: null, rent });
+
+    it('accepts Σ annual < Σ(monthly×12) when the lease is a whole-month abatement', () => {
+      expect(annualFlags(base({ leases: lease1(1100), workbookTotals: totalOf(1100) }))).toEqual([]);
+    });
+
+    it('accepts a half-month abatement and a fully abated year', () => {
+      expect(annualFlags(base({ leases: lease1(1150), workbookTotals: totalOf(1150) }))).toEqual([]);
+      expect(annualFlags(base({ leases: lease1(0), workbookTotals: totalOf(0) }))).toEqual([]);
+    });
+
+    it('accepts a quarter-month / day-prorated abatement (no false critical alarm on valid data)', () => {
+      // $4,000/mo with 0.25 abated months: annual 47,000 = 4,000 x 11.75.
+      expect(annualFlags(base({ leases: lease1(47000, 4000), workbookTotals: totalOf(47000) }))).toEqual([]);
+      // 10 days ~ 0.33 months: 4,000 x 11.67 = 46,667.
+      expect(annualFlags(base({ leases: lease1(46667, 4000), workbookTotals: totalOf(46667) }))).toEqual([]);
+    });
+
+    it('STILL warns on a typo even when the workbook total (a SUM of the same cells) contains it', () => {
+      // 1,260 on a $100/mo lease is 12.6 months: it is above monthly x 12 (more than 12 months).
+      const flags = annualFlags(base({ leases: lease1(1260), workbookTotals: totalOf(1260) }));
+      expect(flags.some((f) => f.severity === 'warn')).toBe(true);
+      expect(flags.some((f) => f.severity === 'error')).toBe(false); // total ties, so only the per-lease warn fires
+    });
+
+    it('STILL warns on an overstatement above 12 months even when the workbook total contains it', () => {
+      const flags = annualFlags(base({ leases: lease1(2400), workbookTotals: totalOf(2400) }));
+      expect(flags.some((f) => f.severity === 'warn')).toBe(true);
+    });
+
+    it('one bad lease keeps the warn even when another lease is a legitimate abatement', () => {
+      const leases = [
+        { id: 'a', annualRent: 1100, monthlyRent: 100 }, // legitimate
+        { id: 'b', annualRent: 1260, monthlyRent: 100 }, // typo
+      ];
+      expect(annualFlags(base({ leases, workbookTotals: totalOf(2360) })).some((f) => f.severity === 'warn')).toBe(true);
+    });
+
+    it('flags the error when Σ annual rent does not tie to the workbook total, regardless of the per-lease check', () => {
+      const flags = annualFlags(base({ leases: lease1(1100), workbookTotals: totalOf(1200) }));
+      expect(flags.some((f) => f.severity === 'error')).toBe(true);
+    });
+  });
+
+  describe('annualRentGapIsExplainedByAbatement', () => {
+    const ok = (annualRent: number, monthlyRent = 100) => annualRentGapIsExplainedByAbatement([{ annualRent, monthlyRent }]);
+    it('explains any annual rent from 0 up to monthly x 12: whole, half, quarter and day-prorated abatements', () => {
+      expect(ok(1200)).toBe(true);
+      expect(ok(1100)).toBe(true);
+      expect(ok(1150)).toBe(true);
+      expect(ok(0)).toBe(true);
+      expect(ok(1100.5)).toBe(true); // within $1
+      expect(annualRentGapIsExplainedByAbatement([{ annualRent: 47000, monthlyRent: 4000 }])).toBe(true); // 0.25 mo
+      expect(ok(1033)).toBe(true); // in range: the per-lease parse check, not this aggregate guard, catches an in-range typo
+    });
+    it('rejects overstatements above 12 months and negative annual rent', () => {
+      expect(ok(1260)).toBe(false);
+      expect(ok(1235)).toBe(false);
+      expect(ok(2400)).toBe(false);
+      expect(ok(-100)).toBe(false);
+    });
+    it('rejects a lease with no monthly rent but annual rent, and accepts an empty list', () => {
+      expect(ok(500, 0)).toBe(false);
+      expect(annualRentGapIsExplainedByAbatement([])).toBe(true);
+    });
   });
 
   it('flags dangling relationship edges (warn)', () => {
