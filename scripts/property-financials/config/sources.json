@@ -1,0 +1,26 @@
+{
+  "$schema_note": "Where the Property Financials statement files live and which entity / layout each folder or file feeds (plan T9b, part 1). Read by scripts/property-financials/lib/sources.ts. `pmFolders` are the property-management monthly exports (one statement per file for AF, one per 12-month window for CF / A12); their `entity` must be a config/entities.json id, or match an `excludedEntities` pattern in the account mapping (then the whole folder is skipped and reported, never opened). `entityStatements` are the top-level annual / YTD files named `P&L <year>[ YTD] -- <entity>.<ext>`: registry entities of kind `annual` (QuickBooks) feed the dataset; monthly-kind entities' annual files are cross-checked against the monthly sums only. Binary .xls (OLE2) files cannot be read by exceljs: they are looked up as `<folder leaf>__<basename>.xlsx` in the converted directory ($PF_CONVERTED_DIR / --converted; produced by convert-xls.ps1) and reported as unreadable when absent. The source directory is READ-ONLY.",
+  "version": "v1",
+  "sourceDirEnv": "PF_SOURCE_DIR",
+  "sourceDirDefault": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Property Financials",
+  "convertedDirEnv": "PF_CONVERTED_DIR",
+  "pmFolders": [
+    { "folder": "Property Management P&Ls/1100 Rarig", "entity": "1100 Rarig", "layout": "AF" },
+    { "folder": "Property Management P&Ls/1900 N Broadway", "entity": "1900 Broadway", "layout": "CF" },
+    { "folder": "Property Management P&Ls/2203 Northwood", "entity": "2203-2207 Northwood", "layout": "AF" },
+    { "folder": "Property Management P&Ls/29000 Information Lane", "entity": "29000 Info Lane", "layout": "CF" },
+    { "folder": "Property Management P&Ls/3034 Westerville", "entity": "3034 Westerville", "layout": "AF" },
+    { "folder": "Property Management P&Ls/3540 E 5th Ave", "entity": "3540 E 5th", "layout": "AF" },
+    { "folder": "Property Management P&Ls/3875-3883 Livingston", "entity": "3883 Livingston", "layout": "AF" },
+    { "folder": "Property Management P&Ls/9050 Red Branch", "entity": "9050 Red Branch", "layout": "CF" },
+    { "folder": "Property Management P&Ls/9620 State 350", "entity": "9620 State 350", "layout": "A12" },
+    { "folder": "Property Management P&Ls/Sepich Portfolio", "entity": "FVC", "layout": "AF" }
+  ],
+  "entityStatements": {
+    "pattern": "^P&L (\\d{4})(?: YTD)? -- (.+)\\.(xlsx|xlsm)$",
+    "entityGroup": 2
+  },
+  "readableExtensions": [".xlsx", ".xlsm"],
+  "convertRequiredExtensions": [".xls"],
+  "convertedNamePattern": "<folder leaf>__<basename>.xlsx"
+}

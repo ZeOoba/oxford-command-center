@@ -1,0 +1,16 @@
+{
+  "$note": "Curated meta text for the Property Financials dataset builder (plan T9a). Numeric meta (periods, categories) is derived; only the text here is carried through. `generated` is the dataset stamp (deterministic builds: the CLI does not stamp the clock unless --generated is passed).",
+  "title": "ORA Property Financials Normalized Dataset",
+  "version": "v03",
+  "generated": "2026-10-05",
+  "as_of": "2026-09-30",
+  "basis": "cash",
+  "units": "USD",
+  "source_folder": "Business/Property Financials",
+  "excluded": [
+    "2203-2207 Northwood (pending)"
+  ],
+  "noi_definition": "revenue (excl. security-deposit receipts and prepaid rent: AppFolio unallocated prepays and Yardi prepaid rental income alike) minus recurring opex",
+  "history_note": "history[entity]: monthly(bool), yr[year] and ytd[year] (Jan-Sep) with br, rev, opex, noi, cats{opex category}, rc{revenue category}, n months; months{g,br,rv,ox,tx} monthly series; ev[] net base-rent steps; drv[period] account-level drivers with nature (recurring|lumpy|mixed|annual). Years with n<12 are partial.",
+  "portfolio_note": "Same-store excludes lease-up and partial-history assets (9620 State 350, 3034 Westerville, 3875-3883 Livingston). FY view adds the two entity-level statements (55 New Plant, 1851 South Club Solar). TTM/YTD views use PM monthly exports only."
+}

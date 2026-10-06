@@ -1,0 +1,606 @@
+// src/modules/property-financials/model.ts
+//
+// The pure view-model of the Property Financials module (plan T5): everything the views render that
+// is derived from the dataset, built ONLY from the calc library in src/analytics/property-financials
+// (pctChange, recoveryRatio, runRateQ3Table, partialReason, the formatters). Components never do
+// arithmetic on dataset figures themselves. No firm number is hardcoded here: the Overview lede, the
+// member counts and the period labels are all read from the dataset.
+//
+// Pinned in tests/unit/property-financials-model.test.ts. Pure TypeScript: no React, no fetch.
+import {
+  LEASE_UP_EXCLUDED,
+  MONTHLY_COMPARISONS,
+  OPEX_CATEGORIES,
+  PF_ENTITY_IDS,
+  PF_MONTHLY_ENTITY_IDS,
+  PF_SEVERITIES,
+  type OpexCategory,
+  type PfAccountMover,
+  type PfComparisonId,
+  type PfDataset,
+  type PfMonthlyEntityId,
+  type PfEntityId,
+  type PfInsight,
+  type PfLease,
+  type PfPeriodFigures,
+  type PfPortfolioView,
+  type PfProperty,
+} from '@contracts/property-financials';
+import { COMPARISONS, notMeaningful, ok, partialReason, periodLabel, type MetricResult } from '@analytics/property-financials/periods';
+import { evaluationResults, pctChange, q3RunRate, ratio, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
+import { EVALUATION_TEST_IDS, THRESHOLDS, ragStatus, type EvaluationTestId, type EvaluationThreshold, type RagStatus } from '@analytics/property-financials/thresholds';
+import { pctLevel } from '@analytics/property-financials/format';
+
+const RE_TAX: OpexCategory = 'Real estate & property tax';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+// -------------------------------------------------------------------------------------------------
+// Labels / dates
+// -------------------------------------------------------------------------------------------------
+
+/** `2026-09-30` → `30 Sep 2026`. Unparseable input is returned unchanged. */
+export function fmtLongDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const mon = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  return m && mon ? `${Number(m[3])} ${mon} ${m[1]}` : iso;
+}
+
+/** `2023-10` → `Oct 2023`. */
+export function fmtMonth(ym: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  const mon = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  return m && mon ? `${mon} ${m[1]}` : ym;
+}
+
+/** First..last month of a window: `Jan-Sep 2026`, or `Oct 2025-Sep 2026` across years. */
+export function monthRangeLabel(months: readonly string[]): string {
+  const first = months[0];
+  const last = months[months.length - 1];
+  if (!first || !last) return '';
+  const firstMon = fmtMonth(first).split(' ')[0];
+  const lastMon = fmtMonth(last).split(' ')[0];
+  const firstYear = first.slice(0, 4);
+  const lastYear = last.slice(0, 4);
+  return firstYear === lastYear ? `${firstMon}-${lastMon} ${lastYear}` : `${firstMon} ${firstYear}-${lastMon} ${lastYear}`;
+}
+
+/** Masthead exclusion notes from dataset meta.excluded: `X (pending)` → `X excluded (pending)`. */
+export function excludedNotes(excluded: readonly string[]): string[] {
+  return excluded.map((e) => {
+    const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(e);
+    return m ? `${m[1]} excluded (${m[2]})` : `${e} excluded`;
+  });
+}
+
+/** Short opex category labels for chart rows (presentation only). */
+export const OPEX_SHORT_LABEL: Readonly<Record<OpexCategory, string>> = {
+  'Real estate & property tax': 'Real estate tax',
+  Insurance: 'Insurance',
+  'Management fees': 'Management fees',
+  Utilities: 'Utilities',
+  'Grounds / snow / lot': 'Grounds & snow',
+  'Repairs & maintenance': 'Repairs & maint.',
+  'Turnover / make-ready': 'Turnover / make-ready',
+  'Professional / admin': 'Professional / admin',
+};
+
+// -------------------------------------------------------------------------------------------------
+// Entity matching
+// -------------------------------------------------------------------------------------------------
+
+/** Entity / lease / insight property label without its trailing parenthetical. */
+function baseName(s: string): string {
+  return s.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+/**
+ * The lease for an entity: same street words, and the entity's building number equals the lease's
+ * number or one end of its range ("3883 Livingston" ↔ "3875-3883 Livingston"). Null when none.
+ */
+export function leaseForEntity(leases: readonly PfLease[], entity: string): PfLease | null {
+  const [num, ...street] = baseName(entity).split(/\s+/);
+  if (!num || street.length === 0) return null;
+  for (const l of leases) {
+    const [lnum, ...lstreet] = baseName(l.property).split(/\s+/);
+    if (!lnum || lstreet.join(' ').toLowerCase() !== street.join(' ').toLowerCase()) continue;
+    if (lnum === num || lnum.split('-').includes(num)) return l;
+  }
+  return null;
+}
+
+/** Review items for an entity: the insight's property starts with the entity's base name. */
+export function insightsForEntity(insights: readonly PfInsight[], entity: string): PfInsight[] {
+  const key = baseName(entity);
+  return insights.filter((i) => i.property.startsWith(key));
+}
+
+/** The dataset entity an insight is about, or null (Portfolio, lease-only properties). */
+export function entityForInsight(insight: PfInsight): PfEntityId | null {
+  return PF_ENTITY_IDS.find((id) => insight.property.startsWith(baseName(id))) ?? null;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Insights
+// -------------------------------------------------------------------------------------------------
+
+const SEVERITY_RANK: Readonly<Record<PfInsight['severity'], number>> = Object.fromEntries(
+  PF_SEVERITIES.map((s, i) => [s, i]),
+) as Record<PfInsight['severity'], number>;
+
+const absImpact = (i: PfInsight): number => (i.annual_impact_usd === null ? -1 : Math.abs(i.annual_impact_usd));
+
+/** Severity (High → Low), then |annual impact| descending; an unknown impact sorts last in its band. */
+export function sortInsights(insights: readonly PfInsight[]): PfInsight[] {
+  return [...insights].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || absImpact(b) - absImpact(a));
+}
+
+/** "Where the money is": High-severity items ranked by |annual impact|. */
+export function whereTheMoneyIs(insights: readonly PfInsight[]): PfInsight[] {
+  return sortInsights(insights.filter((i) => i.severity === 'High'));
+}
+
+/** Sign tone class: positive good (or inverted for costs), negligible muted (the artifact's cls). */
+export function toneClass(x: number | null, invert = false): string {
+  if (x === null || Math.abs(x) < 0.0005) return 'pf-mut';
+  return (invert ? x < 0 : x > 0) ? 'pf-pos' : 'pf-neg';
+}
+
+/** Display tone of an impact figure: an expense increase or a revenue loss reads negative. */
+export function impactTone(i: PfInsight): 'pos' | 'neg' | 'mut' {
+  const v = i.annual_impact_usd;
+  if (v === null) return 'mut';
+  if (i.type === 'Expense') return v > 0 ? 'neg' : 'pos';
+  return v < 0 ? 'neg' : 'pos';
+}
+
+/** Plain-language noun for an insight's primary tag (presentation vocabulary, not data). */
+const TAG_NOUN: Readonly<Record<string, string>> = {
+  solar: 'solar income',
+  rent: 'rent',
+  lease: 'leasing',
+  utilities: 'utilities',
+  repairs: 'repairs',
+  vacancy: 'vacancy and waivers',
+  nnn: 'cost recovery',
+  cam: 'CAM recovery',
+  recoveries: 'recoveries',
+  tax: 'real estate tax',
+  insurance: 'insurance',
+  'management-fee': 'management fees',
+  'bid-out': 'service contracts',
+};
+
+function joinList(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+export interface InsightTheme {
+  /** The primary tag the theme groups on. */
+  readonly key: string;
+  readonly phrase: string;
+  /** Gross |annual impact| of the grouped items. */
+  readonly total: number;
+  readonly insightIds: readonly string[];
+}
+
+/**
+ * The biggest-dollar themes among High-severity items: grouped by primary tag, ranked by gross
+ * |annual impact|. Items without a dollar estimate carry no weight and are left out.
+ */
+export function insightThemes(insights: readonly PfInsight[], limit = 3): InsightTheme[] {
+  const groups = new Map<string, PfInsight[]>();
+  for (const i of whereTheMoneyIs(insights)) {
+    if (i.annual_impact_usd === null) continue;
+    const key = i.tags[0] ?? i.type.toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), i]);
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => {
+      const places = [...new Set(items.map((i) => i.property))];
+      const noun = TAG_NOUN[key] ?? key.replace(/-/g, ' ');
+      const where = places.length === 1 && places[0] === 'Portfolio' ? 'across the portfolio' : `at ${joinList(places.map((p) => (p === 'Portfolio' ? 'portfolio level' : p)))}`;
+      return { key, phrase: `${noun} ${where}`, total: items.reduce((a, i) => a + Math.abs(i.annual_impact_usd ?? 0), 0), insightIds: items.map((i) => i.id) };
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Overview
+// -------------------------------------------------------------------------------------------------
+
+export interface KpiFigure {
+  readonly current: number;
+  readonly prior: number;
+  readonly change: MetricResult;
+}
+
+export interface OverviewKpis {
+  /** Label of the same-store year-to-date window, e.g. `Jan-Sep 2026`. */
+  readonly periodLabel: string;
+  readonly baseRent: KpiFigure & { readonly members: number };
+  readonly opexExTax: KpiFigure;
+  readonly noiFy: KpiFigure & { readonly members: number };
+  readonly high: { readonly count: number; readonly grossSwing: number };
+}
+
+/** A YoY of two sums: n/m with the member's partial reason when any member is partial on either side. */
+function kpi(prior: number, current: number, partial: string | null = null): KpiFigure {
+  return { prior, current, change: partial !== null ? notMeaningful(partial) : pctChange(prior, current) };
+}
+
+function opexExTax(view: PfPortfolioView['view'], partial: string | null): KpiFigure {
+  return kpi(view.opex.prior - view.opex_by[RE_TAX].prior, view.opex.current - view.opex_by[RE_TAX].current, partial);
+}
+
+export type PfPortfolioViewKey = Exclude<keyof PfDataset['portfolio'], 'note'>;
+
+/** The comparison a portfolio view key carries: `same_store_YTD26_vs_YTD25` -> YTD26 vs YTD25. */
+function viewComparison(key: PfPortfolioViewKey): PfComparisonId {
+  const c = MONTHLY_COMPARISONS.find((id) => key.endsWith(`_${id}`));
+  if (!c) throw new Error(`portfolio view ${key} names no known comparison`);
+  return c;
+}
+
+/**
+ * Why a portfolio view's YoY is not meaningful, or null when every member is complete on both sides.
+ * The views are plain sums of their members' period figures (build-dataset `view()`), so ONE member
+ * with a partial current or prior period makes every percent change of the sum a partial-period YoY
+ * (data-dictionary rule 1). Reason: `<member>: partial period: n of N months`.
+ */
+export function portfolioViewPartial(d: PfDataset, key: PfPortfolioViewKey): string | null {
+  const { current, prior } = COMPARISONS[viewComparison(key)];
+  for (const member of d.portfolio[key].members) {
+    const periods = (d.properties as Record<string, { periods: Record<string, PfPeriodFigures | undefined> }>)[member]?.periods;
+    for (const per of [current, prior]) {
+      const f = periods?.[per];
+      const reason = f === undefined ? `no ${per} figures` : partialReason(per, f.n_months);
+      if (reason !== null) return `${member}: ${reason}`;
+    }
+  }
+  return null;
+}
+
+/** The four Overview KPI tiles. Percent changes come from pctChange, never the view's rounded pct. */
+export function overviewKpis(d: PfDataset): OverviewKpis {
+  const ytd = d.portfolio.same_store_YTD26_vs_YTD25;
+  const fy = d.portfolio.pm_only_FY2025_vs_FY2024;
+  const ytdPartial = portfolioViewPartial(d, 'same_store_YTD26_vs_YTD25');
+  const fyPartial = portfolioViewPartial(d, 'pm_only_FY2025_vs_FY2024');
+  const high = d.insights.filter((i) => i.severity === 'High');
+  return {
+    periodLabel: monthRangeLabel(d.meta.periods.YTD26.months),
+    baseRent: { ...kpi(ytd.view.base_rent.prior, ytd.view.base_rent.current, ytdPartial), members: ytd.members.length },
+    opexExTax: opexExTax(ytd.view, ytdPartial),
+    noiFy: { ...kpi(fy.view.noi.prior, fy.view.noi.current, fyPartial), members: fy.members.length },
+    high: { count: high.length, grossSwing: high.reduce((a, i) => a + Math.abs(i.annual_impact_usd ?? 0), 0) },
+  };
+}
+
+const COUNT_WORD = ['no', 'one', 'two', 'three', 'four', 'five'] as const;
+
+/**
+ * The Overview lede, computed (the reference artifact hardcoded it): same-store rent growth,
+ * opex-excl-tax growth, and the three biggest-dollar themes among High-severity items.
+ */
+export function overviewLede(d: PfDataset): string {
+  const k = overviewKpis(d);
+  const rent = k.baseRent.change;
+  const cost = k.opexExTax.change;
+  const abs = (v: number) => pctLevel(Math.abs(v), 1);
+  const rentPart =
+    rent.value === null
+      ? `Same-store rent growth is not measurable (${rent.reason})`
+      : rent.value >= 0
+        ? `Rent is growing ${abs(rent.value)} on a same-store basis`
+        : `Rent is falling ${abs(rent.value)} on a same-store basis`;
+  const costPart =
+    cost.value === null
+      ? `the change in operating cost excluding real estate tax is not measurable (${cost.reason})`
+      : `operating cost excluding real estate tax is ${cost.value >= 0 ? 'up' : 'down'} ${abs(cost.value)}`;
+  let lede = `${rentPart}, while ${costPart}.`;
+  const themes = insightThemes(d.insights, 3);
+  if (themes.length > 0) {
+    const n = COUNT_WORD[themes.length] ?? String(themes.length);
+    const places = themes.length === 1 ? 'place' : 'places';
+    const list = themes.length >= 3 ? `${themes.slice(0, -1).map((t) => t.phrase).join(', ')}, and ${themes[themes.length - 1]!.phrase}` : joinList(themes.map((t) => t.phrase));
+    lede += ` The biggest dollars sit in ${n} ${places}: ${list}.`;
+  }
+  return lede;
+}
+
+export interface OpexDeltaItem {
+  readonly category: OpexCategory;
+  readonly label: string;
+  readonly value: number;
+  readonly prior: number;
+  readonly current: number;
+  readonly change: MetricResult;
+}
+
+/**
+ * Chart 2: dollar change by opex category (current - prior), largest increase first. `partial` is the
+ * view's portfolioViewPartial reason: when set, every percent change is n/m with it.
+ */
+export function opexDeltaItems(view: PfPortfolioView['view'], partial: string | null = null): OpexDeltaItem[] {
+  return OPEX_CATEGORIES.map((c) => {
+    const o = view.opex_by[c];
+    return { category: c, label: OPEX_SHORT_LABEL[c], value: o.current - o.prior, prior: o.prior, current: o.current, change: partial !== null ? notMeaningful(partial) : pctChange(o.prior, o.current) };
+  }).sort((a, b) => b.value - a.value);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Scorecard
+// -------------------------------------------------------------------------------------------------
+
+export interface ScorecardRow {
+  readonly id: PfEntityId;
+  readonly label: string;
+  readonly kind: PfProperty['kind'];
+  readonly sourceNote: string;
+  readonly noiFy24: MetricResult;
+  readonly noiFy25: MetricResult;
+  readonly noiTtm: MetricResult;
+  readonly margin: MetricResult;
+  readonly runRateYoy: MetricResult;
+  readonly opexRatio: MetricResult;
+  readonly mgmtFee: MetricResult;
+  readonly recovery: MetricResult;
+  readonly flags: number;
+  /** The period behind margin / opex ratio / mgmt fee / recovery: TTM26 (monthly) or FY2025 (annual-only). */
+  readonly ratioPeriod: 'TTM26' | 'FY2025';
+}
+
+const ANNUAL_ONLY = 'annual statements only: no monthly detail';
+
+/** A period figure, or n/m with the partial-period reason. */
+function periodValue(periodId: string, f: PfPeriodFigures, pick: (f: PfPeriodFigures) => number | null, nullReason: string): MetricResult {
+  const partial = partialReason(periodId, f.n_months);
+  if (partial !== null) return notMeaningful(partial);
+  const v = pick(f);
+  return v === null ? notMeaningful(nullReason) : ok(v);
+}
+
+/** The Scorecard's short name for a ratio period in an n/m reason ('TTM: partial period ...'), as evaluationResults words it. */
+const RATIO_PERIOD_LABEL = { TTM26: 'TTM', FY2025: 'FY2025' } as const;
+type RatioPeriod = keyof typeof RATIO_PERIOD_LABEL;
+
+/**
+ * Refuse a computed ratio on a partial period, the way evaluationResults does: a value on a partial
+ * period becomes n/m '<period>: partial period ...'; a ratio that is already n/m (no revenue, no pool)
+ * keeps its own reason. Scorecard and Evaluation therefore agree on value AND reason.
+ */
+function refusePartial(periodId: RatioPeriod, f: PfPeriodFigures, r: MetricResult): MetricResult {
+  const partial = partialReason(periodId, f.n_months);
+  return partial !== null && r.value !== null ? notMeaningful(`${RATIO_PERIOD_LABEL[periodId]}: ${partial}`) : r;
+}
+
+/**
+ * A ratio of two RAW period figures via the calc lib's ratio(). The dataset's 2-dp noi_margin /
+ * opex_ratio / mgmt_fee_pct / recovery_ratio are summary fields and are never displayed: the Scorecard
+ * must agree with the Evaluation matrix to the last digit (pinned in tests/unit/property-financials-model.test.ts).
+ */
+function periodRatio(periodId: RatioPeriod, f: PfPeriodFigures, num: (f: PfPeriodFigures) => number, den: (f: PfPeriodFigures) => number, reason: string): MetricResult {
+  return refusePartial(periodId, f, ratio(num(f), den(f), reason));
+}
+
+const NO_REVENUE = 'no revenue in the period';
+const noiMarginOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.noi, (x) => x.revenue, NO_REVENUE);
+const opexRatioOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.opex, (x) => x.revenue, NO_REVENUE);
+const mgmtFeeOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.opex_by['Management fees'], (x) => x.revenue, NO_REVENUE);
+
+/** Scorecard table rows in dataset order (PM monthly entities, then annual entity statements). */
+export function scorecardRows(d: PfDataset): ScorecardRow[] {
+  return (Object.keys(d.properties) as PfEntityId[]).map((id) => {
+    const p = d.properties[id];
+    const flags = insightsForEntity(d.insights, id).length;
+    const noi = (per: 'FY2024' | 'FY2025') => periodValue(per, p.periods[per], (f) => f.noi, 'no figure');
+    if (p.kind === 'monthly') {
+      const t = p.periods.TTM26;
+      return {
+        id,
+        label: p.label,
+        kind: p.kind,
+        sourceNote: `PM monthly, ${fmtMonth(p.first_month)} to ${fmtMonth(p.last_month)}`,
+        noiFy24: noi('FY2024'),
+        noiFy25: noi('FY2025'),
+        noiTtm: periodValue('TTM26', t, (f) => f.noi, 'no figure'),
+        margin: noiMarginOf('TTM26', t),
+        runRateYoy: runRateQ3Table(d.monthly[p.id]).yoy_2026,
+        opexRatio: opexRatioOf('TTM26', t),
+        mgmtFee: mgmtFeeOf('TTM26', t),
+        recovery: refusePartial('TTM26', t, recoveryRatio(t)),
+        flags,
+        ratioPeriod: 'TTM26',
+      };
+    }
+    const fy = p.periods.FY2025;
+    return {
+      id,
+      label: p.label,
+      kind: p.kind,
+      sourceNote: 'Entity annual P&L',
+      noiFy24: noi('FY2024'),
+      noiFy25: noi('FY2025'),
+      noiTtm: notMeaningful(`${ANNUAL_ONLY}, so no trailing-twelve-month figure`),
+      margin: noiMarginOf('FY2025', fy),
+      runRateYoy: notMeaningful(`${ANNUAL_ONLY}, so no Q3 run-rate`),
+      opexRatio: opexRatioOf('FY2025', fy),
+      mgmtFee: mgmtFeeOf('FY2025', fy),
+      recovery: notMeaningful(`${ANNUAL_ONLY}, so no recovery split`),
+      flags,
+      ratioPeriod: 'FY2025',
+    };
+  });
+}
+
+/** Ordered month keys of the monthly cube across the given entities (missing months included as keys). */
+export function cubeMonths(d: PfDataset, entities: readonly string[]): string[] {
+  const set = new Set<string>();
+  for (const id of entities) for (const m of Object.keys((d.monthly as Record<string, Record<string, unknown>>)[id] ?? {})) set.add(m);
+  return [...set].sort();
+}
+
+// -------------------------------------------------------------------------------------------------
+// Rent & NOI levers (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+/** Revenue and recovery review items for the Levers view, severity then |impact|. */
+export function leverInsights(insights: readonly PfInsight[]): PfInsight[] {
+  return sortInsights(insights.filter((i) => i.type === 'Revenue' || i.type === 'Recovery'));
+}
+
+export const RUN_RATE_YEARS = [2024, 2025, 2026] as const;
+export type RunRateYear = (typeof RUN_RATE_YEARS)[number];
+
+export interface RunRateRow {
+  readonly id: PfMonthlyEntityId;
+  readonly label: string;
+  /** Average Jul-Sep base rent x 12, or n/m when a month of the quarter is missing. */
+  readonly q3: Readonly<Record<RunRateYear, MetricResult>>;
+  readonly yoy2025: MetricResult;
+  readonly yoy2026: MetricResult;
+}
+
+/** Base-rent run-rate by PM asset, computed from the monthly cube (exact, not the dataset's 2-dp yoy). */
+export function runRateRows(d: PfDataset): RunRateRow[] {
+  return PF_MONTHLY_ENTITY_IDS.map((id) => {
+    const cube = d.monthly[id];
+    const q3 = Object.fromEntries(
+      RUN_RATE_YEARS.map((y) => {
+        const v = q3RunRate(cube, y);
+        return [y, v === null ? notMeaningful(`no full Jul-Sep ${y} in the monthly exports`) : ok(v)];
+      }),
+    ) as Record<RunRateYear, MetricResult>;
+    const t = runRateQ3Table(cube);
+    return { id, label: d.properties[id].label, q3, yoy2025: t.yoy_2025, yoy2026: t.yoy_2026 };
+  });
+}
+
+// -------------------------------------------------------------------------------------------------
+// Expense watchlist (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+/** The "no filter" option value of both watchlist selects. */
+export const WATCHLIST_ALL = 'All';
+
+/** Property filter options: All, then each Expense item's property once, in dataset order. */
+export function watchlistPropertyOptions(insights: readonly PfInsight[]): string[] {
+  return [WATCHLIST_ALL, ...new Set(insights.filter((i) => i.type === 'Expense').map((i) => i.property))];
+}
+
+export interface WatchlistFilter {
+  readonly property: string;
+  readonly severity: string;
+}
+
+/** Expense items matching both filters, severity then |annual impact| (unknown impact last in band). */
+export function filterWatchlist(insights: readonly PfInsight[], f: WatchlistFilter): PfInsight[] {
+  return sortInsights(
+    insights.filter((i) => i.type === 'Expense' && (f.property === WATCHLIST_ALL || i.property === f.property) && (f.severity === WATCHLIST_ALL || i.severity === f.severity)),
+  );
+}
+
+/** "Largest account movers" table rules (reference artifact WATCH block). */
+export const WATCHLIST_MOVER_RULES = {
+  comparison: 'YTD26_vs_YTD25',
+  /** Accounts must move by more than this many dollars. */
+  minAbsDelta: 2500,
+  limit: 24,
+} as const satisfies { comparison: 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024'; minAbsDelta: number; limit: number };
+
+export interface MoverRow {
+  readonly entity: PfMonthlyEntityId;
+  readonly label: string;
+  readonly mover: PfAccountMover;
+}
+
+export type MoverComparisonId = 'YTD26_vs_YTD25' | 'FY2025_vs_FY2024';
+
+/**
+ * Why an entity's account movers for a comparison are not meaningful (either side partial), or null.
+ * account_movers are built from the raw month sums whatever n_months says, so a mover on a partial
+ * side is a partial-period YoY. Reason: `partial period: n of N months (<period label>)`.
+ */
+export function moverComparisonPartial(d: PfDataset, entity: PfMonthlyEntityId, comparison: MoverComparisonId): string | null {
+  const p = d.properties[entity];
+  const { current, prior } = COMPARISONS[comparison];
+  for (const per of [current, prior]) {
+    const reason = partialReason(per, p.periods[per].n_months);
+    if (reason !== null) return `${reason} (${periodLabel(per)})`;
+  }
+  return null;
+}
+
+export interface MoverExclusion {
+  readonly entity: PfMonthlyEntityId;
+  readonly label: string;
+  readonly reason: string;
+}
+
+export interface OpexMovers {
+  readonly rows: readonly MoverRow[];
+  /** PM assets left out because a side of the comparison is partial, in dataset order. */
+  readonly excluded: readonly MoverExclusion[];
+}
+
+/** Operating-expense account movers across every PM asset with complete comparison periods, largest |delta| first. */
+export function topOpexMovers(
+  d: PfDataset,
+  rules: { readonly comparison: MoverComparisonId; readonly minAbsDelta: number; readonly limit: number } = WATCHLIST_MOVER_RULES,
+): OpexMovers {
+  const opex = new Set<string>(OPEX_CATEGORIES);
+  const rows: MoverRow[] = [];
+  const excluded: MoverExclusion[] = [];
+  for (const id of PF_MONTHLY_ENTITY_IDS) {
+    const partial = moverComparisonPartial(d, id, rules.comparison);
+    if (partial !== null) {
+      excluded.push({ entity: id, label: d.properties[id].label, reason: partial });
+      continue;
+    }
+    for (const m of d.account_movers[id][rules.comparison]) {
+      if (opex.has(m.category) && Math.abs(m.delta) > rules.minAbsDelta) rows.push({ entity: id, label: d.properties[id].label, mover: m });
+    }
+  }
+  return { rows: rows.sort((a, b) => Math.abs(b.mover.delta) - Math.abs(a.mover.delta)).slice(0, rules.limit), excluded };
+}
+
+// -------------------------------------------------------------------------------------------------
+// Evaluation scorecard (plan T6)
+// -------------------------------------------------------------------------------------------------
+
+export interface EvaluationCell {
+  readonly result: MetricResult;
+  readonly status: RagStatus;
+}
+
+export interface EvaluationRow {
+  readonly id: PfMonthlyEntityId;
+  readonly label: string;
+  readonly cells: Readonly<Record<EvaluationTestId, EvaluationCell>>;
+}
+
+/** Eight tests x every PM asset; status ONLY via ragStatus over the given thresholds. */
+export function evaluationMatrix(d: PfDataset, thresholds: Readonly<Record<EvaluationTestId, EvaluationThreshold>> = THRESHOLDS): EvaluationRow[] {
+  return PF_MONTHLY_ENTITY_IDS.map((id) => {
+    const p = d.properties[id];
+    if (p.kind !== 'monthly') throw new Error(`${id} is not a monthly entity`);
+    const res = evaluationResults(p, d.monthly[id], thresholds);
+    const cells = Object.fromEntries(EVALUATION_TEST_IDS.map((t) => [t, { result: res[t], status: ragStatus(t, res[t].value, thresholds) }])) as Record<EvaluationTestId, EvaluationCell>;
+    return { id, label: p.label, cells };
+  });
+}
+
+/** Labels of the lease-up assets (contract LEASE_UP_EXCLUDED), for the evaluation note. */
+export function leaseUpLabels(d: PfDataset): string[] {
+  return LEASE_UP_EXCLUDED.map((id) => d.properties[id].label);
+}
+
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'] as const;
+
+/** 9 → 'nine' (0-12), digits beyond. For prose counts read from the data. */
+export function countWord(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
+}

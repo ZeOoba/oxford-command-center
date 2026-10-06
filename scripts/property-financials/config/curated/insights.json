@@ -1,0 +1,353 @@
+{
+  "$note": "Curated insights (analyst-authored exception queue). Carried verbatim into dataset.insights; not derived from the CSV.",
+  "insights": [
+    {
+      "id": "REV-09",
+      "severity": "High",
+      "type": "Revenue",
+      "property": "1851 South Club Solar",
+      "title": "Solar electricity income fell 55% in 2025",
+      "finding": "Total energy income fell -15.7% ($668,798 to $563,866). Electricity sales dropped from $216.2K to $96.8K while SREC income rose from $452.6K to $467.1K. Operating NOI fell $123.4K and Maryland entity tax is a separate $55.2K.",
+      "action": "Get monthly production, meter reads and the power-sale billing statements for 2024-2026. Confirm there is no curtailment, meter fault or counterparty billing gap. Review SREC sale timing and pricing.",
+      "annual_impact_usd": -104932,
+      "impact_basis": "FY25 vs FY24 energy income [ACTUAL YoY]",
+      "tags": [
+        "solar",
+        "production"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-01",
+      "severity": "High",
+      "type": "Revenue",
+      "property": "FVC",
+      "title": "FVC base rent run-rate is falling",
+      "finding": "Q3 2026 annualized base rent is $1.05M versus $1.15M in Q3 2025 (-8.0%), after +5.5% the year before. YTD 2026 base rent is -1.0% against Jan-Sep 2025. FVC is the largest rent line in the folder (about 26% of trailing base rent) and carries almost no expense recoveries.",
+      "action": "Pull the FVC rent roll by unit for Jun-Sep 2026 and separate vacancy, concessions and rent cuts. Get a property-level P&L split (the file is an all-properties aggregate). Set a leasing target for the vacated space and review every renewal for a mark-to-market.",
+      "annual_impact_usd": -92356,
+      "impact_basis": "Q3-26 vs Q3-25 annualized base rent [ESTIMATE]",
+      "tags": [
+        "rent",
+        "vacancy"
+      ],
+      "evidence": {
+        "q3_2025": 1146307.12,
+        "q3_2026": 1053951.2
+      }
+    },
+    {
+      "id": "REV-02",
+      "severity": "High",
+      "type": "Revenue",
+      "property": "3883 Livingston",
+      "title": "Livingston re-leased about 45% below the prior rent, and Aug-Sep base rent shows $0",
+      "finding": "Base rent was $15,000/mo from Oct 2025 to Jun 2026. The new lease (My Autonomous Transportation Co, 10,950 SF, executed 02/2026) is $8,212.50/mo ($9.00/SF NNN) with 3% annual steps and a $2,737.50/mo tax/insurance/CAM estimate. Base rent starts 09/01/2026 per the lease, yet the PM exports show $8,212.50 in Jul 2026 and $0 in Aug and Sep 2026. All-in new rent is about $10,950/mo ($11.95/SF with the estimate) against $15,000/mo before.",
+      "action": "Confirm whether September rent was billed and collected and whether the July receipt was the first month paid at signing. Confirm what the $15,000 covered (gross vs NNN, one or both buildings). If the roll-down is real, decide whether to push the 3% step schedule or the NNN estimate true-up harder.",
+      "annual_impact_usd": -81450,
+      "impact_basis": "Prior $15,000/mo vs new $8,212.50/mo base rent x 12 [ESTIMATE; depends on whether prior rent was gross]",
+      "tags": [
+        "lease",
+        "rolldown",
+        "collections"
+      ],
+      "evidence": {
+        "prior_monthly": 15000,
+        "new_monthly": 8212.5,
+        "sf": 10950
+      }
+    },
+    {
+      "id": "EXP-01",
+      "severity": "High",
+      "type": "Expense",
+      "property": "1900 Broadway",
+      "title": "Broadway water and sewer doubled year over year",
+      "finding": "Water and Sewer is $63.0K for Jan-Sep 2026 against $30.5K in 2025 (+107.0%), and $76.1K in FY2024 versus $35.0K in FY2025. Annualized 2026 is about $83.9K. Utility reimbursements rose +59.6% to $40.3K, so net unrecovered utilities are up about $21.9K.",
+      "action": "Pull the utility invoices and meter reads. Check for a leak or irrigation fault, a rate or sewer-surcharge change, estimated-read billing, and a stuck meter. Question the swing between years with the city. Add leak detection and submeters if tenants are billed.",
+      "annual_impact_usd": 48949,
+      "impact_basis": "Annualized 2026 water vs FY2025 [ESTIMATE]",
+      "tags": [
+        "utilities",
+        "audit",
+        "question"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-02",
+      "severity": "High",
+      "type": "Expense",
+      "property": "9050 Red Branch",
+      "title": "Red Branch repairs tripled and snow rose 55%",
+      "finding": "Repairs and maintenance are $39.9K YTD against $13.0K (+206%): roof repair $14.6K (was $2.8K) and HVAC repair $8.9K (was $0.7K). Snow removal is $23.9K versus $15.4K. FY2025 electricity was $38.1K versus $20.0K (+91%) and gas $10.9K versus $4.5K.",
+      "action": "Get a roof condition report and a replace-versus-repair comparison before more repair spend. Rebid the snow contract (include a per-push and seasonal-cap option). Price a competitive electricity and gas supply contract for the common-area meters.",
+      "annual_impact_usd": 40448,
+      "impact_basis": "YTD26 vs YTD25 R&M plus grounds/snow increase [ACTUAL, 9 months]",
+      "tags": [
+        "repairs",
+        "bid-out",
+        "energy"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-05",
+      "severity": "High",
+      "type": "Revenue",
+      "property": "9050 Red Branch",
+      "title": "Red Branch lost $57K of base rent to vacancy, waivers and bad debt in 2025",
+      "finding": "Contra-revenue was $57.0K in FY2025 (5.7% of base rent): vacancy $34.1K, commercial waivers $15.0K and bad debt $8.0K (prepaid rent is excluded from revenue since 2026-10-06). It is $33.8K TTM through Sep 2026. Info Lane contra-revenue is rising too ($13.4K TTM, 1.4% to 2.1% of rent).",
+      "action": "Get the vacancy by suite and the waiver and bad-debt schedule by tenant. Tie each waiver to a signed concession. Tighten collections on the $8.0K bad-debt tenants and put the vacant suites on a leasing clock.",
+      "annual_impact_usd": 33805,
+      "impact_basis": "TTM contra-revenue at Red Branch [UPPER BOUND of what is recoverable]",
+      "tags": [
+        "vacancy",
+        "waivers",
+        "collections"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REC-01",
+      "severity": "High",
+      "type": "Recovery",
+      "property": "FVC",
+      "title": "FVC and Rarig carry almost all operating cost themselves",
+      "finding": "Reimbursements cover 4% of the recoverable pool at FVC and 10% at Rarig, against 103% at Red Branch and 132% at 3540 E 5th. FVC's FY2025 pool (tax, insurance, utilities, grounds, repairs) was $268.4K, about 23% of revenue.",
+      "action": "At every renewal and new lease, move gross leases to NNN or modified gross with a base-year stop. Bill utilities by submeter or ratio. Confirm which FVC and Rarig leases already allow pass-throughs and are not being billed.",
+      "annual_impact_usd": 26839,
+      "impact_basis": "Each +10 points of recovery on the FVC pool [SENSITIVITY]",
+      "tags": [
+        "nnn",
+        "pass-through"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-08",
+      "severity": "High",
+      "type": "Expense",
+      "property": "Portfolio",
+      "title": "Real estate tax is the largest cost line; run an appeal program",
+      "finding": "FY2025 real estate and property tax across the nine PM properties is $536.2K (35% of operating expense). Same-store tax grew +4.3% in FY2025. Info Lane is +20% YTD and Red Branch +13% in FY2025.",
+      "action": "Run the tax-appeal workflow on every property with a year-over-year increase above 5% before each county deadline. Track bill versus appeal outcome in the dashboard. Prioritize Info Lane, Red Branch, Rarig and Broadway.",
+      "annual_impact_usd": 26811,
+      "impact_basis": "5% reduction across FY2025 tax [SENSITIVITY]",
+      "tags": [
+        "tax",
+        "appeal"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REC-02",
+      "severity": "High",
+      "type": "Recovery",
+      "property": "9620 State 350",
+      "title": "9620 recovers about 15% of its recoverable cost",
+      "finding": "TTM recoverable pool is $114.0K (tax, insurance, utilities, grounds, repairs) against $17.6K billed (CAM estimates $8.2K and reconciliation $9.4K). Base rent has grown from about $11K/mo to $25K/mo in 12 months as the building leases up.",
+      "action": "Audit each lease for CAM, tax and insurance obligations. Move CAM billing to monthly estimates sized to budget, then run a year-end reconciliation. Confirm vacant-space cost is not being swallowed.",
+      "annual_impact_usd": 11402,
+      "impact_basis": "Each +10 points of recovery on the 9620 pool [SENSITIVITY]",
+      "tags": [
+        "cam",
+        "lease-up"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-04",
+      "severity": "High",
+      "type": "Expense",
+      "property": "FVC",
+      "title": "FVC utilities are up 70% YTD; taxes are down 60% (verify)",
+      "finding": "Utilities are $37.5K YTD against $22.1K: meter reader $5.5K (was $1.1K), electricity +73%, gas +167%, water +34%, plus a $7.0K water line repair and $2.6K water meter installation. Reimbursements for utilities are up to $17.8K from $9.5K. Real estate tax is $27.4K YTD against $68.5K.",
+      "action": "Confirm whether the tax drop is a successful appeal or a missing installment (cash basis). If the second-half bill is unpaid, accrue it. Continue the water submeter program and bill tenants the same month. Rebid electricity supply.",
+      "annual_impact_usd": 7102,
+      "impact_basis": "Increase in net unrecovered utilities YTD [ACTUAL, 9 months]",
+      "tags": [
+        "utilities",
+        "tax",
+        "verify"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-07",
+      "severity": "Medium",
+      "type": "Expense",
+      "property": "Portfolio",
+      "title": "Management fees run about 4% of revenue; two properties are above",
+      "finding": "Total TTM management fees across the nine PM-reported properties are $191.4K (3.8% of revenue). 9620 State 350 is 5.0% and Livingston is 4.0%. The 3540 E 5th lease caps the recoverable fee at 3% of rent plus adjustment rent.",
+      "action": "Bid the management contract across the portfolio or move to a tiered fee (lower rate above a revenue threshold). Make sure the fee base excludes security deposits and prepaid items.",
+      "annual_impact_usd": 25152,
+      "impact_basis": "Each 50 bps of fee on trailing revenue [SENSITIVITY]",
+      "tags": [
+        "management-fee",
+        "bid-out"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-09",
+      "severity": "Medium",
+      "type": "Expense",
+      "property": "Portfolio",
+      "title": "Bid out snow, landscaping and trash contracts as a package",
+      "finding": "Grounds, snow and lot cost is $131.2K TTM across the nine properties. Same-store snow/grounds were -5% in FY2025 but individual contracts moved sharply: Red Branch snow +55% YTD, Info Lane snow $7.3K to $23.8K in FY2025, Broadway snow contract +53% in FY2025. Broadway also pays $22.6K for contract cleaning and $5.9K for an elevator contract.",
+      "action": "Issue one RFP per metro (Columbus and Maryland) for snow, landscaping, trash and janitorial. Require unit pricing and seasonal caps. Rebid every 24-36 months and compare invoices to push counts.",
+      "annual_impact_usd": 13123,
+      "impact_basis": "10% savings on grounds/snow [SENSITIVITY]",
+      "tags": [
+        "bid-out",
+        "contracts"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-07",
+      "severity": "Medium",
+      "type": "Recovery",
+      "property": "3540 E 5th",
+      "title": "3540 E 5th recoveries exceed the property-level reimbursable cost",
+      "finding": "TTM recoveries were $47.4K versus total property operating cost of $37.7K. The lease (IMH LLC / Malul of London, 35,886 SF, 04/2023 to 07/2033) is NNN with 2.5% annual steps ($24,153.32/mo from Aug 2026) and a 3% management-fee cap on rent plus adjustment rent. Rent is on schedule. The gap suggests recoveries include prior-year true-ups or a capital pass-through.",
+      "action": "Run the CAM/tax/insurance reconciliation for the last two lease years and confirm what is in the reimbursement. If capital is being amortized to the tenant, document it. If it is an over-bill, correct it before the tenant audits.",
+      "annual_impact_usd": 9642,
+      "impact_basis": "TTM recoveries minus total opex [ESTIMATE of possible over-recovery]",
+      "tags": [
+        "recoveries",
+        "audit"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-04",
+      "severity": "Medium",
+      "type": "Revenue",
+      "property": "1900 Broadway",
+      "title": "Broadway rent grows about 2% a year, with steady waivers",
+      "finding": "Base rent run-rate: +2.0% in 2025 and +2.0% in 2026 (about $40.2K to $41.6K/mo in small steps). Commercial rental waivers run 2.9% of base rent ($14.3K TTM; prepaid rent is excluded from revenue since 2026-10-06).",
+      "action": "Audit each lease escalator against what is billed. If standard bumps are 3% or fixed steps, Broadway is under-billing. Ask for a waiver log with reasons and end dates.",
+      "annual_impact_usd": 4944,
+      "impact_basis": "Each +1 point of annual rent growth [SENSITIVITY]",
+      "tags": [
+        "rent",
+        "waivers"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-05",
+      "severity": "Medium",
+      "type": "Expense",
+      "property": "9620 State 350",
+      "title": "9620: insurance +55% TTM, an unexplained $10.1K expense, and a 5% management fee",
+      "finding": "Insurance is $51.5K TTM against $33.3K. A $10,067 miscellaneous expense posted in 2026 YTD. Management fee is 5.0% of revenue against 4.0% at most other properties, and real estate tax shows a $6,583 credit in 2026.",
+      "action": "Remarket the insurance policy with the portfolio. Get the invoice behind the $10,067. Renegotiate the fee to a flat 4% of collected revenue. Confirm the tax credit and the CAM property-tax recovery.",
+      "annual_impact_usd": 4554,
+      "impact_basis": "25% of the premium increase through a rebid [SPECULATIVE]",
+      "tags": [
+        "insurance",
+        "management-fee"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-03",
+      "severity": "Medium",
+      "type": "Expense",
+      "property": "29000 Info Lane",
+      "title": "Info Lane: HVAC repairs, a new association fee and a 20% tax increase",
+      "finding": "Non-recurring HVAC repairs are $16.2K YTD, an association fee of $6.0K appears for the first time, and real estate taxes are $42.7K versus $35.5K (+20%). FY2025 also carried a $41.6K suite cleaning and preparation charge (vacancy turnover) and snow of $23.8K versus $7.3K.",
+      "action": "File a property tax appeal. Ask the manager why an association fee started and whether it is recoverable. Replace-versus-repair review on the HVAC units. Get a turnover cost budget per suite.",
+      "annual_impact_usd": 4270,
+      "impact_basis": "10% tax reduction [SENSITIVITY]",
+      "tags": [
+        "tax",
+        "appeal",
+        "hvac"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-06",
+      "severity": "Medium",
+      "type": "Expense",
+      "property": "1100 Rarig",
+      "title": "Rarig real estate tax doubled YTD",
+      "finding": "Taxes are $30.3K Jan-Sep 2026 against $14.2K (+114%), while FY2025 was $28.8K against $43.3K in FY2024. Cash timing may explain part. Legal fees were $6.0K in FY2025 and accounting $3.5K new in 2026.",
+      "action": "Compare the actual tax bills for the last three tax years to the amounts paid. Appeal if the new valuation outpaces rent.",
+      "annual_impact_usd": 3027,
+      "impact_basis": "10% tax reduction [SENSITIVITY]",
+      "tags": [
+        "tax"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-03",
+      "severity": "Medium",
+      "type": "Revenue",
+      "property": "3034 Westerville",
+      "title": "Westerville 45% step-up is captured; verify the May receipt",
+      "finding": "Scheduled rent stepped from $8,950.50 to $13,005.00 on 04/01/2026 (18,360 SF, Buckeye's Best Transport, expires 09/30/2030). TTM NOI is $135.5K against $19.2K the prior year. May 2026 shows $16,558 received, $3,553 above schedule. The lease's $3,060/mo tax and insurance estimate tracks actual cost (taxes plus insurance TTM $36.5K against $36.7K estimated).",
+      "action": "Confirm what the extra $3,553 in May represents (catch-up, true-up or a posting error). Calendar the 3.5% step each April through 2030.",
+      "annual_impact_usd": null,
+      "impact_basis": null,
+      "tags": [
+        "lease",
+        "escalation"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-06",
+      "severity": "Medium",
+      "type": "Revenue",
+      "property": "7658 Fishel",
+      "title": "Fishel: no rent bumps for 5 years, renewal rent already fixed at +2%",
+      "finding": "Heritage Pool Supply (24,000 SF) paid a flat $8,540/mo ($4.27/SF/yr) for the full 60-month term ending 09/30/2026. The renewal option was exercised for 10/01/2026 at $8,710.80/mo, with 2% annual steps to $9,428.85 in year 5. The lease fixes the renewal rent, so there is no market reset. No P&L for this address is in the folder (it may sit inside FVC).",
+      "action": "Treat this as a lease-form lesson: renewal options should be at the greater of fixed or fair market value (the Sunburst lease uses that structure) and initial terms should carry 3% steps. Each $1.00/SF on 24,000 SF is $24,000/yr.",
+      "annual_impact_usd": null,
+      "impact_basis": null,
+      "tags": [
+        "lease",
+        "form"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "REV-08",
+      "severity": "Medium",
+      "type": "Revenue",
+      "property": "55 New Plant",
+      "title": "55 New Plant rent matches the lease; lease ends 12/31/2027; entity cash is earning interest",
+      "finding": "Eurosort (34,534 SF, Owings Mills MD) rent is $34,534 in year 1 with 3% annual steps: $35,570 (2024), $36,637 (2025), $37,736 (2026), $38,868 (2027). FY2025 rent of $440,745 and 2026 YTD of $188,681 (exactly five payments) both tie to the schedule. Interest expense fell from $32.6K (2025) to $3.2K (2026 YTD) while interest income was $78.3K YTD, which points to a debt payoff and a large cash balance in the entity.",
+      "action": "Start the renewal or backfill plan now: the term ends 12/31/2027 and the renewal clause was not fully read (OCR of the scan was partial). Put idle entity cash to work against the $700-800M growth plan.",
+      "annual_impact_usd": null,
+      "impact_basis": null,
+      "tags": [
+        "lease",
+        "rollover",
+        "cash"
+      ],
+      "evidence": {}
+    },
+    {
+      "id": "EXP-10",
+      "severity": "Low",
+      "type": "Expense",
+      "property": "Portfolio",
+      "title": "Insurance is flat once cash timing is removed; rebid it as one program",
+      "finding": "On the six same-store PM properties (complete in every window), FY2025 insurance is +30.2% against FY2024 but TTM26 is -1.8% against TTM25. The difference is cash timing (Info Lane shows $0 in FY2024). Livingston (3 of 12 months in TTM25), Westerville (11 of 12) and 9620 State 350 (lease-up; TTM $33.3K to $51.5K) are outside the comparison. TTM premiums across all nine PM properties are $165.8K.",
+      "action": "Rebid the property and liability program on a blanket basis ahead of renewals. Add a renewal calendar to the dashboard so premium timing is visible.",
+      "annual_impact_usd": 13267,
+      "impact_basis": "8% savings through blanket rebid [SPECULATIVE]",
+      "tags": [
+        "insurance"
+      ],
+      "evidence": {}
+    }
+  ]
+}
