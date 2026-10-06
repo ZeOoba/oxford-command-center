@@ -11,18 +11,18 @@
 //   repo: 'C:\\Users\\Owner\\oxford-command-center',         // optional; default below
 //   lenses: [ { label: 'noi', focus: 'NOI correctness & regression — ...' }, ... ],  // optional
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
-//   model: 'fable',          // optional: 'fable' (default) | 'opus'. Use 'opus' ONLY when Fable is unavailable
-//   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model`
+//   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
+//   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
 // }})
 // There is deliberately ONE script: a forked "-opus" copy drifted (47 lines, two versions in circulation).
 // The result records which models ran (`models`, `modelFloorMet`) so a Refute-Reviewed attestation is auditable:
-// modelFloorMet=false means the pass ran below the Fable floor and the commit message should say so.
+// modelFloorMet is true for every accepted tier (both are at or above the Opus 5.5 floor); a lower model throws.
 // args may also be a PLAIN STRING (treated as changeSet with the default lenses).
 
 export const meta = {
   name: 'refute-financial-change',
   description: 'Adversarially refute a financial-decision code change (engine/scoring/NOI) across N lenses before commit',
-  phases: [{ title: 'Refute', detail: 'independent refuters, each told to break the change', model: 'fable' }],
+  phases: [{ title: 'Refute', detail: 'independent refuters, each told to break the change', model: 'opus' }],
 }
 
 const VERDICT = {
@@ -69,29 +69,29 @@ if (lenses.length > 4096) throw new Error('too many lenses')
 // Model selection. Only the two tiers this workflow has ever been validated on are accepted; anything
 // lower (sonnet/haiku/free text) throws rather than silently weakening a financial-code gate.
 const TIERS = ['fable', 'opus']
-const primaryModel = A.model ?? 'fable'
+const primaryModel = A.model ?? 'opus'
 if (!TIERS.includes(primaryModel)) throw new Error('model must be one of ' + TIERS.join(' | ') + ' (got ' + JSON.stringify(A.model) + ')')
 const fallbackModel = A.fallbackModel === undefined ? 'opus' : A.fallbackModel
 if (fallbackModel !== null && !TIERS.includes(fallbackModel)) throw new Error('fallbackModel must be one of ' + TIERS.join(' | ') + ' | null (got ' + JSON.stringify(A.fallbackModel) + ')')
-// A same-model "fallback" would just repeat the failed call, so it is skipped.
-const effectiveFallback = (fallbackModel && fallbackModel !== primaryModel) ? fallbackModel : null
+// A same-model "fallback" is a deliberate single retry: with opus now the default primary, skipping it would
+// let one transient API failure silently drop a lens from a gate attestation (2026-10-05 review, C1).
+const effectiveFallback = fallbackModel || null
 
 phase('Refute')
 
 const base =
   'You are a HOSTILE financial-systems reviewer for Oxford Realty Advisors (private family-office industrial real estate). BREAK the change below; do NOT bless it. This is NOI / capital-allocation / scoring code — a silent error mis-allocates real capital. Read the ACTUAL files at ' + repo + ' (use git diff for the uncommitted change). HARD CONSTRAINT (CLAUDE.md §9, applies in every checkout and worktree): NEVER open, query, or read the live warehouse or any other data/**/*.sqlite file (data/warehouse/finance.sqlite in particular) — not even read-only, not to "check the real data". To probe a trigger, build an in-memory database in a vitest/tsx script (better-sqlite3 :memory: + runMigrations) from source and migrations only. Set foundRealDefect=true ONLY for a CONCRETE, demonstrably-triggerable defect — not a style nit or a future wish; if you cannot construct a trigger, say so and lean false. ' + greenContext + '\n\nCHANGE SET:\n' + changeSet + '\n\nYOUR LENS: '
 
-// 2026-07-10: governor/financial-code invariant floor raised from opus to fable (CLAUDE.md
-// Dispatch line). Fable's fan-out concurrency is UNTESTED (only opus was canary-tested at the
-// ~2-3-concurrent rate-limit ceiling — reference_lean_ram_toolkit.md) and Fable has observed
-// availability gaps, so each lens falls back to opus on a null result (agent() returns null on
-// a terminal API failure) rather than silently dropping that lens. Concurrency held at 3
-// (unchanged) — do not widen this fan-out until Fable's own ceiling is verified.
+// 2026-10-05: governor/financial-code invariant floor is Opus 5.5 (CLAUDE.md Dispatch line; Fable
+// retired from dispatch). Opus is the canary-tested tier at the ~2-3-concurrent rate-limit ceiling
+// (reference_lean_ram_toolkit.md); concurrency held at 3. The null-result fallback below only fires
+// when a caller explicitly selects model:'fable' (agent() returns null on a terminal API failure)
+// so that lens is retried on opus rather than silently dropped.
 const verdicts = await parallel(
   lenses.map((l) => async () => {
     let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT })
     if (v === null && effectiveFallback) {
-      log(`${primaryModel} call failed for lens "${l.label}" — falling back to ${effectiveFallback}.`)
+      log(`${primaryModel} call failed for lens "${l.label}" — ${effectiveFallback === primaryModel ? 'retrying once on' : 'falling back to'} ${effectiveFallback}.`)
       v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT })
     }
     return v
@@ -109,11 +109,13 @@ if (allFailed) {
 } else {
   log(real.length
     ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
-    : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
+    : succeeded.length < lenses.length
+      ? `No real defect in ${succeeded.length}/${lenses.length} lenses, but ${lenses.length - succeeded.length} lens(es) FAILED even after retry — PARTIAL coverage; do not treat as a full clean pass.`
+      : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
 }
 
 return {
   verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
   models: { primary: primaryModel, fallback: effectiveFallback },
-  modelFloorMet: primaryModel === 'fable',
+  modelFloorMet: TIERS.includes(primaryModel),
 }
