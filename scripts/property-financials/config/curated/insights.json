@@ -181,7 +181,7 @@
       "title": "Management fees run about 4% of revenue; two properties are above",
       "finding": "Total TTM management fees across the nine PM-reported properties are $191.4K (3.8% of revenue). 9620 State 350 is 5.0% and Livingston is 4.0%. The 3540 E 5th lease caps the recoverable fee at 3% of rent plus adjustment rent.",
       "action": "Bid the management contract across the portfolio or move to a tiered fee (lower rate above a revenue threshold). Make sure the fee base excludes security deposits and prepaid items.",
-      "annual_impact_usd": 25155,
+      "annual_impact_usd": 25152,
       "impact_basis": "Each 50 bps of fee on trailing revenue [SENSITIVITY]",
       "tags": [
         "management-fee",
@@ -340,7 +340,7 @@
       "type": "Expense",
       "property": "Portfolio",
       "title": "Insurance is flat once cash timing is removed; rebid it as one program",
-      "finding": "FY2025 insurance looks +30% against FY2024 on the PM properties, but TTM26 is +21.0% against TTM25. The difference is cash timing (Info Lane shows $0 in FY2024). TTM premiums are $165.8K.",
+      "finding": "On the six same-store PM properties (complete in every window), FY2025 insurance is +30.2% against FY2024 but TTM26 is -1.8% against TTM25. The difference is cash timing (Info Lane shows $0 in FY2024). Livingston (3 of 12 months in TTM25), Westerville (11 of 12) and 9620 State 350 (lease-up; TTM $33.3K to $51.5K) are outside the comparison. TTM premiums across all nine PM properties are $165.8K.",
       "action": "Rebid the property and liability program on a blanket basis ahead of renewals. Add a renewal calendar to the dashboard so premium timing is visible.",
       "annual_impact_usd": 13267,
       "impact_basis": "8% savings through blanket rebid [SPECULATIVE]",
