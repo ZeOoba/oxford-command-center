@@ -135,6 +135,14 @@ describe('PfDataHealthPanel — live data health (replaces the artifact’s stat
     expect(within(screen.getByTestId('pf-dh-facts')).getByText(/read failed \(EBUSY\)/)).toBeTruthy();
   });
 
+  it('an absent audit CSV (local-only by policy) says so plainly — no errno, no error styling', () => {
+    renderPanel(response({ meta: { ...response().meta!, csvSha256: null, csvError: 'monthly-long.csv: stat failed (ENOENT)' } }));
+    const facts = within(screen.getByTestId('pf-dh-facts'));
+    const cell = facts.getByText('Audit CSV not present on this machine (kept off the remote by policy); regenerate with the refresh pipeline');
+    expect(cell.className).not.toMatch(/pf-neg/);
+    expect(facts.queryByText(/ENOENT|stat failed/)).toBeNull();
+  });
+
   it('a failed re-read is disclosed (serving last good copy)', () => {
     renderPanel(response({ readError: 'dataset.json is not valid JSON' }));
     expect(screen.getByText(/last good copy/i).textContent).toMatch(/not valid JSON/);

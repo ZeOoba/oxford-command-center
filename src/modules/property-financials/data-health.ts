@@ -137,6 +137,32 @@ export function mentionsExcluded(text: string, excluded: readonly string[]): boo
   });
 }
 
+/**
+ * monthly-long.csv (the GL-level audit layer) is LOCAL-ONLY by Gabriel's ruling of 2026-10-06: gitignored and
+ * kept off the remote, so a fresh clone or a CI checkout legitimately has no CSV. Its absence is a policy state,
+ * not a fault, and the panel says so in these words.
+ */
+export const AUDIT_CSV_ABSENT_TEXT =
+  'Audit CSV not present on this machine (kept off the remote by policy); regenerate with the refresh pipeline';
+
+export type PfCsvAuditStatus =
+  | { readonly kind: 'sha'; readonly sha: string }
+  | { readonly kind: 'absent'; readonly text: string }
+  | { readonly kind: 'error'; readonly text: string };
+
+/** The loader's sanitized error for a file that is not on disk ends in the errno code, e.g. "stat failed (ENOENT)". */
+const NOT_ON_DISK = /\((ENOENT|ENOTDIR)\)$/;
+
+/**
+ * How the data-health panel presents the CSV hash. Absence is claimed ONLY for a missing file (or a server that
+ * sent neither a hash nor an error); any other read failure (EBUSY, EACCES, changed mid-read) stays a visible error.
+ */
+export function csvAuditStatus(meta: Pick<PfDataHealthMeta, 'csvSha256' | 'csvError'>): PfCsvAuditStatus {
+  if (meta.csvSha256) return { kind: 'sha', sha: meta.csvSha256 };
+  if (meta.csvError === null || NOT_ON_DISK.test(meta.csvError)) return { kind: 'absent', text: AUDIT_CSV_ABSENT_TEXT };
+  return { kind: 'error', text: meta.csvError };
+}
+
 /** First 12 hex characters of a sha256, for display (the full value goes in the title). */
 export function shortSha(sha: string | null): string | null {
   return sha === null ? null : sha.slice(0, 12);
