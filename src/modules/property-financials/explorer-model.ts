@@ -509,6 +509,39 @@ export interface BarsData {
   readonly values: ReadonlyArray<readonly number[]>;
   /** [column][series] tooltip lines, title first. */
   readonly tips: ReadonlyArray<ReadonlyArray<readonly string[]>>;
+  /** Stacked charts only: the SIGNED per-column total and its net-credit part (drawn bars floor at zero). */
+  readonly stack?: StackTotalsData;
+}
+
+export interface StackTotalsData {
+  /** Signed total per column (= the period's operating expense, credits included). */
+  readonly totals: readonly number[];
+  /** Sum of the net-credit (negative) categories per column; 0 when none. */
+  readonly credits: readonly number[];
+  /** 'Total $64.9K (incl. -$6.6K credit)': accessible / compact text. */
+  readonly text: readonly string[];
+  /** '$REDACTED-AMT (incl. -$REDACTED-AMT credit)': the data-table Total cell. */
+  readonly tableText: readonly string[];
+  /** 'incl. -$6.6K credit' under the chart's total label, or null when the column has no credit. */
+  readonly creditNote: ReadonlyArray<string | null>;
+}
+
+/** $64.9K at or above $1,000, else whole dollars ($230). */
+const compactUsd = (v: number): string => (Math.abs(v) >= 1000 ? usd(v, 'k') : usd(v));
+
+/** Signed stack totals: the label never drops a net-credit category (the drawn stack does, by necessity). */
+export function stackTotalsData(values: ReadonlyArray<readonly number[]>): StackTotalsData {
+  const fin = (v: number) => (Number.isFinite(v) ? v : 0);
+  const totals = values.map((g) => g.reduce((a, v) => a + fin(v), 0));
+  const credits = values.map((g) => g.reduce((a, v) => a + Math.min(0, fin(v)), 0));
+  const creditNote = credits.map((c) => (c < 0 ? `incl. ${compactUsd(c)} credit` : null));
+  return {
+    totals,
+    credits,
+    creditNote,
+    text: totals.map((t, i) => `Total ${compactUsd(t)}${creditNote[i] ? ` (${creditNote[i]})` : ''}`),
+    tableText: totals.map((t, i) => `${usd(t, 'f')}${credits[i]! < 0 ? ` (incl. ${usd(credits[i]!, 'f')} credit)` : ''}`),
+  };
 }
 
 /** Revenue, operating expense and NOI by period (artifact barChart 'group'). */
@@ -537,14 +570,19 @@ export function periodBars(gs: readonly PeriodGroup[]): BarsData {
 
 /** Operating expense by category per period, fixed category order and slots (artifact barChart 'stack'). */
 export function opexStack(gs: readonly PeriodGroup[]): BarsData {
+  const values = gs.map((x) => OPEX_CATEGORIES.map((c) => x.row.cats[c] ?? 0));
   return {
     columns: columnsOf(gs),
     series: OPEX_CATEGORIES.map((c, i) => ({ id: c, label: OPEX_SHORT_LABEL[c], slot: i + 1 })),
-    values: gs.map((x) => OPEX_CATEGORIES.map((c) => x.row.cats[c] ?? 0)),
+    values,
+    stack: stackTotalsData(values),
     tips: gs.map((x) => {
       // Signed throughout, like categoryRow: a category can net to a credit (a refund or reversal
       // larger than the period's charges), and clamping it to $0 printed a fake -100% change.
-      const total = OPEX_CATEGORIES.reduce((a, c) => a + (x.row.cats[c] ?? 0), 0);
+      // A positive category's share is taken against the DRAWN stack (gross charges, credits not
+      // drawn), so the tooltip and the bar proportions agree; the credit is named when present.
+      const gross = OPEX_CATEGORIES.reduce((a, c) => a + Math.max(0, x.row.cats[c] ?? 0), 0);
+      const credit = OPEX_CATEGORIES.reduce((a, c) => a + Math.min(0, x.row.cats[c] ?? 0), 0);
       return OPEX_CATEGORIES.map((c) => {
         const pick = (r: PeriodRow) => r.cats[c] ?? 0;
         const v = pick(x.row);
@@ -554,8 +592,9 @@ export function opexStack(gs: readonly PeriodGroup[]): BarsData {
         if (x.partial) lines.push('Partial period: not comparable');
         if (v < 0) lines.push('Share of operating expense: n/m (net credit)');
         else {
-          const share = ratio(v, total, 'no operating expense');
-          if (share.value !== null) lines.push(`${pctLevel(share.value)} of operating expense`);
+          const share = ratio(v, gross, 'no operating expense');
+          if (share.value !== null)
+            lines.push(credit < 0 ? `${pctLevel(share.value)} of gross charges, before the ${usd(credit, 'f')} credit` : `${pctLevel(share.value)} of operating expense`);
         }
         return lines;
       });

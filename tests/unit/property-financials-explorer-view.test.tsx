@@ -13,6 +13,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { PF_ENTITY_IDS } from '@contracts/property-financials';
 import { usd } from '@analytics/property-financials/format';
 import { PropertyFinancialsModule } from '../../src/modules/property-financials/PropertyFinancialsModule';
+import { StackedBars } from '../../src/modules/property-financials/charts/PeriodBars';
 import { PF_KEYS } from '../../src/modules/property-financials/hooks';
 import { buildExplorer, propertyCards } from '../../src/modules/property-financials/explorer-model';
 import type { PfDatasetResponse } from '../../src/modules/property-financials/types';
@@ -183,6 +184,37 @@ describe('rules on the page', () => {
     expect(noiRow.children[col]!.querySelector('.pf-nm')).not.toBeNull();
     expect(t.textContent).toContain('9 mo');
     expect(screen.getByText(/divide each period by current total building SF \(109,657 SF/)).toBeTruthy();
+  });
+});
+
+describe('M1: stacked opex total is signed', () => {
+  it('9620 State 350 Jan-Sep 26: label and data-table Total show $64.9K net of the -$6.6K tax credit, not the $71.5K gross stack', () => {
+    renderExplorer(`?view=explorer&p=${encodeURIComponent('9620 State 350')}`);
+    const chart = screen.getByTestId('pf-stacked-bars');
+    const row = [...chart.querySelectorAll('details tbody tr')].find((r) => r.firstElementChild!.textContent === 'Jan-Sep 26')!;
+    expect(row.lastElementChild!.textContent).toBe('$REDACTED-AMT (incl. -$REDACTED-AMT credit)');
+    const labels = [...chart.querySelectorAll('svg text')].map((t) => t.textContent);
+    expect(labels).toContain('$65K');
+    expect(labels).toContain('incl. -$6.6K credit');
+    expect(labels).not.toContain('$71K');
+    expect(chart.textContent).not.toContain('71,497');
+  });
+
+  it('a category present only as a credit keeps its legend entry, marked as a credit', () => {
+    const data = {
+      columns: [{ key: '2025', label: '2025', partial: false, family: 'year' as const }],
+      series: [
+        { id: 'a', label: 'Tax', slot: 1 },
+        { id: 'b', label: 'Insurance', slot: 2 },
+      ],
+      values: [[-100, 500]],
+      tips: [[['2025 · Tax'], ['2025 · Insurance']]],
+      stack: { totals: [400], credits: [-100], text: ['Total $400 (incl. -$100 credit)'], tableText: ['$400 (incl. -$100 credit)'], creditNote: ['incl. -$100 credit'] },
+    };
+    render(<StackedBars data={data} ariaLabel="t" />);
+    const chart = screen.getByTestId('pf-stacked-bars');
+    expect(chart.textContent).toContain('Tax (net credit, not drawn)');
+    expect(chart.textContent).toContain('Insurance');
   });
 });
 
