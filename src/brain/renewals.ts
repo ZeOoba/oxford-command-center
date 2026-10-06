@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
+import { contractAnnualRent } from '@analytics/lease-rent';
 import { DAY_MS } from '@/lib/time-constants';
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -48,7 +49,7 @@ export function renewalBoard(s: PortfolioSnapshot, referenceDate?: string): Rene
       tenant: l.company ?? l.tenantName,
       propertyKey: l.propertyKey,
       unit: l.unit,
-      annualRent: l.annualRent,
+      annualRent: contractAnnualRent(l),
       leaseEnd: l.leaseEnd,
       daysToExpiry,
       stage,

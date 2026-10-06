@@ -48,6 +48,7 @@ import {
   type RentScenario,
 } from '../../src/contracts/lease-forecast';
 import { composeLeaseNarrative } from '../ai/narrative';
+import { contractAnnualRent } from '../../src/analytics/lease-rent';
 
 // ── Snapshot access ────────────────────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
           const bucket = bucketExpiry(l.monthsToExpiry, l.leaseEnd, refDate);
           const b = bucketMap.get(bucket)!;
           b.count++;
-          b.expiringRent += l.annualRent;
+          b.expiringRent += contractAnnualRent(l);
           b.expiringSf += l.sf;
         }
         const bucketTotals = ALL_BUCKETS.map((bucket) => ({
@@ -264,7 +265,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
       const nearTermRent = leases
         .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, refDate) === '0-6m')
-        .reduce((s, l) => s + l.annualRent, 0);
+        .reduce((s, l) => s + contractAnnualRent(l), 0);
 
       // Anonymize propertyKey → ordinal label before sending to AI (invariant 7: no raw
       // owned-asset identifiers egress to the external API; only aggregated/ordinal data).

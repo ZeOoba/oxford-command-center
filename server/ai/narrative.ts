@@ -213,7 +213,7 @@ type LeaseNarrativeInput = {
     uncertainCt: number;
     atRiskCt: number;
     lapsingCt: number;
-    nearTermExpiryRent: number; // sum of annualRent for 0-6m bucket
+    nearTermExpiryRent: number; // sum of contract annual rent (monthlyRent x 12) for 0-6m bucket
   };
   topGaps: Array<{ propertyKey: string; gapPsf: number; underMarket: boolean }>;
   slowLeasingProperties: string[]; // propertyName where slowLeasing=true
