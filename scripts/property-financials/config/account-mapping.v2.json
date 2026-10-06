@@ -1186,6 +1186,19 @@
       }
     },
     {
+      "id": "A12-EXP-MGMT-ANY-GROUP",
+      "when": {
+        "layout": "A12",
+        "section": "EXPENSE",
+        "account": "MANAGEMENT FEE"
+      },
+      "then": {
+        "line_type": "opex",
+        "category": "Management fees"
+      },
+      "note": "Added 2026-10-05 with the 9620 2025-09 correction: the single-month recap collapses REPAIRS & MAINTENANCE and prints MANAGEMENT FEE EXPENSE after 'Total CAM EXPENSES', so the carried group is 5500 CAM EXPENSES and A12-EXP-CAM-RM would file the fee as R&M. Every other month (group 5100 carried) already maps it to Management fees via A12-EXP-RM-MGMT; this rule only changes 2025-09."
+    },
+    {
       "id": "A12-EXP-CAM-GROUNDS",
       "when": {
         "layout": "A12",

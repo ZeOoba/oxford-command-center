@@ -3,7 +3,7 @@
   "data_quality": [
     "All statements are cash basis. Real estate tax, insurance and snow are lumpy by payment date, so year-over-year category moves in a single period can be timing. Prefer FY and TTM views for tax and insurance.",
     "The consolidated 2026 YTD P&Ls in the folder end around 2026-06-12 (three are labeled 12/31/26). The monthly PM exports run through 2026-09-30 and are the basis for all 2026 numbers here.",
-    "Monthly data reconciles to the annual P&Ls to the dollar for Rarig, Broadway, Info Lane, 3540 E 5th, Red Branch and FVC (FY2024, FY2025). Livingston FY2025 differs by $3.4K of opex (July 2025 export missing). 9620 FY2025 revenue differs by $6.5K between the monthly and annual file.",
+    "Monthly data reconciles to the annual P&Ls to the dollar for Rarig, Broadway, Info Lane, 3540 E 5th, Red Branch and FVC (FY2024, FY2025). Livingston FY2025 differs by $3.4K of opex (July 2025 export missing). 9620 FY2025 revenue now ties to the annual file ($185,065); the $6.5K gap (monthly $191,603) came from the single-month 2025-09 recap, whose expense lines were read as revenue, and was corrected on 2026-10-05. 9620 FY2025 opex ties except management fees, $1.25K above the annual file (monthly $14,400 against $13,150).",
     "FVC is an all-properties aggregate (Sepich portfolio). Property-level and unit-level results are not available from the files.",
     "Missing monthly exports: Westerville 2024-01 to 2024-08 and 2024-10; Livingston 2024-01 to 2025-05 and 2025-07; 9620 2024-01 to 2024-08 (pre-ownership).",
     "55 New Plant (EGFLLC) and 1851 South Club Solar are entity-level annual QuickBooks statements with no monthly detail. Their 2026 figures end about 2026-06-12.",

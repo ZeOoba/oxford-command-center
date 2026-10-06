@@ -217,16 +217,31 @@ const RAW_PATH = process.env.PF_RAW_RECORDS;
 const rawAvailable = typeof RAW_PATH === 'string' && RAW_PATH.length > 0 && existsSync(RAW_PATH);
 
 describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (PF_RAW_RECORDS)', () => {
-  it('reproduces every monthly-entity row of data/property-financials/monthly-long.csv exactly, in the committed order', () => {
+  // v03.1 (Gabriel ruling 2026-10-05): the committed 9620 State 350 2025-09 rows were re-parsed from the
+  // statement (README "Known difference", now promoted). The reference raw export carries that recap with
+  // no sections, so it reproduces every OTHER row; for 2025-09 the same lines are only reclassified.
+  const CORRECTED_PERIOD = (r: MonthlyLongRow) => r.entity === '9620 State 350' && r.period === '2025-09';
+  it('reproduces every monthly-entity row of data/property-financials/monthly-long.csv exactly, in the committed order, except the corrected 9620 2025-09 period', () => {
     const raw = parseRawRecords(JSON.parse(readFileSync(RAW_PATH as string, 'utf8')));
     const registry = JSON.parse(readFileSync(resolve(CONFIG_DIR, 'entities.json'), 'utf8')) as { entities: Array<{ id: string; kind: 'monthly' | 'annual' }> };
     const kinds = Object.fromEntries(registry.entities.map((e) => [e.id, e.kind]));
     const result = normalizeRecords(raw, MAPPING, kinds);
-    const built = sortMonthlyLongRows(result.rows, kinds);
+    const builtAll = sortMonthlyLongRows(result.rows, kinds);
 
     const committed = parseMonthlyLong(loadCsvText());
     const monthlyIds = new Set(registry.entities.filter((e) => e.kind === 'monthly').map((e) => e.id));
-    const expected = committed.filter((r) => monthlyIds.has(r.entity));
+    const expectedAll = committed.filter((r) => monthlyIds.has(r.entity));
+
+    // The corrected period holds the same statement lines and amounts, only reclassified (11 rows each side;
+    // 9 of the committed ones are opex now, all of the reference's were revenue).
+    const lines = (rows: readonly MonthlyLongRow[]) => rows.filter(CORRECTED_PERIOD).map((r) => `${r.source_account}|${r.amount_usd}`).sort();
+    expect(lines(builtAll)).toHaveLength(11);
+    expect(lines(expectedAll)).toEqual(lines(builtAll));
+    expect(builtAll.filter((r) => CORRECTED_PERIOD(r) && r.line_type !== 'rev')).toHaveLength(0);
+    expect(expectedAll.filter((r) => CORRECTED_PERIOD(r) && r.line_type === 'opex')).toHaveLength(9);
+
+    const built = builtAll.filter((r) => !CORRECTED_PERIOD(r));
+    const expected = expectedAll.filter((r) => !CORRECTED_PERIOD(r));
 
     // Diff classes first, so a miss is diagnosable without reading 15k rows.
     const missing = new Map<string, number>();
@@ -248,7 +263,9 @@ describe.skipIf(!rawAvailable)('real raw records -> committed monthly-long.csv (
         throw new Error(`row ${i + 2}: built ${JSON.stringify(built[i])} vs committed ${JSON.stringify(expected[i])}`);
       }
     }
-    expect(renderMonthlyLongCsv(built).split('\r\n').slice(1, -1)).toEqual(loadCsvText().split('\r\n').slice(1, 1 + expected.length));
+    expect(renderMonthlyLongCsv(built).split('\r\n').slice(1, -1)).toEqual(
+      loadCsvText().split('\r\n').slice(1, 1 + expectedAll.length).filter((l) => !l.startsWith('9620 State 350,2025-09,')),
+    );
   });
 });
 

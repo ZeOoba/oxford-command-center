@@ -133,7 +133,9 @@ describe('property cards', () => {
       '3540 E 5th': ['2025', 279_963],
       '3883 Livingston': ['2026 (9 mo)', 63_770],
       '9050 Red Branch': ['2025', 905_390],
-      '9620 State 350': ['2025', 39_439],
+      // 26,364 since the v03.1 correction (2026-10-05): the 2025-09 recap's $6,537.61 of expense lines,
+      // previously read as revenue, are opex now (was 39,439 = 26,364 + 2 x 6,537.61).
+      '9620 State 350': ['2025', 26_364],
       FVC: ['2025', 837_090],
       '55 New Plant (EGFLLC)': ['2025', 422_488],
       '1851 South Club Solar': ['2025', 507_472],

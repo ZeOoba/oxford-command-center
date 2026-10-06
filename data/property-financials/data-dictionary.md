@@ -92,3 +92,17 @@ Dataset_v03.json adds a top-level `sf` block and `sf`, `leased_sf`, `occupancy` 
 Leased SF = rent-roll rows classed "Occupied" (vacant, notice-given and expired space excluded). Occupancy ties to the Property NOI tab for every property listed.
 
 Rules: $/SF = period amount / current total SF (not annualized for 9-month periods). FVC mapping rests on SF-sum and rent reconciliation (rent roll annualized $1.05M vs FVC TTM base rent $1.12M); confirm. Northwood (53,700 SF) is excluded pending financials. Dataset_v03 supersedes v02.
+
+## v03.1 correction: 9620 State 350, 2025-09 (2026-10-05)
+
+Gabriel ruled on 2026-10-05 to promote the re-parsed 2025-09 single-month recap for 9620 State 350. The original export read that recap with no section headers and booked all 11 lines as revenue. The statement parser reads INCOME / EXPENSE / N/O EXPENSE, so CAM grounds, trash and utilities, repairs and maintenance, the management fee, legal fees, bank fees and vacant utilities ($6,537.61 in total) are now opex. The management fee ($2,450) is filed under Management fees, the same as every other 9620 month (mapping v2 rule `A12-EXP-MGMT-ANY-GROUP`).
+
+| 9620 State 350 | Revenue (before → after) | Opex (before → after) | NOI (before → after) |
+|---|---|---|---|
+| 2025-09 | 23,772.66 → 17,235.05 | 0.00 → 6,537.61 | 23,772.66 → 10,697.44 |
+| FY2025 | 191,602.76 → 185,065.15 | 152,163.75 → 158,701.36 | 39,439.01 → 26,363.79 |
+| TTM25 (2024-10..2025-09) | 156,667.39 → 150,129.78 | 209,159.57 → 215,697.18 | -52,492.18 → -65,567.40 |
+| YTD25 (Jan–Sep) | 132,875.11 → 126,337.50 | 68,391.71 → 74,929.32 | 64,483.40 → 51,408.18 |
+| TTM26 (2025-10..2026-09) | 268,388.28 (unchanged) | 148,685.77 (unchanged) | 119,702.51 (unchanged) |
+
+FY2025 revenue now ties to the annual file to the cent. FY2025 opex ties to the annual file except management fees: the monthly recaps sum to $14,400 and the annual file shows $13,150. The dependent blocks move with these figures: yoy, monthly, account_movers, history (yr, ytd, months, drv). 9620 is excluded from same-store, so no portfolio or same-store figure changes, and no other entity changes. `meta.version` stays `v03` because the contract requires two digits; this note records the correction.
