@@ -25,7 +25,7 @@ import {
   type PfProperty,
 } from '@contracts/property-financials';
 import { notMeaningful, ok, partialReason, type MetricResult } from '@analytics/property-financials/periods';
-import { evaluationResults, pctChange, q3RunRate, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
+import { evaluationResults, pctChange, q3RunRate, ratio, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
 import { EVALUATION_TEST_IDS, THRESHOLDS, ragStatus, type EvaluationTestId, type EvaluationThreshold, type RagStatus } from '@analytics/property-financials/thresholds';
 import { pctLevel } from '@analytics/property-financials/format';
 
@@ -325,6 +325,34 @@ function periodValue(periodId: string, f: PfPeriodFigures, pick: (f: PfPeriodFig
   return v === null ? notMeaningful(nullReason) : ok(v);
 }
 
+/** The Scorecard's short name for a ratio period in an n/m reason ('TTM: partial period ...'), as evaluationResults words it. */
+const RATIO_PERIOD_LABEL = { TTM26: 'TTM', FY2025: 'FY2025' } as const;
+type RatioPeriod = keyof typeof RATIO_PERIOD_LABEL;
+
+/**
+ * Refuse a computed ratio on a partial period, the way evaluationResults does: a value on a partial
+ * period becomes n/m '<period>: partial period ...'; a ratio that is already n/m (no revenue, no pool)
+ * keeps its own reason. Scorecard and Evaluation therefore agree on value AND reason.
+ */
+function refusePartial(periodId: RatioPeriod, f: PfPeriodFigures, r: MetricResult): MetricResult {
+  const partial = partialReason(periodId, f.n_months);
+  return partial !== null && r.value !== null ? notMeaningful(`${RATIO_PERIOD_LABEL[periodId]}: ${partial}`) : r;
+}
+
+/**
+ * A ratio of two RAW period figures via the calc lib's ratio(). The dataset's 2-dp noi_margin /
+ * opex_ratio / mgmt_fee_pct / recovery_ratio are summary fields and are never displayed: the Scorecard
+ * must agree with the Evaluation matrix to the last digit (pinned in tests/unit/property-financials-model.test.ts).
+ */
+function periodRatio(periodId: RatioPeriod, f: PfPeriodFigures, num: (f: PfPeriodFigures) => number, den: (f: PfPeriodFigures) => number, reason: string): MetricResult {
+  return refusePartial(periodId, f, ratio(num(f), den(f), reason));
+}
+
+const NO_REVENUE = 'no revenue in the period';
+const noiMarginOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.noi, (x) => x.revenue, NO_REVENUE);
+const opexRatioOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.opex, (x) => x.revenue, NO_REVENUE);
+const mgmtFeeOf = (periodId: RatioPeriod, f: PfPeriodFigures) => periodRatio(periodId, f, (x) => x.opex_by['Management fees'], (x) => x.revenue, NO_REVENUE);
+
 /** Scorecard table rows in dataset order (PM monthly entities, then annual entity statements). */
 export function scorecardRows(d: PfDataset): ScorecardRow[] {
   return (Object.keys(d.properties) as PfEntityId[]).map((id) => {
@@ -341,11 +369,11 @@ export function scorecardRows(d: PfDataset): ScorecardRow[] {
         noiFy24: noi('FY2024'),
         noiFy25: noi('FY2025'),
         noiTtm: periodValue('TTM26', t, (f) => f.noi, 'no figure'),
-        margin: periodValue('TTM26', t, (f) => f.noi_margin, 'no revenue in the period'),
+        margin: noiMarginOf('TTM26', t),
         runRateYoy: runRateQ3Table(d.monthly[p.id]).yoy_2026,
-        opexRatio: periodValue('TTM26', t, (f) => f.opex_ratio, 'no revenue in the period'),
-        mgmtFee: periodValue('TTM26', t, (f) => f.mgmt_fee_pct, 'no revenue in the period'),
-        recovery: partialReason('TTM26', t.n_months) ? notMeaningful(partialReason('TTM26', t.n_months)!) : recoveryRatio(t),
+        opexRatio: opexRatioOf('TTM26', t),
+        mgmtFee: mgmtFeeOf('TTM26', t),
+        recovery: refusePartial('TTM26', t, recoveryRatio(t)),
         flags,
       };
     }
@@ -358,10 +386,10 @@ export function scorecardRows(d: PfDataset): ScorecardRow[] {
       noiFy24: noi('FY2024'),
       noiFy25: noi('FY2025'),
       noiTtm: notMeaningful(`${ANNUAL_ONLY}, so no trailing-twelve-month figure`),
-      margin: periodValue('FY2025', fy, (f) => f.noi_margin, 'no revenue in the period'),
+      margin: noiMarginOf('FY2025', fy),
       runRateYoy: notMeaningful(`${ANNUAL_ONLY}, so no Q3 run-rate`),
-      opexRatio: periodValue('FY2025', fy, (f) => f.opex_ratio, 'no revenue in the period'),
-      mgmtFee: periodValue('FY2025', fy, (f) => f.mgmt_fee_pct, 'no revenue in the period'),
+      opexRatio: opexRatioOf('FY2025', fy),
+      mgmtFee: mgmtFeeOf('FY2025', fy),
       recovery: notMeaningful(`${ANNUAL_ONLY}, so no recovery split`),
       flags,
     };
