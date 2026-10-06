@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-10-06",
-    "generatedAt": "2026-10-06T19:28:08.959Z",
+    "generatedAt": "2026-10-06T22:23:24.986Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -7333,7 +7333,7 @@
       "asOfDate": "2026-08-21T00:00:00.000Z",
       "sourceFile": "9620 State 350 Delinquency 8.21.2026.xlsx"
     },
-    "zettler-2000-2002-granite-tops-more": {
+    "zettler-2000-granite-tops-more": {
       "d30": 8437.36,
       "d60": 38.95,
       "d90": 899.52,
@@ -7577,6 +7577,21 @@
       "total": 12380.939999999999,
       "asOfDate": "2026-08-21T00:00:00.000Z",
       "sourceFile": "1100 Rarig Delinquency 8.21.2026.xlsx"
+    },
+    {
+      "leaseId": "zettler-2000-granite-tops-more",
+      "tenantName": "Jonathan  Amaya",
+      "company": "Granite Tops & More",
+      "unit": "2000",
+      "propertyKey": "Zettler",
+      "propertyId": "sepich-portfolio-columbus-oh-8-props",
+      "d30": 8437.36,
+      "d60": 38.95,
+      "d90": 899.52,
+      "d90plus": 221.07,
+      "total": 9596.900000000001,
+      "asOfDate": "2026-08-21T00:00:00.000Z",
+      "sourceFile": "Sepich Portfolio Delinquency 8.21.2026.xlsx"
     },
     {
       "leaseId": "zettler-2020-the-perez-company",
@@ -8136,7 +8151,7 @@
   ],
   "quickbooks": {
     "sourceFile": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Quickbooks Backups -- CURRENT FILES\\ora-pl-by-property.csv",
-    "parsedAt": "2026-10-06T19:28:08.976Z",
+    "parsedAt": "2026-10-06T22:23:25.003Z",
     "properties": [
       {
         "propertyKey": "1100 Rarig Ave, Columbus OH",
