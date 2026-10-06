@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import { PF_ENTITY_IDS, type PfEntityId } from '@contracts/property-financials';
 import {
+  AUDIT_CSV_ABSENT_TEXT,
   NOI_DISCLOSURE,
+  csvAuditStatus,
   excludedNames,
   gapsForEntity,
   mentionsExcluded,
@@ -143,5 +145,33 @@ describe('exclusions + helpers', () => {
     expect(NOI_DISCLOSURE).toBe(
       'Normalized NOI · cash basis · computed independently of the warehouse (Spine B) and the Master Workbook (Spine A); not reconciled',
     );
+  });
+});
+
+describe('csvAuditStatus — monthly-long.csv is a local-only audit layer (Gabriel ruling 2026-10-06)', () => {
+  const sha = 'c'.repeat(64);
+
+  it('a hashed CSV reads as its sha', () => {
+    expect(csvAuditStatus({ csvSha256: sha, csvError: null })).toEqual({ kind: 'sha', sha });
+  });
+
+  it('a CSV that is not on disk (ENOENT / ENOTDIR) reads as absent-by-policy, never as an error', () => {
+    for (const csvError of ['monthly-long.csv: stat failed (ENOENT)', 'monthly-long.csv: stat failed (ENOTDIR)', 'monthly-long.csv: read failed (ENOENT)']) {
+      expect(csvAuditStatus({ csvSha256: null, csvError })).toEqual({ kind: 'absent', text: AUDIT_CSV_ABSENT_TEXT });
+    }
+    // An older server that sends no error with no hash: nothing to show but absence.
+    expect(csvAuditStatus({ csvSha256: null, csvError: null })).toEqual({ kind: 'absent', text: AUDIT_CSV_ABSENT_TEXT });
+  });
+
+  it('a genuine read failure stays a visible error (absence is only claimed for a missing file)', () => {
+    expect(csvAuditStatus({ csvSha256: null, csvError: 'monthly-long.csv: read failed (EBUSY)' })).toEqual({
+      kind: 'error',
+      text: 'monthly-long.csv: read failed (EBUSY)',
+    });
+    expect(csvAuditStatus({ csvSha256: null, csvError: 'monthly-long.csv changed while being read' }).kind).toBe('error');
+  });
+
+  it('the absent text names the policy and the way back', () => {
+    expect(AUDIT_CSV_ABSENT_TEXT).toBe('Audit CSV not present on this machine (kept off the remote by policy); regenerate with the refresh pipeline');
   });
 });

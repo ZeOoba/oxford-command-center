@@ -18,7 +18,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { PF_DATA_HEALTH_HREF } from '../data/tabs';
 import { EmptyState } from './components';
-import { NOI_DISCLOSURE, freshnessAge, mentionsExcluded, shortSha, unattachedLeaseGaps } from './data-health';
+import { NOI_DISCLOSURE, csvAuditStatus, freshnessAge, mentionsExcluded, shortSha, unattachedLeaseGaps } from './data-health';
 import { usePfDataset, usePfMapping } from './hooks';
 import { excludedNotes, fmtLongDate } from './model';
 import type { PfDataHealthMeta, PfDatasetResponse, PfMappingResponse, PfMappingRow } from './types';
@@ -60,6 +60,13 @@ function Sha({ value }: { value: string }) {
   );
 }
 
+/** The audit CSV is local-only (ruling 2026-10-06): absence is a policy state (muted), a read failure an error. */
+function CsvAudit({ meta }: { meta: PfDataHealthMeta }) {
+  const st = csvAuditStatus(meta);
+  if (st.kind === 'sha') return <Sha value={st.sha} />;
+  return <span className={st.kind === 'absent' ? 'pf-mut' : 'pf-neg'}>{st.text}</span>;
+}
+
 function Facts({ response, meta }: { response: PfDatasetResponse; meta: PfDataHealthMeta }) {
   const rows: Array<[string, ReactNode]> = [
     ['Dataset version', meta.version],
@@ -68,7 +75,7 @@ function Facts({ response, meta }: { response: PfDatasetResponse; meta: PfDataHe
     ['Basis', `${meta.basis} basis`],
     ['Source freshness', <PfFreshness key="f" meta={meta} />],
     ['dataset.json sha256', <Sha key="s" value={meta.sha256} />],
-    ['monthly-long.csv sha256', meta.csvSha256 ? <Sha key="c" value={meta.csvSha256} /> : <span className="pf-neg">{meta.csvError ?? 'not available'}</span>],
+    ['monthly-long.csv sha256', <CsvAudit key="c" meta={meta} />],
   ];
   if (response.lastGoodLoadedAt) rows.push(['Loaded by the server', response.lastGoodLoadedAt.replace('T', ' ').replace(/\.\d+Z$/, 'Z')]);
   return (
