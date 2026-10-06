@@ -44,11 +44,11 @@ Unmatched: none today (an unmatched entity gets `canonicalId: null` plus a flag)
 | 17 | Fonts | Google Fonts CDN | Fontsource (self-hosted) | No external CDN |
 | 18 | SF | Static block | Live Spine A snapshot when present, Spine A and fresh (<= 7 days); else static labelled | Spec freshness canon |
 
-## 3. Open decisions (need Gabriel)
+## 3. Decisions (1–3 and 6 resolved by Gabriel 2026-10-05; 4 and 5 open)
 
-1. Binary `.xls` reader: Excel-COM conversion (implemented, needs desktop Excel), LibreOffice, or an approved reader dependency.
-2. 9620 State 350 2025-09: the reference mapped a no-section recap's expense lines as revenue (NOI overstated about $6.5K for that month). The corrected parser differs; promote or keep.
-3. Live leased-SF basis (Active + Expiring Soon) vs the static "Occupied" class.
-4. Refresh task: ratify name, cron, routing; register via supervised `create_scheduled_task` (proposal doc in this folder).
-5. A 12th entity needs data only for the builder, but the strict contract's entity constants must admit it before the module renders it.
-6. `PF_STALE_DAYS = 45` (monthly-close window) vs the firm's 7-day mirror canon: ratify.
+1. **RESOLVED 2026-10-05:** Binary `.xls` reader. Gabriel ruled to keep the Excel-COM conversion step (`convert-xls.ps1`, needs desktop Excel). LibreOffice and a reader dependency are not adopted.
+2. **RESOLVED 2026-10-05, promotion DONE:** 9620 State 350 2025-09. The reference mapped a no-section recap's expense lines as revenue. Gabriel ruled to promote the corrected figures. They were rebuilt with the repo pipeline and promoted as dataset v03.1 (see `data/property-financials/data-dictionary.md`). Only 9620 moved; no portfolio or same-store view changed. FY2025 NOI went from 39,439 to 26,364, and FY2025 revenue now ties to the annual file to the cent. The recap's management fee is filed under Management fees by the new mapping rule `A12-EXP-MGMT-ANY-GROUP`.
+3. **RESOLVED 2026-10-05:** Live leased-SF basis. Gabriel ruled to keep Active + Expiring Soon, labelled as such (`leasedSfBasis`).
+4. **OPEN:** Refresh task: ratify name, cron, routing; register via supervised `create_scheduled_task` (proposal doc in this folder).
+5. **OPEN:** A 12th entity needs data only for the builder, but the strict contract's entity constants must admit it before the module renders it.
+6. **RESOLVED 2026-10-05:** `PF_STALE_DAYS = 45`. Gabriel ratified the monthly-close window. It stays separate from the firm's 7-day mirror canon, which governs live mirrors.

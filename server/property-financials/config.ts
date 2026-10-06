@@ -10,7 +10,7 @@ import { join } from 'node:path';
  * Freshness window for the dataset's `as_of` date, in days. The dataset is a monthly-close product
  * (as_of = last closed month end), so one missed refresh is still inside 45 days; two are not.
  * Distinct from the firm's 7-day mirror rule (EDGE_STALE_DAYS), which governs live mirrors, not a
- * monthly close.
+ * monthly close. 45 days ratified by Gabriel 2026-10-05.
  */
 export const PF_STALE_DAYS = 45;
 

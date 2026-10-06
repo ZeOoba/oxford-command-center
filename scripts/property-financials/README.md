@@ -91,14 +91,14 @@ silently: unknown layouts, unreadable files, unsupported extensions and excluded
 Not parsed, by design and named in the report: the AppFolio "Cash Flow" annual variant (`P&L 2025 -- 9620 State
 350.xlsx`, `P&L 2026 YTD -- 9620 State 350.xlsx`), the Sepich `ProfitLoss_….html` export, the Northwood PDFs.
 
-### Binary .xls exports — OPEN DECISION for Gabriel
+### Binary .xls exports — RESOLVED 2026-10-05: keep the Excel-COM conversion step
 
 186 of the 246 statement files (every AppFolio monthly P&L for 1100 Rarig, 3034 Westerville, 3540 E 5th,
 3875-3883 Livingston and the Sepich portfolio, and the three 9620 recaps) are TRUE binary `.xls` (OLE2 / BIFF8).
 The only spreadsheet reader installed is `exceljs`, which reads `.xlsx` / `.xlsm` only, and `package.json` is
 architect-owned, so this pipeline does not read them directly. The AF and A12 parsers are therefore written
 against the pure `SheetSource` interface (rows of cells) and fully unit-tested on synthetic sheets; to run them
-on the real exports one of these must be chosen:
+on the real exports Gabriel chose option 1 on 2026-10-05 (the alternatives are kept for the record):
 
 1. **Conversion step (implemented, needs desktop Excel):** `convert-xls.ps1` opens each `.xls` read-only via
    Excel COM (macros force-disabled, Office File Validation skipped — 21 of the exports fail validation otherwise;
@@ -109,8 +109,7 @@ on the real exports one of these must be chosen:
 3. **An approved reader dependency** (`xlsx` / SheetJS or `node-xlsx`) in `package.json` — architect approval; the
    `SheetSource` seam means only `lib/excel.ts` would change.
 
-Until decided, a refresh without the conversion step reports every `.xls` as UNREADABLE and exits 4; it never
-guesses.
+A refresh without the conversion step reports every `.xls` as UNREADABLE and exits 4; it never guesses.
 
 ## What the normalizer does (and the documented sort)
 
@@ -148,13 +147,13 @@ per entity + period, $0.005 tolerance:
 | 3540 E 5th | AF (converted .xls) | 56 / 56 | |
 | 3883 Livingston | AF (converted .xls) | 15 / 15 | |
 | 9050 Red Branch | CF | 133 / 133 | |
-| 9620 State 350 | A12 (converted .xls) | 24 / 25 | **2025-09 is a documented known difference** (below) |
+| 9620 State 350 | A12 (converted .xls) | 25 / 25 | 2025-09 corrected and promoted 2026-10-05 (v03.1, below) |
 | FVC | AF (converted .xls) | 51 / 51 | |
 | 55 New Plant (EGFLLC) | QB | 3 / 3 (2024-FY, 2025-FY, 2026-YTD thru 2026-06-12) | reproduces `annual-statements.csv` |
 | 1851 South Club Solar | QB | 3 / 3 | reproduces `annual-statements.csv` |
 
 Against the reference Python raw export (non-total records, monthly entities): identical for every covered
-entity/period except (a) the known difference and (b) 9620 `Commissions Expense`, where the reference carried the
+entity/period except (a) 9620 2025-09 (the reference read it with no sections) and (b) 9620 `Commissions Expense`, where the reference carried the
 EXPENSE section's last group into the first N/O EXPENSE account (the parser resets the group at a section header;
 no mapping rule keys on that group, so the CSV ties).
 
@@ -163,17 +162,19 @@ FY2024 and FY2025 annual AppFolio / Yardi statement ties to the dollar for rev /
 2025 opex within $1 rounding). The 2026 files are partial-year exports with mixed cut-offs (the Broadway /
 Livingston / FVC ones are labelled Jan–Dec yet hold Jan–Jun data) and are informational only.
 
-### Known difference — 9620 State 350, 2025-09 (needs a ruling to promote)
+### 9620 State 350, 2025-09 — corrected and PROMOTED 2026-10-05 (Gabriel ruling; dataset v03.1)
 
 The single-month recap for 2025-09 prints every label in column C, including the section headers. The reference
 parser read sections from column A only, saw none, and the v1 rules `A12-NOSECTION-*` map the 11 rows as revenue
 (T9a finding 1). The T9b parser finds the label column per row and reads `INCOME` / `EXPENSE` / `N/O EXPENSE`,
 so for 2025-09: revenue −$6,537.61 (CAM − Grounds / Utilities / Trash, REPAIRS & MAINTENANCE, MANAGEMENT FEE
 EXPENSE, Legal Fees, Bank Fees, Vacant Utilities become opex), opex +$6,537.61, NOI −$13,075.22 versus the
-committed CSV. `build-dataset.ts` on the re-parsed CSV therefore differs from the committed `dataset.json` only
-under `9620 State 350` (periods FY2025 / YTD25 / TTM25 / TTM26, yoy, monthly cube, movers, history); 9620 is
-lease-up-excluded so no portfolio view moves. Promoting the corrected figures is Gabriel's call (the committed
-files are the reference's); the gated test pins this as the ONLY permitted difference.
+reference's figures. Promoted on 2026-10-05: the rebuild differed from the previous committed files only under
+`9620 State 350` (FY2025 / YTD25 / TTM25, yoy, monthly, movers, history; TTM26 unchanged); 9620 is
+lease-up-excluded so no portfolio view moved. The recap's MANAGEMENT FEE EXPENSE line sits under the carried
+`5500 CAM EXPENSES` group, so mapping v2 gained `A12-EXP-MGMT-ANY-GROUP` to file it as Management fees like
+every other month. The committed CSV now ties to the statements everywhere (the gated test has no known
+differences); before/after figures are in `data/property-financials/data-dictionary.md` (v03.1 correction).
 
 ## Live square footage (T9b part 2; `server/property-financials/live-sf.ts`, `src/analytics/property-financials/live-sf.ts`)
 
@@ -202,11 +203,11 @@ figure. The entity → canonical mapping for FVC is inferred and flagged; the so
 
 ## Findings worth a ruling (reproduced for parity, not fixed here)
 
-1. **9620 State 350, 2025-09 recap** — see "Known difference" above: the parser now reads it correctly; promoting changes the committed 9620 figures.
+1. **9620 State 350, 2025-09 recap** — RESOLVED 2026-10-05: corrected figures promoted (see above).
 2. **Owner distribution signs differ by layout** (Yardi `ADJUSTMENTS/Owner Distributions` flipped to positive; AppFolio `Distribution to Owner` and Yardi `OWNER ACTIVITY` draws/contributions carried as reported, contributions negative). Already disclosed in `data_quality`; carried as-is.
 3. **`history[id].yr[*].partial` is always `false` for monthly entities** even when `n < 12` (only the annual entities' partial statement sets it). Reproduced; consumers derive partial from `n` (the reconcile test pins this).
-4. **Binary .xls reader** — the open decision above (Excel conversion step vs LibreOffice vs an approved dependency).
-5. **Live leased SF basis** — Active + Expiring Soon vs the static "Occupied" class (notice-given space); ratify or add a notice flag to Spine A.
+4. **Binary .xls reader** — RESOLVED 2026-10-05: keep the Excel-COM conversion step.
+5. **Live leased SF basis** — RESOLVED 2026-10-05: keep Active + Expiring Soon, labelled (`leasedSfBasis`).
 
 ## Scheduled refresh
 
