@@ -850,7 +850,7 @@
     "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "NOT merge-ready until the parse.ts net-of-abatement change lands (without it annualRent == monthly x 12 and these consumers are no-ops). PROPOSED Architect-owned edits NOT made, awaiting acknowledgment: (1) src/contracts/lease.ts doc comment on Lease.annualRent, and optionally an abatedMonths field so AR liveness can key on an explicit abatement signal instead of monthlyRent > 0; (2) src/analytics/engine.ts rolloverSchedule.expiringRent, criticalDates annualRent and revenueAtRisk still read net annualRent and now disagree with the contract-basis consumers. Refute rounds: wf_0ca5a142-694 (fable), wf_5dd73f0f-2b1 (opus 5.5).",
-    "last_updated": "2026-10-06T21:42:05Z"
+    "review_detail": "NOT merge-ready until the parse.ts net-of-abatement change lands (without it annualRent == monthly x 12 and these consumers are no-ops). PROPOSED Architect-owned edits NOT made, awaiting acknowledgment: (1) src/contracts/lease.ts doc comment on Lease.annualRent, and optionally an abatedMonths field so AR liveness can key on an explicit abatement signal instead of monthlyRent > 0; (2) DONE in this PR per Gabriel in-turn 2026-10-07 (refute wf_b8fc84af-5c6 medium finding): src/analytics/engine.ts rolloverSchedule.expiringRent, criticalDates annualRent and revenueAtRisk now read contractAnnualRent; WALT/concentration stay net. Refute rounds: wf_0ca5a142-694 (fable), wf_5dd73f0f-2b1 (opus 5.5).",
+    "last_updated": "2026-10-07T21:30:00Z"
   }
 }

@@ -197,6 +197,23 @@ describe('GET /forecast', () => {
     }
   });
 
+  it('abated live lease: expiry buckets are contract rent (monthlyRent x 12), not net annualRent (refute wf_b8fc84af-5c6)', async () => {
+    // monthly 10,000 -> contract 120,000; annualRent 90,000 = 3 abated months. Reverting the bucket sum
+    // to l.annualRent turns this into 90,000.
+    mockGetSnapshot.mockReturnValue(
+      snap({ leases: [mkLease({ id: 'abated', leaseEnd: '2026-11-15', monthsToExpiry: 2, monthlyRent: 10_000, annualRent: 90_000 })] }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(200);
+    const parsed = LeaseForecastResponse.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const rent = parsed.data.bucketTotals.reduce((s, b) => s + b.expiringRent, 0);
+      expect(rent).toBe(120_000);
+    }
+  });
+
   it('C: does not 500 when the lease-market feed read fails on an otherwise-available warehouse -- degrades to marketGaps without derived-asking rows', async () => {
     const db = freshDb();
     // lm_market_rent_feed exists (migration ran) but drop it so loadMarketRentFeed's query throws --

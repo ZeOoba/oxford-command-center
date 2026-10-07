@@ -9,6 +9,7 @@ import { rentForecast } from '../../src/analytics/lease-forecast';
 import { evaluateConditions } from '../../src/analytics/conditions';
 import { portfolioCriticalDates } from '../../src/brain/critical-dates';
 import { renewalBoard } from '../../src/brain/renewals';
+import { criticalDates, revenueAtRisk, rolloverSchedule } from '../../src/analytics/engine';
 import { isDeadLease } from '../../server/ar/lease-liveness';
 import { RentForecastInput } from '../../src/contracts/lease-forecast';
 
@@ -114,5 +115,24 @@ describe('L-5 rollover concentration is like-for-like (contract numerator over c
     expect(ins).toBeDefined();
     expect(ins!.impactAnnualUsd).toBe(120000);
     expect(ins!.detail).toContain('20.0%');
+  });
+});
+
+describe('engine.ts rent-at-expiry surfaces agree with the contract-basis twins (refute wf_b8fc84af-5c6)', () => {
+  const leases = (snap as unknown as { leases: Lease[] }).leases; // fully abated, expiring 2026-11-20: net 0, contract 63,600
+  it('criticalDates amount equals brain portfolioCriticalDates for the same lease event', () => {
+    const eng = criticalDates(leases, ASOF).find((d) => d.kind === 'Expiration');
+    const brain = portfolioCriticalDates(snap, 90).find((e) => e.id === 'lease-expiry-ab');
+    expect(eng?.annualRent).toBe(63600);
+    expect(eng?.annualRent).toBe(brain?.amount);
+  });
+  it('revenueAtRisk within-90d rent is contract and its pct uses a contract denominator', () => {
+    const r = revenueAtRisk(leases, ASOF);
+    expect(r.within90dRent).toBe(63600);
+    expect(r.pctOfRent).toBe(1);
+  });
+  it('rolloverSchedule expiringRent is contract (a fully abated expiring lease does not drop to $0)', () => {
+    const total = rolloverSchedule(leases, ASOF).reduce((s, b) => s + b.expiringRent, 0);
+    expect(total).toBe(63600);
   });
 });

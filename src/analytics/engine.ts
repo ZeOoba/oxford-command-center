@@ -10,6 +10,7 @@ import {
 } from '@contracts/index';
 import { evaluateConditions } from './conditions';
 import { isInvestmentProperty } from './property-basis';
+import { contractAnnualRent } from './lease-rent';
 import { investmentLoanBalance, isAffiliateNoteProperty, isAffiliateBorrowerLoan } from './debt-basis';
 import type {
   AnalyticsBundle,
@@ -154,7 +155,7 @@ export function rolloverSchedule(leases: Lease[], asOf: string, horizonYears = 4
     const b = buckets.get(k) ?? { period: k, count: 0, expiringSf: 0, expiringRent: 0 };
     b.count++;
     b.expiringSf += l.sf;
-    b.expiringRent += l.annualRent;
+    b.expiringRent += contractAnnualRent(l);
     buckets.set(k, b);
   }
   return [...buckets.values()].sort((a, b) => a.period.localeCompare(b.period));
@@ -168,7 +169,7 @@ export function rolloverSchedule(leases: Lease[], asOf: string, horizonYears = 4
  *   omitted, the original baked-`monthsToExpiry` behavior is preserved for backward compatibility.
  */
 export function revenueAtRisk(leases: Lease[], asOf?: string) {
-  const totalRent = sum(leases.map((l) => l.annualRent));
+  const totalRent = sum(leases.map((l) => contractAnnualRent(l)));
   const within90d = (l: Lease): boolean => {
     if (asOf && l.leaseEnd) {
       const days = daysBetween(l.leaseEnd, asOf);
@@ -176,8 +177,8 @@ export function revenueAtRisk(leases: Lease[], asOf?: string) {
     }
     return l.monthsToExpiry !== null && l.monthsToExpiry >= 0 && l.monthsToExpiry <= 3;
   };
-  const within90dRent = sum(leases.filter(within90d).map((l) => l.annualRent));
-  const expiredRent = sum(leases.filter((l) => l.status === 'Expired').map((l) => l.annualRent));
+  const within90dRent = sum(leases.filter(within90d).map((l) => contractAnnualRent(l)));
+  const expiredRent = sum(leases.filter((l) => l.status === 'Expired').map((l) => contractAnnualRent(l)));
   return { within90dRent, expiredRent, pctOfRent: totalRent ? within90dRent / totalRent : 0 };
 }
 
@@ -201,7 +202,7 @@ export function criticalDates(
 
   for (const l of leases) {
     const tenant = l.company ?? l.tenantName;
-    const base = { leaseId: l.id, tenant, propertyKey: l.propertyKey, unit: l.unit, annualRent: l.annualRent };
+    const base = { leaseId: l.id, tenant, propertyKey: l.propertyKey, unit: l.unit, annualRent: contractAnnualRent(l) };
 
     if (l.leaseEnd) {
       const expDays = daysBetween(l.leaseEnd, asOf);
