@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import { cn } from '@/lib/cn';
+import { allocateBudget, coverage } from '@/lib/ranked-cap';
+import { signalCount } from '@/lib/tier-group';
 import { Badge, type BadgeTone } from './Badge';
 import { Button } from './Button';
 import { Card } from './Card';
+import { CoverageBar } from './CoverageBar';
 import { fmtUsdCompact } from '@analytics/index';
 
 export interface TierItemAction {
@@ -25,6 +29,10 @@ export interface TierItem {
   chips?: string[];
   /** De-emphasizes the card (e.g. an already-read alert) without removing it from the rank order. */
   muted?: boolean;
+  /** Root cause shared with sibling items; `groupByCause` rolls items with the same cause into one row. */
+  cause?: string;
+  /** Present on a rolled-up row: the individual items it stands for, shown on expand. */
+  members?: TierItem[];
 }
 
 export interface TierTotal {
@@ -112,23 +120,72 @@ function allActions(item: TierItem): TierItemAction[] {
   return [...(item.action ? [item.action] : []), ...(item.actions ?? [])];
 }
 
-export function TierBoard({ tiers, columns = 3 }: { tiers: Tier[]; columns?: 1 | 2 | 3 | 4 }) {
+export function TierBoard({
+  tiers,
+  columns = 3,
+  budget,
+}: {
+  tiers: Tier[];
+  columns?: 1 | 2 | 3 | 4;
+  /** Surface ceiling: total rows shown across all tiers. Omit for an unbounded board. */
+  budget?: number;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const capped = budget !== undefined && !showAll;
+  const alloc = capped ? allocateBudget(tiers.map((t) => t.items.length), budget) : tiers.map((t) => t.items.length);
+  const rowCount = tiers.reduce((n, t) => n + t.items.length, 0);
+  const shownCount = alloc.reduce((a, b) => a + b, 0);
+  const heldBack = rowCount - shownCount;
+  const showStrip = budget !== undefined && (heldBack > 0 || showAll) && rowCount > budget;
+
   return (
-    <div
-      role="list"
-      aria-label="Tier board"
-      className={cn('grid items-start gap-3', COLUMN_CLASS[columns], 'max-[920px]:grid-cols-1')}
-    >
-      {tiers.map((tier) => (
-        <div key={tier.key} role="listitem">
-          <TierColumn tier={tier} />
-        </div>
-      ))}
+    <div className="flex flex-col gap-3">
+      {showStrip && (
+        <CoverageStrip
+          tiers={tiers}
+          alloc={alloc}
+          showAll={showAll}
+          onToggle={() => setShowAll((v) => !v)}
+        />
+      )}
+      <div
+        role="list"
+        aria-label="Tier board"
+        className={cn('grid items-start gap-3', COLUMN_CLASS[columns], 'max-[920px]:grid-cols-1')}
+      >
+        {tiers.map((tier, i) => (
+          <div key={tier.key} role="listitem">
+            <TierColumn tier={tier} visible={alloc[i] ?? tier.items.length} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-function TierColumn({ tier }: { tier: Tier }) {
+function CoverageStrip({
+  tiers,
+  alloc,
+  showAll,
+  onToggle,
+}: {
+  tiers: Tier[];
+  alloc: number[];
+  showAll: boolean;
+  onToggle: () => void;
+}) {
+  const rows = tiers.flatMap((t, ti) =>
+    t.items.map((item, ii) => ({
+      usd: item.impactUsd ?? null,
+      signals: signalCount(item),
+      shown: showAll || ii < (alloc[ti] ?? 0),
+    })),
+  );
+  return <CoverageBar cov={coverage(rows)} expanded={showAll} onToggle={onToggle} />;
+}
+
+function TierColumn({ tier, visible }: { tier: Tier; visible: number }) {
+  const shown = tier.items.slice(0, visible);
   const color = TONE_COLOR[tier.tone];
   const glow = prefersReducedMotion() ? undefined : TONE_GLOW[tier.tone];
   return (
@@ -163,7 +220,7 @@ function TierColumn({ tier }: { tier: Tier }) {
             color: TEXT_TONE_COLOR[tier.tone],
           }}
         >
-          {tier.items.length}
+          {visible < tier.items.length ? `${visible}/${tier.items.length}` : tier.items.length}
         </span>
       </div>
       {tier.totalsBySpine && tier.totalsBySpine.length > 0 && (
@@ -185,7 +242,7 @@ function TierColumn({ tier }: { tier: Tier }) {
         </div>
       ) : (
         <ul className="flex flex-col gap-2 p-3">
-          {tier.items.map((item) => (
+          {shown.map((item) => (
             <TierCard key={item.id} item={item} />
           ))}
         </ul>
@@ -194,10 +251,13 @@ function TierColumn({ tier }: { tier: Tier }) {
   );
 }
 
-function TierCard({ item }: { item: TierItem }) {
+function TierCard({ item, nested = false }: { item: TierItem; nested?: boolean }) {
+  const [open, setOpen] = useState(false);
   const actions = allActions(item);
+  const memberCount = item.members?.length ?? 0;
   return (
     <li
+      {...(nested ? {} : { 'data-tier-card': '' })}
       className="group rounded-[var(--radius-md)] p-3 transition-[border-color,transform] duration-[120ms]"
       style={{
         background: 'var(--surface-overlay)',
@@ -239,6 +299,20 @@ function TierCard({ item }: { item: TierItem }) {
               {chip}
             </Badge>
           ))}
+        </div>
+      )}
+      {memberCount > 0 && (
+        <div className="mt-2">
+          <Button size="sm" variant="ghost" onPress={() => setOpen((v) => !v)}>
+            {open ? `Hide ${memberCount}` : `Show ${memberCount}`}
+          </Button>
+          {open && (
+            <ul className="mt-2 flex flex-col gap-2">
+              {item.members!.map((m) => (
+                <TierCard key={m.id} item={m} nested />
+              ))}
+            </ul>
+          )}
         </div>
       )}
       {actions.length > 0 && (
