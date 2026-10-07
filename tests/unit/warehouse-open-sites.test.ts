@@ -32,6 +32,7 @@ const ALLOWED_MIGRATING_OPENS: Record<string, string> = {
   'scripts/debt-snapshot-backfill.ts': 'Deliberate operator backfill run by hand; a schema change from it is intended.',
   'scripts/import-assessments.ts': 'Deliberate operator import (npm run import:assessments) run by hand.',
   'scripts/import-insurance-data.ts': 'Deliberate operator import of loss runs, run by hand.',
+  'scripts/import-pca-register.ts': 'Deliberate operator import (npm run warehouse:import-pca) of the PCA register, run by hand.',
 };
 
 const NEWLINE = /\r?\n/;
