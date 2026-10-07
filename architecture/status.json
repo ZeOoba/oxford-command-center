@@ -1,5 +1,14 @@
 {
-  "_comment": "Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
+  "pca-capex-ledger": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
+    "phase": "Property Condition ledger Phase 1 (ingest): migration 035_property_condition.sql, src/contracts/property-condition.ts (+ barrel export), scripts/import-pca-register.ts, package.json script. Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (UI under Capital, alerts, capital-allocation wiring via refute-financial-change) separate.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Gabriel approved the plan and all four placement/source/engine/current decisions in-turn 2026-10-07 and approved the architect-edit-ok sentinel in-turn (AskUserQuestion). Architect-owned files touched: server/warehouse/migrations/035_property_condition.sql (new), src/contracts/property-condition.ts (new) + one export line in src/contracts/index.ts, package.json (one script). No governor/model files touched. Needs architect acknowledgment at PR review.",
+    "last_updated": "2026-10-07T00:00:00Z"
+  },
+  "_comment":"Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
   "property-financials": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-05",
     "phase": "New standalone Property Financials destination (read-only; own normalized NOI, cash basis). Architect-owned surfaces touched: src/contracts/property-financials.ts (new) + one export line in src/contracts/index.ts; server/warehouse/sub-routers.ts (one mount, later). Plan: docs/superpowers/plans/2026-10-05-property-financials-module.md.",
