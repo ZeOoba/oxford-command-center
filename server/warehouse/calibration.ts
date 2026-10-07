@@ -34,6 +34,7 @@ import {
 } from '../../src/contracts/warehouse';
 import { clamp } from './clamp';
 import { stableStringify } from './stable-stringify';
+import type { PcaNearTermCapex } from './pca-capex';
 
 function sha16(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -106,6 +107,24 @@ function classificationDigest(db: WarehouseDb): string {
 }
 
 /**
+ * Digest of the PCA near-term capex intensities the capital-allocation `improve` gate consumes
+ * (Property Condition ledger, Phase 4). '' when nothing is imported — so every version minted before
+ * a PCA load stays byte-identical, and the fingerprint forks exactly once when real PCA data first
+ * lands (and again when it changes). Without this, importing a PCA could flip an improve verdict while
+ * calibration_inputs_version stayed the same, making the two verdicts indistinguishable in the
+ * calibration history. Scoped to the allocation caller (opts.pcaCapex) because only the allocation engine reads
+ * PCA: score/anomaly/tax verdict streams must not re-version on a PCA import. Date-independent: only psf/dollars/SF/report ids are hashed, never the age.
+ */
+function pcaCapexDigest(pca: ReadonlyMap<string, PcaNearTermCapex>): string {
+  const entries = [...pca.values()];
+  if (entries.length === 0) return '';
+  const projection = entries
+    .map((e) => [e.propertyId, Number(e.psf.toFixed(6)), e.dollars, e.coveredSf, e.reportIds] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return sha16(stableStringify(projection));
+}
+
+/**
  * Deterministic content hash over the active-ledger state + config + code version (spec §1.1).
  * Upserts the resulting row into calibration_inputs_version via INSERT OR IGNORE (idempotent).
  *
@@ -113,7 +132,11 @@ function classificationDigest(db: WarehouseDb): string {
  * proven to fork the version without mutating the real INTEL_CONFIG (which is read-only here).
  * Production always passes nothing → the live INTEL_CONFIG is hashed and stored verbatim.
  */
-export function computeInputsVersion(db: WarehouseDb, configOverride?: Record<string, unknown>): InputsVersion {
+export function computeInputsVersion(
+  db: WarehouseDb,
+  configOverride?: Record<string, unknown>,
+  opts: { pcaCapex?: ReadonlyMap<string, PcaNearTermCapex> } = {},
+): InputsVersion {
   // Ledger fingerprint: max active import id | count of active rows | max active rowid, PLUS a
   // digest of the active (classification, normalized_category) projection + the account_mappings
   // state. The coarse triple captures inserts/supersedes (new rows/ids); the digest captures an
@@ -126,7 +149,9 @@ export function computeInputsVersion(db: WarehouseDb, configOverride?: Record<st
       (SELECT MAX(rowid)     FROM ledger_entries WHERE is_active = 1) AS maxRowid
   `).get() as LedgerFingerprintRow;
   const classDigest = classificationDigest(db);
-  const ledgerFingerprint = `${fp.maxImport ?? 0}|${fp.activeCount ?? 0}|${fp.maxRowid ?? 0}|${classDigest}`;
+  const pcaDigest = opts.pcaCapex ? pcaCapexDigest(opts.pcaCapex) : '';
+  const ledgerFingerprint =
+    `${fp.maxImport ?? 0}|${fp.activeCount ?? 0}|${fp.maxRowid ?? 0}|${classDigest}` + (pcaDigest ? `|pca:${pcaDigest}` : '');
 
   // The config that produced the verdict. Stored verbatim (config_json) so a future analyst can
   // read the literal weights without git archaeology; hashed (config_hash) so a weight change forks
