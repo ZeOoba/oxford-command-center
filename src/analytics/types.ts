@@ -11,7 +11,8 @@ export type InsightCategory =
   | 'deal'
   | 'data'
   | 'anomaly'
-  | 'collections';
+  | 'collections'
+  | 'capex';
 
 export interface InsightAction {
   label: string;
