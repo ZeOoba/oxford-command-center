@@ -625,7 +625,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
 
   // Expiry-family dedup (2026-09-23 review + refute wf_6cf7d109-520): ONE expiry insight per lease.
   // The legacy lease block (`expiring-<id>`, `expired-<id>`) and the Phase 3 L-x producers
-  // (`lease-expiry-<id>` = L-1, `lease-lapsed-<id>` = L-2) each carry impactAnnualUsd = annualRent
+  // (`lease-expiry-<id>` = L-1, `lease-lapsed-<id>` = L-2) each carry impactAnnualUsd = contract annual rent
   // for the same lease, so wherever both fire totalsBySpine() summed that rent twice. The pairs:
   //   • `expiring-`  + `lease-expiry-`  — 0–90d out, no advanced renewal stage
   //   • `expired-`   + `lease-lapsed-`  — status 'Expired' holdover, leaseEnd past, stage ≠ Executed
@@ -1051,7 +1051,7 @@ export function isArStale(r: { asOfDate?: Date | null }, now: number): boolean {
  *
  * Impact:
  *   collections → total outstanding arrears (real; from entityId → tenantArrears)
- *   lease       → annualRent of the matched lease (real)
+ *   lease       → contract annual rent (contractAnnualRent) of the matched lease (real)
  *   all others  → null / absent (no derivation attempted — avoids speculative dollar fabrication)
  */
 export function fillImpact(insight: Insight, snapshot: PortfolioSnapshot): Insight {
