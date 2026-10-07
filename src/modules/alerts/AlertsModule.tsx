@@ -5,6 +5,10 @@ import { insightToDraft } from '../../brain/draft';
 import type { InsightSeverity } from '../../analytics/types';
 import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../primitives/TierBoard';
 import { spineLabel } from '../../lib/spine-label';
+import { MAX_ITEMS } from '../../lib/ranked-cap';
+import { groupByCause } from '../../lib/tier-group';
+import { causeOf } from '../../brain/alert-cause';
+import { describeAlertCause } from './cause-labels';
 
 const SEV_COLOR: Record<InsightSeverity, string> = {
   critical: 'var(--text-neg)',
@@ -63,6 +67,7 @@ function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: 
     actions,
     chips: [spineLabel(insight.spine)],
     muted: item.read,
+    cause: causeOf(insight),
   };
 }
 
@@ -74,7 +79,7 @@ function buildTiers(items: AlertViewItem[], action: AlertAction, ui: UiState): T
       key: severity,
       title: TIER_TITLE[severity],
       tone: TIER_TONE[severity],
-      items: bucket.map((item, index) => toTierItem(item, index + 1, action, ui)),
+      items: groupByCause(bucket.map((item, index) => toTierItem(item, index + 1, action, ui)), describeAlertCause),
     };
   });
 }
@@ -96,7 +101,7 @@ export function AlertsModule() {
         <Stat label="Snoozed" value={view.counts.snoozed} />
       </div>
 
-      <TierBoard tiers={tiers} columns={3} />
+      <TierBoard tiers={tiers} columns={3} budget={MAX_ITEMS} />
     </div>
   );
 }

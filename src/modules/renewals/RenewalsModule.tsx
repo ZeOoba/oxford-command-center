@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Mail } from 'lucide-react';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
@@ -7,6 +7,8 @@ import { useUi } from '@/brain/ui-context';
 import { advanceRenewalStage } from '@/data/actions';
 import { fmtUsdCompact, fmtDate, fmtTenure } from '@analytics/index';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { CoverageBar } from '@/primitives/CoverageBar';
+import { MAX_ITEMS, allocateBudget, coverage } from '@/lib/ranked-cap';
 import { renewalBoard, type RenewalCard } from '@/brain/renewals';
 import { RENEWAL_STAGES, nextRenewalStage, type RenewalStage } from '@contracts/index';
 import { useLeaseForecast, likelihoodTone, buildSignalMap } from '../leasing/hooks';
@@ -37,6 +39,7 @@ export function RenewalsModule() {
   const { data: forecast } = useLeaseForecast();
   const signalMap = useMemo(() => buildSignalMap(forecast?.signals ?? []), [forecast?.signals]);
 
+  const [showAll, setShowAll] = useState(false);
   const board = useMemo(
     () => (data ? renewalBoard(data.snapshot, new Date().toISOString().slice(0, 10)) : null),
     [data],
@@ -44,6 +47,15 @@ export function RenewalsModule() {
   if (gate) return gate;
   if (!data || !board) return null;
   const total = RENEWAL_STAGES.reduce((n, s) => n + board[s].length, 0);
+  // Signal discipline: at most MAX_ITEMS cards across the board (each non-empty stage keeps one).
+  const alloc = showAll
+    ? RENEWAL_STAGES.map((s) => board[s].length)
+    : allocateBudget(RENEWAL_STAGES.map((s) => board[s].length), MAX_ITEMS, 1);
+  const cov = coverage(
+    RENEWAL_STAGES.flatMap((s, si) =>
+      board[s].map((card, ci) => ({ usd: card.annualRent, signals: 1, shown: showAll || ci < (alloc[si] ?? 0) })),
+    ),
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -54,8 +66,12 @@ export function RenewalsModule() {
         </span>
       </div>
 
+      {total > MAX_ITEMS && (
+        <CoverageBar cov={cov} expanded={showAll} onToggle={() => setShowAll((v) => !v)} />
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {RENEWAL_STAGES.map((stage) => (
+        {RENEWAL_STAGES.map((stage, si) => (
           <div key={stage} className="flex flex-col rounded-[var(--radius-md)]" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
             <div className="flex items-center justify-between px-3 py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
               <span className="text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em' }}>
@@ -67,7 +83,7 @@ export function RenewalsModule() {
               {board[stage].length === 0 ? (
                 <span className="px-1 py-4 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>—</span>
               ) : (
-                board[stage].map((card) => (
+                board[stage].slice(0, alloc[si] ?? board[stage].length).map((card) => (
                   <RenewalCardView
                     key={card.leaseId}
                     card={card}
