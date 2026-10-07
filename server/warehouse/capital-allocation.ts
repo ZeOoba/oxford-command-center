@@ -13,7 +13,8 @@
 //   sell       → capitalAction === 'disposition-candidate'
 //   refinance  → debtSignal in ('refi' | 'cash-out') AND a drivable refiCashSavingsPct (C-2)
 //   improve    → capitalAction === 'invest' AND capexIrr proxy clears hurdle (see
-//                capexIrrEstimate() below — a PROXY, no real capex-cost data source exists)
+//                capexIrrEstimate() below — a PROXY; where a current PCA exists its near-term
+//                repair $/SF replaces the assumed spend when higher; the assumption is the floor)
 //   hold       → default (monitor, governor-block, no-debt, or invest/improve gate not cleared)
 //   improve→hold → capitalAction === 'invest'  (capexIrr estimate deferred to Phase 4 v2)
 //   hold       → default (monitor, governor-block, no-debt)
@@ -58,6 +59,7 @@ import { isDistrusted } from './debt-trust';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
+import { loadPcaCapexCoverage, type PcaExclusion, type PcaNearTermCapex } from './pca-capex';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
@@ -345,10 +347,20 @@ function currentBasis(seriesForProperty: PeriodMetrics[] | undefined): string | 
 
 // ── capexIrr proxy (improve action gate) ─────────────────────────────────────────
 //
-// A real capex-cost data source does not exist yet (deferred per the Phase 5 v2 handoff —
-// src/brain/replacement-cost.ts is scoped to ACQUISITION deals, wrong shape for capex on
-// an already-owned property). Per Gabriel's explicit decision (2026-07-07): use a proxy
-// rather than leave 'improve' permanently degraded to 'hold'.
+// There is still no measured VALUE-ADD cost source (src/brain/replacement-cost.ts is scoped to
+// ACQUISITION deals, wrong shape for capex on an already-owned property). Per Gabriel's explicit
+// decision (2026-07-07): use a proxy rather than leave 'improve' permanently degraded to 'hold'.
+//
+// PCA floor rule (Property Condition ledger, Phase 4 — 2026-10-07; ruled by Gabriel after adversarial review):
+// where the property has a current PCA (the most recent report we have, no age cutoff), its NEAR-TERM
+// repair intensity — immediate + Yr 1–2 dollars ÷ covered SF, server/warehouse/pca-capex.ts — replaces the
+// assumed spend when it is HIGHER, with the assumption as a floor:
+//   capexPsf = max(ASSUMED_CAPEX_PSF, pcaNearTermPsf)
+// Floor, not pure replacement: a clean building with a $0.04/SF PCA would otherwise yield ~250× too high
+// and fire a spurious 'improve'. Max, not sum: the assumption already claims roof/parking-type scope, so
+// adding the PCA on top would count it twice. The denominator is never below ASSUMED_CAPEX_PSF, so a
+// PCA-informed estimate is ALWAYS ≤ the proxy-only estimate — a PCA can make `improve` harder to reach,
+// never easier. No PCA (or an unmappable/undrivable one) → exactly the pre-existing proxy, byte-for-byte.
 //
 // Proxy: assume ASSUMED_CAPEX_PSF of capex spend fully closes the gap between a property's
 // own noiPerSf and its same-basis peers' median noiPerSf, then check whether the IMPLIED
@@ -408,14 +420,25 @@ function computeSameBasisNoiPerSfMedian(
  * peer median, and a positive gap are all known. Never returns a guessed number when an
  * input is missing — same "undrivable → null" convention as refiCashSavingsPct (C-2).
  */
-function capexIrrEstimate(
+function pcaSpendNote(pcaCapex: PcaNearTermCapex | null): string {
+  if (!pcaCapex) return '';
+  return pcaCapex.psf > ASSUMED_CAPEX_PSF
+    ? ` (spend set by PCA near-term $${pcaCapex.psf.toFixed(2)}/SF, above the $${ASSUMED_CAPEX_PSF}/SF assumption)`
+    : ` (PCA near-term $${pcaCapex.psf.toFixed(2)}/SF is below the $${ASSUMED_CAPEX_PSF}/SF assumption; assumption holds)`;
+}
+
+export function capexIrrEstimate(
   noiPerSf: number | null,
   sameBasisNoiPerSfMedian: number | null,
+  pcaNearTermPsf: number | null = null,
 ): number | null {
   if (noiPerSf === null || sameBasisNoiPerSfMedian === null) return null;
   if (noiPerSf >= sameBasisNoiPerSfMedian) return null;
   const gap = sameBasisNoiPerSfMedian - noiPerSf;
-  return gap / ASSUMED_CAPEX_PSF;
+  // Only a finite PCA figure above the assumption raises the spend; anything else is ignored (never a
+  // guess, never a reduction of the denominator below ASSUMED_CAPEX_PSF).
+  const pca = pcaNearTermPsf !== null && Number.isFinite(pcaNearTermPsf) ? pcaNearTermPsf : 0;
+  return gap / Math.max(ASSUMED_CAPEX_PSF, pca);
 }
 
 // ── Verdict builder for one property ─────────────────────────────────────────
@@ -431,6 +454,8 @@ function buildVerdict(
   expectedReturnPct: number | null,
   capexIrr: number | null,
   bookTrust: DebtBookTrust,
+  pcaCapex: PcaNearTermCapex | null = null,
+  pcaExcluded: readonly PcaExclusion[] = [],
 ): AllocationVerdict {
   // Round 19 (H1 — 2026-07-27 integrity sweep, HIGH): an ABSENT DebtScore means "this property
   // has no active debt_positions rows". Under a trusted book that is a verified unlevered
@@ -516,7 +541,8 @@ function buildVerdict(
     riskBand = healthBandToRisk(ps.healthBand);
     timelineMonths = 12; // spec TIMELINE table: improve = 12 (mid of 6-18)
     reasons.push(
-      `Capital action: invest; capexIrr proxy ${(capexIrr * 100).toFixed(1)}% clears hurdle`,
+      `Capital action: invest; capexIrr proxy ${(capexIrr * 100).toFixed(1)}% clears hurdle` +
+        pcaSpendNote(pcaCapex),
     );
   } else if (ps.capitalAction === 'invest') {
     // 3-neg. invest signal present but capexIrr proxy undrivable or doesn't clear hurdle →
@@ -527,7 +553,8 @@ function buildVerdict(
     reasons.push(
       capexIrr === null
         ? 'improve deferred: capexIrr proxy undrivable (noiPerSf or portfolio median unavailable)'
-        : `improve deferred: capexIrr proxy ${(capexIrr * 100).toFixed(1)}% does not clear hurdle`,
+        : `improve deferred: capexIrr proxy ${(capexIrr * 100).toFixed(1)}% does not clear hurdle` +
+          pcaSpendNote(pcaCapex),
     );
   } else {
     // 4. hold (default — handles monitor, governor-block, no-debt)
@@ -594,8 +621,20 @@ function buildVerdict(
       entity: ps.propertyId,
       field: 'capexIrr',
       issue:
-        `capexIrr is a proxy assuming a $${ASSUMED_CAPEX_PSF}/SF capex spend instantly ` +
-        'and permanently closes the noiPerSf gap to same-basis peers — not a measured capex-cost ' +
+        (pcaCapex
+          ? `capexIrr is a proxy assuming a spend of max($${ASSUMED_CAPEX_PSF}/SF value-add assumption, $${pcaCapex.psf.toFixed(2)}/SF ` +
+            `of near-term PCA repairs) (immediate + Yr 1–2; ${pcaCapex.reportIds.join(', ')}, ` +
+            `${pcaCapex.oldestReportDate === null ? 'undated' : `oldest report ${pcaCapex.oldestReportDate}`}, ` +
+            `covers ${Math.round(pcaCapex.coveredSf).toLocaleString('en-US')} SF` +
+            `${pcaCapex.anyDraftOrLimited ? '; draft/limited-reliance report' : ''}) `
+          : `capexIrr is a proxy assuming a $${ASSUMED_CAPEX_PSF}/SF capex spend `) +
+        (pcaExcluded.length > 0
+          ? `(PCA on file but not applied: ${pcaExcluded
+              .map((x) => `${x.reportId} $${Math.round(x.dollars).toLocaleString('en-US')} — ${x.reason === 'no-sf' ? 'report has no SF' : 'portfolio report overlaps building reports'}`)
+              .join('; ')}) `
+          : '') +
+        (pcaCapex || pcaExcluded.length > 0 ? 'that ' : '') +
+        'instantly and permanently closes the noiPerSf gap to same-basis peers — not a measured capex-cost ' +
         'estimate. See capexIrrEstimate() in capital-allocation.ts for the load-bearing assumption.',
       severity: 'info',
     });
@@ -746,6 +785,10 @@ export async function buildPortfolioAllocation(
   const oxfordValueByProperty = new Map<string, number>(
     (snapshot?.properties ?? []).map((p) => [p.id, p.oxfordValue]),
   );
+  // Near-term PCA repair intensity per master id (Property Condition ledger). Empty when migration 035 is
+  // absent / nothing imported — the engine then runs on its proxy unchanged.
+  const pcaCoverage = loadPcaCapexCoverage(db, asOf);
+  const pcaCapexByProperty = pcaCoverage.byProperty;
   const metricsByProperty = new Map<string, PeriodMetrics[]>();
   for (const m of metrics) {
     const arr = metricsByProperty.get(m.propertyId) ?? [];
@@ -770,7 +813,8 @@ export async function buildPortfolioAllocation(
       ps.propertyId,
       currentBasis(propertySeries),
     );
-    const capexIrr = capexIrrEstimate(noiPerSf, sameBasisMedian);
+    const pcaCapex = pcaCapexByProperty.get(ps.propertyId) ?? null;
+    const capexIrr = capexIrrEstimate(noiPerSf, sameBasisMedian, pcaCapex?.psf ?? null);
 
     return buildVerdict(
       ps,
@@ -781,6 +825,8 @@ export async function buildPortfolioAllocation(
       expectedReturnPct,
       capexIrr,
       allocationBookTrust,
+      pcaCapex,
+      pcaCoverage.excludedByProperty.get(ps.propertyId) ?? [],
     );
   });
 
