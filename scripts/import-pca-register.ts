@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { slug } from '../src/contracts/common';
 import {
   PcaAssetFact,
+  PcaCalibrationPair,
   PcaComponent,
   PcaOpenItem,
   PcaQuote,
@@ -164,6 +165,7 @@ export interface ParsedRegister {
   components: PcaComponent[];
   quotes: PcaQuote[];
   assets: PcaAssetFact[];
+  pairs: PcaCalibrationPair[];
   openItems: PcaOpenItem[];
   rejects: Reject[];
 }
@@ -202,7 +204,7 @@ function firstIssue(e: { issues: Array<{ message: string; path: PropertyKey[] }>
 
 /** Pure: workbook → validated rows + rejects. `known` = property_master ids that exist. */
 export function parseRegister(wb: ExcelJS.Workbook, known: ReadonlySet<string>): ParsedRegister {
-  const out: ParsedRegister = { reports: [], components: [], quotes: [], assets: [], openItems: [], rejects: [] };
+  const out: ParsedRegister = { reports: [], components: [], quotes: [], assets: [], pairs: [], openItems: [], rejects: [] };
   const reject = (sheet: string, row: number, reason: string): void => {
     out.rejects.push({ sheet, row, reason });
   };
@@ -357,6 +359,34 @@ export function parseRegister(wb: ExcelJS.Workbook, known: ReadonlySet<string>):
     out.assets.push(parsed.data);
   });
 
+  // Est_vs_Actual (curated estimate-vs-executed pairs; delta is computed at read time, not trusted from the sheet)
+  const pairWs = requireSheet(wb, 'Est_vs_Actual', ['Property', 'Scope']);
+  const pairIdx = headerIndex(pairWs);
+  let pairSeq = 0;
+  pairWs.eachRow((row, n) => {
+    if (n === 1) return;
+    const get = reader(row, pairIdx);
+    const label = str(get('Property'));
+    const scope = str(get('Scope'));
+    if (!label || !scope) return reject('Est_vs_Actual', n, 'missing Property or Scope');
+    const nums = {
+      estimateUsd: num(get('Estimate $')),
+      estimatePsf: num(get('Estimate $/SF')),
+      contractorUsd: num(get('Contractor $')),
+      contractorPsf: num(get('Contractor $/SF')),
+    };
+    const bad = Object.entries(nums).find(([, v]) => v === undefined);
+    if (bad) return reject('Est_vs_Actual', n, `${label}: ${bad[0]} is not a valid number`);
+    const p = resolveProperty(label, known);
+    pairSeq += 1;
+    const parsed = PcaCalibrationPair.safeParse({
+      rowSeq: pairSeq, propertyKey: p.key, propertyMasterId: p.masterId, propertyLabel: label, scope, ...nums,
+      estimateSource: str(get('PCA / budget estimate')), contractorSource: str(get('Contractor price')), comment: str(get('Comment')),
+    });
+    if (!parsed.success) return reject('Est_vs_Actual', n, `${label}: ${firstIssue(parsed.error)}`);
+    out.pairs.push(parsed.data);
+  });
+
   // Flags_Open_Items
   const flagWs = requireSheet(wb, 'Flags_Open_Items', ['#', 'Severity', 'Issue']);
   const flagIdx = headerIndex(flagWs);
@@ -384,6 +414,7 @@ export interface ImportCounts {
   components: number;
   quotes: number;
   assets: number;
+  pairs: number;
   openItems: number;
 }
 
@@ -409,6 +440,11 @@ export function writeRegister(db: WarehouseDb, p: ParsedRegister): ImportCounts 
       warranty_end_year, source, flag, row_seq)
     VALUES (@propertyKey, @propertyMasterId, @propertyLabel, @component, @installFact, @installYear, @warranty,
       @warrantyEndYear, @source, @flag, @rowSeq)`);
+  const insPair = db.prepare(`
+    INSERT INTO capex_calibration_pairs (row_seq, property_key, property_master_id, property_label, scope, estimate_source,
+      estimate_usd, estimate_psf, contractor_source, contractor_usd, contractor_psf, comment)
+    VALUES (@rowSeq, @propertyKey, @propertyMasterId, @propertyLabel, @scope, @estimateSource,
+      @estimateUsd, @estimatePsf, @contractorSource, @contractorUsd, @contractorPsf, @comment)`);
   const insItem = db.prepare(`
     INSERT INTO pca_open_items (item_no, severity, property_text, issue, action_needed)
     VALUES (@itemNo, @severity, @propertyText, @issue, @actionNeeded)`);
@@ -417,13 +453,14 @@ export function writeRegister(db: WarehouseDb, p: ParsedRegister): ImportCounts 
 
   db.transaction(() => {
     // Children first (pca_components FKs pca_reports).
-    for (const t of ['pca_components', 'pca_reports', 'capex_quotes', 'asset_facts', 'pca_open_items']) {
+    for (const t of ['pca_components', 'pca_reports', 'capex_quotes', 'asset_facts', 'capex_calibration_pairs', 'pca_open_items']) {
       db.exec(`DELETE FROM ${t}`);
     }
     for (const r of p.reports) insReport.run({ ...r, oraCommissioned: bool(r.oraCommissioned) });
     for (const c of p.components) insComponent.run(c);
     for (const q of p.quotes) insQuote.run({ ...q, verified: q.verified ? 1 : 0 });
     for (const a of p.assets) insAsset.run(a);
+    for (const x of p.pairs) insPair.run(x);
     for (const i of p.openItems) insItem.run(i);
   })();
 
@@ -432,6 +469,7 @@ export function writeRegister(db: WarehouseDb, p: ParsedRegister): ImportCounts 
     components: p.components.length,
     quotes: p.quotes.length,
     assets: p.assets.length,
+    pairs: p.pairs.length,
     openItems: p.openItems.length,
   };
 }
@@ -493,7 +531,7 @@ async function main(argv: string[]): Promise<number> {
     const counts = writeRegister(db, parsed);
     console.log(
       `import-pca-register: ${counts.reports} report(s), ${counts.components} component(s), ${counts.quotes} quote(s), `
-      + `${counts.assets} asset fact(s), ${counts.openItems} open item(s) loaded from ${args.xlsxPath}`,
+      + `${counts.assets} asset fact(s), ${counts.pairs} calibration pair(s), ${counts.openItems} open item(s) loaded from ${args.xlsxPath}`,
     );
     const unmapped = [...new Set(parsed.reports.filter((r) => r.propertyMasterId === null).map((r) => r.propertyKey))];
     if (unmapped.length > 0) console.log(`  unmapped to property_master (kept by property_key): ${unmapped.join(', ')}`);

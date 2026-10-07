@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS asset_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_asset_facts_property ON asset_facts(property_key);
 
+-- Curated estimate-vs-executed pairs (the register's Est_vs_Actual sheet). Stored as printed: the
+-- pairing of a consultant/budget estimate to a contractor price on the SAME scope is a human judgement
+-- the engine cannot re-derive from pca_components + capex_quotes. The delta is computed at read time.
+CREATE TABLE IF NOT EXISTS capex_calibration_pairs (
+  row_seq            INTEGER PRIMARY KEY,
+  property_key       TEXT NOT NULL,
+  property_master_id TEXT REFERENCES property_master(id),
+  property_label     TEXT NOT NULL,
+  scope              TEXT NOT NULL,
+  estimate_source    TEXT,
+  estimate_usd       REAL CHECK (estimate_usd IS NULL OR estimate_usd >= 0),
+  estimate_psf       REAL CHECK (estimate_psf IS NULL OR estimate_psf >= 0),
+  contractor_source  TEXT,
+  contractor_usd     REAL CHECK (contractor_usd IS NULL OR contractor_usd >= 0),
+  contractor_psf     REAL CHECK (contractor_psf IS NULL OR contractor_psf >= 0),
+  comment            TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pca_open_items (
   item_no       INTEGER PRIMARY KEY,
   severity      TEXT NOT NULL CHECK (severity IN ('High','Med','Low','Info')),

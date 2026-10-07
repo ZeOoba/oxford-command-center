@@ -1,6 +1,6 @@
 # PCA / Capex Ledger Integration Plan
 
-**Status:** APPROVED 2026-10-07 (Gabriel, in-turn) — decisions in §6 resolved. Phase 1 (ingest) BUILT on branch `feat/pca-capex-ledger`, uncommitted; Phases 2–5 not started.
+**Status:** APPROVED 2026-10-07 (Gabriel, in-turn) — decisions in §6 resolved. Phases 1–2 BUILT on branch `feat/pca-capex-ledger`; Phases 3–5 not started.
 **Date:** 2026-10-07
 **Sources (read-only, OneDrive\Business\Physical Property Information PCAs Capex, etc):**
 `2026-10-06_PCA-Context_Summary_v01_2.md`, `2026-10-06_PCA-Extraction_Register_v01_2.xlsx`
@@ -74,7 +74,7 @@ Import: new `scripts/import-pca-register.ts` reading the xlsx directly (xlsx is 
 |---|---|---|
 | 0 — Decisions | Answer §6 questions; refresh checkout to origin/main; claim `architecture/status.json` entry | Gabriel approval |
 | 1 — Ingest — **BUILT 2026-10-07** | Migration 035 (`pca_reports`, `pca_components`, `capex_quotes`, `asset_facts`, `pca_open_items`), `src/contracts/property-condition.ts`, `scripts/import-pca-register.ts` (`npm run warehouse:import-pca`), 16 tests. Real register loads 17/50/13/20/16 rows with 0 rejects into a seeded scratch DB; 4 reports stay unmapped to `property_master` (E Fulton, St. Michaels, Muirkirk, Sheriff). Latest-per-property selection happens in the Phase 2 read layer, not at import. | typecheck/lint/governance/schema-drift/migration tests green; full `npm run gate` and architect review still to run at PR |
-| 2 — Read-only surface | Property Condition tabs A1–A4 on top of Phase 1 data; Data Quality worklist | Gate + visual check in preview |
+| 2 — Read-only surface — **BUILT 2026-10-07** | `GET /api/warehouse/property-condition/report` (`server/warehouse/property-condition.ts`: latest-report-per-property read model, warranty status, lifecycle due year, calibration deltas, evidence-classed quotes, separate estimate price book); `src/modules/property-condition/` with views Capex outlook · Replacement schedule · Estimate vs actual · Quotes & prices · Open items. `Est_vs_Actual` added to the Phase 1 importer (migration 035 amended pre-merge: `capex_calibration_pairs`, `pca_components.rul_raw`). Verified in the browser against the real register (KPIs $477K / $918K / $2.79M; calibration −60 / −69 / +2 / +213%). Not yet in the static bake mirror → deployed mirror reads as offline. Open items live in their own view; the DataQuality-tab fold-in is deferred. | typecheck/lint/governance/schema-drift + 41 new tests + IA registry tests green |
 | 3 — Alerts | New conditions (warranty, stale-with-immediate, contradiction) | Gate; defensive coercion tests |
 | 4 — Engine wiring | capital-allocation + CapexIrrCalc consume PCA capex; `capexBasis` flag | **refute-financial-change workflow**; ratify rule that PCA-derived replaces proxy only for CURRENT reports |
 | 5 — Backfill | The unread batch: roof proposals/warranties/invoices for 1100 Rarig, 1851 South Club, 5242 Angola, 5600 Sunnyside, 55 New Plant (HVAC, paving, mezzanine, Eurosort); Livingston final PCA; 29000 Info Ln final | Data work in Cowork, not code |
@@ -83,7 +83,7 @@ Phases 1–3 are low-risk and independently shippable (read-only, additive). Pha
 
 ## 6. Decisions (resolved 2026-10-07)
 
-1. **Placement** — tabs under Capital.
+1. **Placement** — Gabriel chose "tabs under Capital". Capital is already at the 5-tab house cap (`MAX_TABS_PER_DESTINATION`), so it ships as a **standalone `Property Condition` destination in the rail's Capital group** (right after Capital), with a 5-view `?view=` strip — the same pattern Property Financials used. Easy to relocate: the module is self-contained and registered in three shell files.
 2. **Source of record** — import the xlsx directly now; Notion as a later sync target.
 3. **Engine wiring (Phase 4)** — approved: PCA-derived capex replaces the $10/SF proxy where a report exists (via `refute-financial-change`; E Fulton treated as a floor and flagged).
 4. **"Current"** — Gabriel's ruling: *current = the most recent details we have* for that property. There is NO age cutoff. The latest report per `property_key` (by `report_date`) is the current one; its age is shown as a badge and its `usability_class` (current/draft/limited/stale) is shown as a caveat, but an old report is still used when it is the newest we have (e.g. Muirkirk 2014, Sheriff 2007). This supersedes the earlier ≤5-yr rule and the "stale reports greyed, never summed" language in §3A. Older reports for the same property remain as history.

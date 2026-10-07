@@ -9,6 +9,7 @@ export const TITLES: Record<string, string> = {
   worklist: 'Worklist',
   data: 'Data',
   capital: 'Capital & Treasury',
+  'property-condition': 'Property Condition',
   leasing: 'Leasing & Tenants',
   obligations: 'Insurance & Taxes',
   'command-brain': 'Brain',

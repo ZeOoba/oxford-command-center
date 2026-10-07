@@ -32,6 +32,7 @@ const REG_HEADERS = [
 const COMP_HEADERS = ['Report ID', 'Property', 'System', 'Qty', 'UOM', 'Unit cost $/UOM', '% / factor', 'EUL', 'Age', 'RUL', 'Total / scheduled $', 'Timing', 'Basis', 'Note'];
 const QUOTE_HEADERS = ['Record (title)', 'Property', 'Vendor', 'Record Type', 'Status', 'Trade', 'Doc Date', 'Quoted Total', 'Actual Total', 'Qty', 'UOM', '$/UOM [DERIVED]', 'Scope Summary', 'Source Type', 'Source Ref', 'Confidence', 'Verified', 'Funding Class', 'Lease Recovery', 'Notes'];
 const ASSET_HEADERS = ['Property', 'Component', 'Install / age fact', 'Derived install yr', 'Warranty', 'Source / as-of', 'Flag'];
+const PAIR_HEADERS = ['Property', 'Scope', 'PCA / budget estimate', 'Estimate $', 'Estimate $/SF', 'Contractor price', 'Contractor $', 'Contractor $/SF', 'Delta', 'Comment'];
 const FLAG_HEADERS = ['#', 'Severity', 'Property', 'Issue', 'Action / decision needed'];
 
 function reg(over: Record<string, unknown> = {}): unknown[] {
@@ -45,7 +46,7 @@ function reg(over: Record<string, unknown> = {}): unknown[] {
   return REG_HEADERS.map((h) => base[h] ?? null);
 }
 
-function build(opts: { reg?: unknown[][]; comp?: unknown[][]; quote?: unknown[][]; asset?: unknown[][]; flag?: unknown[][] } = {}): ExcelJS.Workbook {
+function build(opts: { reg?: unknown[][]; comp?: unknown[][]; quote?: unknown[][]; asset?: unknown[][]; pair?: unknown[][]; flag?: unknown[][] } = {}): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   wb.addWorksheet('PCA_Register').addRows([REG_HEADERS, ...(opts.reg ?? [reg()])]);
   wb.addWorksheet('Components').addRows([COMP_HEADERS, ...(opts.comp ?? [['R01', 'Banwick', 'Paving', 2230, 'SY', 42.5, '40%', 25, 24, 1, 37910, 'Yr1', 'Estimate', 'Poor']])]);
@@ -56,6 +57,7 @@ function build(opts: { reg?: unknown[][]; comp?: unknown[][]; quote?: unknown[][
   wb.addWorksheet('Asset_Facts').addRows([ASSET_HEADERS, ...(opts.asset ?? [[
     '55 New Plant Ct', 'Roof — EPDM', 'Completed 2017-12-05', 2017, 'JM 20-yr to 12-2037', 'warranty', null,
   ]])]);
+  wb.addWorksheet('Est_vs_Actual').addRows([PAIR_HEADERS, ...(opts.pair ?? [['55 New Plant Ct', 'Re-roof', 'PCI 2016', 202300, 7, 'R.D. Bean 2017', 81870, 2.85, -0.595, 'c']])]);
   wb.addWorksheet('Flags_Open_Items').addRows([FLAG_HEADERS, ...(opts.flag ?? [[1, 'High', '3520 E Fulton', 'CBRE floor', 'Commission PCA']])]);
   return wb;
 }
@@ -73,6 +75,7 @@ describe('parseRegister', () => {
     expect(p.quotes[0]).toMatchObject({ propertyKey: 'new-plant', verified: false, quotedUsd: 81870, actualUsd: null });
     expect(p.assets[0]).toMatchObject({ installYear: 2017, warrantyEndYear: 2037 });
     expect(p.openItems[0]).toMatchObject({ itemNo: 1, severity: 'High' });
+    expect(p.pairs[0]).toMatchObject({ propertyKey: 'new-plant', estimateUsd: 202300, contractorPsf: 2.85 });
   });
 
   it('leaves property_master_id NULL when the mapped id is not a known master row', () => {
@@ -180,10 +183,10 @@ describe('writeRegister', () => {
     const db = freshDb();
     try {
       const parsed = parseRegister(build(), knownMasterIds(db));
-      expect(writeRegister(db, parsed)).toEqual({ reports: 1, components: 1, quotes: 1, assets: 1, openItems: 1 });
+      expect(writeRegister(db, parsed)).toEqual({ reports: 1, components: 1, quotes: 1, assets: 1, pairs: 1, openItems: 1 });
       writeRegister(db, parsed);
       const count = (t: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
-      expect([count('pca_reports'), count('pca_components'), count('capex_quotes'), count('asset_facts'), count('pca_open_items')]).toEqual([1, 1, 1, 1, 1]);
+      expect([count('pca_reports'), count('pca_components'), count('capex_quotes'), count('asset_facts'), count('capex_calibration_pairs'), count('pca_open_items')]).toEqual([1, 1, 1, 1, 1, 1]);
       const r = db.prepare('SELECT ora_commissioned, usability_class FROM pca_reports').get() as { ora_commissioned: number; usability_class: string };
       expect(r).toEqual({ ora_commissioned: 1, usability_class: 'current' });
     } finally {
