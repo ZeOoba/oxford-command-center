@@ -11,7 +11,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Button } from '@/primitives/Button';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
-import type { TaskStatus } from '@contracts/index';
+import type { Task, TaskStatus } from '@contracts/index';
+import { buildSectionViews, type SectionView } from './tasks-view';
 
 const STATUS_META: Record<TaskStatus, { tone: BadgeTone; label: string }> = {
   done: { tone: 'green', label: 'Done' },
@@ -53,7 +54,7 @@ export function TasksModule() {
   const open = tasks.filter((t) => t.status === 'pending').length;
   const overdue = tasks.filter((t) => t.status === 'overdue').length;
   const renewals = tasks.filter((t) => t.status === 'renewal').length;
-  const sections = [...new Set(tasks.map((t) => t.section))];
+  const views = buildSectionViews(tasks);
 
   return (
     <div className="flex flex-col gap-4">
@@ -80,32 +81,65 @@ export function TasksModule() {
         </div>
       )}
 
-      {sections.map((sec) => {
-        const items = tasks.filter((t) => t.section === sec);
-        const d = items.filter((t) => t.status === 'done').length;
-        return (
-          <Card key={sec}>
-            <CardHeader title={sec} trailing={<Badge tone="neutral">{d}/{items.length}</Badge>} />
-            <ul className="flex flex-col">
-              {items.map((t) => {
-                const m = STATUS_META[t.status];
-                return (
-                  <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-2.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                    <div className="min-w-0">
-                      <div className="text-sm" style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{t.label}</div>
-                      {t.notes && <div className="num truncate text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: '560px' }}>{t.notes}</div>}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      {t.type && <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{t.type}</span>}
-                      <Badge tone={m.tone}>{m.label}</Badge>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-        );
-      })}
+      {views.map((v) => (
+        <SectionCard key={v.section} view={v} />
+      ))}
     </div>
+  );
+}
+
+function TaskRow({ task }: { task: Task }) {
+  const m = STATUS_META[task.status];
+  return (
+    <li className="flex items-center justify-between gap-3 px-4 py-2.5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="min-w-0">
+        <div className="text-sm" style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{task.label}</div>
+        {task.notes && <div className="num truncate text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: '560px' }}>{task.notes}</div>}
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        {task.type && <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{task.type}</span>}
+        <Badge tone={m.tone}>{m.label}</Badge>
+      </div>
+    </li>
+  );
+}
+
+/** One checklist section: next few open items, completed work folded, external feeds collapsed. */
+function SectionCard({ view }: { view: SectionView }) {
+  const [expanded, setExpanded] = useState(!view.external);
+  const [allOpen, setAllOpen] = useState(false);
+  const [showFolded, setShowFolded] = useState(false);
+  const rows = allOpen ? view.open : view.shown;
+
+  const toggle = (label: string, onPress: () => void) => (
+    <li className="px-4 py-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <Button size="sm" variant="ghost" onPress={onPress}>{label}</Button>
+    </li>
+  );
+
+  return (
+    <Card>
+      <CardHeader
+        title={view.section}
+        trailing={
+          <div className="flex items-center gap-2">
+            {view.external && (
+              <Button size="sm" variant="ghost" onPress={() => setExpanded((v) => !v)}>
+                {expanded ? 'Collapse' : `Show ${view.open.length} open`}
+              </Button>
+            )}
+            <Badge tone="neutral">{view.doneCount}/{view.total}</Badge>
+          </div>
+        }
+      />
+      {expanded && (
+        <ul className="flex flex-col">
+          {rows.map((t) => <TaskRow key={t.id} task={t} />)}
+          {view.heldBack > 0 && toggle(allOpen ? 'Show fewer' : `+${view.heldBack} more open`, () => setAllOpen((v) => !v))}
+          {view.folded.length > 0 && toggle(showFolded ? `Hide ${view.folded.length} done or n/a` : `${view.folded.length} done or n/a`, () => setShowFolded((v) => !v))}
+          {showFolded && view.folded.map((t) => <TaskRow key={t.id} task={t} />)}
+        </ul>
+      )}
+    </Card>
   );
 }
