@@ -13,6 +13,7 @@ import type { WarehouseDb } from './db';
 import { buildPortfolioAllocation } from './capital-allocation';
 import { buildMarketIntel } from './market-intel';
 import { loadCapitalConfig } from './capital-config';
+import { loadPcaNearTermCapex } from './pca-capex';
 import { getMacro } from '../macro/getMacro';
 import {
   CapitalAllocationResponse,
@@ -115,7 +116,7 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
       // Log calibration verdicts — fail-open (never blocks the response). See
       // filterTrustedVerdicts' docblock above for why distrusted verdicts are excluded.
       try {
-        const iv = computeInputsVersion(db);
+        const iv = computeInputsVersion(db, undefined, { pcaCapex: loadPcaNearTermCapex(db, asOf) });
         const trustedVerdicts = filterTrustedVerdicts(portfolio.verdicts);
         const calibVerdicts = verdictsFromAllocations(trustedVerdicts, iv, 'capital-allocation-api');
         logVerdicts(db, calibVerdicts);
