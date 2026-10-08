@@ -3,7 +3,7 @@
 > **IF YOU ARE AN AGENT: READ THIS ENTIRE FILE BEFORE TOUCHING ANY FILE IN THIS REPO.**
 > This is not optional. This is not a formality. Skipping this file is the root cause of every architectural collision this project has experienced.
 
-**Maintained by:** Lead Architect · **Last verified:** 2026-06-21 (§3 hurdle-rate line and §6 gate step list refreshed 2026-09-27 — the gate is actually 11 steps, not 7, and the hurdle rate is ratified, not advisory; §2's merge-history table is separately known-stale — verify against `git log` directly — and not re-audited in this pass)
+**Maintained by:** Lead Architect · **Last verified:** 2026-10-08 (§2 merge-history table and §3 merged-phase table collapsed to pointers; §6 gate list last checked against `package.json` 2026-09-27)
 
 ---
 
@@ -43,16 +43,13 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 ---
 
-## 2. Current Build State (2026-06-22; last-merge row refreshed 2026-07-06)
+## 2. Current Build State
 
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Most recent merge to main | PR #168 (`3278a2c`) — design-parity Waves 2/3 (insurance/tax/brain engines + 6 UI modules) |
-| Recent merge history (newest first) | #168 → #155 (`a45ac30`, leasingRisk in IC memo — M6) → #129 (`5b81321`, ic-memo 501→live) → #117 (`6cd58ed`, Phase 5 Capital Allocation capstone) |
-| Open PRs | *(none)* |
+| Merge history / open PRs / test count | Not tracked here (they go stale within days). Run `git log origin/main --oneline` and `gh pr list`. |
 | Gate | governance + typecheck + lint + check:dev-css + check:schema-drift + test + reconcile:snapshot + reconcile + reconcile:noi-crosscheck + warehouse:verify + warehouse:drift (11 steps — see §6; a separate `gate:ci` script runs a different subset for CI) |
-| Tests | 2253 vitest unit tests (independently re-verified 2026-07-06, after adding real coverage for parseWorkbook + lease-forecast-api + confidential.ts) |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -69,31 +66,14 @@ This is the single discipline that prevents the collision class this repo has al
 
 **Do not start a phase without architect approval.**
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1a | Basis discipline + NOI integrity gate | Shipped ✓ |
-| 1b | FRED macro agent tool | Shipped ✓ |
-| B (PR #13) | Analytics engine (growth/drivers/anomalies/benchmarks/scores) | **Merged ✓** — INTEL_CONFIG weights ratified 2026-06-14 |
-| B2 (PR #14) | Intelligence UI | **Merged ✓** |
-| B3/B4/B5 (PRs #34/#48/#50/#52/#76) | Calibration stack (005_calibration.sql, calibration.ts, src/modules/calibration/*) | **Merged ✓** — all on main |
-| C | Briefings + PDF export (per-property + per-PM) | **Merged ✓** — PR #86; adversarial refute (opus-4.8, 3-lens) complete 2026-06-20 |
-| Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
-| 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
-| 2 | Debt/Refi scoring + AI narrative briefings | **Merged ✓** — PRs #95/#96/#97 (Steps 1–6: migrations + scoring engine + API + Debt Scorecard UI) · #99 (W1: loan→property binding) · #101 (W2: AI narrative briefings Steps 7–11) |
-| 3 | Forecast + Leasing intelligence | **W1+W2 Merged ✓** — PR #107 (W1: lease-forecast analytics + L-1..L-5 + leasingVelocity + migration 011) · PR #109 (W2: Leasing Intelligence UI); W3 (AI narrative) optional |
-| 5 | Capital Allocation capstone + Market intelligence | **Merged ✓** — PRs #112/#113/#114/#116 (foundational) · **PR #117** (final capstone: 5-way verdict buy/hold/sell/refi/improve + Market Intelligence UI + Property Onboarding; 1686 tests; hurdle rate ratification pending Gabriel) |
-| 3 | Forecast + Leasing intelligence | **Merged ✓** — PR #107 (W1) · PR #109 (W2) · PR #111 (W3: AI narrative leasing briefing) |
-| 5 | Capital Allocation capstone + Market intelligence | **Merged ✓** — PR #117; W1 (engines + migrations 012-015 + contracts + calibration) · W2 (Capital Allocation UI) · W3 (Market Intelligence UI) · W4 (Property Onboarding); 1686 tests green; hurdle rate ratified 2026-06-22 |
-| 5 · Track 2 | Parse-layer slug uniqueness enforcement | **Merged ✓** — PR #113; disambiguates colliding property ids at parse time (+8 tests) |
-| 5 · Track 3 | Market intelligence — cap rate benchmarks | **Merged ✓** — PR #114; `CapRateBenchmark` contract + `getMacroMarketBenchmarks` + implied cap rate columns (impliedCapRate + capRateGap + capRatePercentile) in CapitalAllocationModule (+10 tests) |
-| 5 · Scope B | Regional market dynamics — state unemployment via FRED | **Merged ✓** — PR #116; FRED state unemployment integration + regional dynamics enrichment |
-| Direction 1 (PR #119) | Notion writeback for capital allocation decisions | **Merged ✓** — PR #119; syncCapitalActionsToNotion() pushes capitalAction + priorityScore to Notion Property Register (DB 24d6a531) via POST /capital-allocation/sync-notion |
-| Direction 2 (PR #121) | IC Memo HTML export | **Merged ✓** — PR #121 |
-| Direction 3 (PR #120) | Prospect Demand Intelligence foundation | **Merged ✓** — PR #120; migration 012 (prospect_demand_events) + ProspectDemandEvent contract + getProspectDemandReport engine + GET/POST /api/warehouse/prospect-demand routes + ProspectDemandModule UI (Demand Signals panel) |
+**Shipped history:** Phases 1a, 1b, B/B2/B3–B5 (analytics + intelligence UI + calibration), C (briefings + PDF), 2 (debt/refi + AI narrative), 3 (forecast + leasing intelligence), 4 (Acquisition Intelligence Engine), 5 (Capital Allocation capstone, market intelligence, onboarding), Directions 1–3 (Notion writeback, IC memo HTML export, prospect demand) and Design Parity are all merged to `main`. This file does not carry per-phase status or PR numbers; for history read `docs/superpowers/plans/` (per-initiative plans) and `git log origin/main`.
 
-| Design Parity (PRs #161/#166/#168) | Design-parity implementation: tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold (CapitalAllocationModule folded into CapitalModule) | **Merged ✓** — PR #161 (plan) → #166 (Waves 0/1) → #168 (Waves 2/3); independently re-verified 2026-07-06 on post-merge main (typecheck/lint/governance/build clean, full suite matched PR #168's claimed 2224/2224 exactly at that point — see §2 for the current total after subsequent audit-fix test additions) |
+**Open / pending:**
 
-**Pending:** ~~Hurdle rate ratification~~ — **RATIFIED.** The 8% unlevered IRR governor is ratified in code (`server/warehouse/intel-config.ts` `HURDLE_RATE`: `ratification: 'ratified'`, ratified by Gabriel Goldberg, 2026-06-22) and by migration `017_ratify_hurdle_rate.sql`, which seeds the same ratified state into `capital_config`. `advisoryOnly` on the capital-allocation verdict engine (`server/warehouse/capital-allocation.ts`) reads `config.hurdleRateRatification === 'proposed'` from the live DB row at runtime — so it resolves `false` on any warehouse that has migration 017 applied, but this was not re-verified against the live `data/warehouse/finance.sqlite` in this pass. `src/modules/intel/CapexIrrCalc.tsx`'s "not yet ratified" comment is a deliberate, still-correct guard comment for a dormant `isProposed` banner (it explicitly notes "Latent today — the live rate is ratified") — not stale, do not remove it. Phase 7 parity sweep MERGED via PR #169 (2026-07-06 — the previous version of this line was stale). P4c (insurance self-insure/deductible) and C2 tax refinements (cost-seg/filed-returns metadata) are BUILT on clearly-marked placeholder fixtures (docs/placeholder-data.md) pending real broker/assessor data — swap via warehouse:import-loss-runs; basis data needs a future migration. Next initiative TBD.
+- **Acquisition Workbench UI:** last recorded here as "in progress" (contract + engine merged). Not re-verified in this pass — confirm against `git log` and `docs/superpowers/plans/` before relying on it.
+- **Hurdle rate:** RATIFIED. The 8% unlevered IRR governor is ratified in code (`server/warehouse/intel-config.ts` `HURDLE_RATE`: `ratification: 'ratified'`, ratified by Gabriel Goldberg, 2026-06-22) and by migration `017_ratify_hurdle_rate.sql`, which seeds the same state into `capital_config`. `advisoryOnly` on the capital-allocation verdict engine (`server/warehouse/capital-allocation.ts`) reads `config.hurdleRateRatification === 'proposed'` from the live DB row at runtime, so it resolves `false` on any warehouse with migration 017 applied (not re-verified against the live `data/warehouse/finance.sqlite`). `src/modules/intel/CapexIrrCalc.tsx`'s "not yet ratified" comment is a deliberate guard for a dormant `isProposed` banner ("Latent today — the live rate is ratified") — not stale, do not remove it.
+- **Placeholder fixtures:** P4c (insurance self-insure/deductible) and C2 tax refinements (cost-seg/filed-returns metadata) are BUILT on clearly-marked placeholder fixtures (`docs/placeholder-data.md`) pending real broker/assessor data — swap via `warehouse:import-loss-runs`; basis data needs a future migration.
+- **Next initiative:** TBD.
 
 ---
 
@@ -267,7 +247,7 @@ The following will cause irreversible damage or confidentiality violations:
 - **`data/overlay.json`** — user mutations; gitignored; don't commit or overwrite.
 - **`data/warehouse/finance.sqlite`** — live warehouse; don't delete or run DDL against it directly; use migrations.
 - **`confidential-terms.json`** — deal data; hook-blocked; never expose externally.
-- **Gabriel's uncommitted files** (listed in §2) — treat as locked.
+- **Gabriel's uncommitted files** (see the §2 off-limits rule) — treat as locked.
 - **The gate** — never bypass (`--no-verify`); never remove a check without architect approval.
 - **CORS config** (`server/index.ts`) — never relax the localhost-only rule.
 
