@@ -39,4 +39,21 @@ describe('isDeadLease', () => {
     expect(isDeadLease({ status: null, annualRent: 900 })).toBe(false);
     expect(isDeadLease({ status: undefined, annualRent: 0 })).toBe(true);
   });
+
+  // annualRent is year-1 cash NET of abated months (parse.ts, 2026-10-06): a fully abated live lease
+  // (Abated Months = 12) reads annualRent 0 while monthlyRent is still the contract rate.
+  it('Active, annualRent 0 but monthlyRent > 0 (fully abated) -> LIVE, not a $0 placeholder', () => {
+    expect(isDeadLease({ status: 'Active', annualRent: 0, monthlyRent: 5300 })).toBe(false);
+  });
+
+  it('Active, annualRent 0 and monthlyRent 0 / null / absent -> still dead (placeholder rows)', () => {
+    expect(isDeadLease({ status: 'Active', annualRent: 0, monthlyRent: 0 })).toBe(true);
+    expect(isDeadLease({ status: 'Active', annualRent: 0, monthlyRent: null })).toBe(true);
+    expect(isDeadLease({ status: 'Active', annualRent: 0 })).toBe(true);
+  });
+
+  it('monthlyRent never revives an Expired / Vacant lease', () => {
+    expect(isDeadLease({ status: 'Expired', annualRent: 0, monthlyRent: 5300 })).toBe(true);
+    expect(isDeadLease({ status: 'Vacant', annualRent: 0, monthlyRent: 5300 })).toBe(true);
+  });
 });

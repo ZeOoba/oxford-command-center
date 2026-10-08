@@ -11,6 +11,7 @@ import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { isAffiliateNoteProperty, propertyLtvLabel } from '../../src/analytics/debt-basis';
 import { TOTAL_DEBT_BASIS, EXTERNAL_DEBT_BASIS, debtBasisIssues } from './debt-basis-copy';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
+import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { referenceDate } from '../config';
 
 /**
@@ -264,7 +265,7 @@ const EXECUTORS: Record<ToolName, Exec> = {
         count: rows.length,
         leases: rows.map((l) => ({
           tenant: l.company ?? l.tenantName, property: l.propertyKey, unit: l.unit, sf: l.sf,
-          annualRent: fmtUsdCompact(l.annualRent), status: l.status, leaseEnd: l.leaseEnd, monthsToExpiry: l.monthsToExpiry,
+          annualRent: fmtUsdCompact(l.annualRent), contractAnnualRent: fmtUsdCompact(contractAnnualRent(l)), status: l.status, leaseEnd: l.leaseEnd, monthsToExpiry: l.monthsToExpiry,
         })),
       },
       refs: rows.map((l) => ({ type: 'lease', id: l.id, label: l.company ?? l.tenantName })),

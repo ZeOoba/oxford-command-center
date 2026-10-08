@@ -5,6 +5,7 @@ import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
+import { contractAnnualRent } from './lease-rent';
 import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
 import { addMonths, type MonthKey } from './portfolio-trends';
@@ -443,10 +444,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       out.push({
         id: `expired-${l.id}`, severity: 'warning', category: 'lease',
         title: `Lease expired — ${l.company ?? l.tenantName}`,
-        detail: `${l.propertyKey} ${l.unit ?? ''} · ${fmtUsdCompact(l.annualRent)}/yr holding over. Resolve renewal or vacate.`,
-        metric: fmtUsdCompact(l.annualRent), entityType: 'lease', entityId: l.id,
+        detail: `${l.propertyKey} ${l.unit ?? ''} · ${fmtUsdCompact(contractAnnualRent(l))}/yr holding over. Resolve renewal or vacate.`,
+        metric: fmtUsdCompact(contractAnnualRent(l)), entityType: 'lease', entityId: l.id,
         action: { label: 'Draft renewal', kind: 'draft-renewal' },
-        impactAnnualUsd: l.annualRent, spine: 'A', provenance: 'real',
+        impactAnnualUsd: contractAnnualRent(l), spine: 'A', provenance: 'real',
       });
     } else if (l.leaseEnd) {
       const days = daysBetween(l.leaseEnd, asOf);
@@ -458,10 +459,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           severity: days < T.leaseCriticalDays ? 'critical' : 'warning',
           category: 'lease',
           title: `Lease expiring — ${l.company ?? l.tenantName}`,
-          detail: `${l.propertyKey} ${l.unit ?? ''} expires ${fmtDate(l.leaseEnd)} (${days}d). ${fmtUsdCompact(l.annualRent)}/yr at risk.`,
+          detail: `${l.propertyKey} ${l.unit ?? ''} expires ${fmtDate(l.leaseEnd)} (${days}d). ${fmtUsdCompact(contractAnnualRent(l))}/yr at risk.`,
           metric: `${days}d`, entityType: 'lease', entityId: l.id,
           action: { label: 'Draft renewal', kind: 'draft-renewal' },
-          impactAnnualUsd: l.annualRent, spine: 'A', provenance: 'real',
+          impactAnnualUsd: contractAnnualRent(l), spine: 'A', provenance: 'real',
         });
       }
     }
@@ -495,7 +496,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     const asOfMs = new Date(asOf).getTime();
 
     // Build a total annual rent denominator for the L-5 concentration check
-    const totalAnnualRent = s.leases.reduce((sum, l) => sum + l.annualRent, 0);
+    // Contract basis on BOTH sides of the L-5 ratio (numerator below is the bucket's contract rent).
+    const totalAnnualRent = s.leases.reduce((sum, l) => sum + contractAnnualRent(l), 0);
 
     for (const signal of signals) {
       const leaseEndMs = signal.leaseEnd ? new Date(signal.leaseEnd).getTime() : null;
@@ -602,7 +604,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         // Sum annual rent for leases in this bucket using bucketExpiry
         const bucketRent = s.leases
           .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket)
-          .reduce((sum, l) => sum + l.annualRent, 0);
+          .reduce((sum, l) => sum + contractAnnualRent(l), 0);
         const bucketPct = bucketRent / totalAnnualRent;
         if (bucketPct >= T.tenantNoiConcentrationInfo) {
           out.push({
@@ -623,7 +625,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
 
   // Expiry-family dedup (2026-09-23 review + refute wf_6cf7d109-520): ONE expiry insight per lease.
   // The legacy lease block (`expiring-<id>`, `expired-<id>`) and the Phase 3 L-x producers
-  // (`lease-expiry-<id>` = L-1, `lease-lapsed-<id>` = L-2) each carry impactAnnualUsd = annualRent
+  // (`lease-expiry-<id>` = L-1, `lease-lapsed-<id>` = L-2) each carry impactAnnualUsd = contract annual rent
   // for the same lease, so wherever both fire totalsBySpine() summed that rent twice. The pairs:
   //   • `expiring-`  + `lease-expiry-`  — 0–90d out, no advanced renewal stage
   //   • `expired-`   + `lease-lapsed-`  — status 'Expired' holdover, leaseEnd past, stage ≠ Executed
@@ -1049,7 +1051,7 @@ export function isArStale(r: { asOfDate?: Date | null }, now: number): boolean {
  *
  * Impact:
  *   collections → total outstanding arrears (real; from entityId → tenantArrears)
- *   lease       → annualRent of the matched lease (real)
+ *   lease       → contract annual rent (contractAnnualRent) of the matched lease (real)
  *   all others  → null / absent (no derivation attempted — avoids speculative dollar fabrication)
  */
 export function fillImpact(insight: Insight, snapshot: PortfolioSnapshot): Insight {
@@ -1080,8 +1082,8 @@ export function fillImpact(insight: Insight, snapshot: PortfolioSnapshot): Insig
       }
     } else if (insight.category === 'lease') {
       const lease = snapshot.leases.find((l) => l.id === insight.entityId);
-      if (lease && lease.annualRent > 0) {
-        impactAnnualUsd = lease.annualRent;
+      if (lease && contractAnnualRent(lease) > 0) {
+        impactAnnualUsd = contractAnnualRent(lease);
         provenance = 'real';
       }
     }
