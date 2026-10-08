@@ -3,11 +3,11 @@
   "property-financials": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-05",
     "phase": "New standalone Property Financials destination (read-only; own normalized NOI, cash basis). Architect-owned surfaces touched: src/contracts/property-financials.ts (new) + one export line in src/contracts/index.ts; server/warehouse/sub-routers.ts (one mount, later). Plan: docs/superpowers/plans/2026-10-05-property-financials-module.md.",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Gabriel approved standalone placement and placed the worktree architect-edit-ok sentinel in-turn 2026-10-05 (AskUserQuestion). Needs architect acknowledgment at PR review. No governor/model files touched.",
-    "last_updated": "2026-10-05T00:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #442 (e48b8e7, squash, 2026-10-06; Gabriel directed the merge in-turn). Architect-owned surfaces touched were the new src/contracts/property-financials.ts, one export line in src/contracts/index.ts and one mount in server/warehouse/sub-routers.ts; no governor/model files. Refute attestation wf_fba3d571-284 (pass 1 wf_3b9f5092-383). Open follow-ups: register the monthly refresh task (proposal in docs/superpowers/plans/); a 12th entity needs the contract's entity constants widened. monthly-long.csv is local-only by policy.",
+    "last_updated": "2026-10-07T00:00:00Z"
   },
   "edge-followups": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (adversarial review round 7 findings on PR #427)",
