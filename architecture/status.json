@@ -843,5 +843,14 @@
     "review_needed": true,
     "review_detail": "Architect-owned surfaces planned: src/contracts/expenses-monthly.ts (+ index export). src/analytics/ (expense-trends.ts, conditions.ts alert rules) is financial-decision source for check:refute. Additive; no existing table or contract altered. Wave 2 (PR #425) merged 2026-10-02.",
     "last_updated": "2026-10-02T19:41:02Z"
+  },
+  "claude-md-history-pointer": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-authorized in-turn 2026-10-08",
+    "phase": "Doc-only edit to CLAUDE.md (Architect-owned): collapse the stale section 2 merge-history rows and the section 3 merged-phase table into pointers to git log origin/main and docs/superpowers/plans/; keep the off-limits rule, shared-infra rule, Do-not-start-a-phase-without-architect-approval rule, and the open/pending items (hurdle-rate note, placeholder fixtures); update Last verified to 2026-10-08. No code touched.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Touches CLAUDE.md (Architect-owned) and this file. Gabriel authorized the edit in chat 2026-10-08. Uncommitted in worktree ocr-wt-r30-claudemd on branch docs/claude-md-history-pointer; needs architect acknowledgment at PR review.",
+    "last_updated": "2026-10-08T18:45:46Z"
   }
 }
