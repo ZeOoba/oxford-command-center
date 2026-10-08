@@ -105,7 +105,7 @@ flowchart TB
     MACRO -.-> BAKE
     WH -. live governors .-> BAKE
     BAKE --> BRIEF
-    BRIEF -. brief-health.json .-> HEALTH
+    BRIEF -. "brief-health.json" .-> HEALTH
     BAKE --> PAGES
 ```
 <!-- diagram-verified: 2026-10-06 (against origin/main 0d98bfc). Sequence-level views: docs/diagrams/README.md -->
