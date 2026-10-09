@@ -25,12 +25,60 @@ export const PROPERTY_CONDITION_KEYS = {
   report: ['warehouse', 'property-condition', 'report'] as const,
 };
 
-export function usePropertyCondition() {
+export function usePropertyCondition(opts: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: opts.enabled ?? true,
     queryKey: PROPERTY_CONDITION_KEYS.report,
     queryFn: () => fetchParsedOrMirror('/api/warehouse/property-condition/report', PropertyConditionReport),
     ...QUERY_OPTS,
   });
+}
+
+/** Near-term PCA repair dollars on file for one property_master id (immediate + Yr 1–2, current reports only). */
+export interface PcaNearTerm {
+  dollars: number;
+  immediateUsd: number;
+  shortTermUsd: number;
+  /** Consultant when a single report covers the property, else null (several reports roll up). */
+  consultant: string | null;
+  /** Oldest covered report date, null when any covered report is undated. */
+  reportDate: string | null;
+  reportCount: number;
+}
+
+/**
+ * Near-term PCA repairs for a property_master id, summed over the CURRENT (newest) report of every
+ * property_key mapped to it — the same "current = newest, no age cutoff" rule the engine's improve gate
+ * uses (server/warehouse/pca-capex.ts). Dollars only (the calculator needs a $ amount, not an intensity),
+ * so unlike the engine this does not require an SF. null when the property has no PCA dollars on file.
+ */
+export function pcaNearTermForProperty(
+  report: PropertyConditionReport | undefined,
+  propertyId: string | null | undefined,
+): PcaNearTerm | null {
+  if (!report || !report.loaded || !propertyId) return null;
+  const mine = report.properties.filter(
+    (p) => p.propertyMasterId === propertyId && (p.current.immediateUsd !== null || p.current.shortTermUsd !== null),
+  );
+  // Same rule as the engine loader (server/warehouse/pca-capex.ts): a portfolio-scope report covers the same
+  // buildings as its sibling building reports, so it is dropped when any building report exists.
+  const isPortfolio = (k: string): boolean => /portfolio/i.test(k);
+  const rows = mine.some((p) => !isPortfolio(p.propertyKey)) ? mine.filter((p) => !isPortfolio(p.propertyKey)) : mine;
+  if (rows.length === 0) return null;
+  const immediateUsd = rows.reduce((a, p) => a + (p.current.immediateUsd ?? 0), 0);
+  const shortTermUsd = rows.reduce((a, p) => a + (p.current.shortTermUsd ?? 0), 0);
+  const dollars = immediateUsd + shortTermUsd;
+  if (!(dollars > 0)) return null;
+  const dates = rows.map((p) => p.current.reportDate);
+  const dated = dates.filter((d): d is string => d !== null);
+  return {
+    dollars,
+    immediateUsd,
+    shortTermUsd,
+    consultant: rows.length === 1 ? rows[0]!.current.consultant : null,
+    reportDate: dated.length === dates.length ? [...dated].sort()[0] ?? null : null,
+    reportCount: rows.length,
+  };
 }
 
 // ── display helpers ──────────────────────────────────────────────────────────────────────────

@@ -32,6 +32,14 @@ export const ALERT_THRESHOLDS = {
   leaseCriticalDays: 60,
   leaseWarningDays: 180,
   insuranceRenewWarnDays: 30,
+  // Property Condition (Phase 3, server/warehouse/property-condition-conditions.ts). Year-grain: the
+  // register states warranty END YEARS, never dates, so these windows are whole years.
+  /** Warn when a stated warranty end year is this many years (or fewer) ahead of the reference year. */
+  pcaWarrantyWarnYears: 2,
+  /** A warranty whose stated end year is at most this many years BEHIND the reference year still alerts as just-lapsed; older lapses are history. */
+  pcaWarrantyLapsedYears: 1,
+  /** A property's most recent PCA this many whole years old (or more) AND carrying immediate repairs is rolled into one 'dated PCA' info insight. */
+  pcaDatedReportYears: 5,
   cashConcentrationWarn: 0.3,
   tenantNoiConcentrationInfo: 0.15,
   // Collections (audit Fix #2; refute F2): any dollars genuinely 60+ days past due (d90 + d90plus)

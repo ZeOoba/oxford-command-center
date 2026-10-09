@@ -194,6 +194,7 @@ export function PropertyIntelView({ propertyId, onSelectProperty, period, period
           key={selectedId}
           capitalAction={score.capitalAction}
           propertyName={score.propertyName ?? null}
+          propertyId={selectedId}
         />
       )}
 

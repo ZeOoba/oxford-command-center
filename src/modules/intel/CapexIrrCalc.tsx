@@ -22,6 +22,7 @@ import { useSnapshot } from '@/data/queries';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { computeCapexIrr, npvAtRate } from './capex-irr';
 import type { PropertyScore } from './analytics-hooks';
+import { pcaNearTermForProperty, usePropertyCondition } from '../property-condition/hooks';
 
 // ---------------------------------------------------------------------------
 // Defaults — representative starting point, user overrides via inputs.
@@ -43,6 +44,8 @@ interface Props {
   capitalAction: PropertyScore['capitalAction'];
   /** Property name for the panel heading. */
   propertyName: string | null;
+  /** property_master id — enables the optional PCA near-term repairs line (Property Condition ledger). */
+  propertyId?: string | null;
 }
 
 /** Capital-action states this panel renders for — an explicit allow-list (not an exclude-list):
@@ -63,14 +66,18 @@ const CAPEX_CALC_VISIBLE_ACTIONS: ReadonlySet<PropertyScore['capitalAction']> = 
  * server round-trip — pure client math). The hurdle rate is read live via useSnapshot(), so a
  * DB-governed re-ratification of hurdleRatePct flows through with no code change here.
  */
-export function CapexIrrCalc({ capitalAction, propertyName }: Props) {
+export function CapexIrrCalc({ capitalAction, propertyName, propertyId = null }: Props) {
   if (!CAPEX_CALC_VISIBLE_ACTIONS.has(capitalAction)) return null;
 
-  return <CapexIrrPanel propertyName={propertyName} />;
+  return <CapexIrrPanel propertyName={propertyName} propertyId={propertyId} />;
 }
 
-function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
+function CapexIrrPanel({ propertyName, propertyId }: { propertyName: string | null; propertyId: string | null }) {
   const { data } = useSnapshot();
+  // PCA near-term repairs on file for this property — fetched only when a property id is supplied, so
+  // every caller that does not pass one behaves exactly as before.
+  const { data: pcaReport } = usePropertyCondition({ enabled: propertyId !== null });
+  const pca = pcaNearTermForProperty(pcaReport, propertyId);
   const hurdle = data?.snapshot.governors?.hurdleRatePct ?? GOVERNOR_FALLBACK.hurdleRatePct;
   const isProposed = (data?.snapshot.governors?.hurdleRateRatification ?? GOVERNOR_FALLBACK.hurdleRateRatification) === 'proposed';
 
@@ -78,6 +85,11 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   const [capex, setCapex] = useState<number>(DEFAULT_CAPEX);
   const [uplift, setUplift] = useState<number>(DEFAULT_UPLIFT);
   const [hold, setHold] = useState<number>(DEFAULT_HOLD);
+  // Opt-in: the PCA's near-term repairs are deferred maintenance the building needs regardless — the
+  // capital-allocation engine floors its assumed spend at them (max, not sum), and this mirrors that, but only on request
+  // (a default-on checkbox would silently change a generic example's verdict).
+  const [includePca, setIncludePca] = useState(false);
+  const effectiveCapex = includePca && pca ? Math.max(capex, pca.dollars) : capex;
 
   // Pure computation — no side effects. passesHurdle uses the RAW (unrounded) values with the
   // SAME strict `>` the live capital-allocation engine's own improve-gate uses — this is
@@ -88,13 +100,13 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   // each other — a prior display-precision rounding scheme here reintroduced exactly that
   // contradiction, per a second refute pass — removed rather than patched again.
   const result = useMemo(() => {
-    const irr = computeCapexIrr(capex, uplift, hold);
+    const irr = computeCapexIrr(effectiveCapex, uplift, hold);
     const npv = Number.isFinite(irr)
-      ? npvAtRate(capex, uplift, hold, hurdle)
+      ? npvAtRate(effectiveCapex, uplift, hold, hurdle)
       : null;
     const passesHurdle = Number.isFinite(irr) && irr > hurdle;
     return { irr, npv, passesHurdle };
-  }, [capex, uplift, hold, hurdle]);
+  }, [effectiveCapex, uplift, hold, hurdle]);
 
   // Derived display. NaN (invalid inputs, e.g. capex=0) and -Infinity (a genuine no-return
   // project, uplift<=0) are DISTINCT failure modes with distinct copy — conflating them under one
@@ -210,6 +222,37 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
           onChange={(v) => setHold(Math.min(10, Math.max(1, Math.round(v))))}
         />
       </div>
+
+      {/* PCA near-term repairs (Property Condition ledger) — only when this property has PCA dollars on file. */}
+      {pca && (
+        <div
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-xs"
+          style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+        >
+          <label htmlFor="capex-irr-include-pca" className="flex cursor-pointer items-center gap-2">
+            <input
+              id="capex-irr-include-pca"
+              type="checkbox"
+              checked={includePca}
+              onChange={(e) => setIncludePca(e.target.checked)}
+            />
+            <span>
+              Include PCA near-term repairs as a capex floor ({fmtUsd(pca.dollars)})
+            </span>
+          </label>
+          <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            Immediate {fmtUsd(pca.immediateUsd)} + Yr 1–2 {fmtUsd(pca.shortTermUsd)} ·{' '}
+            {pca.consultant ?? `${pca.reportCount} reports`}
+            {pca.reportDate ? ` · oldest report ${pca.reportDate}` : ''} · deferred maintenance the building needs
+            regardless. The capital-allocation engine uses eligible reports (with square footage) when they exceed its assumed spend; this line counts current building reports (a portfolio report is dropped when building reports exist)
+          </span>
+          {includePca && (
+            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              Total capex modeled: {fmtUsd(effectiveCapex)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Outputs */}
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 px-4 py-4 sm:grid-cols-3">
