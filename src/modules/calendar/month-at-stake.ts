@@ -5,7 +5,7 @@ import type { DatedEvent } from '@/brain/critical-dates';
  * Sums upcoming (daysToDate >= 0) ANNUAL RENT actually expiring per month — lease-expiry events
  * only (entityType 'lease' AND type 'lease-expiry'). Escalation events are lease events too, but
  * an escalation carries the SAME full annualRent as its lease's own expiry (see
- * src/brain/critical-dates.ts, both push `amount: l.annualRent`) — it is a notice date, not rent
+ * src/brain/critical-dates.ts, both push `amount: contractAnnualRent(l)`) — it is a notice date, not rent
  * leaving or landing that month, so counting it would double-book or inflate the total depending
  * on whether it lands in the same month as the expiry. No other lease event type in
  * CalendarEventType carries a comparable rent-at-risk amount (loan-maturity carries the loan

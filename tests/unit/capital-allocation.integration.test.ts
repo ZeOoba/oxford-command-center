@@ -289,7 +289,11 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
         {
           id: 'L-H2-1',
           propertyId: '9050-red-branch-rd-columbia-md',
-          annualRent: 100_000,  // 100%-basis rent
+          // ABATED lease: year-1 cash annualRent is NET of 1.2 abated months (90_000) while the contract rate is
+          // monthlyRent x 12 = 100_000. nearTermExpiryRent is rent lost at expiry = CONTRACT basis, so every
+          // expectation below stays 100_000 x 0.50 = 50_000; reverting capital-allocation.ts to annualRent
+          // would read 45_000 and fail this test.
+          annualRent: 90_000,   // 100%-basis year-1 cash rent, net of abatement
           monthlyRent: 100_000 / 12,
           sf: 12_000,
           monthsToExpiry: 3,    // ≤12m — '0-6m' bucket (leaseEnd 2026-09-30 > run date 2026-08-22)

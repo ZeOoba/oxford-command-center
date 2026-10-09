@@ -3,6 +3,7 @@
 // Mirrors engine.ts style — no side effects, no I/O.
 import type { Lease } from '@contracts/index';
 import { ALERT_THRESHOLDS, isArStale } from './conditions';
+import { contractAnnualRent } from './lease-rent';
 import type {
   ExpiryBucket,
   RenewalSignal,
@@ -160,7 +161,7 @@ export function renewalSignals(
       tenantName: l.company ?? l.tenantName,
       propertyId: l.propertyId,
       propertyKey: l.propertyKey,
-      annualRent: l.annualRent,
+      annualRent: contractAnnualRent(l), // contract rent: this is the "rent at risk at expiry" figure
       sf: l.sf,
       leaseEnd: l.leaseEnd,
       monthsToExpiry: mte,
@@ -204,7 +205,8 @@ export function marketRentGaps(
     // Derive current PSF — prefer rentPerSf if available, else compute from annualRent/sf
     const currentRentPsf: number | null = (() => {
       if (l.rentPerSf !== null && Number.isFinite(l.rentPerSf)) return l.rentPerSf;
-      if (l.sf > 0 && Number.isFinite(l.annualRent)) return l.annualRent / l.sf;
+      const contract = contractAnnualRent(l);
+      if (l.sf > 0 && Number.isFinite(contract)) return contract / l.sf;
       return null;
     })();
 
@@ -255,13 +257,13 @@ export function marketRentGaps(
  *
  * Three scenarios:
  *   renew_at_current: projected = inPlace, delta = 0, noiImpact = 0
- *   renew_at_market:  for leases expiring within horizon, replace annualRent with
+ *   renew_at_market:  for leases expiring within horizon, replace contract annual rent with
  *                     marketPsf*sf where market rent exists; others hold at current.
  *                     deltaUsd = sum of changes. noiImpactAnnualUsd = deltaUsd (NNN 1:1).
  *   vacancy_haircut:  projectedAnnualRent = inPlace - (expiringRentInHorizon * vacancyPct).
  *                     noiImpactAnnualUsd = -(expiringRentInHorizon * vacancyPct).
  *
- * expiringRentInHorizon = sum annualRent of leases where 0 ≤ monthsToExpiry ≤ horizonMonths.
+ * expiringRentInHorizon = sum contract annual rent (monthlyRent x 12, see lease-rent.ts) of leases where 0 ≤ monthsToExpiry ≤ horizonMonths.
  */
 export function rentForecast(
   leases: Lease[],
@@ -273,7 +275,9 @@ export function rentForecast(
   const assumptions: string[] = [];
 
   // Total in-place annual rent (all active leases)
-  const inPlaceAnnualRent = leases.reduce((s, l) => s + l.annualRent, 0);
+  // Contract basis (monthlyRent x 12): annualRent is net of abated months, which would overstate the
+  // renew-at-market uplift on an abated lease and make inPlace disagree with the 'contractual rents' basis.
+  const inPlaceAnnualRent = leases.reduce((s, l) => s + contractAnnualRent(l), 0);
 
   // expiringRentInHorizon: 0 ≤ monthsToExpiry ≤ horizonMonths.
   // Use day-accurate signed months from leaseEnd to avoid calendar-month truncation: the workbook
@@ -286,9 +290,9 @@ export function rentForecast(
       : (l.monthsToExpiry !== null && Number.isFinite(l.monthsToExpiry) ? l.monthsToExpiry : null);
     return mte !== null && Number.isFinite(mte) && mte >= 0 && mte <= horizonMonths;
   });
-  const expiringRentInHorizon = expiringLeases.reduce((s, l) => s + l.annualRent, 0);
+  const expiringRentInHorizon = expiringLeases.reduce((s, l) => s + contractAnnualRent(l), 0);
 
-  assumptions.push(`Basis: workbook rent roll (contractual rents)`);
+  assumptions.push(`Basis: workbook rent roll, contract rent (monthly rent x 12; not the year-1 cash total net of abatement)`);
   assumptions.push(`Horizon: ${horizonMonths} months from ${asOf}`);
   assumptions.push(`Expiring leases in horizon: ${expiringLeases.length} leases, ${expiringRentInHorizon.toFixed(0)} annual rent`);
 
@@ -319,7 +323,7 @@ export function rentForecast(
         ? rawMarket : null;
       if (marketPsf !== null && l.sf > 0) {
         const marketAnnual = marketPsf * l.sf;
-        projectedAnnualRent += marketAnnual - l.annualRent;
+        projectedAnnualRent += marketAnnual - contractAnnualRent(l);
         leasesReplaced++;
       } else {
         leasesMissingMarket++;

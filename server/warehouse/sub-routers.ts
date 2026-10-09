@@ -19,9 +19,11 @@ import { capitalAllocationApi } from './capital-allocation-api';
 import { insuranceAnalysisApi } from './insurance-analysis-api';
 import { insuranceLossApi } from './insurance-loss-api';
 import { taxApi } from './tax-api';
+import { propertyConditionApi } from './property-condition-api';
 import { brainApi } from './brain-api';
 import { insightsApi } from './insights-api';
 import { edgeApi } from '../edge/edge-api';
+import { propertyFinancialsApi } from '../property-financials/property-financials-api';
 
 export interface WarehouseSubRouter {
   /** Path segment AFTER '/api/warehouse' (e.g. '/brain', '/insurance/analysis'). */
@@ -60,9 +62,11 @@ const RAW_SUB_ROUTERS: WarehouseSubRouter[] = [
   { prefix: '/insurance/analysis', factory: insuranceAnalysisApi },
   { prefix: '/insurance/loss', factory: insuranceLossApi },
   { prefix: '/tax', factory: taxApi },
+  { prefix: '/property-condition', factory: propertyConditionApi },
   { prefix: '/brain', factory: brainApi },
   { prefix: '/insights', factory: insightsApi },
   { prefix: '/edge', factory: edgeApi },
+  { prefix: '/property-financials', factory: propertyFinancialsApi },
 ];
 
 export const WAREHOUSE_SUB_ROUTERS: WarehouseSubRouter[] = RAW_SUB_ROUTERS.map((e) => ({

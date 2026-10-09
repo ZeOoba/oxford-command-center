@@ -12,6 +12,8 @@ import {
   Coins,
   BrainCircuit,
   BarChart3,
+  Receipt,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { INTEL_TABS } from '@/modules/intel/tabs';
@@ -41,6 +43,12 @@ const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastMo
 const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
 const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
 const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketModule').then((m) => ({ default: m.LeaseMarketModule })));
+const PropertyConditionModule = lazy(() =>
+  import('@/modules/property-condition/PropertyConditionModule').then((m) => ({ default: m.PropertyConditionModule })),
+);
+const PropertyFinancialsModule = lazy(() =>
+  import('@/modules/property-financials/PropertyFinancialsModule').then((m) => ({ default: m.PropertyFinancialsModule })),
+);
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market' | 'System';
 
@@ -65,10 +73,16 @@ export const MODULES: ModuleDef[] = [
   { id: 'worklist', label: 'Worklist', icon: CheckSquare, group: 'Command', Component: WorklistModule, tabs: WORKLIST_TABS },
   { id: 'command-brain', label: 'Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule, tabs: BRAIN_TABS },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioDestination, tabs: PORTFOLIO_TABS },
+  // Property Financials (2026-10-05 ruling: standalone destination). Its six in-module views exceed
+  // MAX_TABS_PER_DESTINATION, so they are a `?view=` strip inside the module, not registry tabs.
+  { id: 'property-financials', label: 'Property Financials', icon: Receipt, group: 'Assets', Component: PropertyFinancialsModule },
   // Financials — module id stays `intel` so /intel/:propertyId deep links + MODULE_PRIMARY_TYPE keep working.
   { id: 'intel', label: 'Financials', icon: BarChart3, group: 'Assets', Component: IntelModule, tabs: INTEL_TABS },
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule, tabs: LEASING_TABS },
   { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule, tabs: CAPITAL_TABS },
+  // Property Condition (2026-10-07): standalone destination in the Capital rail group. Capital is already at
+  // MAX_TABS_PER_DESTINATION, so its five views are a `?view=` strip inside the module, not registry tabs.
+  { id: 'property-condition', label: 'Property Condition', icon: ClipboardCheck, group: 'Capital', Component: PropertyConditionModule },
   { id: 'obligations', label: 'Obligations', icon: ShieldCheck, group: 'Capital', Component: ObligationsModule, tabs: OBLIGATIONS_TABS },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule, tabs: MARKET_TABS },
   { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule, tabs: LEASE_MARKET_TABS },
