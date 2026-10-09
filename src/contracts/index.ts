@@ -46,6 +46,8 @@ export * from './brain-report';
 export * from './trends';
 export * from './edge';
 export * from './expenses-monthly';
+export * from './property-condition';
+export * from './property-financials';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),

@@ -16,3 +16,21 @@ export const DATA_TAB_KEYS: readonly DataTab[] = ['imports', 'quality', 'mapping
 
 /** The three warehouse data-ops tabs carry the portfolio data-ops KPI band above the strip. */
 export const DATA_OPS_TABS: ReadonlySet<DataTab> = new Set<DataTab>(['imports', 'quality', 'mappings']);
+
+/**
+ * The Quality tab's `?view=` switch (R5: a SegmentedControl, never a nested strip). The tab strip is
+ * already at MAX_TABS_PER_DESTINATION, so the Property Financials data-health panel (plan T8, the
+ * reference artifact's "Command center data" tab made live) is a second view of Quality rather than
+ * a sixth tab: Warehouse (default) · Property Financials.
+ */
+export type DataQualityViewKey = 'warehouse' | 'property-financials';
+
+export const DATA_QUALITY_VIEWS: ReadonlyArray<{ value: DataQualityViewKey; label: string }> = [
+  { value: 'warehouse', label: 'Warehouse' },
+  { value: 'property-financials', label: 'Property Financials' },
+];
+
+export const DATA_QUALITY_VIEW_KEYS: readonly DataQualityViewKey[] = DATA_QUALITY_VIEWS.map((v) => v.value);
+
+/** Deep link to the Property Financials data-health panel (used by the module's summary card). */
+export const PF_DATA_HEALTH_HREF = '/data?tab=quality&view=property-financials';

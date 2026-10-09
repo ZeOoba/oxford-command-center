@@ -1,0 +1,55 @@
+entity,period,line_type,category,source_account,amount_usd
+1851 South Club Solar,2024-FY,inctax,Entity income tax,Tax -- Md State,36013.0
+1851 South Club Solar,2024-FY,opex,Insurance,Insurance Expense,17556.92
+1851 South Club Solar,2024-FY,opex,Professional / admin,Bank Service Charges - Other,30.0
+1851 South Club Solar,2024-FY,opex,Professional / admin,Professional Fees,3000.0
+1851 South Club Solar,2024-FY,opex,Professional / admin,Wire Fee,15.0
+1851 South Club Solar,2024-FY,opex,Real estate & property tax,Tax -- Personal Property,309.0
+1851 South Club Solar,2024-FY,opex,Repairs & maintenance,Repairs and Maintenance,17062.37
+1851 South Club Solar,2024-FY,rev,Solar / energy income,Electricity Income -- PS,216214.47
+1851 South Club Solar,2024-FY,rev,Solar / energy income,SREC Income,452584.0
+1851 South Club Solar,2025-FY,inctax,Entity income tax,Tax -- Md State,55176.0
+1851 South Club Solar,2025-FY,opex,Insurance,Insurance Expense,16799.62
+1851 South Club Solar,2025-FY,opex,Professional / admin,Bank Service Charges,35.0
+1851 South Club Solar,2025-FY,opex,Professional / admin,Professional Fees,14711.5
+1851 South Club Solar,2025-FY,opex,Real estate & property tax,Tax -- Personal Property,309.0
+1851 South Club Solar,2025-FY,opex,Repairs & maintenance,Repairs and Maintenance,24538.88
+1851 South Club Solar,2025-FY,rev,Solar / energy income,Electricity Income -- PS,96814.19
+1851 South Club Solar,2025-FY,rev,Solar / energy income,SREC Income,467052.0
+1851 South Club Solar,2026-YTD(thru 2026-06-12),inctax,Entity income tax,Tax -- Md State,13400.0
+1851 South Club Solar,2026-YTD(thru 2026-06-12),opex,Insurance,Insurance Expense,13678.25
+1851 South Club Solar,2026-YTD(thru 2026-06-12),opex,Professional / admin,Misc,0.0
+1851 South Club Solar,2026-YTD(thru 2026-06-12),opex,Real estate & property tax,Tax -- Personal Property,309.0
+1851 South Club Solar,2026-YTD(thru 2026-06-12),opex,Repairs & maintenance,Repairs and Maintenance,10529.6
+1851 South Club Solar,2026-YTD(thru 2026-06-12),rev,Solar / energy income,Electricity Income -- PS,88098.39
+1851 South Club Solar,2026-YTD(thru 2026-06-12),rev,Solar / energy income,SREC Income,139415.5
+55 New Plant (EGFLLC),2024-FY,debt,Debt service,Interest Expense,58659.84
+55 New Plant (EGFLLC),2024-FY,inctax,Entity income tax,Fed,7000.0
+55 New Plant (EGFLLC),2024-FY,inctax,Entity income tax,State,1500.0
+55 New Plant (EGFLLC),2024-FY,noncash,Depreciation/amortization,Amortization Expense,17601.0
+55 New Plant (EGFLLC),2024-FY,noncash,Depreciation/amortization,Depreciation,14529.0
+55 New Plant (EGFLLC),2024-FY,opex,Insurance,Insurance,0.0
+55 New Plant (EGFLLC),2024-FY,opex,Management fees,Asset Management Fees,17342.6
+55 New Plant (EGFLLC),2024-FY,opex,Professional / admin,Professional Fees,3520.0
+55 New Plant (EGFLLC),2024-FY,opex,Real estate & property tax,Property,309.0
+55 New Plant (EGFLLC),2024-FY,opex,Real estate & property tax,Tax - Other,309.0
+55 New Plant (EGFLLC),2024-FY,opex,Repairs & maintenance,REPAIR & MAINT--BLDG,975.0
+55 New Plant (EGFLLC),2024-FY,rev,Base rent,Rents,425450.49
+55 New Plant (EGFLLC),2024-FY,rev,Other income,Tax Refund,1500.0
+55 New Plant (EGFLLC),2025-FY,debt,Debt service,Interest Expense,32592.91
+55 New Plant (EGFLLC),2025-FY,inctax,Entity income tax,Fed,-7656.07
+55 New Plant (EGFLLC),2025-FY,opex,Management fees,Asset Management Fees,13125.33
+55 New Plant (EGFLLC),2025-FY,opex,Professional / admin,Bank Charge,5.0
+55 New Plant (EGFLLC),2025-FY,opex,Professional / admin,Misc,809.56
+55 New Plant (EGFLLC),2025-FY,opex,Professional / admin,Professional Fees,3358.0
+55 New Plant (EGFLLC),2025-FY,opex,Real estate & property tax,Personal Property,309.0
+55 New Plant (EGFLLC),2025-FY,opex,Real estate & property tax,Property,0.0
+55 New Plant (EGFLLC),2025-FY,opex,Repairs & maintenance,REPAIR & MAINT--BLDG,650.0
+55 New Plant (EGFLLC),2025-FY,rev,Base rent,Rents,440744.56
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),debt,Debt service,Interest Expense,3223.73
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),nonop,Interest income,Interest Inc,78297.2
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),opex,Insurance,Insurance,0.0
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),opex,Management fees,Asset Management Fees,6726.57
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),opex,Professional / admin,Bank Charge,5.0
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),opex,Real estate & property tax,Personal Property,309.0
+55 New Plant (EGFLLC),2026-YTD(thru 2026-06-12),rev,Base rent,Rents,188681.2

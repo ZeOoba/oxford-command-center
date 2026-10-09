@@ -24,6 +24,7 @@ vi.mock('../../src/modules/intel/DataQualityView', () => ({ DataQualityView: () 
 vi.mock('../../src/modules/intel/MappingsView', () => ({ MappingsView: () => <div>mappings-panel</div> }));
 vi.mock('../../src/modules/calibration/CalibrationModule', () => ({ CalibrationModule: () => <div>calibration-panel</div> }));
 vi.mock('../../src/modules/documents/DocumentsModule', () => ({ DocumentsModule: () => <div>documents-panel</div> }));
+vi.mock('../../src/modules/property-financials/DataHealthPanel', () => ({ PfDataHealthPanel: () => <div>pf-health-panel</div> }));
 
 import { DataModule } from '../../src/modules/data/DataModule';
 import { tabIsSelected } from './tab-test-utils';
@@ -120,5 +121,47 @@ describe('Data destination', () => {
     q.live = false;
     renderData();
     expect(screen.getByText(/Computed from snapshot · baked 2h ago/)).toBeTruthy();
+  });
+
+  // Plan T8 (property financials): the strip is at MAX_TABS_PER_DESTINATION, so the PF data-health
+  // panel is a ?view= of Quality (R5 SegmentedControl), not a sixth tab.
+  describe('Quality › Property Financials view (plan T8)', () => {
+    it('Quality defaults to the warehouse view and offers a Warehouse / Property Financials switch', () => {
+      renderData('/data?tab=quality');
+      expect(screen.getByText('quality-panel')).toBeTruthy();
+      expect(screen.getByRole('radio', { name: 'Warehouse' })).toBeTruthy();
+      expect(screen.getByRole('radio', { name: 'Property Financials' })).toBeTruthy();
+      expect(screen.getAllByRole('tab')).toHaveLength(5);
+    });
+
+    it('?view=property-financials renders the data-health panel, not the warehouse view or its KPI band', async () => {
+      renderData('/data?tab=quality&view=property-financials');
+      expect(await screen.findByText('pf-health-panel')).toBeTruthy();
+      expect(screen.queryByText('quality-panel')).toBeNull();
+      expect(screen.queryByText('Committed Imports')).toBeNull();
+    });
+
+    it('selecting Property Financials writes ?view= and keeps ?tab=quality', async () => {
+      renderData('/data?tab=quality');
+      fireEvent.click(screen.getByRole('radio', { name: 'Property Financials' }));
+      expect(await screen.findByText('pf-health-panel')).toBeTruthy();
+      const params = new URLSearchParams(screen.getByTestId('loc').textContent!.split('?')[1]);
+      expect(params.get('tab')).toBe('quality');
+      expect(params.get('view')).toBe('property-financials');
+    });
+
+    it('the panel does not depend on the warehouse: it renders when the warehouse routes are offline', async () => {
+      q.noi.error = 'unavailable';
+      renderData('/data?tab=quality&view=property-financials');
+      expect(await screen.findByText('pf-health-panel')).toBeTruthy();
+      expect(screen.queryByText(/requires the live brain server/)).toBeNull();
+    });
+
+    it('leaving Quality clears ?view= (Rule H)', async () => {
+      renderData('/data?tab=quality&view=property-financials');
+      fireEvent.click(screen.getByRole('tab', { name: 'Imports' }));
+      const search = screen.getByTestId('loc').textContent!.split('?')[1] ?? '';
+      expect(new URLSearchParams(search).get('view')).toBeNull();
+    });
   });
 });

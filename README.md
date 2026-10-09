@@ -16,88 +16,113 @@ mirror on Cloudflare Pages behind Cloudflare Access for phone/away use. TypeScri
 
 ```mermaid
 flowchart TB
-    subgraph sources["Data sources"]
-        WB["Master Workbook (.xlsx)<br/>OneDrive - Spine A, live-watched"]
+    subgraph sources["External / file sources"]
+        WB["Master Workbook (.xlsx)<br/>OneDrive - Spine A, chokidar-watched"]
         PF["Property Financials<br/>32 P&L files (OneDrive) - Spine B"]
-        NOTION["Notion<br/>(Acquisition Pipeline, Tenant DB)"]
+        NOTION["Notion<br/>(Acquisition Pipeline, Tenant DB, Property Register)"]
         HUBSPOT["HubSpot<br/>(Acquisitions pipeline, read-only)"]
         M365["Microsoft 365<br/>(To-Do tasks via Graph)"]
         QB["QuickBooks Desktop CSV export"]
-        FRED["FRED API<br/>(macro rates / CPI)"]
+        FRED["FRED API<br/>(macro rates / CPI; seeded fallback)"]
         DOCS["Lease / document corpus<br/>(DOCUMENTS_DIR)"]
-        CLAUDE["Anthropic API<br/>(Claude, Ask panel + OM extract)"]
+        EDGE["Oxford Edge pipeline output<br/>markets.json (OXFORD_EDGE_DIR)"]
+        ARSRC["AR / delinquency exports"]
+        CLAUDE["Anthropic API<br/>(Ask panel + OM extract; raw fetch)"]
     end
 
     subgraph server["Brain Server - Node + Hono, 127.0.0.1:8911"]
-        GUARD["Request boundary<br/>host-guard + localhost CORS +<br/>access-authz (ACCESS_REQUIRE) + rate-limit"]
-        PARSE["server/workbook/parse.ts<br/>ExcelJS adapter"]
-        WATCH["server/brain.ts<br/>chokidar watch + in-memory state + SSE"]
-        OVERLAY["server/overlay.ts<br/>data/overlay.json - user write surface"]
-        RECON["scripts/reconcile*.ts<br/>$0-tolerance self-totals / snapshot checks"]
-        WH["server/warehouse/*<br/>SQLite financial warehouse (Spine B):<br/>ingest, metrics, scores, debt, tax, insurance,<br/>capital-allocation, acq-engine, lease-market,<br/>insights, calibration"]
+        GUARD["Request boundary<br/>host-guard -> localhost CORS -><br/>access-authz (ACCESS_REQUIRE) -> rate-limit"]
+        PARSE["server/workbook/parse.ts parseWorkbook()<br/>ExcelJS adapter; also calls loadDeals() (Notion)<br/>and loadM365Tasks() (Graph)"]
+        BRAIN["server/brain.ts<br/>overlay merge + QuickBooks resolve +<br/>reconcile-runtime + anomaly floor -><br/>in-memory snapshot -> 'snapshot' event"]
+        OVERLAY[("data/overlay.json<br/>user write surface")]
+        SNAPFILE[("data/snapshots/portfolio.json<br/>tracked; rewritten on persist")]
+        CAPTURE["on 'snapshot': capture occupancy, month snapshot,<br/>insurance, debt into the warehouse"]
+        WH[("server/warehouse - SQLite (WAL), Spine B<br/>36 migration files (001-035)")]
+        ENG["warehouse engines<br/>metrics, scores, debt, tax, insurance,<br/>capital-allocation, acq-engine, lease-market,<br/>insights, calibration"]
+        SYNC["acq-notion-sync / acq-hubspot-sync<br/>(POST /api/warehouse/acq/sync/*)"]
+        WBACK["server/notion/capital-writeback.ts<br/>(POST /api/warehouse/capital-allocation/sync-notion)"]
+        EDGESRV["server/edge/*<br/>read-only loader + pull queue (edge_pull_log)<br/>/api/warehouse/edge/*"]
+        MACRO["server/macro/getMacro.ts"]
         AI["server/ai/*<br/>streaming tool-using Claude agent (12 tools)<br/>+ deterministic fallback"]
-        SRC["server/sources/*<br/>notion-deals, notion-tenants, m365-tasks,<br/>quickbooks, documents (local vector RAG);<br/>each degrades gracefully without credentials"]
-        BRIEF["server/brief + server/briefing<br/>daily brief / alert email; per-property and<br/>per-manager PDF briefings"]
-        API["/api/* REST + /sse push"]
+        DOCIDX["server/sources/documents.ts + doc-index worker<br/>(local vector RAG)"]
+        BRIEFING["server/briefing<br/>per-property / per-manager PDF briefings"]
+        HEALTH["GET /api/health<br/>feed-freshness + brief-health.json + alert inbox"]
+        API["/api/* REST + /sse (notify only)"]
     end
 
     subgraph client["React 19 client - Vite, PWA"]
+        DATA["src/data<br/>TanStack Query + SSE listener<br/>(SSE event -> invalidate -> REST refetch)"]
         CONTRACTS["src/contracts<br/>Zod PortfolioSnapshot + warehouse schemas"]
-        DATA["src/data<br/>TanStack Query + SSE listener"]
         ANALYTICS["src/analytics<br/>buildAnalytics() - single metric source of truth"]
-        MODULES["src/modules<br/>12 registered destinations in 5 groups,<br/>each with tabs (?tab=)"]
-        BRAIN["src/brain<br/>command palette, entity/deal drawers, AI panel"]
-        SHELL["src/shell<br/>AppShell, Sidebar, module registry"]
+        MODULES["src/modules + src/shell<br/>12 registered destinations in 5 groups<br/>+ off-rail System Health"]
+        BRAINUI["src/brain<br/>command palette, entity/deal drawers, AI panel"]
     end
 
-    subgraph deploy["Build / deploy / CI"]
-        BAKE["scripts/bake-mirror.ts<br/>redacts confidential deals by default<br/>(+ bake-warehouse.ts: public/warehouse.json)"]
-        BUILD["vite build to dist/"]
-        PAGES["Cloudflare Pages<br/>ora-command-center.pages.dev<br/>behind Cloudflare Access"]
-        FUNC["functions/api/*<br/>ai.ts (Ask panel), whoami.ts (Access identity),<br/>warehouse/acquisition/score.ts"]
-        CI["GitHub Actions<br/>ci.yml: gate + refute-required<br/>order-fragility.yml (weekly canary)<br/>full-gate-selfhosted.yml (manual)"]
+    subgraph deploy["Mirror deploy + daily brief (off-fleet Windows task)"]
+        WINTASK(["'ORA Command Center - Mirror Deploy'<br/>hourly + daily 06:45 ET; scripts/deploy-mirror.ps1<br/>in an isolated worktree reset to origin/main"])
+        BAKE["scripts/bake-mirror.ts<br/>parseWorkbook() directly (no Brain Server needed);<br/>redacts confidential deals by default<br/>(+ bake-warehouse.ts: public/warehouse.json)"]
+        BRIEF["server/brief runBrief()<br/>daily brief / alert email via Outlook COM;<br/>writes brief-health.json"]
+        PAGES["vite build -> Cloudflare Pages<br/>behind Cloudflare Access<br/>(+ functions/api/*)"]
     end
 
-    WB -- watched --> PARSE --> WATCH
-    PF --> WH
-    NOTION --> SRC
-    NOTION --> WH
-    HUBSPOT --> WH
-    M365 --> SRC
-    QB --> SRC
-    DOCS --> SRC
-    FRED --> AI
+    WB -- watched --> PARSE
+    NOTION -- deals --> PARSE
+    M365 -- tasks --> PARSE
+    PARSE --> BRAIN
+    OVERLAY <--> BRAIN
+    QB --> BRAIN
+    BRAIN --> SNAPFILE
+    BRAIN --> CAPTURE --> WH
+    PF -- ingest --> WH
+    NOTION --> SYNC
+    HUBSPOT --> SYNC
+    SYNC --> WH
+    WH --> ENG
+    ENG --> WBACK -- PATCH pages --> NOTION
+    FRED --> MACRO
+    MACRO --> AI
+    MACRO --> ENG
+    MACRO --> API
     CLAUDE --> AI
-    WATCH --> RECON
-    OVERLAY --> WATCH
+    DOCS --> DOCIDX --> API
+    EDGE --> EDGESRV
+    EDGESRV --> WH
+    EDGESRV --> API
+    ARSRC -. "scripts/ar-import-headless.ts (out of band)" .-> OVERLAY
     GUARD --> API
-    WATCH --> API
-    SRC --> API
-    WH --> API
+    BRAIN --> API
+    ENG --> API
     AI --> API
-    BRIEF --> API
+    BRIEFING --> API
+    HEALTH --> API
+
     API -- REST + SSE --> DATA
     DATA --> CONTRACTS --> ANALYTICS --> MODULES
-    MODULES --> SHELL
-    BRAIN --> SHELL
+    BRAINUI --> MODULES
 
-    WINTASK(["Windows Task Scheduler (off-fleet)<br/>'ORA Command Center - Mirror Deploy'<br/>hourly + daily 06:45 ET<br/>scripts/deploy-mirror.ps1, built in an isolated<br/>sibling worktree reset to origin/main"])
-    WINTASK -. hourly bake .-> BAKE --> BUILD --> PAGES
-    PARSE -. "parseWorkbook() called directly;<br/>the bake does not need a running Brain Server" .-> BAKE
-    FUNC -.-> PAGES
-    CI -. push to main + every PR .-> BUILD
+    WINTASK --> BAKE
+    WB --> BAKE
+    MACRO -.-> BAKE
+    WH -. live governors .-> BAKE
+    BAKE --> BRIEF
+    BRIEF -. "brief-health.json" .-> HEALTH
+    BAKE --> PAGES
 ```
-<!-- diagram-verified: 2026-10-03 -->
+<!-- diagram-verified: 2026-10-06 (against origin/main 0d98bfc). Sequence-level views: docs/diagrams/README.md -->
 
 **Two data spines, by design** (documented in `architecture/system-overview.md`):
 
 - **Spine A — "Current State"**: the live workbook, parsed → Zod-validated → reconciled →
-  pushed to the client via REST + SSE. Supplemented by live Notion/HubSpot/M365/QuickBooks/FRED
-  adapters, each of which degrades gracefully (empty result, not a crash) when its credential is
-  unconfigured.
+  pushed to the client via REST + SSE. Notion deals and M365 tasks are fetched inside
+  `parseWorkbook()`; `brain.ts` merges the overlay and the QuickBooks CSV block. Each live adapter
+  degrades gracefully (empty result plus a degradation marker, not a crash) when its credential is
+  unconfigured. Every non-action refresh also captures occupancy, month, insurance and debt rows
+  into Spine B.
 - **Spine B — "Time Dimension"**: a SQLite financial warehouse (`server/warehouse/`) built by
   ingesting 32 property P&L files, used for historical NOI trend, drivers, benchmarks, health
   scores, debt scoring, tax analysis, capital allocation, and the acquisition-underwriting engine.
+  It also receives explicit Notion / HubSpot acquisition syncs, FRED macro inputs, and Oxford Edge
+  pull-queue state, and writes capital-allocation results back to Notion on request.
   `Property.noi` (Spine A) and the warehouse ledger NOI (Spine B) are independent computations.
   A local-only gate (`npm run reconcile:noi-crosscheck`, wired into `npm run gate` — not
   `gate:ci`, since CI has no live workbook or warehouse DB) cross-checks them per property and
@@ -109,13 +134,13 @@ flowchart TB
 | Path | What's actually there |
 |---|---|
 | `src/` | The React 19 client — `contracts/` (Zod schemas, the sole typed boundary), `analytics/` (pure derivations, unit-tested), `data/` (TanStack Query hooks, SSE wiring, seed fixtures), `brain/` (command palette, entity drawer, AI panel, workspaces), `modules/` (28 folders: 12 registered destinations plus the per-tab panels they compose), `shell/` (app shell, sidebar, module registry), `primitives/` and `charts/` (design-system components, visx charts), `tokens/` (theme tokens), `lib/` (shared client helpers). |
-| `server/` | The Node/Hono backend — `workbook/` (live Excel parser + counterparty graph), `warehouse/` (the SQLite Spine-B pipeline: ingest, metrics, scores, debt, tax, insurance, capital-allocation, acquisition engine, lease-market, calibration; 33 numbered SQL migrations in `warehouse/migrations/`), `ai/` (streaming Claude agent + deterministic fallback + comps), `sources/` (Notion, M365 Graph, QuickBooks CSV adapters and the local document-RAG index; HubSpot is pulled by `warehouse/acq-hubspot-sync.ts`), `ar/` (receivables/delinquency import), `alerts/`, `brief/` (daily brief + alert email) and `briefing/` (per-property / per-manager PDF briefings), `macro/` (FRED adapter + seeded fallback), `reconcile/`, `insights/`, `notion/` (capital write-back), `overlay.ts` (the one write surface), plus the request-boundary files `host-guard.ts`, `cors-policy.ts`, `access-authz.ts`, `rate-limit.ts`. |
+| `server/` | The Node/Hono backend — `workbook/` (live Excel parser + counterparty graph), `warehouse/` (the SQLite Spine-B pipeline: ingest, metrics, scores, debt, tax, insurance, capital-allocation, acquisition engine, lease-market, calibration; 36 SQL migration files in `warehouse/migrations/`, numbered 001-035 with two files sharing `017`), `ai/` (streaming Claude agent + deterministic fallback + comps), `sources/` (Notion, M365 Graph, QuickBooks CSV adapters and the local document-RAG index; HubSpot is pulled by `warehouse/acq-hubspot-sync.ts`), `ar/` (receivables/delinquency import), `alerts/`, `brief/` (daily brief + alert email) and `briefing/` (per-property / per-manager PDF briefings), `macro/` (FRED adapter + seeded fallback), `reconcile/`, `insights/`, `notion/` (capital write-back), `edge/` (Oxford Edge market loader + pull queue, mounted at `/api/warehouse/edge`), `lib/` (shared server helpers), `overlay.ts` (the one write surface), `reconcile-runtime.ts` (the in-process snapshot check `brain.ts` runs on every refresh), `feed-freshness.ts` (per-feed staleness for `/api/health`), `anomaly-floor.ts`, `startup.ts`, plus the request-boundary files `host-guard.ts`, `cors-policy.ts`, `access-authz.ts`, `rate-limit.ts`. |
 | `scripts/` | One-off and CI-invoked TypeScript/PowerShell scripts: workbook extraction, reconciliation (`reconcile*.ts`), warehouse backfill/verify/drift/backup, mirror and warehouse baking, governance / write-schema-drift / bundle / refute-required gates, git-hook installers (pre-push confidentiality scan, commit-msg trailer guard), and Windows scheduled-task registration for the always-on Brain Server and the mirror deploy (plus an off-fleet mirror classifier). |
 | `functions/` | Cloudflare Pages Functions — `api/ai.ts` (Ask panel on the static mirror, no Brain Server there), `api/whoami.ts` (Cloudflare Access identity), `api/warehouse/acquisition/score.ts` (edge acquisition scoring). |
 | `architecture/` | Living architecture-lock docs: `system-overview.md`, `api-contracts.md`, `database-schema.md`, `coding-standards.md`, plus `ownership.json`/`status.json` consumed by `governance-check.ts`. |
 | `config/` | Ratified, versioned rule files (acquisition scorecard ruleset, replacement-cost table, lease-market config) — changes require a version bump and re-ratification, never a silent edit. |
 | `data/` | Local runtime state: workbook snapshots (`snapshots/portfolio.json` is the one tracked snapshot), the SQLite warehouse, the alert inbox, `overlay.json` (user write surface), a document search index. Gitignored except for the tracked snapshot and the AR mapping cache. |
-| `tests/` | `unit/` (~420 Vitest test files), `e2e/` (Playwright `smoke` + axe `a11y` specs), `fixtures/`. |
+| `tests/` | `unit/` (430+ Vitest test files), `e2e/` (Playwright `smoke` + axe `a11y` specs), `fixtures/`. |
 | `docs/` | `adr/` (architecture decision records), `constitution/` (engineering constitution), `ops/` (runbooks and audits), `capital/`, `roadmap/`, `scheduled-tasks/`, `templates/`, a `superpowers/` subfolder of specs and plans, and design-parity notes. |
 | `public/` | Static assets and the Pages `_redirects` SPA fallback; the baked `snapshot.json` / `macro.json` (and optional `warehouse.json`) are generated here by the bake scripts. |
 | `design_handoff_ora_command_center/` | The original design-handoff prompt set and reference screens used to scaffold the UI. |
@@ -134,6 +159,13 @@ npm run dev          # Brain Server (:8911) + web app (:5273) together, hot relo
 The workbook path defaults to
 `~/OneDrive - Oxford Capital Partners/eric spreadsheets/Master Excel Template Company Wide -- Oxford.xlsx`
 (`server/config.ts`) — override with the `WORKBOOK_PATH` env var.
+
+Environment: copy `env.example` to `.env` (`cp env.example .env`; `.env` is gitignored, and
+`env.example` is tracked, so it holds keys only, never values). Every key is optional and
+either has a working default or disables one feature when unset (Notion, HubSpot, Graph,
+Anthropic, FRED, Oxford Edge, warehouse path and so on). In a git worktree use
+`worktree-env.example` instead so `WAREHOUSE_DB` points at a per-worktree SQLite file (one WAL
+writer at a time) and the server port does not collide.
 
 Scripts, pulled directly from `package.json`:
 
@@ -162,6 +194,10 @@ Scripts, pulled directly from `package.json`:
 | `npm run backup` / `npm run backup:verify` | Back up the warehouse / verify a restore |
 | `npm run index:docs` | Build the local document-search (RAG) index from `DOCUMENTS_DIR` |
 | `npm run lease-market:ingest` / `:compute` | Ingest lease-market feed data / compute positioning |
+| `npm run warehouse:import-loss-runs` | Import insurance loss-run / policy data (`scripts/import-insurance-data.ts`) — the swap path for the placeholder fixtures in `docs/placeholder-data.md` |
+| `npm run xref:seed` | Report lease-market entities not yet linked in `entity_xref`; `-- --write` mirrors config-blessed links into it (`scripts/seed-entity-xref.ts`) |
+| `npm run worktree -- <add\|remove\|prune> ...` | Junction-safe worktree add/remove/prune (`scripts/safe-worktree.ts`; never force-removes a worktree whose `node_modules` is a reparse point) |
+| `npm run generate:confidential-scan-types` | Generates the gitignored `.d.mts` for the pre-push confidential scan from its JSDoc (run automatically by `prebuild` / `pretypecheck`) |
 | `npm run bake` / `npm run build:mirror` | Bake `public/{snapshot,macro}.json` / bake then `vite build` — the static mirror artifact |
 | `npm run deploy:mirror` | `build:mirror` then `wrangler pages deploy` — a manual, un-hardened convenience; the scheduled deploy uses `scripts/deploy-mirror.ps1` instead |
 | `npm run governance` | Validates CLAUDE.md + architecture docs + `ownership.json`/`status.json` |
@@ -195,6 +231,8 @@ CI workflows (`.github/workflows/`):
 - **`server/macro/fred.ts` / `getMacro.ts`** — live FRED adapter (DGS10, DGS5, DGS2, SOFR, FEDFUNDS, CPIAUCSL) with a seeded fallback when `FRED_API_KEY` is unset.
 - **`server/sources/`** — live adapters for Notion (Acquisition Pipeline, Tenant DB), Microsoft 365 To-Do (Graph), and QuickBooks CSV; each returns gracefully (empty/unchanged) with no credential configured, never throwing.
 - **`server/brief/` + `server/briefing/`** — `brief/` composes, renders and emails the daily brief and critical alerts (run from the mirror bake's 06:45 ET trigger; recipient is the principal only); `briefing/` composes the per-property and per-manager PDF briefings.
+- **`server/edge/` (Oxford Edge)** — reads the oxford-edge pipeline's `markets.json` read-only (directory from `OXFORD_EDGE_DIR`) and keeps only user state in the warehouse (`edge_pull_log`, migration 034). Routes: `GET /api/warehouse/edge/markets`, `GET`/`POST /api/warehouse/edge/pull-queue`, `POST /api/warehouse/edge/pull-queue/:id/void`; surfaced as the Acquisitions `edge` tab.
+- **`server/notion/capital-writeback.ts`** — the Notion write path: `POST /api/warehouse/capital-allocation/sync-notion` PATCHes capital-allocation results onto Notion Property Register pages (creating any missing database properties first). Deal and tenant reads (`parseWorkbook`, `acq-notion-sync`, `reconcile:leases`) are read-only.
 - **`server/sources/documents.ts` + `doc-index-*`** — local document RAG: a worker builds a sqlite-vec index with local embeddings; `GET /api/documents/search` serves it.
 - **`src/contracts/index.ts`** — `PortfolioSnapshot`, the one Zod-validated shape everything in the UI renders from; validated on both server parse and client fetch.
 - **`src/analytics/engine.ts`** — `buildAnalytics()`, the single source of truth for derived metrics; its `insights` come from the rules-based condition evaluator in `src/analytics/conditions.ts` (balloon, lease-expiry, arrears, refi-spread, opex-spike and insurance thresholds live in that file; read it rather than this README).

@@ -8,6 +8,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { BarChart } from '@/charts/BarChart';
+import { CoverageBar } from '@/primitives/CoverageBar';
+import { MAX_ITEMS, coverage } from '@/lib/ranked-cap';
 import { monthlyAtStake } from './month-at-stake';
 import {
   portfolioCriticalDates,
@@ -77,6 +79,7 @@ export function CalendarModule() {
   const ui = useUi();
   const [type, setType] = useState<TypeFilter>('all');
   const [horizon, setHorizon] = useState<WindowFilter>('12mo');
+  const [showAll, setShowAll] = useState(false);
 
   // Day-counts are relative to the browser's current date (run-date basis), NOT the frozen
   // workbook data date — so "in Nd" and overdue/holdover classification stay current.
@@ -102,15 +105,22 @@ export function CalendarModule() {
   }, [allEvents, horizon, type]);
   const atStake = useMemo(() => monthlyAtStake(filtered), [filtered]);
 
+  // Signal discipline: the list opens on the next MAX_ITEMS dates; the rest is held back, not dropped
+  // (the KPIs and the rent-expiring chart above still describe every event in the window).
+  const visible = useMemo(() => (showAll ? filtered : filtered.slice(0, MAX_ITEMS)), [filtered, showAll]);
+  const cov = useMemo(
+    () => coverage(filtered.map((e, i) => ({ usd: e.amount, signals: 1, shown: showAll || i < MAX_ITEMS }))),
+    [filtered, showAll],
+  );
   const groups = useMemo(() => {
     const m = new Map<string, DatedEvent[]>();
-    for (const e of filtered) {
+    for (const e of visible) {
       const arr = m.get(e.monthKey) ?? [];
       arr.push(e);
       m.set(e.monthKey, arr);
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
+  }, [visible]);
 
   if (gate) return gate;
   if (!data) return null;
@@ -156,6 +166,12 @@ export function CalendarModule() {
             <option value="36mo">Next 36 months</option>
           </select>
         </div>
+
+        {filtered.length > MAX_ITEMS && (
+          <div className="px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <CoverageBar cov={cov} expanded={showAll} onToggle={() => setShowAll((v) => !v)} />
+          </div>
+        )}
 
         {groups.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>

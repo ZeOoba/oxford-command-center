@@ -53,3 +53,9 @@ if (process.env.AR_INBOX === undefined) {
 if (process.env.OVERLAY_PATH === undefined) {
   process.env.OVERLAY_PATH = join(dataSandbox, 'overlay.json');
 }
+// runBrief writes brief-health.json after every run. Several suites call it (brief-run,
+// reference-date) with fixture clocks, so without this each local run overwrote the real
+// data/brief-health.json that the Data Feeds "Daily brief" row reads (2026-07-09 fixture, 86d stale).
+if (process.env.BRIEF_HEALTH_PATH === undefined) {
+  process.env.BRIEF_HEALTH_PATH = join(dataSandbox, 'brief-health.json');
+}
