@@ -148,7 +148,7 @@ export function loadLeasesFromSnapshot(): LeaseLite[] {
     throw new Error(`Snapshot not found at ${SNAPSHOT_PATH} — run a Brain refresh first (npm run dev).`);
   }
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null; annualRent?: number | null }>;
+    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null; annualRent?: number | null; monthlyRent?: number | null }>;
   };
   return (snap.leases ?? [])
     .filter((l) => !isDeadLease(l))
@@ -193,7 +193,7 @@ export function loadAllLeaseIdsFromSnapshot(): Set<string> {
  * says is at that unit, since the row itself carries no tenant name). */
 export function loadUnitLeasesFromSnapshot(): UnitLease[] {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null; annualRent?: number | null; tenantName?: string | null }>;
+    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null; annualRent?: number | null; monthlyRent?: number | null; tenantName?: string | null }>;
   };
   return (snap.leases ?? []).map((l) => ({
     id: l.id,
@@ -201,6 +201,7 @@ export function loadUnitLeasesFromSnapshot(): UnitLease[] {
     propertyId: l.propertyId,
     status: l.status ?? null,
     annualRent: l.annualRent ?? null,
+    monthlyRent: l.monthlyRent ?? null,
     tenantName: l.tenantName ?? null,
   }));
 }

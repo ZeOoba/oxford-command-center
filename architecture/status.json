@@ -3,11 +3,11 @@
   "property-financials": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-05",
     "phase": "New standalone Property Financials destination (read-only; own normalized NOI, cash basis). Architect-owned surfaces touched: src/contracts/property-financials.ts (new) + one export line in src/contracts/index.ts; server/warehouse/sub-routers.ts (one mount, later). Plan: docs/superpowers/plans/2026-10-05-property-financials-module.md.",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Gabriel approved standalone placement and placed the worktree architect-edit-ok sentinel in-turn 2026-10-05 (AskUserQuestion). Needs architect acknowledgment at PR review. No governor/model files touched.",
-    "last_updated": "2026-10-05T00:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #442 (e48b8e7, squash, 2026-10-06; Gabriel directed the merge in-turn). Architect-owned surfaces touched were the new src/contracts/property-financials.ts, one export line in src/contracts/index.ts and one mount in server/warehouse/sub-routers.ts; no governor/model files. Refute attestation wf_fba3d571-284 (pass 1 wf_3b9f5092-383). Open follow-ups: register the monthly refresh task (proposal in docs/superpowers/plans/); a 12th entity needs the contract's entity constants widened. monthly-long.csv is local-only by policy.",
+    "last_updated": "2026-10-07T00:00:00Z"
   },
   "edge-followups": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (adversarial review round 7 findings on PR #427)",
@@ -852,5 +852,13 @@
     "review_needed": true,
     "review_detail": "Touches CLAUDE.md (Architect-owned) and this file. Gabriel authorized the edit in chat 2026-10-08. Uncommitted in worktree ocr-wt-r30-claudemd on branch docs/claude-md-history-pointer; needs architect acknowledgment at PR review.",
     "last_updated": "2026-10-08T18:45:46Z"
+  "annualrent-net-consumers": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-06 (adversarial review wf_d12221a6-d8f follow-up)",
+    "phase": "Lease.annualRent is year-1 cash NET of abated months (parse.ts fix, uncommitted on data/snapshot-2026-10-06, NOT in this branch). Consumers that mean CONTRACT rent now use contractAnnualRent (src/analytics/lease-rent.ts): AR isDeadLease (+resolve-by-unit, ar-import-headless loaders), lease-forecast.ts, conditions.ts (expiry/lapsed/holdover impact, fillImpact, L-5), critical-dates.ts, renewals.ts, draft.ts, server/warehouse/lease-forecast-api.ts, server/warehouse/capital-allocation.ts (near-term expiry numerator). Financial-decision surfaces: conditions.ts, capital-allocation.ts, lease-forecast*.ts.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "NOT merge-ready until the parse.ts net-of-abatement change lands (without it annualRent == monthly x 12 and these consumers are no-ops). PROPOSED Architect-owned edits NOT made, awaiting acknowledgment: (1) src/contracts/lease.ts doc comment on Lease.annualRent, and optionally an abatedMonths field so AR liveness can key on an explicit abatement signal instead of monthlyRent > 0; (2) DONE in this PR per Gabriel in-turn 2026-10-07 (refute wf_b8fc84af-5c6 medium finding): src/analytics/engine.ts rolloverSchedule.expiringRent, criticalDates annualRent and revenueAtRisk now read contractAnnualRent; WALT/concentration stay net. Refute rounds: wf_0ca5a142-694 (fable), wf_5dd73f0f-2b1 (opus 5.5).",
+    "last_updated": "2026-10-07T21:30:00Z"
   }
 }

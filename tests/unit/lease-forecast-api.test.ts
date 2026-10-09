@@ -84,7 +84,7 @@ function mkLease(o: Partial<Lease> & { id: string }): Lease {
     unit: null,
     company: 'Fixture Co',
     sf: 10000,
-    monthlyRent: 1000,
+    monthlyRent: o.annualRent !== undefined ? o.annualRent / 12 : 1000, // contract rent consistent with an overridden annualRent
     rentPerSf: 1.2,
     leaseStart: '2022-06-21',
     leaseEnd: '2027-06-21',
@@ -194,6 +194,23 @@ describe('GET /forecast', () => {
       // Label/day-count SPLIT: the response asOf label remains the workbook data date (meta.asOf),
       // even though the buckets above were classified against the run date.
       expect(parsed.data.asOf).toBe(ASOF);
+    }
+  });
+
+  it('abated live lease: expiry buckets are contract rent (monthlyRent x 12), not net annualRent (refute wf_b8fc84af-5c6)', async () => {
+    // monthly 10,000 -> contract 120,000; annualRent 90,000 = 3 abated months. Reverting the bucket sum
+    // to l.annualRent turns this into 90,000.
+    mockGetSnapshot.mockReturnValue(
+      snap({ leases: [mkLease({ id: 'abated', leaseEnd: '2026-11-15', monthsToExpiry: 2, monthlyRent: 10_000, annualRent: 90_000 })] }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(200);
+    const parsed = LeaseForecastResponse.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const rent = parsed.data.bucketTotals.reduce((s, b) => s + b.expiringRent, 0);
+      expect(rent).toBe(120_000);
     }
   });
 
