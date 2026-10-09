@@ -59,6 +59,7 @@ import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
+import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
@@ -1135,7 +1136,7 @@ export async function buildCapitalAllocationReport(
       const ownershipPct = ownershipPctByProperty.get(lease.propertyId) ?? 1;
       nearTermExpiryRentByProperty.set(
         lease.propertyId,
-        existing + lease.annualRent * ownershipPct,
+        existing + contractAnnualRent(lease) * ownershipPct,
       );
     }
   }

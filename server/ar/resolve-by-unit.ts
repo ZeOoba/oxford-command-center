@@ -45,6 +45,9 @@ export interface UnitLease {
   /** Optional -- annualRent === 0 also makes a lease dead per isDeadLease (2026-09-14 sweep, Fix
    *  A: a zero-rent Active placeholder is not a billing tenant). Absent/null = unknown = not dead. */
   annualRent?: number | null;
+  /** Optional -- contract monthly rent; an Active annualRent-0 lease with monthlyRent > 0 is a fully
+   *  abated live tenant, not a placeholder (see isDeadLease). */
+  monthlyRent?: number | null;
   /** Optional -- the roster's tenant name, surfaced by unitCandidates() so a Format B row that
    *  lands in the review queue can say who the roster puts at that unit (the row itself carries no
    *  name). Never used for matching: Format B resolution stays unit-only. */

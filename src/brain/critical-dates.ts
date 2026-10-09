@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot } from '../contracts/index';
 import { ALERT_THRESHOLDS } from '@analytics/index';
+import { contractAnnualRent } from '@analytics/lease-rent';
 import { DAY_MS } from '@/lib/time-constants';
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -58,7 +59,7 @@ export function portfolioCriticalDates(
         out.push({
           id: `lease-expiry-${l.id}`, type: 'lease-expiry', entityType: 'lease', entityId: l.id,
           title: tenant, subtitle: where, date: l.leaseEnd, daysToDate: d,
-          monthKey: l.leaseEnd.slice(0, 7), urgency: urgencyOf(d), amount: l.annualRent,
+          monthKey: l.leaseEnd.slice(0, 7), urgency: urgencyOf(d), amount: contractAnnualRent(l),
         });
       }
     }
@@ -68,7 +69,7 @@ export function portfolioCriticalDates(
         out.push({
           id: `escalation-${l.id}`, type: 'escalation', entityType: 'lease', entityId: l.id,
           title: tenant, subtitle: `${where} · escalation`, date: l.escalationDate, daysToDate: d,
-          monthKey: l.escalationDate.slice(0, 7), urgency: urgencyOf(d), amount: l.annualRent,
+          monthKey: l.escalationDate.slice(0, 7), urgency: urgencyOf(d), amount: contractAnnualRent(l),
         });
       }
     }

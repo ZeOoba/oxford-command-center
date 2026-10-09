@@ -7,7 +7,7 @@ function snap(): PortfolioSnapshot {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: '2026-06-01T00:00:00.000Z', source: 't', scenario: 'Base' },
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-06-01' },
     properties: [],
-    leases: [{ id: 'lease1', propertyKey: '29000 Information Lane', propertyId: 'p1', tenantName: 'Jane', unit: 'A', company: 'REDACTED-659, INC.', sf: 1000, monthlyRent: 8333, rentPerSf: null, leaseStart: null, leaseEnd: '2026-08-30', escalationDate: null, escalationPct: null, status: 'Expiring Soon', annualRent: 100000, monthsToExpiry: 2, flags: [] }],
+    leases: [{ id: 'lease1', propertyKey: '29000 Information Lane', propertyId: 'p1', tenantName: 'Jane', unit: 'A', company: 'REDACTED-659, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2026-08-30', escalationDate: null, escalationPct: null, status: 'Expiring Soon', annualRent: 90000, monthsToExpiry: 2, flags: [] }],
     loans: [{ id: 'l1', name: 'REDACTED-306', counterparty: 'Oxford', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.78, lender: null, balloon: true, flags: [] }],
     cash: { asOf: '2026-06-01', totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
     insurance: [{ id: 'ins-1', property: 'Solar Field', entity: null, coverage: 'Package', effective: null, expires: '2026-07-01', policyNo: null, carrier: 'Erie', premium: 8000, daysToExpiry: 30, status: 'Renew Now', notes: null, flags: [] }],
@@ -32,7 +32,9 @@ describe('buildDraft — draft-only emails', () => {
     const d = buildDraft(snap(), { kind: 'renewal', entity: { type: 'lease', id: 'lease1' } });
     expect(d?.subject).toContain('29000 Information Lane');
     expect(d?.body).toContain('REDACTED-659, INC.');
+    // tenant-facing figure is CONTRACT rent (monthlyRent x 12 = 99,999.96), never the net-of-abatement annualRent (90,000)
     expect(d?.body).toContain('$100,000');
+    expect(d?.body).not.toContain('$90,000');
     expect(d?.body).toMatch(/Aug \d{1,2}, 2026/); // fmtDate renders in local tz
   });
 
