@@ -19,6 +19,7 @@ import { capitalAllocationApi } from './capital-allocation-api';
 import { insuranceAnalysisApi } from './insurance-analysis-api';
 import { insuranceLossApi } from './insurance-loss-api';
 import { taxApi } from './tax-api';
+import { propertyConditionApi } from './property-condition-api';
 import { brainApi } from './brain-api';
 import { insightsApi } from './insights-api';
 import { edgeApi } from '../edge/edge-api';
@@ -61,6 +62,7 @@ const RAW_SUB_ROUTERS: WarehouseSubRouter[] = [
   { prefix: '/insurance/analysis', factory: insuranceAnalysisApi },
   { prefix: '/insurance/loss', factory: insuranceLossApi },
   { prefix: '/tax', factory: taxApi },
+  { prefix: '/property-condition', factory: propertyConditionApi },
   { prefix: '/brain', factory: brainApi },
   { prefix: '/insights', factory: insightsApi },
   { prefix: '/edge', factory: edgeApi },
