@@ -18,6 +18,15 @@
     "review_detail": "MERGED via PR #442 (e48b8e7, squash, 2026-10-06; Gabriel directed the merge in-turn). Architect-owned surfaces touched were the new src/contracts/property-financials.ts, one export line in src/contracts/index.ts and one mount in server/warehouse/sub-routers.ts; no governor/model files. Refute attestation wf_fba3d571-284 (pass 1 wf_3b9f5092-383). Open follow-ups: register the monthly refresh task (proposal in docs/superpowers/plans/); a 12th entity needs the contract's entity constants widened. monthly-long.csv is local-only by policy.",
     "last_updated": "2026-10-07T00:00:00Z"
   },
+  "claude-md-history-pointer": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-authorized in-turn 2026-10-08",
+    "phase": "Doc-only edit to CLAUDE.md (Architect-owned): collapse the stale section 2 merge-history rows and the section 3 merged-phase table into pointers to git log origin/main and docs/superpowers/plans/; keep the off-limits rule, shared-infra rule, Do-not-start-a-phase-without-architect-approval rule, and the open/pending items (hurdle-rate note, placeholder fixtures); update Last verified to 2026-10-08. No code touched.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Touches CLAUDE.md (Architect-owned) and this file. Gabriel authorized the edit in chat 2026-10-08. Uncommitted in worktree ocr-wt-r30-claudemd on branch docs/claude-md-history-pointer; needs architect acknowledgment at PR review.",
+    "last_updated": "2026-10-09T01:40:35Z"
+  },
   "edge-followups": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-03 (adversarial review round 7 findings on PR #427)",
     "phase": "server/edge/pull-queue.ts + edge-api.ts: truck automated rule counts observed-status values only; POST /pull-queue maps SQLITE_BUSY to 503; void route rejects out-of-scope rows (409); tests pin log-history scopes in POST/void responses; humanized log-only labels; spec 5.2/5.3 wording. No financial math (Refute-Skip).",
@@ -853,14 +862,6 @@
     "review_detail": "Architect-owned surfaces planned: src/contracts/expenses-monthly.ts (+ index export). src/analytics/ (expense-trends.ts, conditions.ts alert rules) is financial-decision source for check:refute. Additive; no existing table or contract altered. Wave 2 (PR #425) merged 2026-10-02.",
     "last_updated": "2026-10-02T19:41:02Z"
   },
-  "claude-md-history-pointer": {
-    "agent_role": "Engineering (Claude Code) - Gabriel-authorized in-turn 2026-10-08",
-    "phase": "Doc-only edit to CLAUDE.md (Architect-owned): collapse the stale section 2 merge-history rows and the section 3 merged-phase table into pointers to git log origin/main and docs/superpowers/plans/; keep the off-limits rule, shared-infra rule, Do-not-start-a-phase-without-architect-approval rule, and the open/pending items (hurdle-rate note, placeholder fixtures); update Last verified to 2026-10-08. No code touched.",
-    "status": "in_progress",
-    "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Touches CLAUDE.md (Architect-owned) and this file. Gabriel authorized the edit in chat 2026-10-08. Uncommitted in worktree ocr-wt-r30-claudemd on branch docs/claude-md-history-pointer; needs architect acknowledgment at PR review.",
-    "last_updated": "2026-10-08T18:45:46Z"
   "annualrent-net-consumers": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-06 (adversarial review wf_d12221a6-d8f follow-up)",
     "phase": "Lease.annualRent is year-1 cash NET of abated months (parse.ts fix, uncommitted on data/snapshot-2026-10-06, NOT in this branch). Consumers that mean CONTRACT rent now use contractAnnualRent (src/analytics/lease-rent.ts): AR isDeadLease (+resolve-by-unit, ar-import-headless loaders), lease-forecast.ts, conditions.ts (expiry/lapsed/holdover impact, fillImpact, L-5), critical-dates.ts, renewals.ts, draft.ts, server/warehouse/lease-forecast-api.ts, server/warehouse/capital-allocation.ts (near-term expiry numerator). Financial-decision surfaces: conditions.ts, capital-allocation.ts, lease-forecast*.ts.",
