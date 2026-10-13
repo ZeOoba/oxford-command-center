@@ -327,6 +327,34 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   return flags;
 }
 
+/** Σ annual rent legitimately differs from Σ(monthly × 12) once any lease carries abated months
+ *  (the workbook's Annual Rent is monthly × (12 − Abated Months), 2026-10-06). The gap is explained
+ *  ONLY when every lease on its own is *possible* under some abatement: abatement can only LOWER a
+ *  year's rent and cannot exceed twelve months, so 0 ≤ annual ≤ monthly × 12 (within `tolerance`
+ *  dollars). A negative value, an overstatement above 12 months, or annual rent on a lease with no
+ *  monthly rent fails the lease and the aggregate warn stays.
+ *
+ *  This is the COARSE aggregate guard, kept deliberately granularity-free: Abated Months may be a
+ *  quarter-month or a day-prorated figure (10 days ≈ 0.33), and a stricter multiple-of-half-a-month
+ *  rule would raise a false critical alarm on valid data. The REAL per-lease defence is the parse-time
+ *  check in parseLeases (annual rent = monthly × (12 − abated months), from the Abated Months column),
+ *  which flags a typo or a hard-coded cell that is still inside this range.
+ *
+ *  Deliberately PER-LEASE and NOT "the workbook's Portfolio Total confirms Σ annual rent": the total is
+ *  a SUM of the same cells, so it ties to any bad cell by construction (the 2026-09-07 zeroed-cells
+ *  incident passed the total gate for exactly that reason). Shared by checkSnapshot and
+ *  scripts/reconcile.ts so the runtime and the gate cannot disagree. */
+export function annualRentGapIsExplainedByAbatement(
+  leases: readonly { monthlyRent: number; annualRent: number }[],
+  tolerance = 1,
+): boolean {
+  return leases.every((l) => {
+    const maxAnnual = l.monthlyRent * 12;
+    if (Math.abs(l.annualRent - maxAnnual) <= tolerance) return true;
+    return l.annualRent >= 0 && l.annualRent <= maxAnnual + tolerance && l.monthlyRent > 0;
+  });
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>
@@ -338,10 +366,11 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
     flag('cash.totalCash', `total ${Math.round(s.cash.totalCash)} ≠ Σ entities ${Math.round(cashSum)}`);
   }
 
-  // Annualized rent must equal Σ(monthly × 12).
+  // Annualized rent must equal Σ(monthly × 12), unless every lease's own annual rent is consistent
+  // with an abatement (see annualRentGapIsExplainedByAbatement).
   const annual = sum(s.leases.map((l) => l.annualRent));
   const monthlyX12 = sum(s.leases.map((l) => l.monthlyRent * 12));
-  if (Math.abs(annual - monthlyX12) > 5) {
+  if (Math.abs(annual - monthlyX12) > 5 && !annualRentGapIsExplainedByAbatement(s.leases)) {
     flag('leases.annualRent', `Σ annual ${Math.round(annual)} ≠ Σ(monthly×12) ${Math.round(monthlyX12)}`, 'warn');
   }
 
