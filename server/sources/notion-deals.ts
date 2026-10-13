@@ -3,7 +3,7 @@ import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
 import { dealJoinKey, findDuplicateDealRows, keyDigest } from './deal-name';
 
-import { isDeclassified } from './deal-declassification';
+import { isDeclassified, rosterClaimsDeal } from './deal-declassification';
 import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
 
 /**
@@ -391,7 +391,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
       targetCloseDate: pick(live.targetCloseDate, s.targetCloseDate),
       status: pick(live.status, s.status),
       estimatedFields,
-      // id, name, shortName, confidential, notionDealId, buildings, holdYrs preserved from the seed.
+      // A live row the pipeline already marks confidential (name patterns) is never un-flagged by
+      // the seed merge; the roster check below then covers the case where neither flag fires.
+      confidential: s.confidential || live.confidential,
+      // id, name, shortName, notionDealId, buildings, holdYrs preserved from the seed.
     };
   });
 
@@ -410,7 +413,16 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     .filter((d) => !d.notionDealId || !usedIds.has(d.notionDealId))
     .map((d) => (d.confidential ? d : { ...d, confidential: !isDeclassified(d) }));
 
-  const published = [...merged, ...extras];
+  // Roster wins over the seed flag (Hard Invariant 3). A seed confidential:false is the intended
+  // escape hatch, but only while no ACTIVE roster group claims the deal — checked here on the
+  // MERGED record (live location/price/nextAction included), fail-closed on an unreadable roster.
+  const rosterChecked = merged.map((d) => {
+    if (d.confidential || !rosterClaimsDeal(d)) return d;
+    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it — forcing confidential.`);
+    return { ...d, confidential: true };
+  });
+
+  const published = [...rosterChecked, ...extras];
 
   // ── Dangling PUBLIC_DEAL_IDS entries ───────────────────────────────────────────────────────────
   // isDeclassified()'s not-in-allowlist path returns false SILENTLY — no warn, no flag — because
