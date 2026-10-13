@@ -1,5 +1,6 @@
 import type { Deal } from '../../src/contracts/index';
 import { CompSet, RECORD_COMPS_TOOL } from '../../src/contracts/index';
+import { scanForConfidential } from '../briefing/confidential';
 
 export type FetchCompsResult = { ok: true; comps: CompSet } | { ok: false; error: string };
 
@@ -7,6 +8,8 @@ export interface FetchCompsOptions {
   apiKey?: string;
   model?: string;
   now: string; // ISO — injected for deterministic sourcedAt
+  /** Roster scan over the outbound prompt; injectable for tests. Defaults to the live roster. */
+  confidentialScan?: (value: unknown) => { dealLabel: string } | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -44,6 +47,19 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
     `3. SUBMARKET stats — vacancy, asking-rent trend, net absorption, new supply.\n` +
     `Prefer the last 18 months and the same submarket. Include a source URL/publication for every item. ` +
     `If solid data is thin, record what you can and note the gaps in summary. End by calling record_comps.`;
+
+  // Roster guard on the EXACT outbound text (Hard Invariant 3). The deal.confidential flag above is
+  // only a flag; the roster is the source of record, so scan the prompt itself and fail closed
+  // (an unreadable roster throws, which also blocks the call).
+  try {
+    const hit = (opts.confidentialScan ?? scanForConfidential)(prompt);
+    if (hit) {
+      return { ok: false, error: 'Market comps blocked — the request matches an active confidential deal on the roster.' };
+    }
+  } catch (e) {
+    console.error('[comps] confidential roster unavailable — refusing external web search:', e);
+    return { ok: false, error: 'Market comps blocked — the confidential roster could not be verified.' };
+  }
 
   const body = {
     model: opts.model || 'claude-opus-5',
