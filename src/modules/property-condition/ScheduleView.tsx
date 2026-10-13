@@ -9,12 +9,15 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtUsd } from '@analytics/index';
-import type { PcaLifecycleRow, PcaScheduleRow } from '@contracts/property-condition';
+import type { PcaLifecycleRow } from '@contracts/property-condition';
+import type { ClockScheduleRow } from './clock';
 import { fmtPartialDate, warrantyBadge } from './hooks';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 
-const SCHEDULE_COLS: Column<PcaScheduleRow>[] = [
+const yrs = (n: number | null) => (n === null ? 'n/a' : `${n < 0 ? '−' : ''}${Math.abs(n)} yr${Math.abs(n) === 1 ? '' : 's'}`);
+
+const SCHEDULE_COLS: Column<ClockScheduleRow>[] = [
   {
     key: 'property',
     header: 'Property / component',
@@ -51,6 +54,21 @@ const SCHEDULE_COLS: Column<PcaScheduleRow>[] = [
       );
     },
     sortValue: (r) => r.warrantyEndYear,
+  },
+  {
+    key: 'left',
+    header: 'Years left',
+    align: 'right',
+    render: (r) => (
+      <div>
+        <div className="num text-xs">Warranty {yrs(r.warrantyYearsRemaining)}</div>
+        <div className="num text-2xs" style={muted}>
+          Life {yrs(r.lifeYearsRemaining)}
+          {r.eul !== null ? ` · EUL ${r.eul}` : ''}
+        </div>
+      </div>
+    ),
+    sortValue: (r) => r.warrantyYearsRemaining ?? r.lifeYearsRemaining,
   },
   {
     key: 'flag',
@@ -110,7 +128,7 @@ const LIFECYCLE_COLS: Column<PcaLifecycleRow>[] = [
   },
 ];
 
-export function ScheduleView({ schedule, lifecycle }: { schedule: PcaScheduleRow[]; lifecycle: PcaLifecycleRow[] }) {
+export function ScheduleView({ schedule, lifecycle }: { schedule: ClockScheduleRow[]; lifecycle: PcaLifecycleRow[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -137,9 +155,9 @@ export function ScheduleView({ schedule, lifecycle }: { schedule: PcaScheduleRow
         )}
       </Card>
       <p className="num px-1 text-2xs" style={muted}>
-        Warranty end years appear only where the source document states them — none are derived from install
-        year. Lifecycle due year = report year + integer RUL; a range RUL is shown as printed, not guessed.
-        Lifecycle lines are consultant estimates for each property's most recent report only.
+        Warranty end years come from the source document; the one exception is tagged DERIVED in its warranty text
+        (term + stated start date, 3540 E Fifth). Years left are computed from today's date on every load; negative = past due or expired. Life = install + EUL, or a stated RUL rolled forward from its report year. Lifecycle due year = report year + integer RUL; a range RUL is shown as printed, not guessed.
+        Lifecycle lines are consultant estimates from each property's most recent report dated 2024 or later; older (stale) reports are history only and are not projected — see Building specs.
       </p>
     </div>
   );
