@@ -8,6 +8,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { PropertyConditionModule } from '../../src/modules/property-condition/PropertyConditionModule';
+import { CoverageCard } from '../../src/modules/property-condition/SpecsView';
 import {
   PROPERTY_CONDITION_KEYS,
   ageLabel,
@@ -99,10 +100,37 @@ describe('PropertyConditionModule', () => {
     expect(screen.getByText('Capex Reserves')).toBeTruthy();
     expect(screen.getByText('2 / 2')).toBeTruthy();
     expect(screen.getByText('Capex outlook by property')).toBeTruthy();
-    expect(screen.getByText('3520 E Fulton St')).toBeTruthy();
+    expect(screen.getAllByText('3520 E Fulton St').length).toBeGreaterThan(0);
     // An old report still appears (current = newest we have) with its age as a caveat badge.
-    expect(screen.getByText('6410 Sheriff Rd')).toBeTruthy();
+    expect(screen.getAllByText('6410 Sheriff Rd').length).toBeGreaterThan(0);
     expect(screen.getByText('19 yrs')).toBeTruthy();
+  });
+
+  it('shows the near-term rollup, reserve intensity and report-currency alerts on the default view', () => {
+    renderModule();
+    expect(screen.getByText('Near-term capex rollup')).toBeTruthy();
+    expect(screen.getByText(/Reserve intensity/)).toBeTruthy();
+    expect(screen.getByText('Report-currency alerts')).toBeTruthy();
+  });
+
+  it('?view=open adds the 8-item PCA decision queue, all Open and unassigned', () => {
+    renderModule('/property-condition?view=open');
+    expect(screen.getByText('PCA decision queue')).toBeTruthy();
+    expect(screen.getAllByText('Open')).toHaveLength(8);
+    expect(screen.getAllByText('Owner: unassigned')).toHaveLength(8);
+  });
+
+  it('?view=infolane never shows the Year 1 / Year 2 reserve outlays as Immediate or Short-term', () => {
+    renderModule('/property-condition?view=infolane');
+    expect(screen.getByText('Immediate (ADA)')).toBeTruthy();
+    expect(screen.getByText('$1,100')).toBeTruthy();
+    expect(screen.getByText('Reserve schedule by year (uninflated)')).toBeTruthy();
+    expect(screen.getAllByText(/\[SPECULATIVE\]/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('?view=calibration carries the permanent estimate-vs-quote label', () => {
+    renderModule('/property-condition?view=calibration');
+    expect(screen.getByText('PCA consultant estimate vs contractor quote; n=1 each; directional only')).toBeTruthy();
   });
 
   it('falls back to Capex outlook for an unknown ?view=', () => {
@@ -114,16 +142,46 @@ describe('PropertyConditionModule', () => {
     renderModule('/property-condition?view=schedule');
     expect(screen.getByText('Install & warranty facts')).toBeTruthy();
     expect(screen.getByText('Expired')).toBeTruthy();
-    expect(screen.getByText('Active')).toBeTruthy();
+    expect(screen.getAllByText('Active')).toHaveLength(2); // New Plant (register) + 3540 E Fifth (derived 2042 end)
     expect(screen.getByText('Consultant lifecycle (current reports)')).toBeTruthy();
     expect(screen.getByText('2029')).toBeTruthy();
   });
 
-  it('?view=calibration shows signed deltas and the directional-only caveat', () => {
+  it('?view=calibration renders per-component tiers from the ledger, never a single portfolio factor', () => {
     renderModule('/property-condition?view=calibration');
-    expect(screen.getByText('−60%')).toBeTruthy();
-    expect(screen.getByText('+213%')).toBeTruthy();
-    expect(screen.getByText('n=2 · directional only')).toBeTruthy();
+    expect(screen.getByText('PCA estimate vs contractor price — calibration ledger')).toBeTruthy();
+    expect(screen.getByText('Roof — EPDM')).toBeTruthy();
+    expect(screen.getByText('Roof — TPO')).toBeTruthy();
+    expect(screen.getAllByText('LIMITED').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('THIN').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('USABLE')).toBeNull();
+    expect(screen.getAllByText('directional only').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/What changed:/)).toBeTruthy();
+    expect(screen.queryByText(/portfolio calibration factor/i)).toBeNull();
+  });
+
+  it('?view=specs loads the vintage-stamped extractions: coverage, roof clock, rollups, profile and findings ledger', async () => {
+    renderModule('/property-condition?view=specs');
+    expect(await screen.findByText('Extraction coverage', {}, { timeout: 15000 })).toBeTruthy();
+    expect(screen.getByText('Roof age & past-EUL list')).toBeTruthy();
+    expect(screen.getByText('Portfolio spec rollups (counts by vintage)')).toBeTruthy();
+    expect(screen.getByText('Building profile — effective facts')).toBeTruthy();
+    expect(screen.getByText(/Findings ledger/)).toBeTruthy();
+    expect(screen.getAllByText(/\[FORECAST\]/).length).toBeGreaterThan(0);
+    // The ledger exposes per-row, year-labeled estimates and says outright that there are no totals.
+    expect(screen.getByText(/no totals/)).toBeTruthy();
+  }, 30000);
+
+  it('an UNREADABLE report renders as UNREADABLE with the path that was tried', () => {
+    render(
+      <CoverageCard
+        rows={[{ reportId: 'R99', propertyLabel: 'Test Property', consultant: 'ACME', reportDate: '2010-01-01', status: 'UNREADABLE', ocr: false,
+          pagesTotal: 0, pagesWithoutText: 0, facts: 0, findings: 0, factsByComponent: {}, pathTried: 'Business/Test/missing.pdf', notes: '' }]}
+      />,
+    );
+    expect(screen.getByText('UNREADABLE')).toBeTruthy();
+    expect(screen.getByText(/path tried: Business\/Test\/missing\.pdf/)).toBeTruthy();
+    expect(screen.getByText(/1 unreadable/)).toBeTruthy();
   });
 
   it('?view=prices keeps contractor evidence and the consultant price book in separate, labeled cards', () => {

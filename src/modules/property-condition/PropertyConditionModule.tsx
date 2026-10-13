@@ -1,8 +1,8 @@
 // src/modules/property-condition/PropertyConditionModule.tsx
 //
 // Property Condition — standalone destination in the rail's Capital group (Capital itself is at the
-// 5-tab house cap, so this is not a sixth Capital tab). Four KPIs + a 5-view SegmentedControl on `?view=`
-// (Capex outlook / Replacement schedule / Estimate vs actual / Quotes & prices / Open items); only the
+// 5-tab house cap, so this is not a sixth Capital tab). Four KPIs + a 7-view SegmentedControl on `?view=`
+// (Capex outlook / Replacement schedule / Estimate vs actual / Quotes & prices / Open items / 29000 Info Ln / Building specs); only the
 // selected view is mounted (R5: no nested tab strips).
 //
 // READ-ONLY. Phase 2 of docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md: nothing here feeds
@@ -18,6 +18,7 @@ import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { fmtUsdCompact } from '@analytics/index';
+import { STALE_BEFORE_YEAR, applyPcaOverlay, currencyAlerts, monthsSince, nearTermRollup } from '@/analytics/pca-intelligence';
 import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { usePropertyCondition } from './hooks';
@@ -27,6 +28,21 @@ import { ScheduleView } from './ScheduleView';
 import { CalibrationView } from './CalibrationView';
 import { PricesView } from './PricesView';
 import { OpenItemsView } from './OpenItemsView';
+import { IssuesQueue } from './IssuesQueue';
+import { AlertsBanner } from './AlertsBanner';
+import { InfoLaneView } from './InfoLaneView';
+import { SpecsPanel } from './SpecsView';
+import { buildClockRows } from './clock';
+import { EXTRA_ASSET_FACTS, INFO_LANE_DETAIL, PCA_OVERLAY } from './pca-overlay';
+import { CALIBRATION_LEDGER, CALIBRATION_PENDING } from './calibration-data';
+
+/** Reports dated before 2024 are history only — their lifecycle lines are not projected as forecasts. */
+const isStaleDate = (d: string | null): boolean => d === null || Number(d.slice(0, 4)) < STALE_BEFORE_YEAR;
+
+/** Today as YYYY-MM-DD — years-left, report age and rent-roll age are all computed from this at render. */
+function todayIso(): string {
+  return new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
+}
 
 const VIEW_OPTIONS = PC_VIEWS.map((v) => ({ value: v.id, label: v.label }));
 
@@ -82,7 +98,14 @@ export function PropertyConditionModule() {
     );
   }
 
-  const { totals } = report;
+  // Curated corrections + data-quality flags, then everything time-dependent is derived from today.
+  const today = todayIso();
+  const adjusted = applyPcaOverlay(report, PCA_OVERLAY);
+  const { totals } = adjusted;
+  const rollup = nearTermRollup(adjusted.properties);
+  const alerts = currencyAlerts(adjusted.properties, today, PCA_OVERLAY);
+  const staleReportIds = new Set(adjusted.properties.filter((p) => p.status === 'STALE').map((p) => p.current.reportId));
+  const clockRows = buildClockRows(report.schedule, EXTRA_ASSET_FACTS, today);
 
   return (
     <div className="flex flex-col gap-4">
@@ -92,7 +115,7 @@ export function PropertyConditionModule() {
           value={totals.immediateUsd}
           format={fmtUsdCompact}
           accentColor="var(--color-warn)"
-          sublabel="Σ most recent report per property"
+          sublabel="Σ current + draft reports · excl. pre-2024 stale"
         />
         <KpiStat
           label="Short-term (Yr 1–2)"
@@ -114,13 +137,22 @@ export function PropertyConditionModule() {
         />
       </div>
 
+      <AlertsBanner alerts={alerts} />
+
       <SegmentedControl options={VIEW_OPTIONS} value={view} onChange={setView} aria-label="Property condition views" />
 
-      {view === 'outlook' && <CapexOutlookView properties={report.properties} />}
-      {view === 'schedule' && <ScheduleView schedule={report.schedule} lifecycle={report.lifecycle} />}
-      {view === 'calibration' && <CalibrationView rows={report.calibration} />}
+      {view === 'outlook' && <CapexOutlookView properties={adjusted.properties} rollup={rollup} />}
+      {view === 'schedule' && <ScheduleView schedule={clockRows} lifecycle={report.lifecycle.filter((l) => !isStaleDate(l.reportDate) && !staleReportIds.has(l.reportId))} />}
+      {view === 'calibration' && <CalibrationView ledger={CALIBRATION_LEDGER} pending={CALIBRATION_PENDING} />}
       {view === 'prices' && <PricesView quotes={report.quotes} priceBook={report.priceBook} />}
-      {view === 'open' && <OpenItemsView items={report.openItems} />}
+      {view === 'open' && (
+        <div className="flex flex-col gap-4">
+          <IssuesQueue />
+          <OpenItemsView items={report.openItems} />
+        </div>
+      )}
+      {view === 'specs' && <SpecsPanel enabled />}
+      {view === 'infolane' && <InfoLaneView rentRollMonths={monthsSince(INFO_LANE_DETAIL.rentRoll.asOf, today)} />}
     </div>
   );
 }

@@ -31,6 +31,8 @@
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
     "warehouse:import-loss-runs": "tsx scripts/import-insurance-data.ts",
     "warehouse:import-pca": "tsx scripts/import-pca-register.ts",
+    "calibration:propose": "tsx scripts/calibration-propose.ts",
+    "calibration:promote": "tsx scripts/calibration-promote.ts",
     "lease-market:ingest": "tsx scripts/lease-market.ts ingest",
     "lease-market:compute": "tsx scripts/lease-market.ts compute",
     "backup": "tsx scripts/warehouse-backup.ts",
