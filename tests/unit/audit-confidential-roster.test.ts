@@ -3,7 +3,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Deal } from '../../src/contracts/index';
-import { mergeDeals } from '../../server/sources/notion-deals';
+import { mergeDeals, loadDeals } from '../../server/sources/notion-deals';
+import { SEED_DEALS } from '../../src/data/seed-deals';
 import { rosterClaimsDeal } from '../../server/sources/deal-declassification';
 import { fetchDealComps } from '../../server/ai/comps';
 
@@ -137,5 +138,54 @@ describe('fetchDealComps — roster scan on the outbound prompt (finding 3)', ()
       apiKey: 'sk-test', now: NOW, fetchImpl: f, confidentialScan: () => null,
     });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('refute-pass fixes (2026-10-13)', () => {
+  const NOW = '2026-10-13T12:00:00.000Z';
+  const netSpy = () => {
+    const calls: number[] = [];
+    const f = (async () => {
+      calls.push(1);
+      return { ok: true, status: 200, json: async () => ({ content: [] }), text: async () => '' };
+    }) as unknown as typeof fetch;
+    return { f, calls };
+  };
+
+  it('comps FAILS CLOSED on the placeholder roster (previously went out with 1 network call)', async () => {
+    process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'missing.json');
+    process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = '1';
+    const { f, calls } = netSpy();
+    const r = await fetchDealComps(deal({ name: 'Zephyr Logistics', location: '9900 Quarry Rd' }), { apiKey: 'sk-test', now: NOW, fetchImpl: f });
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('comps blocks on a whole-record roster hit the prompt never carries (owner / nextAction)', async () => {
+    const { f, calls } = netSpy();
+    const r = await fetchDealComps(
+      deal({ name: 'Anonymous', location: '1 Main St', nextAction: 'Call re 9900 Quarry Rd' }),
+      { apiKey: 'sk-test', now: NOW, fetchImpl: f, confidentialScan: () => null },
+    );
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('loadDeals degraded fallback (no NOTION_TOKEN) still applies the roster override to seeds', async () => {
+    const savedToken = process.env.NOTION_TOKEN;
+    delete process.env.NOTION_TOKEN;
+    try {
+      const target = SEED_DEALS.find((d) => !d.confidential);
+      expect(target).toBeDefined();
+      const p = join(dir, 'seedroster.json');
+      writeFileSync(p, JSON.stringify({ g: { label: 'G', active: true, always: [target!.name.toLowerCase()] } }), 'utf8');
+      process.env.CONFIDENTIAL_TERMS_PATH = p;
+      const load = await loadDeals();
+      expect(load.degraded?.reason).toBe('not-configured');
+      expect(load.deals.find((d) => d.id === target!.id)!.confidential).toBe(true);
+    } finally {
+      if (savedToken === undefined) delete process.env.NOTION_TOKEN;
+      else process.env.NOTION_TOKEN = savedToken;
+    }
   });
 });
