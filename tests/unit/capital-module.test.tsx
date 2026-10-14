@@ -76,6 +76,7 @@ function allocationResponse(): CapitalAllocationResponse {
       ],
       actionCounts: { buy: 0, hold: 1, sell: 0, refinance: 0, improve: 0 },
       pipeline: [],
+      dataQuality: [],
     },
   };
 }
