@@ -100,7 +100,7 @@ export function linesFromRegister(parsed: ParsedRegister, workbookName: string):
     if (component === 'other') continue;
     quotes.push({
       propertyKey: q.propertyKey, propertyLabel: q.propertyLabel, component, unit: unit as CalibrationUnit, qty: q.qty,
-      totalUsd: q.actualUsd ?? q.quotedUsd, isActual: q.actualUsd !== null, vendor: q.vendor ?? 'Unknown vendor', docDate: q.docDate,
+      totalUsd: q.actualUsd !== null && q.actualUsd > 0 ? q.actualUsd : q.quotedUsd, isActual: q.actualUsd !== null && q.actualUsd > 0, vendor: q.vendor ?? 'Unknown vendor', docDate: q.docDate,
       status: contractorStatus(q.recordType, q.status), superseded: (q.status ?? '').toLowerCase() === 'superseded',
       title: q.title, sourceFile: `${workbookName} > Quotes_Actuals (${demojibake(q.title)})`,
     });
@@ -200,7 +200,7 @@ export function notionQuote(props: Props, workbookLabel: string): QuoteLine | nu
   const status = txt(props, 'Status');
   return {
     propertyKey: resolveProperty(label, new Set()).key, propertyLabel: label, component, unit: unit as CalibrationUnit,
-    qty: numOf(props, 'Qty'), totalUsd: numOf(props, 'Actual Total') ?? numOf(props, 'Quoted Total'), isActual: numOf(props, 'Actual Total') !== null,
+    qty: numOf(props, 'Qty'), totalUsd: (numOf(props, 'Actual Total') ?? 0) > 0 ? numOf(props, 'Actual Total') : numOf(props, 'Quoted Total'), isActual: (numOf(props, 'Actual Total') ?? 0) > 0,
     vendor: txt(props, 'Vendor') ?? 'Unknown vendor', docDate: docDate.slice(0, 10),
     status: contractorStatus(txt(props, 'Record Type'), status), superseded: (status ?? '').toLowerCase() === 'superseded',
     title, sourceFile: `Notion ${workbookLabel} > ${title}`,
