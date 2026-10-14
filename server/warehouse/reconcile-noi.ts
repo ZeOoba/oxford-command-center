@@ -72,7 +72,7 @@ export interface NoiReconcileInput {
    *  for the structural-mismatch downgrade (OI-137) — an acquisition on/after the comparison
    *  period's start means the warehouse actuals may predate or only partially reflect ownership. */
   acqDate: string | null;
-  /** Sum of CURRENT annualRent (Spine A) across this property's leases whose leaseStart falls on
+  /** Sum of CURRENT annualRent (Spine A), scaled to Oxford share (× oxfordOwnPct), across this property's leases whose leaseStart falls on
    *  or after the warehouse FY comparison period's first day. Tenancy-change signal for the
    *  structural-mismatch downgrade (OI-137). Null only when there is no comparison period to
    *  evaluate leaseStart against (never null merely because no lease qualified — that's a real 0). */
@@ -102,7 +102,7 @@ function formatUsd(n: number): string {
  * warehouse's comparison period, rather than a genuine integrity break (OI-137). Returns the
  * evidence sentence to fold into the row's reason, or null when there isn't enough evidence.
  *
- *  - Tenancy alone: leases that started on or after the comparison period's first day contribute
+ *  - Tenancy alone (rent in Oxford share, x oxfordOwnPct, like the delta): leases that started on or after the comparison period's first day contribute
  *    AT LEAST HALF of the drift's dollar magnitude to the current rent roll — large enough that
  *    their absence from that period's actuals plausibly explains most of the disagreement. Half,
  *    not "any", because a single small recent lease next to an otherwise-unexplained large gap is
@@ -147,7 +147,7 @@ function detectStructuralMismatchReason(input: NoiReconcileInput, delta: number)
 
   if (delta > 0 && hasAnyRecentTenancy && recentRent! >= absDelta * 0.5) {
     return (
-      `${formatUsd(recentRent!)}/yr of the current rent roll comes from leases starting on or after ` +
+      `${formatUsd(recentRent!)}/yr (Oxford share) of the current rent roll comes from leases starting on or after ` +
       `${periodStart} — at least half of the ${formatUsd(absDelta)} delta, so the ${periodYear} warehouse ` +
       `actuals could not have collected that rent.`
     );
@@ -156,7 +156,7 @@ function detectStructuralMismatchReason(input: NoiReconcileInput, delta: number)
   if (acquiredSincePeriodStart && hasAnyRecentTenancy) {
     return (
       `Oxford acquired this property ${input.acqDate}, on or after the ${periodYear} comparison period ` +
-      `began, and ${formatUsd(recentRent!)}/yr of the current rent roll comes from leases starting since ` +
+      `began, and ${formatUsd(recentRent!)}/yr (Oxford share) of the current rent roll comes from leases starting since ` +
       `then — the warehouse actuals may predate or only partially reflect Oxford ownership.`
     );
   }
@@ -373,6 +373,9 @@ export function buildNoiReconcileInputs(
     // OI-137 tenancy signal: sum CURRENT annualRent across leases that started on/after the FY
     // comparison period's first day. Null (not 0) when there is no FY period to compare against —
     // 0 is reserved for "we could compare, and nothing qualified."
+    // Non-finite or out-of-[0,1] ownership (pre-contract stubs, a malformed '50%' cell parsed as 50) falls back
+    // to 1 = no scaling = the legacy behaviour, so a bad cell can never LOOSEN the gate.
+    const oxfordShare = Number.isFinite(wp.oxfordOwnPct) && wp.oxfordOwnPct >= 0 && wp.oxfordOwnPct <= 1 ? wp.oxfordOwnPct : 1;
     const periodYear = fyPeriod?.slice(0, 4) ?? null;
     const periodStart = periodYear !== null ? `${periodYear}-01-01` : null;
     const recentTenancyAnnualRent = periodStart !== null
@@ -383,7 +386,11 @@ export function buildNoiReconcileInputs(
           // not count as evidence for a drift it can no longer be causing (adversarial-review
           // finding, 2026-08-17).
           .filter((l) => l.leaseStart !== null && l.leaseStart >= periodStart && (l.status === 'Active' || l.status === 'Expiring Soon'))
-          .reduce((sum, l) => sum + l.annualRent, 0)
+          // Lease.annualRent is 100%-basis; the NOI delta it is compared against is Oxford-share. Scale to
+          // Oxford share (same basis as workbookOxfordNoi / warehouseOxfordNoi) so a JV property's tenancy
+          // signal is not overstated 1/oxfordOwnPct-fold. Conservative direction: the gate can only fire
+          // more often. Wholly-owned (oxfordOwnPct 1) is unchanged.
+          .reduce((sum, l) => sum + l.annualRent, 0) * oxfordShare
       : null;
 
     inputs.push({
