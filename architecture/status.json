@@ -5,8 +5,8 @@
     "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "PROPOSED Architect-owned edit NOT yet made, awaiting Gabriel's acknowledgment: new migration server/warehouse/migrations/036_acq_current_score_id.sql (ALTER TABLE acq_candidates ADD COLUMN current_score_id + backfill from latest scored_at,id row). db.ts/migrate.ts not expected to change. scored_at is second-resolution, so the 'touch scored_at' alternative cannot disambiguate same-second re-scores and also breaks the 'never mutated' contract on acq_scores. Failing regression test: tests/unit/acq-current-score-history-independent.test.ts.",
-    "last_updated": "2026-10-13T20:20:00Z"
+    "review_detail": "Gabriel acknowledged the Architect-owned migration in-turn 2026-10-13 (AskUserQuestion, pointer-column option). Made: server/warehouse/migrations/036_acq_current_score_id.sql (new; ADD COLUMN acq_candidates.current_score_id + backfill). db.ts/migrate.ts unchanged. Refute: wf_f7898ae5-2da, wf_ba4886b3-1a9, wf_96d87140-319, wf_8d7273d2-bfb (clean). Branch fix/acq-current-score-pointer, rebased on origin/main 64a4363, unpushed. Deploy note: restart the always-on Brain Server so no pre-036 code writes scores.",
+    "last_updated": "2026-10-14T00:00:00Z"
   },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
