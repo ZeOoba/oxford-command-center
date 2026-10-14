@@ -646,23 +646,42 @@ interface AcqScoreRow {
   candidate_id: string;
   composite: number;
   tier: string;
+  verdict: string | null;
+  governor_dscr_cleared: number | null;
+  governor_ltv_cleared: number | null;
   score_json: string | null;
 }
 
 import { ClusterTier } from '../../src/contracts/acquisition';
 
-function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'] {
+/**
+ * A candidate is BUY-eligible only if its PERSISTED verdict survived the acquisition governors:
+ * acq-engine demotes verdict to PASS on a DSCR/LTV proxy failure (and on the fail-closed
+ * invalid-governor path) but leaves `tier` as scored, so tier alone would still read T1/T2.
+ * governor_*_cleared = 0 means failed; NULL means not evaluated (not a failure).
+ */
+function isBuyEligible(row: AcqScoreRow | undefined): boolean {
+  if (!row) return false;
+  if (row.verdict !== 'PURSUE' && row.verdict !== 'WATCH') return false;
+  return row.governor_dscr_cleared !== 0 && row.governor_ltv_cleared !== 0;
+}
+
+function loadPipelineCandidates(db: WarehouseDb): {
+  pipeline: PortfolioAllocation['pipeline'];
+  buyIneligible: ReadonlySet<string>;
+} {
   const candidates = db
     .prepare(`SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`)
     .all() as AcqCandRow[];
 
   // Hoist prepared statement outside the map loop (Fix A-2)
   const latestScoreStmt = db.prepare(
-    `SELECT candidate_id, composite, tier, score_json
+    `SELECT candidate_id, composite, tier, verdict, governor_dscr_cleared, governor_ltv_cleared, score_json
      FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1`,
   );
 
-  return candidates.map((c) => {
+  const buyIneligible = new Set<string>();
+  const pipeline = candidates.map((c) => {
     // Use acq_scores (Phase 4 table) — get latest score by scored_at DESC
     const scoreRow = latestScoreStmt.get(c.id) as AcqScoreRow | undefined;
 
@@ -673,15 +692,23 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
         ? tierRaw
         : null;
 
-    // Extract leveredIrr and basisDiscountPct from score_json if present
+    if (!isBuyEligible(scoreRow)) buyIneligible.add(c.id);
+
+    // score_json is a stringified AcquisitionScore: the basis discount and levered IRR are the
+    // `actual` of its floors[] entries (ids 'basis' / 'irr'), NOT top-level keys — reading
+    // parsed['leveredIrr'] / parsed['basisDiscountPct'] always yielded null.
     let leveredIrr: number | null = null;
     let basisDiscountPct: number | null = null;
     if (scoreRow?.score_json) {
       try {
-        const parsed = JSON.parse(scoreRow.score_json) as Record<string, unknown>;
-        if (typeof parsed['leveredIrr'] === 'number') leveredIrr = parsed['leveredIrr'];
-        if (typeof parsed['basisDiscountPct'] === 'number')
-          basisDiscountPct = parsed['basisDiscountPct'];
+        const parsed = JSON.parse(scoreRow.score_json) as { floors?: unknown };
+        if (Array.isArray(parsed.floors)) {
+          for (const f of parsed.floors as Array<{ id?: unknown; actual?: unknown }>) {
+            if (typeof f?.actual !== 'number' || !Number.isFinite(f.actual)) continue;
+            if (f.id === 'irr') leveredIrr = f.actual;
+            else if (f.id === 'basis') basisDiscountPct = f.actual;
+          }
+        }
       } catch {
         // score_json malformed — silently skip (non-fatal)
       }
@@ -702,6 +729,7 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
       basisDiscountPct,
     };
   });
+  return { pipeline, buyIneligible };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -786,7 +814,7 @@ export async function buildPortfolioAllocation(
   });
 
   // Pipeline candidates (active status only)
-  const pipeline = loadPipelineCandidates(db);
+  const { pipeline, buyIneligible } = loadPipelineCandidates(db);
 
   // C-3: portfolio-level buy verdict (spec §3.5) — emitted ONLY when a T1/T2 candidate
   // clears the composite floor and the basis-discount floor (or basis discount is unknown).
@@ -796,6 +824,7 @@ export async function buildPortfolioAllocation(
       (c.tier === 'T1' || c.tier === 'T2') &&
       c.composite !== null &&
       c.composite >= BUY_COMPOSITE_FLOOR &&
+      !buyIneligible.has(c.candidateId) &&
       (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
   );
   if (buyable.length > 0) {
