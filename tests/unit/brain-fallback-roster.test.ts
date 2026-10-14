@@ -21,7 +21,11 @@ const deal = (o: Partial<Deal>): Deal => ({
   notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
-const h = vi.hoisted(() => ({ snapshotPath: '' }));
+const h = vi.hoisted(() => ({
+  snapshotPath: '',
+  parseError: null as Error | null,
+  base: null as unknown,
+}));
 
 vi.mock('../../server/config', async (importOriginal) => ({
   ...(await importOriginal<typeof ConfigModule>()),
@@ -29,7 +33,10 @@ vi.mock('../../server/config', async (importOriginal) => ({
   get SNAPSHOT_PATH() { return h.snapshotPath; },
 }));
 vi.mock('../../server/workbook/parse', () => ({
-  parseWorkbook: vi.fn(async () => { throw new Error('workbook locked'); }),
+  parseWorkbook: vi.fn(async () => {
+    if (h.parseError) throw h.parseError;
+    return { snapshot: h.base, flags: [], dealsDegraded: null };
+  }),
 }));
 vi.mock('chokidar', () => ({ watch: vi.fn(() => ({ on: vi.fn() })) }));
 
@@ -38,10 +45,17 @@ const originalPath = process.env.CONFIDENTIAL_TERMS_PATH;
 const originalPlaceholder = process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
 
 /** Real, schema-valid snapshot (the tracked mirror) with deals[] replaced by synthetic rows. */
-function writeFallbackSnapshot(deals: Deal[]): void {
-  const base = JSON.parse(readFileSync(join(process.cwd(), 'data', 'snapshots', 'portfolio.json'), 'utf8'));
-  writeFileSync(h.snapshotPath, JSON.stringify({ ...base, deals }), 'utf8');
+function snapshotWith(deals: Deal[]): Record<string, unknown> {
+  const base = JSON.parse(readFileSync(join(process.cwd(), 'data', 'snapshots', 'portfolio.json'), 'utf8')) as Record<string, unknown>;
+  return { ...base, deals };
 }
+function writeFallbackSnapshot(deals: Deal[]): void {
+  writeFileSync(h.snapshotPath, JSON.stringify(snapshotWith(deals)), 'utf8');
+}
+function setRoster(roster: unknown): void {
+  writeFileSync(process.env.CONFIDENTIAL_TERMS_PATH!, JSON.stringify(roster), 'utf8');
+}
+const CLEAN_ROSTER = { live_deal: { label: 'Live Deal', active: true, always: ['nothing-matches-this'] } };
 
 beforeEach(() => {
   delete process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
@@ -50,6 +64,8 @@ beforeEach(() => {
   writeFileSync(terms, JSON.stringify(ROSTER), 'utf8');
   process.env.CONFIDENTIAL_TERMS_PATH = terms;
   h.snapshotPath = join(dir, 'portfolio.json');
+  h.parseError = new Error('workbook locked');
+  h.base = null;
   vi.resetModules();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -101,5 +117,37 @@ describe('Brain loadFallback — the roster outranks a stored confidential:false
     writeFallbackSnapshot([deal({ id: 'a', name: 'Clean Deal' })]);
     const { brain } = await refreshIntoFallback();
     expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(true);
+  });
+});
+
+describe('Brain — a roster change AFTER a snapshot is adopted still reaches served deals', () => {
+  async function adoptCleanSnapshot() {
+    setRoster(CLEAN_ROSTER);
+    h.parseError = null;
+    h.base = snapshotWith([deal({ id: 'a', name: 'Zephyr Logistics' }), deal({ id: 'b', name: 'Clean Deal' })]);
+    const { brain, state } = await refreshIntoFallback();
+    expect(state.source).toBe('workbook');
+    expect(brain.getSnapshot()!.deals.find((d) => d.id === 'a')!.confidential).toBe(false);
+    return brain;
+  }
+
+  it('warm fallback: in-memory snapshot is re-checked when a later parse fails', async () => {
+    const brain = await adoptCleanSnapshot();
+    setRoster(ROSTER); // roster now claims 'zephyr'
+    h.parseError = new Error('workbook locked');
+    const state = await brain.refresh('file-change');
+    expect(state.source).toBe('snapshot-fallback');
+    const byId = Object.fromEntries(brain.getSnapshot()!.deals.map((d) => [d.id, d.confidential]));
+    expect(byId.a).toBe(true);
+    expect(byId.b).toBe(false);
+  });
+
+  it('rederive: a UI write-back re-checks the roster instead of re-serving the stale flag', async () => {
+    const brain = await adoptCleanSnapshot();
+    setRoster(ROSTER);
+    brain.setDealStage('b', 'Diligence' as never);
+    const byId = Object.fromEntries(brain.getSnapshot()!.deals.map((d) => [d.id, d.confidential]));
+    expect(byId.a).toBe(true);
+    expect(byId.b).toBe(false);
   });
 });
