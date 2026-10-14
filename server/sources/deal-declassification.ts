@@ -158,3 +158,13 @@ export function serializeForPublication(payload: unknown): { json: string | null
 export function publicPayloadRosterRefusal(payload: unknown): string | null {
   return serializeForPublication(payload).refusal;
 }
+    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+      console.warn('[deal-declassification] confidential roster is the PLACEHOLDER stand-in — treating every deal as roster-claimed (fail closed).');
+      return true;
+    }
+    return scanForConfidential(deal) !== null;
+  } catch (e) {
+    console.warn(`[deal-declassification] confidential roster unreadable (${e instanceof Error ? e.message : String(e)}) — treating the deal as roster-claimed (fail closed).`);
+    return true;
+  }
+}

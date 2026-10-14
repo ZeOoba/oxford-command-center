@@ -208,6 +208,20 @@ export function mapNotionPage(page: NotionPage): Deal | null {
 }
 
 /**
+ * Roster wins over a seed `confidential:false` (Hard Invariant 3). The seed flag is the intended
+ * escape hatch, but only while no ACTIVE roster group claims the deal — checked on the whole record
+ * (live location/price/nextAction included) and fail-closed on an unreadable or placeholder roster.
+ * Applied on EVERY path that returns seed deals, including loadDeals' degraded fallbacks.
+ */
+export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
+  return deals.map((d) => {
+    if (d.confidential || !rosterClaimsDeal(d)) return d;
+    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it (or the roster could not be verified) — forcing confidential.`);
+    return { ...d, confidential: true };
+  });
+}
+
+/**
  * Merge live Notion deals onto the seed, joining on the Notion Deal ID.
  *
  * A matched deal enriches the seed record (live fields win) but KEEPS the seed id, confidential

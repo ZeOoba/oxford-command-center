@@ -62,6 +62,10 @@ function seedCandidate(
     tier: 'T1' | 'T2' | 'PASS' | 'KILLED';
     leveredIrr?: number | null;
     basisDiscountPct?: number | null;
+    /** Persisted verdict; defaults to PURSUE. A governor demotion persists PASS with the tier untouched. */
+    verdict?: 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED';
+    governorDscrCleared?: 0 | 1 | null;
+    governorLtvCleared?: 0 | 1 | null;
   },
 ): void {
   const now = '2026-06-21T00:00:00Z';
@@ -76,15 +80,23 @@ function seedCandidate(
     db.prepare('SELECT id FROM acq_score_inputs WHERE candidate_id = ? AND inputs_version = ?')
       .get(opts.id, inputsVersion) as { id: number }
   ).id;
+  // score_json is a stringified AcquisitionScore: basis discount and levered IRR live in floors[].actual.
   const scoreJson = JSON.stringify({
-    leveredIrr: opts.leveredIrr ?? null,
-    basisDiscountPct: opts.basisDiscountPct ?? null,
+    floors: [
+      { id: 'basis', passed: true, actual: opts.basisDiscountPct ?? null, required: 0.25, detail: '' },
+      { id: 'yield', passed: true, actual: null, required: 0.08, detail: '' },
+      { id: 'irr', passed: true, actual: opts.leveredIrr ?? null, required: 0.15, detail: '' },
+    ],
   });
   db.prepare(`
     INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
-      advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json)
-    VALUES (?, ?, ?, ?, ?, 'PURSUE', 1, 0, 1, 1, 0, ?)
-  `).run(opts.id, scoreInputId, inputsVersion, opts.composite, opts.tier, scoreJson);
+      advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate,
+      governor_dscr_cleared, governor_ltv_cleared, score_json)
+    VALUES (?, ?, ?, ?, ?, ?, 1, 0, 1, 1, 0, ?, ?, ?)
+  `).run(
+    opts.id, scoreInputId, inputsVersion, opts.composite, opts.tier, opts.verdict ?? 'PURSUE',
+    opts.governorDscrCleared ?? null, opts.governorLtvCleared ?? null, scoreJson,
+  );
 }
 
 function makeMacro(dgs5: number | null) {
@@ -583,6 +595,52 @@ describe('buildPortfolioAllocation', () => {
     mockScoreDebt.mockReturnValue([]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('C3-governor-demoted: T1 tier with a persisted PASS verdict (governor demotion) is NOT buyable', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // acq-engine demotes verdict to PASS on a DSCR proxy failure but leaves tier = T1.
+    seedCandidate(db, { id: 'cand-demoted', composite: 92, tier: 'T1', basisDiscountPct: 0.30, verdict: 'PASS', governorDscrCleared: 0 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('C3-governor-failed-flag: governor_dscr_cleared=0 or governor_ltv_cleared=0 blocks buy even if verdict reads PURSUE', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-dscr-fail', composite: 90, tier: 'T1', basisDiscountPct: 0.30, governorDscrCleared: 0 });
+    seedCandidate(db, { id: 'cand-ltv-fail', composite: 91, tier: 'T1', basisDiscountPct: 0.30, governorLtvCleared: 0 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('C3-governor-cleared: cleared governors and a WATCH verdict remain buyable; the demoted top-ranked candidate is skipped for the next', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-top-demoted', composite: 95, tier: 'T1', basisDiscountPct: 0.30, verdict: 'PASS', governorDscrCleared: 0 });
+    seedCandidate(db, { id: 'cand-clean', composite: 80, tier: 'T2', basisDiscountPct: 0.30, verdict: 'WATCH', governorDscrCleared: 1, governorLtvCleared: 1 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(1);
+    expect(result.verdicts.find((v) => v.action === 'buy')!.propertyId).toBe('pipeline:cand-clean');
+  });
+
+  it('C3-floors-populate: basisDiscountPct and leveredIrr are read from score_json floors[].actual', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-floors', composite: 82, tier: 'T1', basisDiscountPct: 0.31, leveredIrr: 0.17 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const c = result.pipeline.find((p) => p.candidateId === 'cand-floors')!;
+    expect(c.basisDiscountPct).toBe(0.31);
+    expect(c.leveredIrr).toBe(0.17);
   });
 
   it('C3-tier-neg: PASS/KILLED tier never buyable regardless of composite', async () => {
