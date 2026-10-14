@@ -259,7 +259,7 @@ export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   const out: EffectiveSpec[] = [];
   for (const g of groups.values()) {
     const ordered = [...g].sort(
-      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || b.as_of.localeCompare(a.as_of) || b.report_date.localeCompare(a.report_date),
+      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || b.as_of.localeCompare(a.as_of) || b.report_date.localeCompare(a.report_date) || a.report_id.localeCompare(b.report_id) || String(a.value).localeCompare(String(b.value)),
     );
     const effective = ordered[0] as SpecFactT;
     const history = ordered.slice(1);

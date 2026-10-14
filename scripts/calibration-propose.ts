@@ -111,8 +111,17 @@ export function linesFromRegister(parsed: ParsedRegister, workbookName: string):
 /** Best PCA line for a quote: same property + component + unit; newest report, then largest quantity. */
 function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
   const hits = pca.filter((p) => p.propertyKey === q.propertyKey && p.component === q.component && p.unit === q.unit);
-  hits.sort((a, b) => b.reportDate.localeCompare(a.reportDate) || (b.qty ?? 0) - (a.qty ?? 0));
+  // Total order (register row order must never decide the unit-cost basis): newest report, largest qty, then stable keys.
+  hits.sort((a, b) => b.reportDate.localeCompare(a.reportDate) || (b.qty ?? 0) - (a.qty ?? 0) || a.reportId.localeCompare(b.reportId) || a.sourceFile.localeCompare(b.sourceFile) || a.unitCost - b.unitCost);
   return hits[0] ?? null;
+}
+
+/** Ledger rows that stand in for an unidentified / undated quote on the same scope: a real quote may replace one (promote --supersedes). */
+function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string {
+  const ids = ledger
+    .filter((o) => o.property.toLowerCase() === q.propertyLabel.toLowerCase() && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
+    .map((o) => o.obs_id);
+  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> so it is not counted twice.`;
 }
 
 export function proposePairs(
@@ -127,7 +136,9 @@ export function proposePairs(
   // Seed with rows already on file so a collapse against an earlier run is reported too, not only one within this run.
   const keptByKey = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [pairKey(o), o.obs_id]));
   const out: CalibrationProposal[] = [];
-  for (const q of quotes) {
+  // Deterministic order: when two quotes share an obs_id the live (non-superseded), newest, lowest-vendor one is kept, never input order.
+  const ordered = [...quotes].sort((a, b) => Number(a.superseded) - Number(b.superseded) || b.docDate.localeCompare(a.docDate) || a.vendor.localeCompare(b.vendor) || (a.totalUsd ?? 0) - (b.totalUsd ?? 0));
+  for (const q of ordered) {
     const p = pickPca(pca, q);
     if (!p) continue;
     const contractorUnit = q.totalUsd !== null && q.totalUsd > 0 && q.qty !== null && q.qty > 0 ? q.totalUsd / q.qty : null // a credit / $0 placeholder is not a price;
@@ -139,7 +150,7 @@ export function proposePairs(
       pca_source: { consultant: p.consultant, report_date: p.reportDate, source_file: p.sourceFile, source_date: p.reportDate, price_basis: 'PCA_CONSULTANT_ESTIMATE', status: p.status },
       contractor_unit_cost: contractorUnit === null ? null : Math.round(contractorUnit * 1e6) / 1e6,
       contractor_source: { vendor: q.vendor, doc_date: q.docDate, status: q.status, source_file: q.sourceFile, source_date: q.docDate, price_basis: q.isActual ? 'CONTRACTOR_ACTUAL' : 'CONTRACTOR_QUOTE' },
-      scope_note: `Auto-matched on property + component (${q.component}); PCA line ${p.reportId} qty ${p.qty ?? 'n/a'} ${p.unit}. Review scope equivalence before promoting.`,
+      scope_note: `Auto-matched on property + component (${q.component}); PCA line ${p.reportId} qty ${p.qty ?? 'n/a'} ${p.unit}. Review scope equivalence before promoting.${placeholderNote(existing.ledger, q)}`,
       include_in_stats: !q.superseded,
       exclusion_reason: q.superseded ? 'quote superseded by a later version' : null,
       proposed_at: today, proposed_from: proposedFrom,

@@ -248,6 +248,33 @@ describe('promotion: pending → observation', () => {
     expect(q.isActual).toBe(false);
   });
 
+  it('supersedes: promote can set it, refuses a target on a different property / component, and propose flags placeholder rows', () => {
+    const placeholder = obs({ obs_id: 'banwick:placeholder', property: '2800-2826 Banwick', component: 'roof_epdm', contractor_source: { ...obs().contractor_source, vendor: 'Unidentified roofer (low)', doc_date: '2026' } });
+    const other = obs({ obs_id: 'elsewhere:x', property: 'Elsewhere', component: 'roof_tpo' });
+    const prop = { ...proposal(), obs_id: 'banwick:real', property: '2800-2826 Banwick', component: 'roof_epdm' as const };
+    const ok = promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', 'banwick:placeholder');
+    expect(ok.promoted.supersedes).toBe('banwick:placeholder');
+    expect(aggregateByComponent(ok.ledger).find((g) => g.component === 'roof_epdm')!.n).toBe(1);
+    expect(() => promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', 'elsewhere:x')).toThrow(/different property/);
+    const pcaLine: PcaLine = { propertyKey: 'banwick', component: 'roof_epdm', unit: 'SF', unitCost: 6, qty: 24000, consultant: 'Intertek', reportDate: '2026-04-07', reportId: 'R01', status: 'CURRENT', sourceFile: 'f' };
+    const q: QuoteLine = { propertyKey: 'banwick', propertyLabel: '2800-2826 Banwick', component: 'roof_epdm', unit: 'SF', qty: 24000, totalUsd: 252000, isActual: false, vendor: 'Acme', docDate: '2026-05-12', status: 'BID', superseded: false, title: 't', sourceFile: 's' };
+    const [p] = proposePairs([pcaLine], [q], { ledger: [placeholder], pending: [] }, '2026-10-14', 't');
+    expect(p!.scope_note).toMatch(/--supersedes banwick:placeholder|--supersedes <obs_id>/);
+    expect(p!.scope_note).toContain('banwick:placeholder');
+  });
+
+  it('proposal output does not depend on input order: pickPca ties and same-obs_id quotes resolve deterministically', () => {
+    const a: PcaLine = { propertyKey: 'p', component: 'roof_tpo', unit: 'SF', unitCost: 12, qty: null, consultant: 'c', reportDate: '2025-03-01', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
+    const b: PcaLine = { ...a, unitCost: 4, reportId: 'R2', sourceFile: 'b' };
+    const mk = (over: Partial<QuoteLine>): QuoteLine => ({ propertyKey: 'p', propertyLabel: 'P', component: 'roof_tpo', unit: 'SF', qty: 1000, totalUsd: 9000, isActual: false, vendor: 'V', docDate: '2025-06-01', status: 'BID', superseded: false, title: 't', sourceFile: 's', ...over });
+    const run = (pca: PcaLine[], quotes: QuoteLine[]) => JSON.stringify(proposePairs(pca, quotes, { ledger: [], pending: [] }, '2026-10-14', 't'));
+    expect(run([a, b], [mk({})])).toBe(run([b, a], [mk({})]));
+    const sup = mk({ superseded: true, totalUsd: 5000 });
+    const live = mk({ totalUsd: 9000 });
+    expect(run([a], [sup, live])).toBe(run([a], [live, sup]));
+    expect(JSON.parse(run([a], [sup, live]))[0].include_in_stats).toBe(true); // the live quote wins
+  });
+
   it('refuses to promote when two pending proposals share an obs_id (never picks by array order)', () => {
     const a = proposal();
     const b = { ...proposal(), pca_unit_cost: (proposal().pca_unit_cost ?? 0) + 1 };
