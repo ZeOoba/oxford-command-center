@@ -9,7 +9,7 @@
 //      BUY gate must read). The indeterminate-floor T2 cap is already pinned in acquisition.test.ts (B5) —
 //      referenced there, not duplicated here.
 // Synthetic fixtures only: no candidate IDs, addresses or APNs.
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -47,13 +47,16 @@ const FROZEN: Record<string, unknown> = {
 const deal = (over: Record<string, unknown> = {}) => AcquisitionInput.parse({ ...FROZEN, ...over });
 const score = (d: AcquisitionInput) => scoreAcquisition(d, ratified, { now: NOW, rct: RCT });
 
-/** Governors as seeded by the normal migrations on a throwaway tmpdir DB — never hand-typed literals. */
+/** Governors as seeded by the normal migrations on a throwaway tmpdir DB — never hand-typed literals.
+ *  The tmpdir is removed afterwards: tests that leak mkdtemp warehouses fill the CI runner's disk. */
 function seededGovernorFingerprint(): string {
-  const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'acq-golden-')), 'test.sqlite'));
+  const dir = mkdtempSync(join(tmpdir(), 'acq-golden-'));
+  const db = openWarehouse(join(dir, 'test.sqlite'));
   try {
     return governorFingerprint(loadGovernors(db));
   } finally {
     db.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
