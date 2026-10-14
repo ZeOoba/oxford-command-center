@@ -95,6 +95,7 @@ describe('mergeDeals — the roster outranks a seed confidential:false (finding 
     );
     expect(out.find((d) => d.id === 's4')!.confidential).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('s4'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('s4: live row is confidential'));
   });
 
   it('fails closed when the roster is unreadable', () => {
@@ -179,6 +180,7 @@ describe('refute-pass fixes (2026-10-13)', () => {
   ] as const)('loadDeals degraded=%s still applies the roster override', (reason, makeFetch) => {
     it('forces a roster-claimed seed confidential', async () => {
       const savedToken = process.env.NOTION_TOKEN;
+      const savedDs = process.env.NOTION_DEALS_DATA_SOURCE;
       process.env.NOTION_TOKEN = 't';
       process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
       vi.stubGlobal('fetch', makeFetch());
@@ -193,6 +195,8 @@ describe('refute-pass fixes (2026-10-13)', () => {
       } finally {
         vi.unstubAllGlobals();
         delete process.env.NOTION_DEALS_DATA_SOURCE;
+        if (savedDs === undefined) delete process.env.NOTION_DEALS_DATA_SOURCE;
+        else process.env.NOTION_DEALS_DATA_SOURCE = savedDs;
         if (savedToken === undefined) delete process.env.NOTION_TOKEN;
         else process.env.NOTION_TOKEN = savedToken;
       }
