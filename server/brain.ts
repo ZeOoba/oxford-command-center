@@ -168,7 +168,10 @@ class Brain extends EventEmitter {
     const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(this.base.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
     if (preservedFrom === 'memory') console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
     else if (preservedFrom) console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
-    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks };
+    const overlaid = applyOverlay(this.base, this.overlay);
+    // Hard Invariant 3: base.deals were roster-checked at PARSE time; the roster may have claimed a
+    // deal since. Re-check on every re-derive so a UI write-back never re-serves/mirrors a stale flag.
+    const merged = { ...overlaid, deals: applyRosterOverride(overlaid.deals), quickbooks };
     // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
     // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
     // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
@@ -390,7 +393,11 @@ class Brain extends EventEmitter {
   }
 
   private loadFallback(): boolean {
-    if (this.snapshot) return true;
+    if (this.snapshot) {
+      // Warm path: adopted earlier, roster may have changed since (Hard Invariant 3).
+      this.snapshot = { ...this.snapshot, deals: applyRosterOverride(this.snapshot.deals) };
+      return true;
+    }
     if (!existsSync(SNAPSHOT_PATH)) return false;
     try {
       const stored = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
