@@ -239,6 +239,13 @@ describe('currencyAlerts', () => {
     expect(a[0]!.message).toContain('Muirkirk');
   });
 
+  it('names a RECENT report the register classed stale (excluded from totals, so it must be surfaced)', () => {
+    const recent = prop('banwick-x', 'Recent But Stale', brief({ reportDate: '2026-04-07', usabilityClass: 'stale' }));
+    const a = currencyAlerts([...adjusted.properties, recent], '2026-10-13', PCA_OVERLAY).filter((x) => x.propertyKey === '_stale');
+    expect(a).toHaveLength(1);
+    expect(a[0]!.message).toContain('Recent But Stale');
+  });
+
   it('moves the age boundary with the as-of date — no hardcoded "years left"', () => {
     const later = currencyAlerts(adjusted.properties, '2026-11-13', PCA_OVERLAY).filter((a) => a.kind === 'age').map((a) => a.propertyKey);
     expect(later).toEqual(expect.arrayContaining(['northwood', 'raytown']));

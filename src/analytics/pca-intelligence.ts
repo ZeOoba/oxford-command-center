@@ -262,23 +262,25 @@ export function currencyAlerts(
         message: `Report is a DRAFT${p.current.consultant ? ` (${p.current.consultant})` : ''} — final not on file`,
       });
     }
+    // Every STALE report is excluded from totals, so every one is named — including a recent report the register
+    // classed stale (usabilityClass) that the age test alone would never surface.
+    if (status === 'STALE') {
+      staleLabels.push(p.propertyLabel);
+      continue;
+    }
     const months = monthsSince(p.current.reportDate, asOf);
     if (months !== null && months > AGE_ALERT_MONTHS) {
-      if (status === 'STALE') {
-        staleLabels.push(p.propertyLabel);
-      } else {
-        alerts.push({
-          kind: 'age', severity: 'warn', propertyKey: p.propertyKey, propertyLabel: p.propertyLabel,
-          message: `Report is ${months} months old (> ${AGE_ALERT_MONTHS})`,
-        });
-      }
+      alerts.push({
+        kind: 'age', severity: 'warn', propertyKey: p.propertyKey, propertyLabel: p.propertyLabel,
+        message: `Report is ${months} months old (> ${AGE_ALERT_MONTHS})`,
+      });
     }
   }
   // STALE reports are already excluded from totals; one summary line instead of a row per report.
   if (staleLabels.length > 0) {
     alerts.push({
       kind: 'age', severity: 'info', propertyKey: '_stale', propertyLabel: `${staleLabels.length} stale reports`,
-      message: `Older than ${AGE_ALERT_MONTHS} months and dated pre-${STALE_BEFORE_YEAR} — install-date history only, excluded from totals: ${staleLabels.join('; ')}`,
+      message: `Stale (dated pre-${STALE_BEFORE_YEAR} or classed stale by the register) — install-date history only, excluded from totals: ${staleLabels.join('; ')}`,
     });
   }
   for (const r of overlay.rentRolls) {

@@ -89,9 +89,9 @@ export const parsePending = (raw: unknown): CalibrationProposal[] => z.array(Cal
 
 // ── derived values (never stored) ───────────────────────────────────────────────────────────
 
-/** contractor ÷ PCA unit cost; null unless both are present and the PCA cost is positive. */
+/** contractor ÷ PCA unit cost; null unless both are present and positive (a $0 quote is a placeholder, not a price). */
 export function ratio(o: Pick<CalibrationObservation, 'pca_unit_cost' | 'contractor_unit_cost'>): number | null {
-  if (o.pca_unit_cost === null || o.contractor_unit_cost === null || o.pca_unit_cost <= 0) return null;
+  if (o.pca_unit_cost === null || o.contractor_unit_cost === null || o.pca_unit_cost <= 0 || o.contractor_unit_cost <= 0) return null;
   return o.contractor_unit_cost / o.pca_unit_cost;
 }
 
