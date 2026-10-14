@@ -13,6 +13,7 @@
 import ExcelJS from 'exceljs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { parseRegister, resolveProperty, type ParsedRegister } from './import-pca-register';
 import { reportStatus } from '../src/analytics/pca-intelligence';
 import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
@@ -283,10 +284,17 @@ async function main(argv: string[]): Promise<number> {
   const costSegFacts = existsSync(costSegPath) ? parseCostSeg(JSON.parse(readFileSync(costSegPath, 'utf-8'))).facts : [];
   // Cost seg quantities are only ever OFFERED as a candidate qty on a pending proposal; a human promotes (or not).
   const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none'), costSegFacts);
-  const next = [...pending, ...proposals];
-  writeFileSync(PENDING_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
-  console.log(`calibration-propose: ${proposals.length} new proposal(s) -> ${PENDING_PATH} (${next.length} pending total). Ledger untouched.`);
-  for (const p of proposals) console.log(`  ${p.obs_id}`);
+  // Re-read both files right before writing: the loads above are async (workbook, Notion pagination) and a
+  // `calibration:promote` run in that window must not be undone by writing back the stale snapshot.
+  const fresh = readJson(PENDING_PATH, parsePending);
+  const taken = new Set([...readJson(LEDGER_PATH, parseLedger), ...fresh].map(pairKey));
+  const toAdd = proposals.filter((p) => !taken.has(pairKey(p)));
+  const next = [...fresh, ...toAdd];
+  const tmp = `${PENDING_PATH}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
+  renameSyncWithRetry(tmp, PENDING_PATH);
+  console.log(`calibration-propose: ${toAdd.length} new proposal(s) -> ${PENDING_PATH} (${next.length} pending total). Ledger untouched.`);
+  for (const p of toAdd) console.log(`  ${p.obs_id}`);
   return 0;
 }
 

@@ -473,7 +473,8 @@ export function hvacOwnershipRollup(facts: SpecFactT[]): CountRow[] {
 }
 
 export function sprinklerRollup(facts: SpecFactT[]): CountRow[] {
-  const NEGATED = /(?:\bno|\bnot|\bwithout|\bnone)\b[^.;]{0,40}(?:sprinkler|suppression)|unsprinklered|(?:sprinkler|suppression)[^.;]{0,40}\b(?:none|not (?:present|provided|installed|equipped))/;
+  // Negation must sit directly on the sprinkler noun ("no automatic sprinkler system"); "no deficiencies noted with the sprinkler system" is NOT a negation.
+  const NEGATED = /\b(?:no|not|without|none)\s+(?:(?:automatic|fire|wet|dry|any|fully|known|installed|present)\s+){0,3}(?:sprinkler|suppression)|unsprinklered|(?:sprinkler|suppression)[^.;]{0,40}\b(?:none(?! of)|not (?:present|provided|installed|equipped))/;
   return tally(
     ofAttr(facts, 'fire_life_safety', 'sprinklered').map((f) => {
       let key: string;
