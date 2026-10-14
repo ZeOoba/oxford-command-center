@@ -28,6 +28,7 @@ import {
   contractorStatus,
   fetchNotionLines,
   linesFromRegister,
+  notionComponent,
   notionQuote,
   proposePairs,
   type PcaLine,
@@ -278,6 +279,28 @@ describe('proposal matcher (read-only)', () => {
     expect(out).toHaveLength(1);
     expect(skipped).toHaveLength(1);
     expect(skipped[0]!.obsId).toContain('paving_overlay');
+  });
+
+  it('a negative or $0 contractor total (credit / placeholder) yields a null price, not a crash or a ratio', () => {
+    for (const totalUsd of [0, -500]) {
+      const [p] = proposePairs(pca, [quote({ totalUsd })], { ledger: [], pending: [] }, '2026-10-13', 't');
+      expect(p!.contractor_unit_cost).toBeNull();
+    }
+  });
+
+  it('reports a second scope that collapses against a row already on file from an earlier run', () => {
+    const two = [...pca, { ...pca[0]!, component: 'paving_overlay' as const, unit: 'SF' as const, reportId: 'R04b' }];
+    const [first] = proposePairs(two, [quote()], { ledger: [], pending: [] }, '2026-10-12', 't');
+    const skipped: Array<{ obsId: string; keptObsId: string }> = [];
+    const out = proposePairs(two, [quote({ component: 'paving_overlay', title: 'lot overlay (Walker)' })], { ledger: [], pending: [first!] }, '2026-10-13', 't', (d) => skipped.push(d));
+    expect(out).toHaveLength(0);
+    expect(skipped).toHaveLength(1);
+  });
+
+  it('a Notion component whose Usability says stale is STALE (not CURRENT), so it is excluded from stats', () => {
+    const rt = (v: string) => ({ type: 'rich_text', rich_text: [{ plain_text: v }] });
+    const props = { 'Report ID': rt('R09'), Property: rt('3875-3883 E Livingston'), System: rt('EPDM roof'), UOM: rt('SF'), 'Unit cost $/UOM': { type: 'number', number: 9 }, 'Report Date': rt('2025-03-01'), Usability: rt('Stale - superseded') } as never;
+    expect(notionComponent(props)!.status).toBe('STALE');
   });
 
   it('pairs on property + component and normalizes the contractor total to $/unit', () => {

@@ -14,7 +14,7 @@ import ExcelJS from 'exceljs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
-import { parseRegister, resolveProperty, type ParsedRegister } from './import-pca-register';
+import { classifyUsability, parseRegister, resolveProperty, type ParsedRegister } from './import-pca-register';
 import { reportStatus } from '../src/analytics/pca-intelligence';
 import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
 import {
@@ -124,12 +124,13 @@ export function proposePairs(
   onDuplicate: (skipped: { obsId: string; keptObsId: string }) => void = () => {},
 ): CalibrationProposal[] {
   const seen = new Set<string>([...existing.ledger, ...existing.pending].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
-  const keptByKey = new Map<string, string>();
+  // Seed with rows already on file so a collapse against an earlier run is reported too, not only one within this run.
+  const keptByKey = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [pairKey(o), o.obs_id]));
   const out: CalibrationProposal[] = [];
   for (const q of quotes) {
     const p = pickPca(pca, q);
     if (!p) continue;
-    const contractorUnit = q.totalUsd !== null && q.qty !== null && q.qty > 0 ? q.totalUsd / q.qty : null;
+    const contractorUnit = q.totalUsd !== null && q.totalUsd > 0 && q.qty !== null && q.qty > 0 ? q.totalUsd / q.qty : null // a credit / $0 placeholder is not a price;
     const proposal = CalibrationProposal.parse({
       obs_id: `${q.propertyKey}:${q.component}:${slugify(q.vendor)}:${q.docDate}`,
       property: q.propertyLabel, component: q.component, unit: q.unit,
@@ -220,7 +221,7 @@ export function notionComponent(props: Props): PcaLine | null {
   return {
     propertyKey: resolveProperty(label, new Set()).key, component, unit: unit as CalibrationUnit, unitCost: cost,
     qty: numOf(props, 'Qty'), consultant: txt(props, 'Consultant') ?? 'Unknown consultant',
-    reportDate, reportId, status: reportStatus({ usabilityClass: /draft/i.test(txt(props, 'Usability') ?? '') ? 'draft' : 'unknown', reportDate }),
+    reportDate, reportId, status: reportStatus({ usabilityClass: classifyUsability(txt(props, 'Usability')), reportDate }),
     sourceFile: `Notion Components > ${reportId} ${system}`,
   };
 }
