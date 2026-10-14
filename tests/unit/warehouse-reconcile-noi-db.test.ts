@@ -70,6 +70,7 @@ const prop = (
   id: string,
   noi: number,
   type: 'Industrial' | 'Residence' = 'Industrial',
+  oxfordOwnPct = 1,
 ): PortfolioSnapshot['properties'][number] =>
   ({
     id,
@@ -84,7 +85,7 @@ const prop = (
     occPct: 1,
     acqDate: null,
     estValue100: 1000000,
-    oxfordOwnPct: 1,
+    oxfordOwnPct,
     oxfordValue: 1000000,
     grossIncome: noi + 5000,
     expenses: 5000,
@@ -107,8 +108,16 @@ const prop = (
     index: null,
   } as unknown as PortfolioSnapshot['properties'][number]);
 
-const snapshot = (properties: PortfolioSnapshot['properties']): PortfolioSnapshot =>
-  ({ properties } as unknown as PortfolioSnapshot);
+const snapshot = (
+  properties: PortfolioSnapshot['properties'],
+  leases: ReadonlyArray<Record<string, unknown>> = [],
+): PortfolioSnapshot =>
+  ({ properties, leases } as unknown as PortfolioSnapshot);
+
+// Minimal current-in-force lease that started inside the 2025 comparison period (OI-137 tenancy signal).
+const recentLease = (propertyId: string, annualRent: number): Record<string, unknown> => ({
+  propertyId, leaseStart: '2025-06-01', status: 'Active', annualRent,
+});
 
 describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B warehouse)', () => {
   it('match: workbook Oxford-share NOI equal to warehouse oxfordNoi → status match', async () => {
@@ -275,5 +284,66 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
     expect(rarig.status).toBe('match');
     expect(rb.status).toBe('match');
     expect(mystery.status).toBe('missing-from-warehouse');
+  });
+
+  // OI-137 structural-mismatch basis mix: Lease.annualRent is 100%-basis, while the NOI delta is
+  // Oxford-share. The "half the delta" tenancy bar must compare like with like.
+  it('JV basis mix: 50%-owned property — recent rent is scaled to Oxford share before the half-delta bar', async () => {
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
+    const rbId = '9050-red-branch-rd-columbia-md';
+    // Warehouse oxfordNoi = 47500. Workbook 147500 → delta 100000 (large-drift). Half-delta bar = 50000.
+    // Lease rent 70000 is 100%-basis: raw 70000 >= 50000 (old, wrong clear) but Oxford share is
+    // 35000 < 50000 → must stay a gating large-drift error.
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop(rbId, 147500, 'Industrial', 0.5)], [recentLease(rbId, 70000)]),
+    );
+    const r = rows.find((row) => row.propertyId === rbId)!;
+    expect(r.delta).toBe(100000);
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('JV basis mix: 50%-owned property — Oxford-share rent that DOES clear the bar still downgrades', async () => {
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
+    const rbId = '9050-red-branch-rd-columbia-md';
+    // Share = 0.5 * 120000 = 60000 >= 50000 → structural-mismatch downgrade preserved.
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop(rbId, 147500, 'Industrial', 0.5)], [recentLease(rbId, 120000)]),
+    );
+    const r = rows.find((row) => row.propertyId === rbId)!;
+    expect(r.status).toBe('structural-mismatch');
+    expect(r.severity).toBe('warn');
+  });
+
+  it('JV basis mix control: wholly-owned property is unchanged (rent 70000 vs bar 50000 still downgrades)', async () => {
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
+    const id = '1100-rarig-ave-columbus-oh';
+    // Warehouse oxfordNoi = 95000. Workbook 195000 → delta 100000; ownership 1 → no scaling.
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop(id, 195000)], [recentLease(id, 70000)]),
+    );
+    const r = rows.find((row) => row.propertyId === id)!;
+    expect(r.status).toBe('structural-mismatch');
+  });
+
+  it('JV basis mix: out-of-range ownership (malformed "50%" cell parsed as 50) falls back to no scaling and cannot loosen the gate', async () => {
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
+    const id = '1100-rarig-ave-columbus-oh';
+    // Warehouse oxfordNoi 95000; workbook 195000 → delta 100000, bar 50000. Rent 40000 < bar at share 1
+    // (legacy) → large-drift. Unclamped, 40000 x 50 = 2,000,000 would clear the bar and downgrade it.
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop(id, 195000, 'Industrial', 50)], [recentLease(id, 40000)]),
+    );
+    const r = rows.find((row) => row.propertyId === id)!;
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
   });
 });
