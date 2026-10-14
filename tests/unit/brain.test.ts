@@ -259,6 +259,20 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
  * Breach intact, alarm gone. That also means H2's gate cannot fire on this path unless M1 is fixed
  * with it — they are one change, not two.
  */
+describe('Brain.persist — confidential-roster mirror guard', () => {
+  const rosterFlag = { entity: 'deals', field: 'confidential-roster', issue: 'roster unavailable', severity: 'error' };
+
+  it('declines the mirror write on the roster-unavailable flag, but keeps serving', async () => {
+    h.base = { ...makeBase(), dataQuality: [rosterFlag] };
+
+    const state = await brain.refresh();
+
+    expect(state.status).toBe('fresh');
+    expect(brain.getSnapshot()).not.toBeNull();
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+});
+
 describe('Brain.persist — H2/M1: reconciliation gate on the third writer', () => {
   const reconErr = { entity: 'reconciliation', field: 'cash.totalCash', issue: 'total ≠ Σ entities', severity: 'error' };
   const reconWarn = { entity: 'reconciliation', field: 'leases.annualRent', issue: 'Σ annual ≠ Σ(monthly×12)', severity: 'warn' };
