@@ -81,9 +81,9 @@ export function reportStatus(b: Pick<PcaReportBrief, 'usabilityClass' | 'reportD
   const y = b.reportDate === null ? null : ymOf(b.reportDate)?.y ?? null;
   if (y !== null && y < STALE_BEFORE_YEAR) return 'STALE';
   if (b.usabilityClass === 'stale') return 'STALE';
-  if (b.usabilityClass === 'draft') return 'DRAFT';
-  // An undated report cannot be shown to be 2024 or later, so it cannot feed totals (matches the calibration loaders and the lifecycle filter).
+  // An undated report (draft or not) cannot be shown to be 2024 or later, so it cannot feed totals (matches the calibration loaders and the lifecycle filter).
   if (y === null) return 'STALE';
+  if (b.usabilityClass === 'draft') return 'DRAFT';
   return 'CURRENT';
 }
 
