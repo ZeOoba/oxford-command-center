@@ -41,6 +41,12 @@ import type { DebtScore } from '../../src/contracts/debt';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { _projectUnleveredReturn, PROJECTION_ASSUMPTIONS } from '../../server/warehouse/capital-allocation';
+import { governorFingerprint, persistAndLogScore } from '../../server/warehouse/acq-engine';
+import { loadGovernors } from '../../server/warehouse/governors';
+import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const mockGetMacro = vi.mocked(getMacro);
 const mockScoreProperties = vi.mocked(scoreProperties);
@@ -66,6 +72,8 @@ function seedCandidate(
     verdict?: 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED';
     governorDscrCleared?: 0 | 1 | null;
     governorLtvCleared?: 0 | 1 | null;
+    /** score_json.governorRegime stamp; defaults to the CURRENT regime. `null` = legacy row (no stamp). */
+    governorRegime?: string | null;
   },
 ): void {
   const now = '2026-06-21T00:00:00Z';
@@ -81,7 +89,9 @@ function seedCandidate(
       .get(opts.id, inputsVersion) as { id: number }
   ).id;
   // score_json is a stringified AcquisitionScore: basis discount and levered IRR live in floors[].actual.
+  const regime = opts.governorRegime === undefined ? governorFingerprint(loadGovernors(db)) : opts.governorRegime;
   const scoreJson = JSON.stringify({
+    ...(regime === null ? {} : { governorRegime: regime }),
     floors: [
       { id: 'basis', passed: true, actual: opts.basisDiscountPct ?? null, required: 0.25, detail: '' },
       { id: 'yield', passed: true, actual: null, required: 0.08, detail: '' },
@@ -667,6 +677,160 @@ describe('buildPortfolioAllocation', () => {
     expect(buyVerdict.inputs.noiPerSf).toBeNull();
     expect(buyVerdict.expectedReturnPct).toBeNull(); // C-4 deferred
     expect(buyVerdict.reasons.some((r) => /not applicable/i.test(r))).toBe(true);
+  });
+});
+
+describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202-de8)', () => {
+  const ratifiedJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'));
+  const RULESET = parseRuleset(ratifiedJson);
+  const RCT = loadRatifiedRct();
+  // Strong deal: DSCR proxy = 0.12 / (0.40 x 0.085) = 3.53 -> clears dscr_floor 1.25, fails 4.0.
+  const STRONG = AcquisitionInput.parse({
+    dealId: 'stale-strong', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
+    productType: 'shallow-bay-multi', officePct: 0.1, clearHeightFt: 28, hasDriveIn: true, hasDock: true,
+    dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
+    constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false, allInBasis: 3_600_000,
+    stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
+    sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5,
+    valueAddScore: 0.5, ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
+  });
+
+  function addConfigVersion(db: WarehouseDb, version: number, dscrFloor: number): void {
+    db.prepare(`INSERT INTO capital_config
+      (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate, acq_irr,
+       capex_irr, refi_trigger_bps, payout_pct, notes)
+      SELECT ?, '2026-10-13', ?, ltv_ceiling, disposition_cap_rate, hold_cap_rate, acq_irr, capex_irr,
+             refi_trigger_bps, payout_pct, 'test regime change'
+      FROM capital_config WHERE version = 1`).run(version, dscrFloor);
+  }
+
+  async function scoreReal(db: WarehouseDb, id: string): Promise<void> {
+    db.prepare(`INSERT OR IGNORE INTO acq_candidates (id, source, market, status) VALUES (?, 'manual', 'owned-submarket', 'active')`).run(id);
+    await persistAndLogScore(db, id, STRONG, RULESET, RCT);
+  }
+
+  beforeEach(() => {
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+  });
+
+  it('control: a strong candidate scored under the CURRENT governors still emits BUY', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-fresh');
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.actionCounts.buy).toBe(1);
+  });
+
+  it('REPRO: score under v1 (dscr 1.25), raise dscr_floor to 4.0 (proxy now fails), no re-score -> NO buy', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-stale');
+    addConfigVersion(db, 2, 4.0);
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('fail-closed by regime, not value: a looser-or-equal-passing v2 floor (1.30) still blocks until re-scored', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-stale-pass');
+    addConfigVersion(db, 2, 1.3);
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+    // Re-score under v2: new inputs_version row becomes the latest and is current -> BUY returns.
+    await scoreReal(db, 'cand-stale-pass');
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(1);
+  });
+
+  it('re-score under the raised floor demotes the verdict (governor fails) -> still no buy', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-rescored-fail');
+    addConfigVersion(db, 2, 4.0);
+    await scoreReal(db, 'cand-rescored-fail');
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+  });
+
+  it('legacy row with no governorRegime stamp is BUY-ineligible until re-scored', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-legacy', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorRegime: null });
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+  });
+
+  it('re-score of UNCHANGED inputs backfills a missing stamp (legacy post-#213 row under the current regime)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-backfill');
+    db.prepare(`UPDATE acq_scores SET score_json = json_remove(score_json, '$.governorRegime') WHERE candidate_id = ?`).run('cand-backfill');
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+    await scoreReal(db, 'cand-backfill'); // same inputs + regime => same inputs_version => INSERT OR IGNORE no-op
+    expect(db.prepare('SELECT COUNT(*) AS n FROM acq_scores WHERE candidate_id = ?').get('cand-backfill')).toEqual({ n: 1 });
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(1);
+  });
+
+  it('backfill never overwrites an existing (older-regime) stamp', async () => {
+    const db = freshDb();
+    await scoreReal(db, 'cand-keep');
+    db.prepare(`UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', '0:old') WHERE candidate_id = ?`).run('cand-keep');
+    await scoreReal(db, 'cand-keep');
+    const row = db.prepare(`SELECT json_extract(score_json, '$.governorRegime') AS r FROM acq_scores WHERE candidate_id = ?`).get('cand-keep') as { r: string };
+    expect(row.r).toBe('0:old');
+  });
+
+  it('backfill refuses to stamp a drifted row (stored composite != freshly computed) — BUY stays withheld', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-drift');
+    db.prepare(`UPDATE acq_scores SET composite = composite + 5, score_json = json_remove(score_json, '$.governorRegime') WHERE candidate_id = ?`).run('cand-drift');
+    await scoreReal(db, 'cand-drift');
+    const row = db.prepare(`SELECT json_extract(score_json, '$.governorRegime') AS r FROM acq_scores WHERE candidate_id = ?`).get('cand-drift') as { r: string | null };
+    expect(row.r).toBeNull();
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+  });
+
+  it('stale disclosure includes a governor-demoted PASS (old regime) with T1 tier', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-old-demoted', composite: 85, tier: 'T1', basisDiscountPct: 0.3, verdict: 'PASS', governorDscrCleared: 0, governorRegime: '0:1.25:0.4:0.085' });
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.dataQuality.find((f) => f.field === 'governorRegime')?.issue).toMatch(/cand-old-demoted/);
+  });
+
+  it('all would-be-buyable candidates stale => no BUY but portfolio-level dataQuality warn names them', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-all-stale', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorRegime: '0:1.25:0.4:0.085' });
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.actionCounts.buy).toBe(0);
+    const flag = result.dataQuality.find((f) => f.field === 'governorRegime');
+    expect(flag?.severity).toBe('warn');
+    expect(flag?.issue).toMatch(/cand-all-stale/);
+  });
+
+  it('stale disclosure excludes candidates that fail BUY anyway (basis floor, governor already failed, below composite floor)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    const old = '0:1.25:0.4:0.085';
+    seedCandidate(db, { id: 'cand-thin', composite: 90, tier: 'T1', basisDiscountPct: 0.02, governorRegime: old });
+    seedCandidate(db, { id: 'cand-govfail', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorDscrCleared: 0, governorRegime: old });
+    seedCandidate(db, { id: 'cand-lowcomp', composite: 50, tier: 'T1', basisDiscountPct: 0.3, governorRegime: old });
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.dataQuality).toEqual([]);
+  });
+
+  it('a stale top-ranked candidate is skipped for the next fresh one, and the portfolio dataQuality discloses the exclusion', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-top-stale', composite: 95, tier: 'T1', basisDiscountPct: 0.3, governorRegime: '0:1.25:0.4:0.085' });
+    seedCandidate(db, { id: 'cand-next-fresh', composite: 80, tier: 'T2', basisDiscountPct: 0.3 });
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    const buy = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buy.propertyId).toBe('pipeline:cand-next-fresh');
+    expect(buy.dataQuality.find((f) => f.field === 'governorRegime')).toBeUndefined(); // single home: portfolio-level
+    const flag = result.dataQuality.find((f) => f.field === 'governorRegime');
+    expect(flag?.severity).toBe('warn');
+    expect(flag?.issue).toMatch(/cand-top-stale/);
   });
 });
 
