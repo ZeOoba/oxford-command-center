@@ -295,8 +295,8 @@ describe('overlay content', () => {
     expect(INFO_LANE_DETAIL.immediateItems.reduce((a, i) => a + i.usd, 0)).toBe(1100);
   });
 
-  it('loads exactly the 8 open issues, status Open, owner blank', () => {
-    expect(PCA_ISSUES).toHaveLength(8);
+  it('loads exactly the 9 open issues, status Open, owner blank', () => {
+    expect(PCA_ISSUES).toHaveLength(9);
     for (const i of PCA_ISSUES) {
       expect(i.status).toBe('Open');
       expect(i.owner).toBe('');

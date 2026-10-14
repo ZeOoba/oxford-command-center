@@ -56,6 +56,13 @@ the PCR was available, it was read. Every divergence is listed. "Applied" = how 
 | 30 | R15 survey date | 2013-08 | 2013-08-02 | Report prints both 08/01/13 and 8/2/13 | 2013-08-02 used, conflict noted. |
 | 31 | R07 F.A. Taylor roof inspection | n/a | Register: "F.A. Taylor roof inspection 2025-11-20, 1988 metal roof FAIR, 37 yrs, budget TPO retrofit" | **Not in the 15-page PCI PDF** (the SDAT printout on p.7 gives year built 1988) | No F.A. Taylor facts extracted; the register note stands unverified. |
 | 32 | R12 9050 Red Branch roof area | n/a | Register "Roof 90,000 SF" | Printed only as the RR-4 table quantity ($5.00/SF = $450,000); gross building area 89,609 SF | Roof area 90,000 recorded from the table with the source noted. Roof install 2007 is DERIVED (2015 minus "approximately eight years"). |
+| 33 | Cost seg - OCR digit error (Northwood) | Seed: CMU wall per building 19,368 SF | n/a | Fresh rotated OCR: quantity list reads 720 LF / **10,368 SF** (= 720 LF x 14.4 ft exactly) | Corrected to 10,368 in the data with a note; regression test added. |
+| 34 | Cost seg - provenance (4 facts) | n/a | n/a | Land allocation (Broadway $1,232,257, Northwood $840,988) and Livingston proposal basis ($649,900) / land ($320,100) are printed in the proposal / contract, not the study the seed cited | `source_file` re-pointed to the proposal / contract; note added. |
+| 35 | Broadway GBA (**new - not in D1-D14**) | n/a | PCA register SF 26,609 (PCI 2015, STALE) | Cost seg gross building area 27,671 SF (**+4.0%**) | Shown as "differs" in the quantity cross-check; confirm survey SF. |
+| 36 | Livingston paving (**new**) | n/a | AEI PCA 35,200 SF (p.18) | Cost seg asphalt 33,778 SF (**-4.0%**) | Shown as "differs". |
+| 37 | Livingston GBA (D1) | n/a | AEI / register 10,950 SF | Cost seg 11,280 SF (**+3.0%**); PCA intensity 0.80 -> 0.78 on 11,280 SF | Confirmed; noted, not applied (no reserve is adjusted). |
+| 38 | Livingston roof (D2) | PCA $28,800 / Able $29,313 unscoped | AEI roof sections 3,000 / 6,500 / 2,400 / 100 SF (p.35, cut by building use) | Cost seg: 3883 aluminum panel 6,078 + asphalt shingle 2,962 (= 9,040); 3875 EPDM 2,240 | The two cuts are not the same surfaces, so the roof rows are marked "scope differs - not compared"; no surface is linked to any price. (An earlier cut of the cross-check compared them and produced spurious matches - fixed.) |
+| 39 | Northwood GBA / roof | n/a | R05 p.9: 18,000 (A and B each) + 17,700 (C, 2203 Marvel Rd) = 53,700 | Cost seg GBA 53,700 (matches); modeled roof 18,000 x 3 = 54,000 | GBA matches; per-building roof is modeled uniform (DERIVED). The study's address is "2203 Marvel Rd & 2205-2207 Northwood Dr" while the PCA register keys the property as 2203-2207 Northwood. |
 
 ## Extraction coverage (R01-R17, plus R11b)
 
@@ -99,6 +106,25 @@ Known limits: the extractions are summary-grade for photo pages and appendices; 
 compares by attribute across scopes (flags are candidates for review, not corrections). R17 (Foust) covers 8 properties under one key
 (`sepich-portfolio`) with `scope` naming the building group, so it has no per-property cross-vintage diff.
 
+## Cost segregation studies (module 10) - coverage and verification
+
+Seed: `2026-10-13_CostSeg_Property_Facts_v01_1.json` (identical in content to v01: 222 facts, 6 studies, 14 discrepancies, 12 QC checks; the v02 / v02_1 prompt and report files are also identical to each other). Loaded as `data/cost-seg/cost-seg.json` on its own price basis (`COST_SEG_MODELED_RSMEANS_M&S`).
+
+| Study | Status | Facts | DERIVED | OCR | site | structure | envelope | roof | doors | dock | hvac | plumbing | electrical | fire_life_safety | paving | elevator | tenants | tenant | acquisition | basis | modeled_cost_allocation | Note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CS-RAR | READ | 43 | 1 | 1 | 14 | 4 | 2 | 1 | 3 | 0 | 2 | 5 | 2 | 0 | 2 | 0 | 0 | 0 | 3 | 0 | 0 | 60-pp study; 22 of 94 PDF pages have no text (maps / county record); membrane type not stated |
+| CS-BWY | READ | 40 | 2 | 0 | 16 | 4 | 3 | 5 | 0 | 0 | 2 | 0 | 1 | 2 | 1 | 2 | 1 | 0 | 2 | 1 | 0 | 78 pp read; Excel detail (FinalReportDataDetail) present |
+| CS-RDB | READ | 39 | 1 | 0 | 14 | 3 | 4 | 5 | 2 | 3 | 2 | 0 | 1 | 2 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 86 pp read; Excel detail present |
+| CS-LIV | READ | 40 | 1 | 0 | 17 | 2 | 5 | 5 | 1 | 0 | 3 | 1 | 0 | 1 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 79 pp read; Excel detail present; roof is three surfaces |
+| CS-NWD | PARTIAL (OCR) | 28 | 5 | 28 | 11 | 2 | 1 | 2 | 2 | 0 | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 0 | 2 | 1 | 0 | scan, 129 pp, no text layer: seed OCR'd pp.1-93; re-OCR'd in full (rotated) for verification; door counts and per-building roof area back-solved (DERIVED) |
+| CS-FIS | PARTIAL (dollars only) | 32 | 0 | 0 | 7 | 1 | 0 | 1 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 18 | CSSI gives dollars only (18 modeled allocation lines, no quantities); building description is from the owner's property notes, not the study |
+
+**Re-verification against the underlying studies** (all six PDFs under `OneDrive\Business`, converted with `pdftotext`; Northwood re-OCR'd with `ocrmypdf --rotate-pages`; Fishel notes read from the .docx):
+- **Allocations:** every study total and every class split (5/7/15/39-yr, ADS 9-yr) appears in its study text - Rarig, Broadway, Red Branch, Northwood (incl. $2,936 ADS 9-yr), Livingston, Fishel. Livingston's 5/15/39-yr splits are printed in the study itself (the report says they come from the tax register; both agree), so the basis note was corrected.
+- **Facts:** 174 numeric, non-derived facts were checked for presence in their source text (years excluded); **169 were found as seeded**. The 5 misses were each traced: four cited the study but the value is in the proposal / contract (Broadway land allocation $1,232,257; Northwood $840,988; Livingston $649,900 and $320,100 - each confirmed in the proposal and **re-pointed in the data**), and one was an OCR digit error (Northwood CMU wall, below). After correction all 174 verify (170 in the study text + the 4 in their proposals). Acquisition-price arithmetic ties (e.g. 3,559,012 + 840,988 = 4,400,000).
+- **Not independently re-verifiable:** the Fishel generator / HVAC / PIS items (D10), tenant lists (as-of-study history only), and the four tax-register-sourced PIS dates (read from the register, per instruction).
+
+
 ## Decisions / behavior changes for you
 
 1. **KPI dollar totals, the near-term rollup, the reserve-intensity chart and the "Consultant lifecycle" card now exclude STALE (pre-2024) reports.**
@@ -112,7 +138,8 @@ compares by attribute across scopes (flags are candidates for review, not correc
    internal property-condition data on a URL; the deployed mirror also has no live warehouse, so the register / schedule / quotes views would show the offline card
    (calibration, Building specs and the 29000 drill-down are static data and would render). Say the word and which target to use.
 4. `package.json` (architect-owned) gained two scripts - `calibration:propose`, `calibration:promote` - flagged in `architecture/status.json`.
-5. Open-issue status/owner are display defaults (Open / unassigned) - no write path (no Notion writes). `resolved_since` on findings is recorded by adding rows to
+5. **Cost seg is its own basis, informational only.** Its quantities can reach `calibration_pending` as a candidate `qty` (flagged `COST_SEG_MODELED`) but never `observations.json` without an explicit promotion; nothing in module 10 touches reserves, the rollup, intensity or calibration statistics. The bridge found nothing to fill today (the one pending proposal already has a stated quantity, and Livingston's roof is ambiguous).
+6. Open-issue status/owner are display defaults (Open / unassigned) - no write path (no Notion writes). `resolved_since` on findings is recorded by adding rows to
    `data/building-specs/resolutions.json`.
 
 ## Not done / out of scope

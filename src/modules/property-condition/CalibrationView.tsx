@@ -76,6 +76,7 @@ function ComponentPanel({ agg }: { agg: ComponentAggregate }) {
         <TierBadge tier={agg.tier} />
         <span className="num text-2xs" style={muted}>n={agg.n}{agg.excluded > 0 ? ` (+${agg.excluded} excluded)` : ''}</span>
         {agg.directionalOnly && <span className="text-2xs" style={{ color: 'var(--text-warn)' }}>directional only</span>}
+        {agg.costSegQtyN > 0 && <span className="text-2xs" style={{ color: 'var(--text-warn)' }}>{agg.costSegQtyN} on a cost-seg-modeled quantity</span>}
       </div>
       {agg.n > 0 ? (
         <>
@@ -100,7 +101,7 @@ function LedgerRow({ o, tier }: { o: CalibrationObservation; tier: ConfidenceTie
     <tr style={{ borderTop: '1px solid var(--border-subtle)', opacity: why ? 0.6 : 1, verticalAlign: 'top' }}>
       <td className="px-3 py-2 text-xs">
         <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.property}</div>
-        <div className="text-2xs" style={muted}>{label(o.component)} · {o.qty === null ? 'qty n/a' : `${o.qty.toLocaleString('en-US')} ${o.unit}`}</div>
+        <div className="text-2xs" style={muted}>{label(o.component)} · {o.qty === null ? 'qty n/a' : `${o.qty.toLocaleString('en-US')} ${o.unit}`}{o.qty_source === 'COST_SEG_MODELED' ? ' · qty: cost seg modeled' : ''}</div>
       </td>
       <td className="num px-3 py-2 text-right text-xs">
         {o.pca_unit_cost === null ? 'n/a' : `${fmtPsf(o.pca_unit_cost)}/${o.unit}`}

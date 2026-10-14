@@ -62,6 +62,8 @@ export const CalibrationObservation = z
     unit: CalibrationUnit,
     /** Quantity of the CONTRACTOR-priced scope. Null = not in any source → excluded from stats. */
     qty: z.number().finite().positive().nullable(),
+    /** STATED = from a PCA / quote / workbook; COST_SEG_MODELED = a cost seg takeoff a human confirmed at promotion. */
+    qty_source: z.enum(['STATED', 'COST_SEG_MODELED']).default('STATED'),
     pca_unit_cost: unitCost,
     pca_source: PcaSource,
     contractor_unit_cost: unitCost,
@@ -139,6 +141,8 @@ export interface CalibrationPoint {
   ratio: number;
   variancePct: number;
   contractorStatus: ContractorStatus;
+  /** COST_SEG_MODELED = the quantity behind this row is a cost seg takeoff a person confirmed at promotion. */
+  qtySource: 'STATED' | 'COST_SEG_MODELED';
 }
 
 export interface ComponentAggregate {
@@ -155,6 +159,8 @@ export interface ComponentAggregate {
   /** Shown only when n ≥ 5; otherwise null — a mean of 2 or 3 points is not a statistic. */
   meanRatio: number | null;
   points: CalibrationPoint[];
+  /** How many counted points rest on a cost-seg-modeled quantity (promoted by a person, but flagged). */
+  costSegQtyN: number;
 }
 
 /** Per-component aggregates, in the enum's order. Components with no rows at all are omitted. */
@@ -170,6 +176,7 @@ export function aggregateByComponent(ledger: CalibrationObservation[]): Componen
       ratio: ratio(o) as number,
       variancePct: variancePct(o) as number,
       contractorStatus: o.contractor_source.status,
+      qtySource: o.qty_source,
     }));
     const ratios = points.map((p) => p.ratio);
     const n = ratios.length;
@@ -185,6 +192,7 @@ export function aggregateByComponent(ledger: CalibrationObservation[]): Componen
       maxRatio: n ? Math.max(...ratios) : null,
       meanRatio: n >= MEAN_MIN_N ? ratios.reduce((a, b) => a + b, 0) / n : null,
       points,
+      costSegQtyN: points.filter((p) => p.qtySource === 'COST_SEG_MODELED').length,
     });
   }
   return out;
