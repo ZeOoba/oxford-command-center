@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { redactConfidential, refuseBakeOnRosterScan } from '../../scripts/bake-mirror';
+import { redactConfidential, refuseBakeOnRosterScan, writeSnapshotPayload } from '../../scripts/bake-mirror';
 
 // Refute wf_d42a89c6-fe5 on PR #457: redactConfidential is flag- and name-only, so text that names an
 // ACTIVE roster deal by an `always` term (an address, say) while the Notion deal NAME differs
@@ -107,5 +107,37 @@ describe('redaction + roster scan together (the PR #457 refute scenario)', () =>
     const { snapshot } = redactConfidential(snap());
     expect(snapshot.tasks).toHaveLength(1); // documents the residual the scan closes
     expect(refuseBakeOnRosterScan(snapshot)).not.toBeNull();
+  });
+});
+
+describe('context term split between a key and a value (review round 3, C1b)', () => {
+  it('refuses when the anchor is a value and a quote-bearing context term is only a key', () => {
+    useRoster(JSON.stringify({ k: { label: 'K', active: true, context: ['x"y'], context_requires_any: ['anchorq'] } }));
+    expect(refuseBakeOnRosterScan({ v: 'anchorq', m: { 'x"y': 1 } })).not.toBeNull();
+    expect(refuseBakeOnRosterScan({ anchorq: 'x"y' })).not.toBeNull();
+    expect(refuseBakeOnRosterScan({ v: 'unrelated', m: { 'x"y': 1 } })).toBeNull(); // no anchor, no hit
+  });
+});
+
+describe('writeSnapshotPayload — the snapshot.json publication boundary (round 3, C4)', () => {
+  const leaky = { tasks: [{ label: 'Send PSA redline for 9900 Quarry' }] };
+  const out = () => join(dir, 'snapshot.json');
+
+  it('writes a clean payload', () => {
+    writeSnapshotPayload({ tasks: [] }, false, dir);
+    expect(existsSync(out())).toBe(true);
+  });
+  it('throws and writes NOTHING for a redacted payload carrying a roster term', () => {
+    expect(() => writeSnapshotPayload(leaky, false, dir)).toThrow(/roster/i);
+    expect(existsSync(out())).toBe(false);
+  });
+  it('leaves the previous snapshot.json in place on refusal', () => {
+    writeSnapshotPayload({ tasks: [] }, false, dir);
+    expect(() => writeSnapshotPayload(leaky, false, dir)).toThrow();
+    expect(existsSync(out())).toBe(true);
+  });
+  it('FULL (Access-gated) mode is unchanged', () => {
+    writeSnapshotPayload(leaky, true, dir);
+    expect(existsSync(out())).toBe(true);
   });
 });

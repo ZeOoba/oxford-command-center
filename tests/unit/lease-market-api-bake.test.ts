@@ -245,7 +245,7 @@ describe('bakeWarehouseJson — checkpoint-read path respects includeConfidentia
     else rmSync(warehouseJsonPath, { force: true });
   });
 
-  async function bakeAgainstFixtureDb(includeConfidential: boolean | undefined): Promise<Record<string, unknown>> {
+  async function bakeAgainstFixtureDb(includeConfidential: boolean | undefined, rosterTerm?: string): Promise<Record<string, unknown>> {
     const dbDir = mkdtempSync(join(tmpdir(), 'lm-bake-orch-db-'));
     openDirs.push(dbDir);
     const dbPath = join(dbDir, 't.sqlite');
@@ -266,7 +266,21 @@ describe('bakeWarehouseJson — checkpoint-read path respects includeConfidentia
     // deterministically forcing the checkpoint-read branch — the one the bug lived in.
     process.env.BRAIN_BAKE_SOURCE_URL = 'http://127.0.0.1:1';
 
-    const result = await bakeWarehouseJson({ now: Date.parse('2026-03-02T00:00:00.000Z'), includeConfidential });
+    const prevRoster = process.env.CONFIDENTIAL_TERMS_PATH;
+    if (rosterTerm) {
+      const rp = join(dbDir, 'roster.json');
+      writeFileSync(rp, JSON.stringify({ t: { label: 'T', active: true, always: [rosterTerm] } }));
+      process.env.CONFIDENTIAL_TERMS_PATH = rp;
+    }
+    let result;
+    try {
+      result = await bakeWarehouseJson({ now: Date.parse('2026-03-02T00:00:00.000Z'), includeConfidential });
+    } finally {
+      if (rosterTerm) {
+        if (prevRoster === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+        else process.env.CONFIDENTIAL_TERMS_PATH = prevRoster;
+      }
+    }
     expect(result.warehouseSource).toBe('checkpoint-read');
     const written = JSON.parse(readFileSync(result.path, 'utf8')) as { endpoints: Record<string, unknown> };
     return written.endpoints;
@@ -286,6 +300,19 @@ describe('bakeWarehouseJson — checkpoint-read path respects includeConfidentia
     const endpoints = await bakeAgainstFixtureDb(false);
     const leaseMarketKeys = Object.keys(endpoints).filter((k) => k.startsWith('/api/warehouse/lease-market/'));
     expect(leaseMarketKeys).toEqual([]);
+  });
+
+  // Review round 3, C4: the roster boundary inside bakeWarehouseJson itself, not just the extracted
+  // helper. Every envelope carries `/api/warehouse/` route keys, so a roster term of that text must trip it.
+  it('redacted mode: a roster term anywhere in the envelope makes the orchestrator throw and leaves no warehouse.json', async () => {
+    rmSync(warehouseJsonPath, { force: true });
+    await expect(bakeAgainstFixtureDb(false, 'api/warehouse')).rejects.toThrow(/roster/i);
+    expect(existsSync(warehouseJsonPath)).toBe(false);
+  });
+
+  it('FULL mode ignores the roster boundary (Access-gated target)', async () => {
+    const endpoints = await bakeAgainstFixtureDb(true, 'api/warehouse');
+    expect(Object.keys(endpoints).length).toBeGreaterThan(0);
   });
 
   it('confidential mode (includeConfidential: true): the checkpoint-read path includes /lease-market/* keys', async () => {
