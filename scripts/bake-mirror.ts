@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
-import { publicPayloadRosterRefusal } from '../server/sources/deal-declassification';
+import { publicPayloadRosterRefusal, serializeForPublication } from '../server/sources/deal-declassification';
 import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
@@ -69,11 +69,14 @@ export const refuseBakeOnRosterScan = publicPayloadRosterRefusal;
  * catch turns the throw into exit 1, which halts the `bake && deploy` chain.
  */
 export function writeSnapshotPayload(payload: unknown, includeConfidential: boolean, pubDir: string): void {
-  if (!includeConfidential) {
-    const refusal = refuseBakeOnRosterScan(payload);
-    if (refusal) throw new Error(refusal);
+  if (includeConfidential) {
+    writeFileSync(join(pubDir, 'snapshot.json'), JSON.stringify(payload));
+    return;
   }
-  writeFileSync(join(pubDir, 'snapshot.json'), JSON.stringify(payload));
+  // Write the exact bytes that were scanned (serializeForPublication serializes once).
+  const { json, refusal } = serializeForPublication(payload);
+  if (refusal || json === null) throw new Error(refusal ?? 'refusing to publish \u2014 unverifiable payload.');
+  writeFileSync(join(pubDir, 'snapshot.json'), json);
 }
 
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {

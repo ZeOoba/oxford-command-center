@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { redactConfidential, refuseBakeOnRosterScan, writeSnapshotPayload } from '../../scripts/bake-mirror';
+import { readFileSync } from 'node:fs';
 
 // Refute wf_d42a89c6-fe5 on PR #457: redactConfidential is flag- and name-only, so text that names an
 // ACTIVE roster deal by an `always` term (an address, say) while the Notion deal NAME differs
@@ -139,5 +140,29 @@ describe('writeSnapshotPayload — the snapshot.json publication boundary (round
   it('FULL (Access-gated) mode is unchanged', () => {
     writeSnapshotPayload(leaky, true, dir);
     expect(existsSync(out())).toBe(true);
+  });
+});
+
+describe('what is scanned is what is written (review round 4, C1b/C1c)', () => {
+  it('a getter that changes between reads cannot smuggle a term into the written file', () => {
+    let reads = 0;
+    const payload = { get sneaky() { reads += 1; return reads <= 3 ? 'clean' : '9900 quarry'; } };
+    let threw = false;
+    try { writeSnapshotPayload(payload, false, dir); } catch { threw = true; }
+    const written = existsSync(join(dir, 'snapshot.json')) ? readFileSync(join(dir, 'snapshot.json'), 'utf8') : '';
+    // Either refused, or what was written is exactly what was scanned -- never a term on disk.
+    expect(threw || !written.toLowerCase().includes('quarry')).toBe(true);
+    expect(written.toLowerCase()).not.toContain('quarry');
+  });
+
+  it('a toJSON that hides a quote-bearing term from the raw object is still caught', () => {
+    useRoster(JSON.stringify({ k: { label: 'K', active: true, always: ['a"b'] } }));
+    expect(refuseBakeOnRosterScan({ x: { toJSON: () => 'xx a"b yy' } })).not.toBeNull();
+  });
+
+  it('bake-mirror main() publishes snapshot.json only through writeSnapshotPayload (source pin)', () => {
+    const src = readFileSync(join(process.cwd(), 'scripts', 'bake-mirror.ts'), 'utf8');
+    expect(src).toContain('writeSnapshotPayload({ ...snapshot, governors }, includeConfidential, pub)');
+    expect(src.match(/'snapshot\.json'/g)).toHaveLength(2); // both inside writeSnapshotPayload
   });
 });

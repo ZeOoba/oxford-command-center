@@ -123,37 +123,38 @@ function collectKeys(value: unknown): string {
   return Object.entries(value).map(([k, v]) => `${k} ${collectKeys(v)}`).join(' ');
 }
 
-export function publicPayloadRosterRefusal(payload: unknown): string | null {
+export function serializeForPublication(payload: unknown): { json: string | null; refusal: string | null } {
   const tail = 'Leaving the last good public output in place.';
+  const refuse = (why: string) => ({ json: null, refusal: `\u2717 refusing to publish \u2014 ${why} ${tail}` });
   try {
     if (rosterUnavailable()) {
-      return (
-        `\u2717 refusing to publish \u2014 the confidential-terms roster is unreadable or the placeholder ` +
-        `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
-      );
+      return refuse('the confidential-terms roster is unreadable or the placeholder stand-in, so this publicly served payload cannot be verified against it.');
     }
+    // Serialize ONCE and scan exactly what will be written. Scanning the live object and then
+    // re-serializing it let a getter / toJSON return different content on the second pass (review round 4,
+    // C1b/C1c); the parse below is the bytes' own value+key view, so toJSON rewrites are covered too.
+    const json = JSON.stringify(payload);
+    if (typeof json !== 'string') return refuse('the payload does not serialize.');
+    const parsed: unknown = JSON.parse(json);
     // ONE combined text for values + keys: a context term and its anchor may be split between a key and a
     // value, and a per-text scan would see only one half of the pair (review round 3, C1b). The raw
-    // serialized bytes are scanned separately for anything toJSON rewrites.
-    const hit =
-      scanForConfidential(`${collectText(payload)} ${collectKeys(payload)}`) ||
-      scanForConfidential(JSON.stringify(payload));
+    // serialized text is scanned as well, as a backstop for anything the structured walk misses.
+    const hit = scanForConfidential(`${collectText(parsed)} ${collectKeys(parsed)}`) || scanForConfidential(json);
     // The roster is re-read on every scan; if it vanished between the check above and the scans, they ran
     // against the placeholder and a clean result means nothing (review round 3, C1d).
     if (rosterUnavailable()) {
-      return (
-        `\u2717 refusing to publish \u2014 the confidential-terms roster became unreadable during the scan, so ` +
-        `this payload cannot be verified. ${tail}`
-      );
+      return refuse('the confidential-terms roster became unreadable during the scan, so this payload cannot be verified.');
     }
     if (hit) {
-      return (
-        `\u2717 refusing to publish \u2014 the redacted payload still matches an ACTIVE confidential roster ` +
-        `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`
-      );
+      return refuse('the redacted payload still matches an ACTIVE confidential roster term. Find and remove the leaking field at its source (term withheld from this log).');
     }
-    return null;
+    return { json, refusal: null };
   } catch {
-    return `\u2717 refusing to publish \u2014 the confidential roster scan threw, so the payload cannot be verified. ${tail}`;
+    return refuse('the confidential roster scan threw, so the payload cannot be verified.');
   }
+}
+
+/** Refusal text only (null = may publish). Writers should prefer serializeForPublication and write its `json`. */
+export function publicPayloadRosterRefusal(payload: unknown): string | null {
+  return serializeForPublication(payload).refusal;
 }

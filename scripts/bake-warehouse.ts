@@ -18,7 +18,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
-import { publicPayloadRosterRefusal } from '../server/sources/deal-declassification';
+import { serializeForPublication } from '../server/sources/deal-declassification';
 import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
 import { leaseMarketApi } from '../server/warehouse/lease-market-api';
 import Database from 'better-sqlite3';
@@ -315,14 +315,17 @@ export function leaseMarketBakeMode(includeConfidential: boolean): LeaseMarketBa
 export function writeWarehouseEnvelope(env: unknown, includeConfidential: boolean, pubDir: string): string {
   mkdirSync(pubDir, { recursive: true });
   const outPath = join(pubDir, 'warehouse.json');
-  if (!includeConfidential) {
-    const refusal = publicPayloadRosterRefusal(env);
-    if (refusal) {
-      rmSync(outPath, { force: true });
-      throw new Error(refusal);
-    }
+  if (includeConfidential) {
+    writeFileSync(outPath, JSON.stringify(env));
+    return outPath;
   }
-  writeFileSync(outPath, JSON.stringify(env));
+  // Write the exact bytes that were scanned (serializeForPublication serializes once).
+  const { json, refusal } = serializeForPublication(env);
+  if (refusal || json === null) {
+    rmSync(outPath, { force: true });
+    throw new Error(refusal ?? 'refusing to publish \u2014 unverifiable payload.');
+  }
+  writeFileSync(outPath, json);
   return outPath;
 }
 
