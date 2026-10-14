@@ -110,11 +110,19 @@ export function rosterUnavailable(): boolean {
  * Fails CLOSED three ways: a hit, a throw (unreadable roster), and the placeholder stand-in. The
  * message never carries a matched term or deal label -- this text reaches logs.
  *
- * Scans BOTH the flattened values (collectText, the egress hook's semantics) AND the exact
- * serialized bytes, because collectText walks Object.values and never sees object KEYS -- yet
- * JSON.stringify writes them (tenantNotes / dealComps / marketRents are keyed by free text).
+ * Scans the flattened values (collectText, the egress hook's semantics), every object KEY (collectText
+ * walks Object.values and never sees keys -- yet tenantNotes / dealComps / marketRents are keyed by free
+ * text), AND the serialized bytes. Keys are walked raw, not via the bytes, because JSON.stringify
+ * escapes quotes and backslashes and would hide a term containing one.
  * Callers must not use this for FULL (Access-gated) bakes, where confidential content is the point.
  */
+/** Every object key in the value, space-joined, for scanning (collectText skips keys). */
+function collectKeys(value: unknown): string {
+  if (value === null || typeof value !== 'object') return '';
+  if (Array.isArray(value)) return value.map(collectKeys).join(' ');
+  return Object.entries(value).map(([k, v]) => `${k} ${collectKeys(v)}`).join(' ');
+}
+
 export function publicPayloadRosterRefusal(payload: unknown): string | null {
   const tail = 'Leaving the last good public output in place.';
   try {
@@ -124,7 +132,11 @@ export function publicPayloadRosterRefusal(payload: unknown): string | null {
         `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
       );
     }
-    if (scanForConfidential(payload) || scanForConfidential(JSON.stringify(payload))) {
+    if (
+      scanForConfidential(payload) ||
+      scanForConfidential(collectKeys(payload)) ||
+      scanForConfidential(JSON.stringify(payload))
+    ) {
       return (
         `\u2717 refusing to publish \u2014 the redacted payload still matches an ACTIVE confidential roster ` +
         `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`

@@ -86,6 +86,14 @@ describe('object keys (collectText never walks keys, JSON.stringify writes them)
   });
 });
 
+describe('object keys containing JSON-escaped characters', () => {
+  it('refuses a key whose term contains a quote or backslash (stringify would hide it)', () => {
+    useRoster(JSON.stringify({ k: { label: 'K', active: true, always: ['a"b', 'c\\d'] } }));
+    expect(refuseBakeOnRosterScan({ m: { 'xx a"b yy': 1 } })).not.toBeNull();
+    expect(refuseBakeOnRosterScan({ m: { 'xx c\\d yy': 1 } })).not.toBeNull();
+  });
+});
+
 describe('redaction + roster scan together (the PR #457 refute scenario)', () => {
   const snap = (): PortfolioSnapshot => ({
     properties: [], leases: [], loans: [], insurance: [], counterparties: [],
