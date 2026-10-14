@@ -13,6 +13,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import {
   aggregateByComponent,
   exclusionFor,
+  supersededMap,
   latestObservation,
   ratio,
   underwritingUse,
@@ -95,8 +96,8 @@ function ComponentPanel({ agg }: { agg: ComponentAggregate }) {
   );
 }
 
-function LedgerRow({ o, tier }: { o: CalibrationObservation; tier: ConfidenceTier | undefined }) {
-  const why = exclusionFor(o);
+function LedgerRow({ o, tier, superseded }: { o: CalibrationObservation; tier: ConfidenceTier | undefined; superseded: ReadonlyMap<string, string> }) {
+  const why = exclusionFor(o, superseded);
   return (
     <tr style={{ borderTop: '1px solid var(--border-subtle)', opacity: why ? 0.6 : 1, verticalAlign: 'top' }}>
       <td className="px-3 py-2 text-xs">
@@ -134,6 +135,7 @@ function LedgerRow({ o, tier }: { o: CalibrationObservation; tier: ConfidenceTie
 
 export function CalibrationView({ ledger, pending }: { ledger: CalibrationObservation[]; pending: CalibrationProposal[] }) {
   const aggs = aggregateByComponent(ledger);
+  const superseded = supersededMap(ledger);
   const tierByComponent = new Map(aggs.map((a) => [a.component, a.tier]));
   const latest = latestObservation(ledger);
   const use = underwritingUse(aggs);
@@ -174,7 +176,7 @@ export function CalibrationView({ ledger, pending }: { ledger: CalibrationObserv
             </thead>
             <tbody>
               {ledger.map((o) => (
-                <LedgerRow key={o.obs_id} o={o} tier={tierByComponent.get(o.component)} />
+                <LedgerRow key={o.obs_id} o={o} tier={tierByComponent.get(o.component)} superseded={superseded} />
               ))}
             </tbody>
           </table>

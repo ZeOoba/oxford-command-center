@@ -11,6 +11,7 @@ import {
   aggregateByComponent,
   classifyComponent,
   exclusionFor,
+  supersededMap,
   includedInStats,
   latestObservation,
   median,
@@ -224,6 +225,27 @@ describe('promotion: pending → observation', () => {
     expect(r.pending).toHaveLength(0);
     expect(ledger).toHaveLength(1); // input not mutated
     expect(r.ledger[0]).toBe(ledger[0]); // existing rows untouched (append-only)
+  });
+
+  it('a later row that supersedes an earlier one stops it counting without editing it; an unknown target is refused', () => {
+    const placeholder = obs({ obs_id: 'banwick:placeholder' });
+    const real = obs({ obs_id: 'banwick:real', supersedes: 'banwick:placeholder' });
+    const agg = aggregateByComponent([placeholder, real]);
+    expect(agg[0]!.n).toBe(1);
+    expect(agg[0]!.points[0]!.obsId).toBe('banwick:real');
+    expect(exclusionFor(placeholder, supersededMap([placeholder, real]))).toMatch(/superseded by banwick:real/);
+    expect(exclusionFor(placeholder)).toBeNull(); // the stored row itself is untouched
+    expect(supersededMap([real, placeholder]).size).toBe(0); // a row can only supersede an EARLIER id
+    const pend = { ...proposal(), obs_id: 'x:new', supersedes: 'nope' };
+    expect(() => promoteProposal([placeholder], [pend], 'x:new', '2026-10-14')).toThrow(/not in the ledger/);
+  });
+
+  it('a $0 Actual Total does not mask the real Quoted Total', () => {
+    const rt = (v: string) => ({ type: 'rich_text', rich_text: [{ plain_text: v }] });
+    const props = { 'Record (title)': rt('EPDM roof replacement'), Property: rt('2800-2826 Banwick'), UOM: rt('SF'), 'Doc Date': rt('2026-04-01'), Qty: { type: 'number', number: 24000 }, 'Actual Total': { type: 'number', number: 0 }, 'Quoted Total': { type: 'number', number: 252000 }, Vendor: rt('Acme'), 'Record Type': rt('Quote'), Status: rt('Open') } as never;
+    const q = notionQuote(props, 'wb')!;
+    expect(q.totalUsd).toBe(252000);
+    expect(q.isActual).toBe(false);
   });
 
   it('refuses to promote when two pending proposals share an obs_id (never picks by array order)', () => {

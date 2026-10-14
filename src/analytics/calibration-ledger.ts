@@ -71,6 +71,8 @@ export const CalibrationObservation = z
     scope_note: z.string(),
     include_in_stats: z.boolean().default(true),
     exclusion_reason: z.string().nullable().default(null),
+    /** obs_id of an EARLIER row this one replaces (e.g. a real quote replacing a placeholder). The older row is never edited; it stops counting. */
+    supersedes: z.string().nullable().default(null),
     /** Date this row entered the ledger (drives the "what changed" line). */
     added_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   })
@@ -105,7 +107,9 @@ export function variancePct(o: Pick<CalibrationObservation, 'pca_unit_cost' | 'c
  * Stats eligibility: opted in, a PCA estimate from a non-stale report, a stated quantity, a per-unit (not lump-sum) basis, and both unit costs present.
  * Rows failing this stay visible in the ledger — they just do not count toward n.
  */
-export function exclusionFor(o: CalibrationObservation): string | null {
+export function exclusionFor(o: CalibrationObservation, supersededBy: ReadonlyMap<string, string> = new Map()): string | null {
+  const newer = supersededBy.get(o.obs_id);
+  if (newer !== undefined) return `superseded by ${newer} — kept as history, not counted`;
   if (!o.include_in_stats) return o.exclusion_reason ?? 'excluded by reviewer';
   // Stale (pre-2024) reports are history only — they never feed calibration unit costs, whatever the row says.
   const pcaYear = Number(o.pca_source.report_date.slice(0, 4));
@@ -115,7 +119,18 @@ export function exclusionFor(o: CalibrationObservation): string | null {
   if (ratio(o) === null) return 'missing unit cost on one side';
   return null;
 }
-export const includedInStats = (o: CalibrationObservation): boolean => exclusionFor(o) === null;
+export const includedInStats = (o: CalibrationObservation, supersededBy: ReadonlyMap<string, string> = new Map()): boolean => exclusionFor(o, supersededBy) === null;
+
+/** obs_id → the obs_id of the row that supersedes it. A later row supersedes only an id that already exists earlier in the ledger. */
+export function supersededMap(ledger: readonly CalibrationObservation[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const o of ledger) {
+    if (o.supersedes !== null && seen.has(o.supersedes)) out.set(o.supersedes, o.obs_id);
+    seen.add(o.obs_id);
+  }
+  return out;
+}
 
 export type ConfidenceTier = 'NONE' | 'THIN' | 'LIMITED' | 'USABLE';
 /** n=0 NONE · n=1 THIN · n=2–4 LIMITED · n≥5 USABLE. Recomputed on every call. */
@@ -166,10 +181,11 @@ export interface ComponentAggregate {
 /** Per-component aggregates, in the enum's order. Components with no rows at all are omitted. */
 export function aggregateByComponent(ledger: CalibrationObservation[]): ComponentAggregate[] {
   const out: ComponentAggregate[] = [];
+  const superseded = supersededMap(ledger);
   for (const component of CALIBRATION_COMPONENTS) {
     const rows = ledger.filter((o) => o.component === component);
     if (rows.length === 0) continue;
-    const included = rows.filter(includedInStats);
+    const included = rows.filter((o) => includedInStats(o, superseded));
     const points: CalibrationPoint[] = included.map((o) => ({
       obsId: o.obs_id,
       property: o.property,
@@ -254,6 +270,9 @@ export function promoteProposal(
     const same = JSON.stringify(CalibrationObservation.parse({ ...fields, added_at: existing.added_at })) === JSON.stringify(existing);
     if (!same) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
     return { ledger, pending: pending.filter((p) => p.obs_id !== obsId), promoted: existing };
+  }
+  if (fields.supersedes !== null && !ledger.some((o) => o.obs_id === fields.supersedes)) {
+    throw new Error(`calibration: obs_id "${obsId}" supersedes "${fields.supersedes}", which is not in the ledger`);
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
