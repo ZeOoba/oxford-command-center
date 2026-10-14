@@ -474,7 +474,7 @@ export function hvacOwnershipRollup(facts: SpecFactT[]): CountRow[] {
 
 export function sprinklerRollup(facts: SpecFactT[]): CountRow[] {
   // Negation must sit directly on the sprinkler noun ("no automatic sprinkler system"); "no deficiencies noted with the sprinkler system" is NOT a negation.
-  const NEGATED = /\b(?:no|not|without|none|lacks?)\b(?:\s+(?!deficienc|impair|missing|issues?|problems?|recall)[\w()-]+){0,6}?[\s-]+(?:sprinkler|suppression)(?!s?\s+(?:heads?\s+)?(?:missing|deficienc|impair|issues?|problems?))|unsprinklered|(?:sprinkler|suppression)[^.;]{0,40}\b(?:none(?! of)|not (?:present|provided|installed|equipped|observed))/;
+  const NEGATED = new RegExp([String.raw`\b(?:no|not|without|none|lacks?)\s+(?:(?:equipped|with|automatic|fire|wet|dry|pipe|central|any|an|a|the|fully|complete|installed|present|provided|known|standpipe|or|protected|by|served|building|buildings|is|are|systems?|and|\(sprinkler\)|fire-)\s*){0,6}(?:sprinkler|suppression)(?![\w-]*\s+(?:(?:system|heads?|piping|risers?|lines?)\s+){0,2}(?:missing|deficienc|impair|issues?|problems?|leaks?|damag|corros|concern|repair))`, String.raw`(?:un|non)-?sprinklered`, String.raw`sprinklers?(?: systems?)?\s*[:=]\s*(?:no|none|n)\b`, String.raw`(?:sprinkler|suppression)(?:(?!deficienc|impair|leak|damag|corros|missing|issue|problem)[^.;]){0,40}\b(?:none(?! of)|not (?:present|provided|installed|equipped))`].join('|'));
   return tally(
     ofAttr(facts, 'fire_life_safety', 'sprinklered').map((f) => {
       let key: string;

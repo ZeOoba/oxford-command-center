@@ -319,8 +319,8 @@ describe('review regressions', () => {
 
   it('sprinkler rollup: real report phrasings (R02, R06, R08) classify as not sprinklered; deficiency wording does not', () => {
     const mk = (v: string, sc: string) => rawFact({ component: 'fire_life_safety', attribute: 'sprinkler_system', value: v, scope: sc, as_of: '2025-10' });
-    const neg = ['Buildings are not equipped with automatic fire suppression (sprinkler) systems', 'Buildings are NOT equipped with automatic fire-suppression (sprinkler) systems', 'no central sprinkler system', 'Building lacks sprinklers'];
-    const pos = ['no sprinkler heads missing', 'No sprinkler deficiencies were observed', 'Wet-pipe system; no sprinkler impairments noted', 'Fully sprinklered, without sprinkler impairments'];
+    const neg = ['Buildings are not equipped with automatic fire suppression (sprinkler) systems', 'Buildings are NOT equipped with automatic fire-suppression (sprinkler) systems', 'no central sprinkler system', 'Building lacks sprinklers', 'Non-sprinklered', 'Sprinklers: No'];
+    const pos = ['no sprinkler heads missing', 'No sprinkler deficiencies were observed', 'Wet-pipe system; no sprinkler impairments noted', 'Fully sprinklered, without sprinkler impairments', 'Fully sprinklered; sprinkler deficiencies were not observed', 'Wet-pipe sprinkler system in good condition, leaks not observed', 'The riser lacks a current sprinkler inspection tag', 'ESFR sprinkler system; no evidence of leaking sprinkler heads', 'No visible damage to the sprinkler system', 'No leaks observed at the sprinkler piping', 'No sprinkler system impairments noted'];
     const r = sprinklerRollup(stamp(CURRENT, [...neg.map((v, i) => mk(v, `n${i}`)), ...pos.map((v, i) => mk(v, `p${i}`))]).facts);
     expect(r.find((x) => x.key === 'not sprinklered')!.CURRENT).toBe(neg.length);
     expect(r.find((x) => x.key === 'sprinklered')!.CURRENT).toBe(pos.length);

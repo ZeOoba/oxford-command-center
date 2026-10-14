@@ -123,7 +123,7 @@ export function proposePairs(
   proposedFrom: string,
   onDuplicate: (skipped: { obsId: string; keptObsId: string }) => void = () => {},
 ): CalibrationProposal[] {
-  const seen = new Set<string>([...existing.ledger, ...existing.pending].map(pairKey));
+  const seen = new Set<string>([...existing.ledger, ...existing.pending].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
   const keptByKey = new Map<string, string>();
   const out: CalibrationProposal[] = [];
   for (const q of quotes) {
@@ -143,8 +143,11 @@ export function proposePairs(
       exclusion_reason: q.superseded ? 'quote superseded by a later version' : null,
       proposed_at: today, proposed_from: proposedFrom,
     });
+    // Two identities exist (pairKey: raw label + vendor; obs_id: slugified). Dedupe on both so two quotes that slugify to
+    // the same obs_id can never both reach pending (promote would keep the first and silently drop the other).
     const key = pairKey(proposal);
-    if (seen.has(key)) {
+    const idKey = `id:${proposal.obs_id}`;
+    if (seen.has(key) || seen.has(idKey)) {
       // One quote document is one observation (pairKey), but a document pricing two scopes on one date collapses here —
       // say so instead of dropping the second scope silently.
       const kept = keptByKey.get(key);
@@ -152,6 +155,7 @@ export function proposePairs(
       continue;
     }
     seen.add(key);
+    seen.add(idKey);
     keptByKey.set(key, proposal.obs_id);
     out.push(proposal);
   }
@@ -296,8 +300,8 @@ async function main(argv: string[]): Promise<number> {
   // Re-read both files right before writing: the loads above are async (workbook, Notion pagination) and a
   // `calibration:promote` run in that window must not be undone by writing back the stale snapshot.
   const fresh = readJson(PENDING_PATH, parsePending);
-  const taken = new Set([...readJson(LEDGER_PATH, parseLedger), ...fresh].map(pairKey));
-  const toAdd = proposals.filter((p) => !taken.has(pairKey(p)));
+  const taken = new Set([...readJson(LEDGER_PATH, parseLedger), ...fresh].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
+  const toAdd = proposals.filter((p) => !taken.has(pairKey(p)) && !taken.has(`id:${p.obs_id}`));
   const next = [...fresh, ...toAdd];
   const tmp = `${PENDING_PATH}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
