@@ -202,7 +202,10 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       // would silently record the period as ingested with zero ledger rows (data loss).
       insIssue.run(importId, det.propertyId, 'empty-parse', `parsed 0 valued accounts from ${fileName} (sourceSystem ${stmt.sourceSystem})`, 'error');
     }
-    const commit = insertedRows > 0 && det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0;
+    // An undecidable sign side fails closed: the 'sign-undecidable' DQ row says no flip was applied,
+    // so committing would serve a possibly negative-booked side as-is. Route to review instead.
+    const commit = insertedRows > 0 && det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0
+      && undecidableSides.length === 0;
     if (commit) {
       // supersede prior committed versions for the same logical period
       const priors = db.prepare(`
@@ -237,7 +240,8 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     if (!flagged) {
       db.prepare("INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, ?, ?, ?, ?)")
         .run(importId, det.propertyId, 'restale-skipped',
-          `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty) — prior committed version retained`, 'warn');
+          `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty/sign-undecidable) — prior committed version retained` +
+          (undecidableSides.length ? `; sign-undecidable: ${undecidableSides.join(' | ')} — retained ledger may carry an unflipped side, verify its sign` : ''), 'warn');
     }
     return { file: fileName, status: 'committed', importId, reason: 'restale-skipped' };
   }

@@ -77,5 +77,39 @@ describe('noiVariance', () => {
     // Consistency: portfolio variance equals the sum of per-row (paired) variances.
     const sumRowVar = r.rows.reduce((n, x) => n + (x.variance ?? 0), 0);
     expect(r.totalVariance).toBe(sumRowVar);
+    // Coverage counts must tell paired apart from budgeted/actual: 2 budgeted, 1 actual, 1 paired.
+    expect(r.pairedCount).toBe(1);
+    expect(r.budgetedCount).toBe(2);
+    expect(r.actualCount).toBe(1);
+  });
+
+  it('reports paired/budgeted/actual coverage counts alongside the (unchanged) totals', () => {
+    // fixture: a, b paired; c has neither budget nor actual
+    expect(v.pairedCount).toBe(2);
+    expect(v.budgetedCount).toBe(2);
+    expect(v.actualCount).toBe(2);
+    expect(v.rows).toHaveLength(3);
+  });
+
+  it('QB actuals with zero budgets yields pairedCount 0 (a 0 variance must not read as on-budget)', () => {
+    const noBudgets = {
+      properties: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+      noiBudgets: {},
+      quickbooks: {
+        sourceFile: null, parsedAt: '2026-06-05T00:00:00.000Z',
+        properties: [
+          { propertyKey: 'A', propertyId: 'a', annualIncome: 130000, annualExpense: 40000, annualNoi: 90000, monthly: [], glExpense: [] },
+          { propertyKey: 'B', propertyId: 'b', annualIncome: 70000, annualExpense: 10000, annualNoi: 60000, monthly: [], glExpense: [] },
+        ],
+      },
+    } as unknown as PortfolioSnapshot;
+    const r = noiVariance(noBudgets);
+    expect(r.pairedCount).toBe(0);
+    expect(r.budgetedCount).toBe(0);
+    expect(r.actualCount).toBe(2);
+    // existing numeric fields keep their values and type
+    expect(r.totalVariance).toBe(0);
+    expect(r.totalBudget).toBe(0);
+    expect(r.totalActual).toBe(0);
   });
 });
