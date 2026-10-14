@@ -23,7 +23,7 @@ import {
   type ConfidenceTier,
 } from '@/analytics/calibration-ledger';
 import { fmtDeltaPct, fmtPartialDate, fmtPsf } from './hooks';
-import { CALIBRATION_LABEL } from './pca-overlay';
+import { calibrationLabel } from './pca-overlay';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 
@@ -141,7 +141,7 @@ export function CalibrationView({ ledger, pending }: { ledger: CalibrationObserv
     <div className="flex flex-col gap-3">
       <Card>
         <CardHeader title="PCA estimate vs contractor price — calibration ledger" trailing={<Badge tone="amber">{ledger.length} observations · {aggs.reduce((a, g) => a + g.n, 0)} count toward stats</Badge>} />
-        <div className="num px-4 pb-1 text-2xs" style={{ color: 'var(--text-warn)' }}>{CALIBRATION_LABEL}</div>
+        <div className="num px-4 pb-1 text-2xs" style={{ color: 'var(--text-warn)' }}>{calibrationLabel(aggs.map((a) => a.n))}</div>
         <div className="px-4 pb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
           {latest !== null && (
             <div>

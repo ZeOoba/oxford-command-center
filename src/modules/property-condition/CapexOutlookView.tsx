@@ -103,7 +103,7 @@ const COLUMNS: Column<AdjustedProperty>[] = [
   },
   {
     key: 'shortTerm',
-    header: 'Yr 1–2',
+    header: 'Short-term',
     align: 'right',
     render: (p) => <span className="num text-xs">{fmtUsd(p.current.shortTermUsd)}</span>,
     sortValue: (p) => p.current.shortTermUsd,

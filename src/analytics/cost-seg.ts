@@ -205,12 +205,12 @@ const num = (v: unknown): number | null => {
 };
 
 /** Pulls the PCA-side quantities for one property: the register SF plus the module-9 facts that state areas / counts. */
-export function pcaComparators(specFacts: SpecFactT[], propertyKey: string | null, registerSf: number | null): PcaComparators {
+export function pcaComparators(specFacts: SpecFactT[], propertyKey: string | null, registerSf: number | null, registerVintage: 'CURRENT' | 'DRAFT' | 'STALE' | null = null): PcaComparators {
   const mine = propertyKey === null ? [] : specFacts.filter((f) => f.property === propertyKey);
   const q = (f: SpecFactT, value: number, extra = ''): PcaQuantity => ({
     value, label: `${f.report_id} p.${f.source_page}${f.scope ? ` · ${f.scope}` : ''}${extra}`, vintage: f.report_vintage, scoped: f.scope !== null,
   });
-  const buildingSf: PcaQuantity[] = registerSf === null || !(registerSf > 0) ? [] : [{ value: registerSf, label: 'PCA register SF', vintage: null, scoped: false }];
+  const buildingSf: PcaQuantity[] = registerSf === null || !(registerSf > 0) ? [] : [{ value: registerSf, label: `PCA register SF${registerVintage === 'STALE' ? ' (stale report)' : ''}`, vintage: registerVintage, scoped: false }];
   const roofArea: PcaQuantity[] = [];
   const pavingArea: PcaQuantity[] = [];
   const doors: PcaQuantity[] = [];

@@ -420,7 +420,10 @@ export function SpecsView({ model, todayYear }: { model: BuildingSpecsModel; tod
   const filter = { property: property || undefined, component: component || undefined, vintage: vintage || undefined, text: text || undefined };
   const facts = useMemo(() => filterFacts(model.facts, filter), [model.facts, property, component, vintage, text]); // eslint-disable-line react-hooks/exhaustive-deps
   const effective = useMemo(() => effectiveSpecs(facts), [facts]);
-  const projections = useMemo(() => projectRoofs(facts, todayYear), [facts, todayYear]);
+  // Roof clock inputs span SEPARATE facts (install year, EUL), so the text/component filters must not thin them out:
+  // project from property + vintage only, otherwise a search drops the EUL fact and the roof reads "EUL not stated".
+  const roofBase = useMemo(() => filterFacts(model.facts, { property: property || undefined, vintage: vintage || undefined }), [model.facts, property, vintage]);
+  const projections = useMemo(() => projectRoofs(roofBase, todayYear), [roofBase, todayYear]);
   const projectionByKey = useMemo(() => new Map(projections.map((p) => [`${p.propertyKey}|${p.reportId}|${p.scope ?? ''}`, p])), [projections]);
   const ledger = useMemo(() => buildFindingsLedger(model.findings, model.resolutions), [model.findings, model.resolutions]);
   const findings = useMemo(
