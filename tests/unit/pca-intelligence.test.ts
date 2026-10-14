@@ -89,6 +89,14 @@ describe('reservePsfYr', () => {
   });
 });
 
+describe('reportStatus undated', () => {
+  it('an undated report cannot be shown to be 2024+, so it is STALE (never feeds totals); a draft stays DRAFT', () => {
+    expect(reportStatus({ usabilityClass: 'current', reportDate: null })).toBe('STALE');
+    expect(reportStatus({ usabilityClass: 'unknown', reportDate: null })).toBe('STALE');
+    expect(reportStatus({ usabilityClass: 'draft', reportDate: null })).toBe('DRAFT');
+  });
+});
+
 describe('reportStatus', () => {
   it('maps usability + report year to CURRENT / DRAFT / STALE', () => {
     expect(reportStatus(brief({ usabilityClass: 'current' }))).toBe('CURRENT');

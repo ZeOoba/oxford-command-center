@@ -20,14 +20,17 @@ const write = (path: string, data: unknown): void => {
 };
 
 function main(argv: string[]): number {
-  const obsId = argv[0];
+  const sIdx = argv.indexOf('--supersedes');
+  const supersedes = sIdx >= 0 ? argv[sIdx + 1] : undefined;
+  const rest = sIdx >= 0 ? argv.filter((_, i) => i !== sIdx && i !== sIdx + 1) : argv;
+  const obsId = rest[0];
   if (!obsId) {
-    console.error('usage: npm run calibration:promote -- <obs_id>   (see data/calibration/calibration_pending.json)');
+    console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>]   (see data/calibration/calibration_pending.json)');
     return 1;
   }
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today);
+    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today, supersedes);
     write(LEDGER_PATH, result.ledger);
     write(PENDING_PATH, result.pending);
     console.log(`calibration-promote: ${obsId} appended to the ledger (${result.ledger.length} observations, ${result.pending.length} still pending).`);

@@ -256,13 +256,15 @@ export function promoteProposal(
   pending: CalibrationProposal[],
   obsId: string,
   today: string,
+  supersedes?: string,
 ): PromotionResult {
   const matches = pending.filter((p) => p.obs_id === obsId);
   if (matches.length === 0) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
   // Never pick by array order: a duplicated id means two different quotes collide, so the human must resolve it.
   if (matches.length > 1) throw new Error(`calibration: ${matches.length} pending proposals share obs_id "${obsId}" - remove the duplicate from calibration_pending.json first`);
   const proposal = matches[0]!;
-  const { proposed_at: _proposedAt, proposed_from: _proposedFrom, ...fields } = proposal;
+  const { proposed_at: _proposedAt, proposed_from: _proposedFrom, ...rest } = proposal;
+  const fields = { ...rest };
   const existing = ledger.find((o) => o.obs_id === obsId);
   if (existing) {
     // Crash recovery: a prior promote appended the identical row to the ledger but died before clearing pending.
@@ -271,8 +273,14 @@ export function promoteProposal(
     if (!same) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
     return { ledger, pending: pending.filter((p) => p.obs_id !== obsId), promoted: existing };
   }
-  if (fields.supersedes !== null && !ledger.some((o) => o.obs_id === fields.supersedes)) {
-    throw new Error(`calibration: obs_id "${obsId}" supersedes "${fields.supersedes}", which is not in the ledger`);
+  if (supersedes !== undefined) fields.supersedes = supersedes;
+  if (fields.supersedes !== null) {
+    const target = ledger.find((o) => o.obs_id === fields.supersedes);
+    if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${fields.supersedes}", which is not in the ledger`);
+    // A mistyped target must not silently retire an unrelated observation.
+    if (target.component !== fields.component || target.unit !== fields.unit || target.property.toLowerCase() !== fields.property.toLowerCase()) {
+      throw new Error(`calibration: "${fields.supersedes}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
+    }
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };

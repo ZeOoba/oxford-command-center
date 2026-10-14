@@ -188,6 +188,11 @@ describe('spec sheet', () => {
 });
 
 describe('PCA vs cost-seg quantity cross-check', () => {
+  it('compareQuantity picks the same nearest value whatever the input order (ties go to the smaller)', () => {
+    expect(compareQuantity(100, [98, 102])).toEqual(compareQuantity(100, [102, 98]));
+    expect(compareQuantity(100, [98, 102]).nearest).toBe(98);
+  });
+
   it('compareQuantity: match within 2%, differs otherwise, no PCA value when none', () => {
     expect(compareQuantity(11280, [10950])).toMatchObject({ status: 'differs' });
     expect(compareQuantity(11280, [11280])).toMatchObject({ status: 'match' });

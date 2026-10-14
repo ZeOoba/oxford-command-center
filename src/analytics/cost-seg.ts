@@ -190,7 +190,7 @@ export function compareQuantity(costSeg: number, pcaValues: number[]): { status:
   // Only positive quantities are comparable: a zero / negative value is "not stated", never a divisor.
   const pca = pcaValues.filter((v) => Number.isFinite(v) && v > 0);
   if (pca.length === 0 || !(costSeg > 0)) return { status: 'no-pca', nearest: null, pctDiff: null };
-  const nearest = pca.reduce((best, v) => (Math.abs(v - costSeg) < Math.abs(best - costSeg) ? v : best), pca[0] as number);
+  const nearest = pca.reduce((best, v) => (Math.abs(v - costSeg) < Math.abs(best - costSeg) || (Math.abs(v - costSeg) === Math.abs(best - costSeg) && v < best) ? v : best), pca[0] as number);
   const pctDiff = (costSeg - nearest) / nearest;
   return { status: Math.abs(nearest - costSeg) <= nearest * QUANTITY_TOLERANCE ? 'match' : 'differs', nearest, pctDiff };
 }
