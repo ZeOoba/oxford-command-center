@@ -79,9 +79,13 @@ export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC
  */
 export function rosterClaimsDeal(deal: Deal): boolean {
   try {
-    if (scanForConfidential(PLACEHOLDER_SENTINEL)) return true;
+    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+      console.warn('[deal-declassification] confidential roster is the PLACEHOLDER stand-in — treating every deal as roster-claimed (fail closed).');
+      return true;
+    }
     return scanForConfidential(deal) !== null;
-  } catch {
+  } catch (e) {
+    console.warn(`[deal-declassification] confidential roster unreadable (${e instanceof Error ? e.message : String(e)}) — treating the deal as roster-claimed (fail closed).`);
     return true;
   }
 }

@@ -87,12 +87,14 @@ describe('mergeDeals — the roster outranks a seed confidential:false (finding 
     expect(out.find((d) => d.id === 's3')!.confidential).toBe(false);
   });
 
-  it('never un-flags a live row the pipeline already marked confidential', () => {
+  it('never un-flags a live row the pipeline already marked confidential (and warns)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const out = mergeDeals(
       [deal({ id: 's4', name: 'Known Public', notionDealId: 'DEAL-4', confidential: false })],
       [deal({ id: 'n4', name: 'Known Public', notionDealId: 'DEAL-4', confidential: true })],
     );
     expect(out.find((d) => d.id === 's4')!.confidential).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('s4'));
   });
 
   it('fails closed when the roster is unreadable', () => {
@@ -169,6 +171,32 @@ describe('refute-pass fixes (2026-10-13)', () => {
     );
     expect(r.ok).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+
+  describe.each([
+    ['fetch-failed', () => vi.fn().mockRejectedValue(new Error('fetch failed'))],
+    ['empty-result', () => vi.fn().mockResolvedValue({ ok: true, json: async () => ({ results: [], has_more: false }), text: async () => '' })],
+  ] as const)('loadDeals degraded=%s still applies the roster override', (reason, makeFetch) => {
+    it('forces a roster-claimed seed confidential', async () => {
+      const savedToken = process.env.NOTION_TOKEN;
+      process.env.NOTION_TOKEN = 't';
+      process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+      vi.stubGlobal('fetch', makeFetch());
+      try {
+        const target = SEED_DEALS.find((d) => !d.confidential)!;
+        const p = join(dir, 'seedroster2.json');
+        writeFileSync(p, JSON.stringify({ g: { label: 'G', active: true, always: [target.name.toLowerCase()] } }), 'utf8');
+        process.env.CONFIDENTIAL_TERMS_PATH = p;
+        const load = await loadDeals();
+        expect(load.degraded?.reason).toBe(reason);
+        expect(load.deals.find((d) => d.id === target.id)!.confidential).toBe(true);
+      } finally {
+        vi.unstubAllGlobals();
+        delete process.env.NOTION_DEALS_DATA_SOURCE;
+        if (savedToken === undefined) delete process.env.NOTION_TOKEN;
+        else process.env.NOTION_TOKEN = savedToken;
+      }
+    });
   });
 
   it('loadDeals degraded fallback (no NOTION_TOKEN) still applies the roster override to seeds', async () => {
