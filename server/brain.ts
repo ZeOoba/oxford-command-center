@@ -11,7 +11,7 @@ import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { renameSyncWithRetry } from './lib/rename-retry';
-import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
+import { hasDealsPipelineFailure, applyRosterOverride, type DealsDegradation } from './sources/notion-deals';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
 /**
@@ -393,7 +393,10 @@ class Brain extends EventEmitter {
     if (this.snapshot) return true;
     if (!existsSync(SNAPSHOT_PATH)) return false;
     try {
-      this.snapshot = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
+      const stored = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
+      // Hard Invariant 3: the stored deals[] were stamped when the snapshot was written; the roster may
+      // have claimed a deal since. Re-apply it before serving, exactly as every live deals path does.
+      this.snapshot = { ...stored, deals: applyRosterOverride(stored.deals) };
       return true;
     } catch {
       return false;
