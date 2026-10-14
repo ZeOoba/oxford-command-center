@@ -1,4 +1,13 @@
 {
+  "acq-current-score-pointer": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
+    "phase": "Fix: history-independent current acq score (refute wf_f5f45202-de8 on PR #456). Add acq_candidates.current_score_id, set by every persistAndLogScore call incl. the idempotent no-op path; capital-allocation.ts loadPipelineCandidates, api.ts /acq/candidates, brain-report.ts floor-indeterminate join on it.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "PROPOSED Architect-owned edit NOT yet made, awaiting Gabriel's acknowledgment: new migration server/warehouse/migrations/036_acq_current_score_id.sql (ALTER TABLE acq_candidates ADD COLUMN current_score_id + backfill from latest scored_at,id row). db.ts/migrate.ts not expected to change. scored_at is second-resolution, so the 'touch scored_at' alternative cannot disambiguate same-second re-scores and also breaks the 'never mutated' contract on acq_scores. Failing regression test: tests/unit/acq-current-score-history-independent.test.ts.",
+    "last_updated": "2026-10-13T20:20:00Z"
+  },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
     "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
