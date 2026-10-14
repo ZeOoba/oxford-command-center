@@ -241,8 +241,11 @@ export function promoteProposal(
   obsId: string,
   today: string,
 ): PromotionResult {
-  const proposal = pending.find((p) => p.obs_id === obsId);
-  if (!proposal) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
+  const matches = pending.filter((p) => p.obs_id === obsId);
+  if (matches.length === 0) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
+  // Never pick by array order: a duplicated id means two different quotes collide, so the human must resolve it.
+  if (matches.length > 1) throw new Error(`calibration: ${matches.length} pending proposals share obs_id "${obsId}" - remove the duplicate from calibration_pending.json first`);
+  const proposal = matches[0]!;
   const { proposed_at: _proposedAt, proposed_from: _proposedFrom, ...fields } = proposal;
   const existing = ledger.find((o) => o.obs_id === obsId);
   if (existing) {

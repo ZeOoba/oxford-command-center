@@ -225,6 +225,14 @@ describe('promotion: pending → observation', () => {
     expect(r.ledger[0]).toBe(ledger[0]); // existing rows untouched (append-only)
   });
 
+  it('refuses to promote when two pending proposals share an obs_id (never picks by array order)', () => {
+    const a = proposal();
+    const b = { ...proposal(), pca_unit_cost: (proposal().pca_unit_cost ?? 0) + 1 };
+    for (const pending of [[a, b], [b, a]]) {
+      expect(() => promoteProposal([], pending, a.obs_id, '2026-10-14')).toThrow(/share obs_id/);
+    }
+  });
+
   it('is explicit — an unknown obs_id is refused and nothing changes', () => {
     expect(() => promoteProposal([obs()], [proposal()], 'nope', '2026-10-14')).toThrow(/no pending proposal/);
   });
