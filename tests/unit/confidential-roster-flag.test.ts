@@ -55,6 +55,15 @@ describe('confidentialRosterFlag', () => {
     expect(hasConfidentialRosterFailure([])).toBe(false);
     expect(hasConfidentialRosterFailure([{ entity: 'deals', field: 'pipeline', issue: 'x', severity: 'error' }])).toBe(false);
   });
+  it('is NOT overridable by --force, even alongside an unrelated forceable error', () => {
+    const f = confidentialRosterFlag(true)!;
+    const other = { entity: 'reconciliation', field: 'x', issue: 'known gap', severity: 'error' as const };
+    const base = { leases: [], properties: [], loans: [], deals: [], cash: { totalCash: 0, entities: [] }, insurance: [], counterparties: [] };
+    expect(evaluateReconciliationGate({ ...base, dataQuality: [f, other] } as never, 'x.json', true).refuse).toBe(true);
+    expect(evaluateReconciliationGate({ ...base, dataQuality: [f] } as never, 'x.json', true).refuse).toBe(true);
+    // control: the unrelated error alone IS forceable
+    expect(evaluateReconciliationGate({ ...base, dataQuality: [other] } as never, 'x.json', true).refuse).toBe(false);
+  });
   it('makes the CLI writers\' reconciliation gate refuse', () => {
     const f = confidentialRosterFlag(true)!;
     const snap = { dataQuality: [f], leases: [], properties: [], loans: [], deals: [], cash: { totalCash: 0, entities: [] }, insurance: [], counterparties: [] };
