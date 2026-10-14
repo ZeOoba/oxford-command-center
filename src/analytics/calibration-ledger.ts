@@ -71,8 +71,8 @@ export const CalibrationObservation = z
     scope_note: z.string(),
     include_in_stats: z.boolean().default(true),
     exclusion_reason: z.string().nullable().default(null),
-    /** obs_id of an EARLIER row this one replaces (e.g. a real quote replacing a placeholder). The older row is never edited; it stops counting. */
-    supersedes: z.string().nullable().default(null),
+    /** obs_ids of EARLIER rows this one replaces (e.g. a real quote replacing the two placeholder range rows). Older rows are never edited; they stop counting. */
+    supersedes: z.array(z.string().min(1)).default([]),
     /** Date this row entered the ledger (drives the "what changed" line). */
     added_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   })
@@ -126,7 +126,7 @@ export function supersededMap(ledger: readonly CalibrationObservation[]): Map<st
   const out = new Map<string, string>();
   const seen = new Set<string>();
   for (const o of ledger) {
-    if (o.supersedes !== null && seen.has(o.supersedes)) out.set(o.supersedes, o.obs_id);
+    for (const t of o.supersedes) if (seen.has(t) && !out.has(t)) out.set(t, o.obs_id); // first superseder wins; never re-pointed
     seen.add(o.obs_id);
   }
   return out;
@@ -256,7 +256,7 @@ export function promoteProposal(
   pending: CalibrationProposal[],
   obsId: string,
   today: string,
-  supersedes?: string,
+  supersedes?: string[],
 ): PromotionResult {
   const matches = pending.filter((p) => p.obs_id === obsId);
   if (matches.length === 0) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
@@ -265,6 +265,8 @@ export function promoteProposal(
   const proposal = matches[0]!;
   const { proposed_at: _proposedAt, proposed_from: _proposedFrom, ...rest } = proposal;
   const fields = { ...rest };
+  // Apply the operator's --supersedes BEFORE the crash-recovery comparison, so re-running the identical command heals a half-finished promote.
+  if (supersedes !== undefined) fields.supersedes = [...new Set(supersedes)];
   const existing = ledger.find((o) => o.obs_id === obsId);
   if (existing) {
     // Crash recovery: a prior promote appended the identical row to the ledger but died before clearing pending.
@@ -273,14 +275,15 @@ export function promoteProposal(
     if (!same) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
     return { ledger, pending: pending.filter((p) => p.obs_id !== obsId), promoted: existing };
   }
-  if (supersedes !== undefined) fields.supersedes = supersedes;
-  if (fields.supersedes !== null) {
-    const target = ledger.find((o) => o.obs_id === fields.supersedes);
-    if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${fields.supersedes}", which is not in the ledger`);
-    // A mistyped target must not silently retire an unrelated observation.
+  const retired = supersededMap(ledger);
+  for (const t of fields.supersedes) {
+    const target = ledger.find((o) => o.obs_id === t);
+    if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${t}", which is not in the ledger`);
+    // A mistyped target must not silently retire an unrelated observation, and a retired row is not retired twice.
     if (target.component !== fields.component || target.unit !== fields.unit || target.property.toLowerCase() !== fields.property.toLowerCase()) {
-      throw new Error(`calibration: "${fields.supersedes}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
+      throw new Error(`calibration: "${t}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
     }
+    if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };

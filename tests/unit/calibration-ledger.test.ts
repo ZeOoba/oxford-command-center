@@ -229,14 +229,14 @@ describe('promotion: pending → observation', () => {
 
   it('a later row that supersedes an earlier one stops it counting without editing it; an unknown target is refused', () => {
     const placeholder = obs({ obs_id: 'banwick:placeholder' });
-    const real = obs({ obs_id: 'banwick:real', supersedes: 'banwick:placeholder' });
+    const real = obs({ obs_id: 'banwick:real', supersedes: ['banwick:placeholder'] });
     const agg = aggregateByComponent([placeholder, real]);
     expect(agg[0]!.n).toBe(1);
     expect(agg[0]!.points[0]!.obsId).toBe('banwick:real');
     expect(exclusionFor(placeholder, supersededMap([placeholder, real]))).toMatch(/superseded by banwick:real/);
     expect(exclusionFor(placeholder)).toBeNull(); // the stored row itself is untouched
     expect(supersededMap([real, placeholder]).size).toBe(0); // a row can only supersede an EARLIER id
-    const pend = { ...proposal(), obs_id: 'x:new', supersedes: 'nope' };
+    const pend = { ...proposal(), obs_id: 'x:new', supersedes: ['nope'] };
     expect(() => promoteProposal([placeholder], [pend], 'x:new', '2026-10-14')).toThrow(/not in the ledger/);
   });
 
@@ -252,10 +252,10 @@ describe('promotion: pending → observation', () => {
     const placeholder = obs({ obs_id: 'banwick:placeholder', property: '2800-2826 Banwick', component: 'roof_epdm', contractor_source: { ...obs().contractor_source, vendor: 'Unidentified roofer (low)', doc_date: '2026' } });
     const other = obs({ obs_id: 'elsewhere:x', property: 'Elsewhere', component: 'roof_tpo' });
     const prop = { ...proposal(), obs_id: 'banwick:real', property: '2800-2826 Banwick', component: 'roof_epdm' as const };
-    const ok = promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', 'banwick:placeholder');
-    expect(ok.promoted.supersedes).toBe('banwick:placeholder');
+    const ok = promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', ['banwick:placeholder']);
+    expect(ok.promoted.supersedes).toEqual(['banwick:placeholder']);
     expect(aggregateByComponent(ok.ledger).find((g) => g.component === 'roof_epdm')!.n).toBe(1);
-    expect(() => promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', 'elsewhere:x')).toThrow(/different property/);
+    expect(() => promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', ['elsewhere:x'])).toThrow(/different property/);
     const pcaLine: PcaLine = { propertyKey: 'banwick', component: 'roof_epdm', unit: 'SF', unitCost: 6, qty: 24000, consultant: 'Intertek', reportDate: '2026-04-07', reportId: 'R01', status: 'CURRENT', sourceFile: 'f' };
     const q: QuoteLine = { propertyKey: 'banwick', propertyLabel: '2800-2826 Banwick', component: 'roof_epdm', unit: 'SF', qty: 24000, totalUsd: 252000, isActual: false, vendor: 'Acme', docDate: '2026-05-12', status: 'BID', superseded: false, title: 't', sourceFile: 's' };
     const [p] = proposePairs([pcaLine], [q], { ledger: [placeholder], pending: [] }, '2026-10-14', 't');
@@ -273,6 +273,30 @@ describe('promotion: pending → observation', () => {
     const live = mk({ totalUsd: 9000 });
     expect(run([a], [sup, live])).toBe(run([a], [live, sup]));
     expect(JSON.parse(run([a], [sup, live]))[0].include_in_stats).toBe(true); // the live quote wins
+  });
+
+  it('one real quote can retire BOTH Banwick range rows; a retired row is never retired twice; re-running a half-finished --supersedes promote heals', () => {
+    const lo = obs({ obs_id: 'b:lo', property: 'Banwick', component: 'roof_epdm' });
+    const hi = obs({ obs_id: 'b:hi', property: 'Banwick', component: 'roof_epdm' });
+    const prop = { ...proposal(), obs_id: 'b:real', property: 'Banwick', component: 'roof_epdm' as const };
+    const done = promoteProposal([lo, hi], [prop], 'b:real', '2026-10-14', ['b:lo', 'b:hi']);
+    expect(aggregateByComponent(done.ledger).find((g) => g.component === 'roof_epdm')!.n).toBe(1);
+    const second = { ...prop, obs_id: 'b:real2' };
+    expect(() => promoteProposal(done.ledger, [second], 'b:real2', '2026-10-15', ['b:lo'])).toThrow(/already superseded/);
+    // crash between ledger write and pending write: the identical command heals instead of stranding the pending row
+    const healed = promoteProposal(done.ledger, [prop], 'b:real', '2026-10-20', ['b:lo', 'b:hi']);
+    expect(healed.ledger).toEqual(done.ledger);
+    expect(healed.pending).toEqual([]);
+  });
+
+  it('proposePairs: quotes tying on vendor/date/total but differing in qty resolve the same whichever order they arrive', () => {
+    const a: PcaLine = { propertyKey: 'p', component: 'roof_tpo', unit: 'SF', unitCost: 12, qty: null, consultant: 'c', reportDate: '2025-03-01', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
+    const mk = (qty: number): QuoteLine => ({ propertyKey: 'p', propertyLabel: 'P', component: 'roof_tpo', unit: 'SF', qty, totalUsd: 9000, isActual: false, vendor: 'V', docDate: '2025-06-01', status: 'BID', superseded: false, title: 't', sourceFile: 's' });
+    const skipped: unknown[] = [];
+    const fwd = JSON.stringify(proposePairs([a], [mk(1000), mk(1500)], { ledger: [], pending: [] }, '2026-10-14', 't', (d) => skipped.push(d)));
+    const rev = JSON.stringify(proposePairs([a], [mk(1500), mk(1000)], { ledger: [], pending: [] }, '2026-10-14', 't'));
+    expect(fwd).toBe(rev);
+    expect(skipped).toHaveLength(1); // the dropped twin is reported, not silent
   });
 
   it('refuses to promote when two pending proposals share an obs_id (never picks by array order)', () => {
@@ -327,7 +351,9 @@ describe('proposal matcher (read-only)', () => {
     const out = proposePairs(two, [quote(), quote({ component: 'paving_overlay', title: 'lot overlay (Walker)' })], { ledger: [], pending: [] }, '2026-10-13', 't', (d) => skipped.push(d));
     expect(out).toHaveLength(1);
     expect(skipped).toHaveLength(1);
-    expect(skipped[0]!.obsId).toContain('paving_overlay');
+    // Deterministic (component order, not input order): paving_overlay sorts first and is kept; the roof scope is reported, never silent.
+    expect(skipped[0]!.obsId).toContain('roof_other');
+    expect(skipped[0]!.keptObsId).toContain('paving_overlay');
   });
 
   it('a negative or $0 contractor total (credit / placeholder) yields a null price, not a crash or a ratio', () => {

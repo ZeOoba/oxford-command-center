@@ -19,11 +19,34 @@ const write = (path: string, data: unknown): void => {
   renameSyncWithRetry(tmp, path);
 };
 
+/** `<obs_id> [--supersedes <id>]...` (also `--supersedes=<id>`). A missing value or an unknown flag is an error, never silently ignored. */
+export function parseArgs(argv: string[]): { obsId: string | undefined; supersedes: string[] | undefined } | string {
+  const supersedes: string[] = [];
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] as string;
+    if (a === '--supersedes') {
+      const v = argv[++i];
+      if (v === undefined || v.startsWith('--')) return '--supersedes needs an obs_id';
+      supersedes.push(v);
+    } else if (a.startsWith('--supersedes=')) {
+      const v = a.slice('--supersedes='.length);
+      if (v === '') return '--supersedes needs an obs_id';
+      supersedes.push(v);
+    } else if (a.startsWith('--')) return `unknown option ${a}`;
+    else positional.push(a);
+  }
+  if (positional.length > 1) return `unexpected extra argument "${positional[1]}"`;
+  return { obsId: positional[0], supersedes: supersedes.length > 0 ? supersedes : undefined };
+}
+
 function main(argv: string[]): number {
-  const sIdx = argv.indexOf('--supersedes');
-  const supersedes = sIdx >= 0 ? argv[sIdx + 1] : undefined;
-  const rest = sIdx >= 0 ? argv.filter((_, i) => i !== sIdx && i !== sIdx + 1) : argv;
-  const obsId = rest[0];
+  const parsed = parseArgs(argv);
+  if (typeof parsed === 'string') {
+    console.error(`calibration-promote: ${parsed}`);
+    return 1;
+  }
+  const { obsId, supersedes } = parsed;
   if (!obsId) {
     console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>]   (see data/calibration/calibration_pending.json)');
     return 1;

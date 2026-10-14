@@ -18,6 +18,7 @@ import { classifyUsability, parseRegister, resolveProperty, type ParsedRegister 
 import { reportStatus } from '../src/analytics/pca-intelligence';
 import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
 import {
+  supersededMap,
   CalibrationProposal,
   classifyComponent,
   pairKey,
@@ -118,8 +119,9 @@ function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
 
 /** Ledger rows that stand in for an unidentified / undated quote on the same scope: a real quote may replace one (promote --supersedes). */
 function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string {
+  const retired = supersededMap(ledger);
   const ids = ledger
-    .filter((o) => o.property.toLowerCase() === q.propertyLabel.toLowerCase() && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
+    .filter((o) => !retired.has(o.obs_id) && o.property.toLowerCase() === q.propertyLabel.toLowerCase() && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
     .map((o) => o.obs_id);
   return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> so it is not counted twice.`;
 }
@@ -137,7 +139,12 @@ export function proposePairs(
   const keptByKey = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [pairKey(o), o.obs_id]));
   const out: CalibrationProposal[] = [];
   // Deterministic order: when two quotes share an obs_id the live (non-superseded), newest, lowest-vendor one is kept, never input order.
-  const ordered = [...quotes].sort((a, b) => Number(a.superseded) - Number(b.superseded) || b.docDate.localeCompare(a.docDate) || a.vendor.localeCompare(b.vendor) || (a.totalUsd ?? 0) - (b.totalUsd ?? 0));
+  const ordered = [...quotes].sort(
+    (a, b) =>
+      Number(a.superseded) - Number(b.superseded) || b.docDate.localeCompare(a.docDate) || a.vendor.localeCompare(b.vendor) ||
+      a.component.localeCompare(b.component) || a.unit.localeCompare(b.unit) || (a.totalUsd ?? 0) - (b.totalUsd ?? 0) ||
+      (a.qty ?? Infinity) - (b.qty ?? Infinity) || a.sourceFile.localeCompare(b.sourceFile) || a.title.localeCompare(b.title),
+  );
   for (const q of ordered) {
     const p = pickPca(pca, q);
     if (!p) continue;
@@ -163,7 +170,7 @@ export function proposePairs(
       // One quote document is one observation (pairKey), but a document pricing two scopes on one date collapses here —
       // say so instead of dropping the second scope silently.
       const kept = keptByKey.get(key);
-      if (kept !== undefined && kept !== proposal.obs_id) onDuplicate({ obsId: proposal.obs_id, keptObsId: kept });
+      if (kept !== undefined) onDuplicate({ obsId: proposal.obs_id, keptObsId: kept }); // also when the colliding quote prices a different qty / unit under the same id
       continue;
     }
     seen.add(key);

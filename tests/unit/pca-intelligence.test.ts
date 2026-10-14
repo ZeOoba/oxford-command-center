@@ -90,10 +90,11 @@ describe('reservePsfYr', () => {
 });
 
 describe('reportStatus undated', () => {
-  it('an undated report cannot be shown to be 2024+, so it is STALE (never feeds totals); a draft stays DRAFT', () => {
+  it('an undated report cannot be shown to be 2024+, so it is STALE (never feeds totals); a dated draft stays DRAFT', () => {
     expect(reportStatus({ usabilityClass: 'current', reportDate: null })).toBe('STALE');
     expect(reportStatus({ usabilityClass: 'unknown', reportDate: null })).toBe('STALE');
-    expect(reportStatus({ usabilityClass: 'draft', reportDate: null })).toBe('DRAFT');
+    expect(reportStatus({ usabilityClass: 'draft', reportDate: null })).toBe('STALE'); // undated beats draft: its dollars must not count
+    expect(reportStatus({ usabilityClass: 'draft', reportDate: '2025-04-10' })).toBe('DRAFT');
   });
 });
 
