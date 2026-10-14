@@ -79,6 +79,13 @@ describe('refuseBakeOnRosterScan', () => {
   });
 });
 
+describe('object keys (collectText never walks keys, JSON.stringify writes them)', () => {
+  it('refuses a roster term that appears only as an object key', () => {
+    expect(refuseBakeOnRosterScan({ tenantNotes: { '9900 Quarry Rd': 'fine' } })).not.toBeNull();
+    expect(refuseBakeOnRosterScan({ dealComps: { 'zephyr-flex': {} } })).not.toBeNull();
+  });
+});
+
 describe('redaction + roster scan together (the PR #457 refute scenario)', () => {
   const snap = (): PortfolioSnapshot => ({
     properties: [], leases: [], loans: [], insurance: [], counterparties: [],

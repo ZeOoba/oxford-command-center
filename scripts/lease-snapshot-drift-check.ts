@@ -26,6 +26,7 @@ import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 import { checkSnapshot } from '../server/reconcile-runtime';
+import { hasConfidentialRosterFailure } from '../server/sources/notion-deals';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
@@ -439,6 +440,15 @@ export function evaluateReconciliationGate(
   if (errors.length === 0) return { refuse: false };
 
   const summary = errors.map((f) => `${f.entity} · ${f.field}: ${f.issue}`).join('; ');
+  // An unreadable/placeholder confidential roster is NOT forceable: --force exists for a known,
+  // intentional DATA discrepancy, and would otherwise sweep this Hard Invariant 3 refusal along with
+  // an unrelated one (e.g. the routine annualRent gap). Fix the roster instead.
+  if (hasConfidentialRosterFailure(errors)) {
+    return {
+      refuse: true,
+      reason: `Refusing to write ${snapshotPath}: the confidential-terms roster is unreadable or the placeholder, so deal confidentiality could not be verified. --force does not override this. portfolio.json was NOT modified. All error flags: ${summary}.`,
+    };
+  }
   if (!force) {
     return {
       refuse: true,

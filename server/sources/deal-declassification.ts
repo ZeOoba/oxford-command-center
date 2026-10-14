@@ -99,3 +99,39 @@ export function rosterUnavailable(): boolean {
     return true;
   }
 }
+
+/**
+ * Roster scan of a payload about to be published to a redacted PUBLIC surface (PR #457 refute
+ * wf_d42a89c6-fe5). Redaction is flag- and name-only, so text naming an ACTIVE roster deal by an
+ * `always` term (e.g. an M365 task carrying its address) survives whenever the Notion name differs;
+ * the roster is the source of record for Hard Invariant 3 and gets the last word. Returns the
+ * refusal text, or null when the payload may publish.
+ *
+ * Fails CLOSED three ways: a hit, a throw (unreadable roster), and the placeholder stand-in. The
+ * message never carries a matched term or deal label -- this text reaches logs.
+ *
+ * Scans BOTH the flattened values (collectText, the egress hook's semantics) AND the exact
+ * serialized bytes, because collectText walks Object.values and never sees object KEYS -- yet
+ * JSON.stringify writes them (tenantNotes / dealComps / marketRents are keyed by free text).
+ * Callers must not use this for FULL (Access-gated) bakes, where confidential content is the point.
+ */
+export function publicPayloadRosterRefusal(payload: unknown): string | null {
+  const tail = 'Leaving the last good public output in place.';
+  try {
+    if (rosterUnavailable()) {
+      return (
+        `\u2717 refusing to publish \u2014 the confidential-terms roster is unreadable or the placeholder ` +
+        `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
+      );
+    }
+    if (scanForConfidential(payload) || scanForConfidential(JSON.stringify(payload))) {
+      return (
+        `\u2717 refusing to publish \u2014 the redacted payload still matches an ACTIVE confidential roster ` +
+        `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`
+      );
+    }
+    return null;
+  } catch {
+    return `\u2717 refusing to publish \u2014 the confidential roster scan threw, so the payload cannot be verified. ${tail}`;
+  }
+}

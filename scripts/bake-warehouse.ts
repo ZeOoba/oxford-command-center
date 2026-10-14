@@ -18,6 +18,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
+import { publicPayloadRosterRefusal } from '../server/sources/deal-declassification';
 import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
 import { leaseMarketApi } from '../server/warehouse/lease-market-api';
 import Database from 'better-sqlite3';
@@ -366,6 +367,12 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
     const pub = join(process.cwd(), 'public');
     mkdirSync(pub, { recursive: true });
     const outPath = join(pub, 'warehouse.json');
+    // Redacted bakes only: a FULL bake targets an Access-gated mirror by design. Same roster boundary
+    // as snapshot.json -- /brain/report titles carry acquisition addresses (PR #457 refute C2).
+    if (!includeConfidential) {
+      const refusal = publicPayloadRosterRefusal(env);
+      if (refusal) throw new Error(refusal);
+    }
     writeFileSync(outPath, JSON.stringify(env));
     return { path: outPath, warehouseSource, count: Object.keys(env.endpoints).length };
   } finally {
