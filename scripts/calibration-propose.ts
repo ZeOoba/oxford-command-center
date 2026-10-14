@@ -121,8 +121,10 @@ export function proposePairs(
   existing: { ledger: CalibrationObservation[]; pending: CalibrationProposal[] },
   today: string,
   proposedFrom: string,
+  onDuplicate: (skipped: { obsId: string; keptObsId: string }) => void = () => {},
 ): CalibrationProposal[] {
   const seen = new Set<string>([...existing.ledger, ...existing.pending].map(pairKey));
+  const keptByKey = new Map<string, string>();
   const out: CalibrationProposal[] = [];
   for (const q of quotes) {
     const p = pickPca(pca, q);
@@ -142,8 +144,15 @@ export function proposePairs(
       proposed_at: today, proposed_from: proposedFrom,
     });
     const key = pairKey(proposal);
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      // One quote document is one observation (pairKey), but a document pricing two scopes on one date collapses here —
+      // say so instead of dropping the second scope silently.
+      const kept = keptByKey.get(key);
+      if (kept !== undefined && kept !== proposal.obs_id) onDuplicate({ obsId: proposal.obs_id, keptObsId: kept });
+      continue;
+    }
     seen.add(key);
+    keptByKey.set(key, proposal.obs_id);
     out.push(proposal);
   }
   return out;
@@ -283,7 +292,7 @@ async function main(argv: string[]): Promise<number> {
   const costSegPath = join(process.cwd(), 'data', 'cost-seg', 'cost-seg.json');
   const costSegFacts = existsSync(costSegPath) ? parseCostSeg(JSON.parse(readFileSync(costSegPath, 'utf-8'))).facts : [];
   // Cost seg quantities are only ever OFFERED as a candidate qty on a pending proposal; a human promotes (or not).
-  const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none'), costSegFacts);
+  const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none', (d) => console.warn(`calibration-propose: skipped ${d.obsId} — same property/vendor/date as ${d.keptObsId} (one quote document = one observation); add it by hand if it is a separate scope.`)), costSegFacts);
   // Re-read both files right before writing: the loads above are async (workbook, Notion pagination) and a
   // `calibration:promote` run in that window must not be undone by writing back the stale snapshot.
   const fresh = readJson(PENDING_PATH, parsePending);

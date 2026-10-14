@@ -236,6 +236,12 @@ describe('promotion: pending → observation', () => {
     expect(healed.pending).toEqual([]);
   });
 
+  it('a $0 contractor unit cost is excluded from stats, not counted as a ratio-0 point', () => {
+    const z = obs({ contractor_unit_cost: 0 });
+    expect(ratio(z)).toBeNull();
+    expect(includedInStats(z)).toBe(false);
+  });
+
   it('refuses a duplicate obs_id (append-only)', () => {
     const dup = { ...proposal(), obs_id: obs().obs_id, pca_unit_cost: (obs().pca_unit_cost ?? 0) + 1 }; // differing row: never overwritten
     expect(() => promoteProposal([obs()], [dup], obs().obs_id, '2026-10-14')).toThrow(/already exists/);
@@ -255,6 +261,15 @@ describe('proposal matcher (read-only)', () => {
   const quote = (over: Partial<QuoteLine> = {}): QuoteLine => ({
     propertyKey: 'e-livingston', propertyLabel: '3875-3883 E Livingston', component: 'roof_other', unit: 'SF', qty: 2376, totalUsd: REDACTED-AMT, isActual: false, vendor: 'Walker', docDate: '2025-03-26',
     status: 'BID', superseded: false, title: 'back bldg re-roof (Walker)', sourceFile: 'wb > Quotes_Actuals', ...over,
+  });
+
+  it('reports (instead of silently dropping) a second scope from the same vendor document', () => {
+    const two = [...pca, { ...pca[0]!, component: 'paving_overlay' as const, unit: 'SF' as const, reportId: 'R04b' }];
+    const skipped: Array<{ obsId: string; keptObsId: string }> = [];
+    const out = proposePairs(two, [quote(), quote({ component: 'paving_overlay', title: 'lot overlay (Walker)' })], { ledger: [], pending: [] }, '2026-10-13', 't', (d) => skipped.push(d));
+    expect(out).toHaveLength(1);
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]!.obsId).toContain('paving_overlay');
   });
 
   it('pairs on property + component and normalizes the contractor total to $/unit', () => {
