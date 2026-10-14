@@ -2,8 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
-import { scanForConfidential } from '../server/briefing/confidential';
-import { rosterUnavailable } from '../server/sources/deal-declassification';
+import { publicPayloadRosterRefusal } from '../server/sources/deal-declassification';
 import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
@@ -57,38 +56,11 @@ export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string 
 
 /**
  * Writer policy for the PUBLIC mirror, part three: roster scan of the WHOLE payload at the
- * publication boundary (PR #457 refute wf_d42a89c6-fe5). redactConfidential is flag- and name-only,
- * so text naming an ACTIVE roster deal by an `always` term (e.g. an M365 task carrying its address)
- * survives whenever the Notion name differs. The roster is the source of record for Hard Invariant 3,
- * so it gets the last word over everything about to be written. Returns the refusal, or null.
- *
- * Fails CLOSED three ways: a hit, a throw (unreadable roster), and the placeholder stand-in. The
- * message never carries the matched term or deal label -- this text reaches logs.
- * Not applied in FULL (MIRROR_INCLUDE_CONFIDENTIAL=1) mode, where confidential content is the point.
+ * publication boundary -- see publicPayloadRosterRefusal. Not applied in FULL
+ * (MIRROR_INCLUDE_CONFIDENTIAL=1) mode, where confidential content is the point and the target is
+ * verified Access-gated (deploy-mirror.ps1 always runs FULL, so this guards redacted bakes only).
  */
-export function refuseBakeOnRosterScan(payload: unknown): string | null {
-  const tail = 'Leaving the last good public/snapshot.json in place.';
-  try {
-    if (rosterUnavailable()) {
-      return (
-        `✗ bake-mirror: refusing to bake — the confidential-terms roster is unreadable or the placeholder ` +
-        `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
-      );
-    }
-    if (scanForConfidential(payload)) {
-      return (
-        `✗ bake-mirror: refusing to bake — the redacted payload still matches an ACTIVE confidential roster ` +
-        `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`
-      );
-    }
-    return null;
-  } catch {
-    return (
-      `✗ bake-mirror: refusing to bake — the confidential roster scan threw, so the payload cannot be ` +
-      `verified. ${tail}`
-    );
-  }
-}
+export const refuseBakeOnRosterScan = publicPayloadRosterRefusal;
 
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
   if (!degraded) return null;
