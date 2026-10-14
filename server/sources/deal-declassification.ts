@@ -69,3 +69,23 @@ export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC
     return false;
   }
 }
+
+/**
+ * True when the live confidential-terms roster claims this deal — or when that cannot be ruled out.
+ * The mirror image of isDeclassified for deals whose flag is already `false` (seed-matched deals,
+ * whose seed flag is otherwise authoritative): the roster is the source of record for Hard
+ * Invariant 3, so a seed `confidential:false` can never outrank an ACTIVE roster hit. Fails CLOSED
+ * on an unreadable roster and on the placeholder stand-in, exactly as isDeclassified does.
+ */
+export function rosterClaimsDeal(deal: Deal): boolean {
+  try {
+    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+      console.warn('[deal-declassification] confidential roster is the PLACEHOLDER stand-in — treating every deal as roster-claimed (fail closed).');
+      return true;
+    }
+    return scanForConfidential(deal) !== null;
+  } catch (e) {
+    console.warn(`[deal-declassification] confidential roster unreadable (${e instanceof Error ? e.message : String(e)}) — treating the deal as roster-claimed (fail closed).`);
+    return true;
+  }
+}
