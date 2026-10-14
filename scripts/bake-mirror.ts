@@ -62,6 +62,20 @@ export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string 
  */
 export const refuseBakeOnRosterScan = publicPayloadRosterRefusal;
 
+/**
+ * The publication step for public/snapshot.json, extracted so the roster boundary is testable
+ * (review round 3, C4: removing the inline call left every test green). Redacted bakes throw on a
+ * roster refusal BEFORE anything is written, so the last good snapshot.json stays in place; main()'s
+ * catch turns the throw into exit 1, which halts the `bake && deploy` chain.
+ */
+export function writeSnapshotPayload(payload: unknown, includeConfidential: boolean, pubDir: string): void {
+  if (!includeConfidential) {
+    const refusal = refuseBakeOnRosterScan(payload);
+    if (refusal) throw new Error(refusal);
+  }
+  writeFileSync(join(pubDir, 'snapshot.json'), JSON.stringify(payload));
+}
+
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
   if (!degraded) return null;
   return (
@@ -284,15 +298,7 @@ async function main() {
     ? { snapshot: raw, removed: [], removedCounterparties: [], removedTasks: 0 }
     : redactConfidential(raw);
 
-  const payload = { ...snapshot, governors };
-  if (!includeConfidential) {
-    const rosterRefusal = refuseBakeOnRosterScan(payload);
-    if (rosterRefusal) {
-      console.error(rosterRefusal);
-      process.exit(1);
-    }
-  }
-  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify(payload));
+  writeSnapshotPayload({ ...snapshot, governors }, includeConfidential, pub);
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
 
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';

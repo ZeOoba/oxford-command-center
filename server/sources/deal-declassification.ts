@@ -8,7 +8,7 @@
 
 import type { Deal } from '../../src/contracts/index';
 import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
-import { scanForConfidential } from '../briefing/confidential';
+import { collectText, scanForConfidential } from '../briefing/confidential';
 
 /**
  * The sentinel term carried by `confidential.ts`'s FALLBACK_TERMS — the placeholder roster returned
@@ -132,11 +132,21 @@ export function publicPayloadRosterRefusal(payload: unknown): string | null {
         `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
       );
     }
-    if (
-      scanForConfidential(payload) ||
-      scanForConfidential(collectKeys(payload)) ||
-      scanForConfidential(JSON.stringify(payload))
-    ) {
+    // ONE combined text for values + keys: a context term and its anchor may be split between a key and a
+    // value, and a per-text scan would see only one half of the pair (review round 3, C1b). The raw
+    // serialized bytes are scanned separately for anything toJSON rewrites.
+    const hit =
+      scanForConfidential(`${collectText(payload)} ${collectKeys(payload)}`) ||
+      scanForConfidential(JSON.stringify(payload));
+    // The roster is re-read on every scan; if it vanished between the check above and the scans, they ran
+    // against the placeholder and a clean result means nothing (review round 3, C1d).
+    if (rosterUnavailable()) {
+      return (
+        `\u2717 refusing to publish \u2014 the confidential-terms roster became unreadable during the scan, so ` +
+        `this payload cannot be verified. ${tail}`
+      );
+    }
+    if (hit) {
       return (
         `\u2717 refusing to publish \u2014 the redacted payload still matches an ACTIVE confidential roster ` +
         `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`
