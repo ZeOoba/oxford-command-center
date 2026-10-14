@@ -34,9 +34,10 @@ export function CloseModule() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiStat label="Actual NOI" value={qb ? v.totalActual : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor="var(--color-pos)" />
-        <KpiStat label="Budget NOI" value={v.totalBudget || null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor="var(--accent)" />
-        <KpiStat label="Portfolio Variance" value={qb ? v.totalVariance : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor={v.totalVariance < 0 ? 'var(--color-neg)' : 'var(--color-pos)'} sublabel={qb ? `${v.belowBudgetCount} below budget` : undefined} />
+        <KpiStat label="Actual NOI" value={qb && v.pairedCount > 0 ? v.totalActual : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor="var(--color-pos)" sublabel={qb ? `${v.pairedCount} of ${v.actualCount} paired` : undefined} />
+        <KpiStat label="Budget NOI" value={v.pairedCount > 0 ? v.totalBudget : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor="var(--accent)" sublabel={qb ? `${v.pairedCount} of ${v.budgetedCount} paired` : undefined} />
+        {/* No budget/actual pairs: a 0 variance is "nothing compared", not "on budget" — show — with a neutral accent. */}
+        <KpiStat label="Portfolio Variance" value={qb && v.pairedCount > 0 ? v.totalVariance : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor={v.pairedCount === 0 ? 'var(--text-tertiary)' : v.totalVariance < 0 ? 'var(--color-neg)' : 'var(--color-pos)'} sublabel={qb ? (v.pairedCount === 0 ? 'no budget/actual pairs' : `${v.belowBudgetCount} below budget · ${v.pairedCount} of ${v.rows.length} paired`) : undefined} />
         <KpiStat label="Expense Ratio" value={v.expenseRatio !== null ? v.expenseRatio : null} format={(n) => (n === null ? '—' : fmtPct(n))} accentColor="var(--color-warn)" sublabel="QB opex / income" />
       </div>
 

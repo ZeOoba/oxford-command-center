@@ -441,6 +441,52 @@ describe('sign-flip is section-scoped, not account-scoped (defect class: OI-355 
     const und = db.prepare("SELECT severity FROM data_quality_issues WHERE kind='sign-undecidable'").all() as Array<{ severity: string }>;
     expect(und).toHaveLength(1);
     expect(und[0]!.severity).toBe('warn');
+    // Fail closed (audit ingest-sign-undecidable-still-commits): an undecidable sign side must NOT
+    // auto-commit — a committed, unflipped negative-booked side would silently serve inflated NOI.
+    const batch = db.prepare('SELECT status FROM import_batches').get() as { status: string };
+    expect(batch.status).toBe('pending-review');
+    const active = db.prepare('SELECT COUNT(*) AS n FROM ledger_entries WHERE is_active = 1').get() as { n: number };
+    expect(active.n).toBe(0);
+  });
+
+  it('a stale re-derive of an already-committed import that is now sign-undecidable keeps the prior committed ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-undecidable-rederive-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SIGN_SEED);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Row[] = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          Total Expense', 0],
+      [null, null, '          Insurance Expense', -30000],
+      [null, null, '          HVAC Repair', -10000],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+    const r1 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-09-28T00:00:00Z' });
+    const importId = r1.importId!;
+    // Simulate a batch that auto-committed BEFORE the fail-closed rule: committed, stale parser, rows active.
+    db.prepare("UPDATE import_batches SET status = 'committed', parser_version = 0 WHERE id = ?").run(importId);
+    db.prepare('UPDATE ledger_entries SET is_active = 1 WHERE import_id = ?').run(importId);
+
+    const r2 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-09-28T02:00:00Z' });
+    expect(r2.status).toBe('committed');
+    expect(r2.reason).toBe('restale-skipped');
+    const batch = db.prepare('SELECT status, parser_version FROM import_batches WHERE id = ?').get(importId) as { status: string; parser_version: number };
+    expect(batch.status).toBe('committed');
+    expect(batch.parser_version).toBe(0); // rolled back => stays stale, so a later fixed parser re-attempts
+    // the skip is surfaced WITH its real cause (the rollback erases the in-tx sign-undecidable row)
+    const skip = db.prepare("SELECT detail FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped'").all(importId) as Array<{ detail: string }>;
+    expect(skip).toHaveLength(1);
+    expect(skip[0]!.detail).toContain('sign-undecidable:');
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(importId) as { c: number }).c).toBe(3);
   });
 
   it('bare display-negative TOTAL|EXPENSE block does not cancel the real EXPENSE section and hand the decision to a NON OPERATING tail', async () => {
