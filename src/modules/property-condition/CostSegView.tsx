@@ -199,10 +199,10 @@ function SpecSheetCard({ ds, studyId, onStudy }: { ds: CostSegDatasetT; studyId:
 
 // ── cross-check ─────────────────────────────────────────────────────────────────────────────
 
-function CrossCheckCard({ ds, specFacts, registerSf }: { ds: CostSegDatasetT; specFacts: Parameters<typeof pcaComparators>[0]; registerSf: Record<string, number | null> }) {
+function CrossCheckCard({ ds, specFacts, registerSf, registerStatus }: { ds: CostSegDatasetT; specFacts: Parameters<typeof pcaComparators>[0]; registerSf: Record<string, number | null>; registerStatus: Record<string, 'CURRENT' | 'DRAFT' | 'STALE'> }) {
   const groups = Object.keys(ds.studies).map((id) => {
     const key = COST_SEG_PROPERTY_MAP[id as CostSegStudyId] ?? null;
-    const cmp = pcaComparators(specFacts, key, key === null ? null : registerSf[key] ?? null);
+    const cmp = pcaComparators(specFacts, key, key === null ? null : registerSf[key] ?? null, key === null ? null : registerStatus[key] ?? null);
     return { id, key, rows: crossCheck(ds.facts, id, cmp) };
   });
   const differs = groups.reduce((a, g) => a + g.rows.filter((r) => r.status === 'differs').length, 0);
@@ -287,7 +287,7 @@ function DiscrepancyCard({ ds }: { ds: CostSegDatasetT }) {
 
 // ── view ────────────────────────────────────────────────────────────────────────────────────
 
-export function CostSegPanel({ registerSf }: { registerSf: Record<string, number | null> }) {
+export function CostSegPanel({ registerSf, registerStatus }: { registerSf: Record<string, number | null>; registerStatus: Record<string, 'CURRENT' | 'DRAFT' | 'STALE'> }) {
   const cs = useCostSeg(true);
   const specs = useBuildingSpecs(true);
   const [studyId, setStudyId] = useState<string>('CS-LIV');
@@ -323,7 +323,7 @@ export function CostSegPanel({ registerSf }: { registerSf: Record<string, number
           PCA building specs failed to load ({specs.error instanceof Error ? specs.error.message : 'error'}) — the cross-check shows register SF only.
         </p>
       )}
-      <CrossCheckCard ds={ds} specFacts={specFacts} registerSf={registerSf} />
+      <CrossCheckCard ds={ds} specFacts={specFacts} registerSf={registerSf} registerStatus={registerStatus} />
       <DiscrepancyCard ds={ds} />
     </div>
   );

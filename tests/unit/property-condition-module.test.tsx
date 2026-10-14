@@ -130,7 +130,7 @@ describe('PropertyConditionModule', () => {
 
   it('?view=calibration carries the permanent estimate-vs-quote label', () => {
     renderModule('/property-condition?view=calibration');
-    expect(screen.getByText('PCA consultant estimate vs contractor quote; n=1 each; directional only')).toBeTruthy();
+    expect(screen.getByText(/PCA consultant estimate vs contractor quote; .*directional only below n=5/)).toBeTruthy();
   });
 
   it('falls back to Capex outlook for an unknown ?view=', () => {

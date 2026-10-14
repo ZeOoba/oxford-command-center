@@ -18,7 +18,7 @@ import {
   INFO_LANE_DETAIL,
   PCA_ISSUES,
   PCA_OVERLAY,
-  CALIBRATION_LABEL,
+  calibrationLabel,
 } from '../../src/modules/property-condition/pca-overlay';
 import type { PcaPropertySummary, PcaReportBrief, PropertyConditionReport } from '../../src/contracts/property-condition';
 
@@ -326,6 +326,8 @@ describe('overlay content', () => {
   });
 
   it('carries the permanent calibration label', () => {
-    expect(CALIBRATION_LABEL).toBe('PCA consultant estimate vs contractor quote; n=1 each; directional only');
+    expect(calibrationLabel([1, 1, 1])).toBe('PCA consultant estimate vs contractor quote; n=1 each; directional only below n=5');
+    expect(calibrationLabel([1, 3, 0])).toContain('n=1–3 per component');
+    expect(calibrationLabel([])).toContain('no countable observations');
   });
 });

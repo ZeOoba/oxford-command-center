@@ -119,7 +119,7 @@ export function PropertyConditionModule() {
           sublabel="Σ current + draft reports · excl. pre-2024 stale"
         />
         <KpiStat
-          label="Short-term (Yr 1–2)"
+          label="Short-term"
           value={totals.shortTermUsd}
           format={fmtUsdCompact}
           sublabel="Where the report separates it"
@@ -153,7 +153,7 @@ export function PropertyConditionModule() {
         </div>
       )}
       {view === 'specs' && <SpecsPanel enabled />}
-      {view === 'costseg' && <CostSegPanel registerSf={Object.fromEntries(adjusted.properties.map((p) => [p.propertyKey, p.current.sf]))} />}
+      {view === 'costseg' && <CostSegPanel registerSf={Object.fromEntries(adjusted.properties.map((p) => [p.propertyKey, p.current.sf]))} registerStatus={Object.fromEntries(adjusted.properties.map((p) => [p.propertyKey, p.status]))} />}
       {view === 'infolane' && <InfoLaneView rentRollMonths={monthsSince(INFO_LANE_DETAIL.rentRoll.asOf, today)} />}
     </div>
   );

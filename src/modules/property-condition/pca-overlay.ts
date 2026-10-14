@@ -19,7 +19,12 @@ const INFO_LANE_PROV: Provenance = {
   status: 'DRAFT',
 };
 
-export const CALIBRATION_LABEL = 'PCA consultant estimate vs contractor quote; n=1 each; directional only';
+/** Derived from the live ledger counts (never a stored "n=1"): adding an observation is a data change only. */
+export function calibrationLabel(counts: number[]): string {
+  const ns = counts.filter((n) => n > 0);
+  const nPart = ns.length === 0 ? 'no countable observations' : Math.min(...ns) === Math.max(...ns) ? `n=${ns[0]} each` : `n=${Math.min(...ns)}–${Math.max(...ns)} per component`;
+  return `PCA consultant estimate vs contractor quote; ${nPart}; directional only below n=5`;
+}
 
 export const PCA_OVERLAY: PcaOverlay = {
   corrections: [
