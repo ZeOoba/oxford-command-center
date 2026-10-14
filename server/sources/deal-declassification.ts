@@ -85,3 +85,17 @@ export function rosterClaimsDeal(deal: Deal): boolean {
     return true;
   }
 }
+
+/**
+ * True when the confidential roster cannot be relied on at all: unreadable/absent (the scan throws)
+ * or the placeholder stand-in (CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 with no real file). The
+ * publication-boundary counterpart of the per-deal checks above -- used by writers that must refuse
+ * outright rather than decide per deal, and by the aggregate `deals / confidential-roster` flag.
+ */
+export function rosterUnavailable(): boolean {
+  try {
+    return scanForConfidential(PLACEHOLDER_SENTINEL) !== null;
+  } catch {
+    return true;
+  }
+}

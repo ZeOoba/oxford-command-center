@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
+import { scanForConfidential } from '../server/briefing/confidential';
+import { rosterUnavailable } from '../server/sources/deal-declassification';
 import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
@@ -51,6 +53,41 @@ export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string 
     `served publicly. Both CLI writers refuse the same state. Reconciliation error(s): ${which}. ` +
     `Leaving the last good public/snapshot.json in place.`
   );
+}
+
+/**
+ * Writer policy for the PUBLIC mirror, part three: roster scan of the WHOLE payload at the
+ * publication boundary (PR #457 refute wf_d42a89c6-fe5). redactConfidential is flag- and name-only,
+ * so text naming an ACTIVE roster deal by an `always` term (e.g. an M365 task carrying its address)
+ * survives whenever the Notion name differs. The roster is the source of record for Hard Invariant 3,
+ * so it gets the last word over everything about to be written. Returns the refusal, or null.
+ *
+ * Fails CLOSED three ways: a hit, a throw (unreadable roster), and the placeholder stand-in. The
+ * message never carries the matched term or deal label -- this text reaches logs.
+ * Not applied in FULL (MIRROR_INCLUDE_CONFIDENTIAL=1) mode, where confidential content is the point.
+ */
+export function refuseBakeOnRosterScan(payload: unknown): string | null {
+  const tail = 'Leaving the last good public/snapshot.json in place.';
+  try {
+    if (rosterUnavailable()) {
+      return (
+        `✗ bake-mirror: refusing to bake — the confidential-terms roster is unreadable or the placeholder ` +
+        `stand-in, so this publicly served payload cannot be verified against it. ${tail}`
+      );
+    }
+    if (scanForConfidential(payload)) {
+      return (
+        `✗ bake-mirror: refusing to bake — the redacted payload still matches an ACTIVE confidential roster ` +
+        `term. Find and remove the leaking field at its source (term withheld from this log). ${tail}`
+      );
+    }
+    return null;
+  } catch {
+    return (
+      `✗ bake-mirror: refusing to bake — the confidential roster scan threw, so the payload cannot be ` +
+      `verified. ${tail}`
+    );
+  }
 }
 
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
@@ -275,7 +312,15 @@ async function main() {
     ? { snapshot: raw, removed: [], removedCounterparties: [], removedTasks: 0 }
     : redactConfidential(raw);
 
-  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify({ ...snapshot, governors }));
+  const payload = { ...snapshot, governors };
+  if (!includeConfidential) {
+    const rosterRefusal = refuseBakeOnRosterScan(payload);
+    if (rosterRefusal) {
+      console.error(rosterRefusal);
+      process.exit(1);
+    }
+  }
+  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify(payload));
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
 
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';
