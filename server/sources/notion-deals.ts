@@ -214,11 +214,16 @@ export function mapNotionPage(page: NotionPage): Deal | null {
  * Applied on EVERY path that returns seed deals, including loadDeals' degraded fallbacks.
  */
 export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
-  return deals.map((d) => {
+  let forced = 0;
+  const out = deals.map((d) => {
     if (d.confidential || !rosterClaimsDeal(d)) return d;
-    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it (or the roster could not be verified) — forcing confidential.`);
+    forced++;
     return { ...d, confidential: true };
   });
+  // Count only: deal ids are name/address slugs (seed ids, `notion-<slug>`), so logging one names the
+  // very deal the roster is protecting.
+  if (forced > 0) console.warn(`[notion-deals] ${forced} deal(s) were confidential:false but the active confidential roster claims them (or the roster could not be verified) — forced confidential.`);
+  return out;
 }
 
 /**
