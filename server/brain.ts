@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { watch } from 'chokidar';
+import { watch, type FSWatcher } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears, type QbActuals, type Property } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
@@ -12,7 +12,11 @@ import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { renameSyncWithRetry } from './lib/rename-retry';
 import { hasDealsPipelineFailure, applyRosterOverride, type DealsDegradation } from './sources/notion-deals';
+import { termsPath as confidentialRosterPath } from './briefing/confidential';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
+
+/** Trailing debounce for roster-file events (editors emit write bursts / unlink+add pairs). */
+const ROSTER_RECHECK_DEBOUNCE_MS = 250;
 
 /**
  * resolveQuickbooks(), layered with an in-memory preference (2026-08-17 — refute pass on the
@@ -120,7 +124,12 @@ class Brain extends EventEmitter {
       // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
       this.dealsDegraded = dealsDegraded;
       this.m365Degraded = m365Degraded;
-      const merged = applyOverlay(snapshot, this.overlay);
+      const overlaid = applyOverlay(snapshot, this.overlay);
+      // Hard Invariant 3: parseWorkbook roster-checked deals[] at PARSE time, but the parse is async and
+      // the roster can be edited while it runs. The roster watcher's re-check would then fire BEFORE this
+      // adoption and be overwritten by the stale parse-time verdict. Re-check synchronously at adoption
+      // so any edit landed before this line is seen, and any edit after it triggers the watcher.
+      const merged = { ...overlaid, deals: applyRosterOverride(overlaid.deals) };
       // Attach QuickBooks actuals via resolveQuickbooks (2026-08-17 fix): a live server's refresh()
       // fires far more often than either CLI writer, so a transient read/parse failure here (a
       // OneDrive sync lock on QUICKBOOKS_CSV, a momentary schema hiccup) is MORE likely to hit,
@@ -410,8 +419,86 @@ class Brain extends EventEmitter {
     }
   }
 
+  /**
+   * Roster-only re-check of the SERVED deals (Hard Invariant 3) — no workbook re-parse, no persist.
+   * getSnapshot() returns the cached object, so without this a roster edit with no later Brain event
+   * would leave deals confidential:false until the next refresh / write-back / restart.
+   *
+   * With a parsed `base`, deals are rebuilt from base+overlay exactly as rederive() does, so a TRANSIENT
+   * fail-closed that happened AFTER the last parse (roster mid-write or briefly unreadable → everything
+   * confidential) releases once the roster reads cleanly. Verdicts fixed INTO `base` at parse time
+   * (parseWorkbook roster-checks deals[]) are not released here — they stay confidential until the next
+   * refresh, which fails safe. With no base (snapshot served from the on-disk fallback) only the cached
+   * snapshot exists, so the check is one-way (can force true, never release) until the next refresh.
+   * Emits only when a verdict actually changed, so an irrelevant roster edit costs clients no refetch.
+   * Logs counts only — never roster terms or deal names.
+   */
+  private recheckRoster(reason: string) {
+    const current = this.snapshot;
+    if (!current) return;
+    let deals: PortfolioSnapshot['deals'];
+    try {
+      const source = this.base ? applyOverlay(this.base, this.overlay).deals : current.deals;
+      deals = applyRosterOverride(source);
+    } catch (err) {
+      // Nothing here is expected to throw (applyRosterOverride fails closed internally); if it does,
+      // serving the stale verdicts is the one wrong answer, so force everything confidential.
+      console.error(`✗ Brain.recheckRoster (${reason}): re-check threw — forcing all deals confidential:`, err instanceof Error ? err.message : err);
+      deals = current.deals.map((d) => (d.confidential ? d : { ...d, confidential: true }));
+    }
+    const was = new Map(current.deals.map((d) => [d.id, d.confidential]));
+    const tightened = deals.filter((d) => d.confidential && was.get(d.id) === false).length;
+    const released = deals.filter((d) => !d.confidential && was.get(d.id) === true).length;
+    if (tightened === 0 && released === 0) return;
+    this.snapshot = { ...current, deals };
+    console.warn(`[brain] confidential roster changed (${reason}): ${tightened} deal(s) now confidential, ${released} released.`);
+    // `action:` prefix: server/index.ts's snapshot listener skips those reasons, and it must — it writes
+    // occupancy / debt time series from the snapshot on workbook refreshes only, and a roster edit can
+    // land while Brain is serving a stale disk fallback. Clients still refetch via the SSE push.
+    this.emit('snapshot', { reason: 'action:roster-change', flags: [] as DataQualityFlag[] });
+  }
+
+  private rosterWatcher: FSWatcher | null = null;
+
+  /** Watch the confidential roster file; debounce bursts into one roster-only re-check. */
+  private watchRoster() {
+    if (this.rosterWatcher) return;
+    let timer: NodeJS.Timeout | null = null;
+    const schedule = (reason: string) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        this.recheckRoster(reason);
+      }, ROSTER_RECHECK_DEBOUNCE_MS);
+    };
+    try {
+      const watcher = watch(confidentialRosterPath(), { ignoreInitial: true });
+      watcher.on('add', () => schedule('roster-add'));
+      watcher.on('change', () => schedule('roster-change'));
+      watcher.on('unlink', () => schedule('roster-unlink'));
+      // ignoreInitial skips the initial scan, and the watcher is armed only after the startup refresh
+      // adopted its snapshot — an edit in that gap would raise no event. 'ready' closes it.
+      watcher.on('ready', () => this.recheckRoster('roster-watch-ready'));
+      // An unhandled 'error' on an EventEmitter throws, and a watcher error means an event may have been
+      // missed: re-check now rather than waiting out a debounce.
+      watcher.on('error', (err) => {
+        console.error('✗ Brain roster watcher error — re-checking roster immediately:', err instanceof Error ? err.message : err);
+        if (timer) clearTimeout(timer);
+        timer = null;
+        this.recheckRoster('roster-watch-error');
+      });
+      this.rosterWatcher = watcher;
+    } catch (err) {
+      // Not fatal to the server, but loud: without this watcher a roster edit only lands on the next
+      // refresh / write-back / restart.
+      console.error('✗ Brain: could not watch the confidential roster file —', err instanceof Error ? err.message : err);
+    }
+  }
+
   /** Watch the workbook; debounce noisy save events into one refresh. */
   startWatching() {
+    // Before the workbook early-return below: the roster guard does not depend on the workbook.
+    this.watchRoster();
     if (!existsSync(workbookPath())) {
       this.setState({ lastError: `Workbook not found at ${workbookPath()}` });
       return;
