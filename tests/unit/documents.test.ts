@@ -27,6 +27,12 @@ import {
   indexCounts,
   queryIndex,
   extractXlsxText,
+  ocrCacheDir,
+  ocrCacheKey,
+  ocrCachePathFor,
+  readOcrText,
+  listIndexableFiles,
+  listIndexablePdfs,
 } from '../../server/sources/documents';
 
 /**
@@ -130,6 +136,68 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
 // OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.
 const LEASES_RE = /(^|\/)Leases(\/)/i;
 
+describe('isExcludedPath — W-9 / taxpayer-ID forms (2026-10-14: 31 W-9 PDFs were found in the live index)', () => {
+  it('excludes W-9 forms however they are filed or named (folder or file, W9 / W-9 / W9s)', () => {
+    for (const p of [
+      'Business\\W9s\\Acme Vendor.pdf', //                                  the dedicated folder
+      'Business\\1851 South Club Solar LLC\\W9 -- 1851 South Club Solar LLC.pdf',
+      'Business\\1900 North Broadway\\W9 signed2024 Repair + Paint 1900.pdf',
+      'Business\\3034 Westerville\\W9-5242 Angola Road LLC.pdf', //          hyphen after W9
+      'Business\\Corporate and Settlement and Legal Documents\\2203 Northwood, LLC\\W-9 -- 2203 Northwood LLC (OCR).pdf',
+      'Business\\Oxford Realty Advisors\\Oxford Realty W9 Signed 9-13-10.pdf', // mid-name
+      'Business\\Oxford Realty Advisors\\W9_Signed -- EGFLLC.pdf', //        underscore after W9
+      'Business\\X\\Form W-9.pdf', //                                        end of name before extension
+      'Business\\X\\w9.pdf',
+      // Adversarial review (2026-10-14): how W-9s are actually downloaded, duplicated and typed.
+      'Business\\X\\fw9.pdf', //                                             the IRS download filename
+      'Business\\X\\fw9 (1).pdf',
+      'Business\\X\\Acme W-9(1).pdf', //                                     browser duplicate suffix
+      'Business\\X\\W9(2).pdf',
+      'Business\\X\\W 9 Acme.pdf', //                                        space / underscore / en dash between W and 9
+      'Business\\X\\W_9 Acme.pdf',
+      'Business\\X\\W–9 Acme.pdf',
+      'Business\\X\\w9form.pdf',
+      'Business\\X\\Acme(W9).pdf', //                                        bracketed / dotted / possessive
+      'Business\\X\\[W9] Acme.pdf',
+      'Business\\X\\Acme.W9.pdf',
+      "Business\\X\\Acme W9's.pdf",
+      'Business\\X\\Acme W9signed.pdf',
+      'Business\\X\\Tax payer ID.pdf',
+      // Round-2 review: 17 in-scope PDFs carry the same identifier under "Tax ID…" names.
+      'Business\\X\\Tax ID Number.pdf',
+      'Business\\X\\Tax Identification Letter.pdf',
+      'Business\\X\\Tax-ID.pdf',
+      'Business\\X\\FederalTaxIdentification.pdf',
+    ]) {
+      expect(isExcludedPath(p), p).toBe(true);
+    }
+  });
+
+  it('excludes taxpayer-ID / taxpayer-profile documents', () => {
+    expect(isExcludedPath('Business\\Investment Candidates -- 2026\\outputs\\ORA_Taxpayer-Profile_v01.md')).toBe(true);
+    expect(isExcludedPath('Business\\X\\Taxpayer ID Certification.pdf')).toBe(true);
+  });
+
+  it('does NOT exclude business look-alikes (1099 reports, "Window9", ordinary leases, "W9" inside a word)', () => {
+    for (const p of [
+      'Business\\55 New Plant Court\\1099 Eurosort 2025 -- 55 New Plant Ct.pdf',
+      'Business\\X\\Window9 Report.pdf',
+      'Business\\55 New Plant Court\\Lease Eurosort -- 55 New Plant Court 10-2022.pdf',
+      'Business\\Master Lease Database\\15 - 55 New Plant Court (Owings Mills MD)\\Lease.pdf',
+      'Business\\X\\Lease 109 Main St.pdf',
+      'Business\\X\\Rent Roll 2019.pdf',
+      'Business\\X\\W91 Report.pdf', //                                      a digit after W9 is not a W-9
+      'Business\\123 W 9th St\\Lease.pdf', //                                an address, not a form
+      'Business\\X\\500 W 9 Mile Rd Lease.pdf',
+      'Business\\X\\Syntax ID Guide.pdf', //                                 "…tax ID" inside a word
+      'Business\\X\\Lease Tax Bill 2025.pdf',
+      'Business\\X\\Tax Identifier Parcel Map.pdf', //                       a parcel "identifier" is not a taxpayer ID
+    ]) {
+      expect(isExcludedPath(p), p).toBe(false);
+    }
+  });
+});
+
 describe('matchesIndexFilters — extension + optional path-include filter', () => {
   it('supports pdf/txt/md/docx/xlsx/csv/tsv, skipping legacy .doc and binary .pptx', () => {
     expect(matchesIndexFilters('PropA/Leases/x.pdf', null)).toBe(true);
@@ -216,13 +284,198 @@ describe('maxChunksPerDoc — per-document chunk cap', () => {
   afterEach(() => {
     restoreEnv('DOCUMENTS_MAX_CHUNKS_PER_DOC', prev);
   });
-  it('defaults to 25 and honors a valid override; ignores nonsense', () => {
+  // 120 (not 25, not 80): the Eurosort executed lease OCRs to ~129K chars = ~87 chunks and its "Option to
+  // Renew" clause (§43) sits at 90% of the text — a 25-chunk cap kept ~14 pages and an 80-chunk cap still
+  // cut the clause off (measured 2026-10-14). 120 chunks ≈ 165K chars.
+  it('defaults to 120 and honors a valid override; ignores nonsense', () => {
     delete process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
-    expect(maxChunksPerDoc()).toBe(25);
+    expect(maxChunksPerDoc()).toBe(120);
     process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '8';
     expect(maxChunksPerDoc()).toBe(8);
     process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = 'nonsense';
-    expect(maxChunksPerDoc()).toBe(25);
+    expect(maxChunksPerDoc()).toBe(120);
+  });
+});
+
+describe('OCR cache — cache-aware PDF extraction (temp corpus)', () => {
+  const prev = {
+    dir: process.env.DOCUMENTS_DIR,
+    inc: process.env.DOCUMENTS_PATH_INCLUDE,
+    allow: process.env.DOCUMENTS_INCLUDE_DIRS,
+    cache: process.env.DOCUMENTS_OCR_CACHE_DIR,
+    drop: process.env.DOCUMENTS_DROP_NONLEASE,
+  };
+  afterEach(() => {
+    restoreEnv('DOCUMENTS_DIR', prev.dir);
+    restoreEnv('DOCUMENTS_PATH_INCLUDE', prev.inc);
+    restoreEnv('DOCUMENTS_INCLUDE_DIRS', prev.allow);
+    restoreEnv('DOCUMENTS_OCR_CACHE_DIR', prev.cache);
+    restoreEnv('DOCUMENTS_DROP_NONLEASE', prev.drop);
+  });
+
+  // A "scanned" PDF the text extractor cannot read (not a real PDF → pdf-parse throws → '' today), which
+  // is exactly the case the OCR cache must rescue. Returns { root, cacheDir, scan, estate }.
+  function setup(): { root: string; cacheDir: string; scan: string; estate: string } {
+    const root = mkdtempSync(join(tmpdir(), 'ocrcorp-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'ocrcache-'));
+    mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+    mkdirSync(join(root, 'Estate Planning', 'Leases'), { recursive: true });
+    const scan = join(root, 'PropA', 'Leases', 'Lease Scan.pdf');
+    const estate = join(root, 'Estate Planning', 'Leases', 'Trust Scan.pdf');
+    writeFileSync(scan, '%PDF-1.4 not really a pdf');
+    writeFileSync(estate, '%PDF-1.4 not really a pdf either');
+    process.env.DOCUMENTS_DIR = root;
+    process.env.DOCUMENTS_OCR_CACHE_DIR = cacheDir;
+    delete process.env.DOCUMENTS_PATH_INCLUDE;
+    delete process.env.DOCUMENTS_INCLUDE_DIRS;
+    delete process.env.DOCUMENTS_DROP_NONLEASE;
+    return { root, cacheDir, scan, estate };
+  }
+  function putOcr(file: string, text: string): void {
+    writeFileSync(ocrCachePathFor(file)!, text);
+  }
+
+  it('ocrCacheDir honors DOCUMENTS_OCR_CACHE_DIR and has an ora-doc-index default', () => {
+    process.env.DOCUMENTS_OCR_CACHE_DIR = 'C:\\somewhere\\ocr';
+    expect(ocrCacheDir()).toBe('C:\\somewhere\\ocr');
+    delete process.env.DOCUMENTS_OCR_CACHE_DIR;
+    expect(ocrCacheDir().replace(/\\/g, '/')).toMatch(/ora-doc-index\/ocr-cache$/);
+  });
+
+  it('ocrCacheKey is stable, and changes when the file changes (size/mtime)', () => {
+    const { root, cacheDir, scan } = setup();
+    try {
+      const k1 = ocrCacheKey(scan);
+      expect(k1).toMatch(/^[0-9a-f]{40}$/);
+      expect(ocrCacheKey(scan)).toBe(k1);
+      writeFileSync(scan, '%PDF-1.4 now a different, longer scanned body');
+      expect(ocrCacheKey(scan)).not.toBe(k1);
+      expect(ocrCacheKey(join(root, 'nope.pdf'))).toBeNull(); // missing file → no key, never throws
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('readOcrText returns null on a miss and the cached text on a hit', () => {
+    const { root, cacheDir, scan } = setup();
+    try {
+      expect(readOcrText(scan)).toBeNull();
+      putOcr(scan, 'cached ocr text');
+      expect(readOcrText(scan)).toBe('cached ocr text');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('indexes an unreadable scanned PDF from its OCR cache entry', async () => {
+    const { root, cacheDir, scan } = setup();
+    try {
+      putOcr(scan, 'Tenant shall have one option to renew this lease for five years.');
+      const { chunks, docs } = await collectDocChunks();
+      expect(docs.map((d) => d.name.replace(/\\/g, '/'))).toEqual(['PropA/Leases/Lease Scan.pdf']);
+      expect(chunks.some((c) => c.text.includes('option to renew'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('without a cache entry the unreadable PDF is still skipped (behavior unchanged)', async () => {
+    const { root, cacheDir } = setup();
+    try {
+      const { docs } = await collectDocChunks();
+      expect(docs.length).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores a STALE cache entry after the PDF changes (key no longer matches)', async () => {
+    const { root, cacheDir, scan } = setup();
+    try {
+      putOcr(scan, 'old ocr text from the previous version of the file');
+      writeFileSync(scan, '%PDF-1.4 replaced by a newer scan with a different size');
+      const { docs } = await collectDocChunks();
+      expect(docs.length).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a cache entry NEVER resurrects a path outside the DOCUMENTS_INCLUDE_DIRS allowlist', async () => {
+    const { root, cacheDir } = setup();
+    try {
+      mkdirSync(join(root, 'Unlisted Folder', 'Leases'), { recursive: true });
+      mkdirSync(join(root, 'Listed Folder', 'Leases'), { recursive: true });
+      const unlisted = join(root, 'Unlisted Folder', 'Leases', 'Scan.pdf');
+      const listed = join(root, 'Listed Folder', 'Leases', 'Scan.pdf');
+      writeFileSync(unlisted, '%PDF-1.4 not really a pdf');
+      writeFileSync(listed, '%PDF-1.4 not really a pdf');
+      putOcr(unlisted, 'text from a folder that is not allowlisted');
+      putOcr(listed, 'text from the allowlisted folder');
+      process.env.DOCUMENTS_INCLUDE_DIRS = 'Listed Folder';
+      const { docs } = await collectDocChunks();
+      expect(docs.map((d) => d.name.replace(/\\/g, '/'))).toEqual(['Listed Folder/Leases/Scan.pdf']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('listIndexablePdfs skips PDFs over the indexer size cap (they are never read, so OCR would be wasted)', () => {
+    const prevMb = process.env.DOCUMENTS_MAX_FILE_MB;
+    const { root, cacheDir, scan } = setup();
+    try {
+      writeFileSync(scan, Buffer.alloc(4096, 1)); // 4 KB "scan"
+      process.env.DOCUMENTS_MAX_FILE_MB = '0.001'; // ~1 KB cap
+      expect(listIndexablePdfs()).toEqual([]);
+      process.env.DOCUMENTS_MAX_FILE_MB = '25';
+      expect(listIndexablePdfs().map((p) => p.path)).toEqual([scan]);
+    } finally {
+      restoreEnv('DOCUMENTS_MAX_FILE_MB', prevMb);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a cache entry NEVER resurrects an excluded path (exclusion runs before extraction)', async () => {
+    const { root, cacheDir, estate } = setup();
+    try {
+      putOcr(estate, 'confidential estate trust text that must never be indexed');
+      const { docs, chunks } = await collectDocChunks();
+      expect(docs.length).toBe(0);
+      expect(chunks.length).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('listIndexableFiles applies the indexer exclusions + filters; listIndexablePdfs adds keys and cache state', () => {
+    const { root, cacheDir, scan, estate } = setup();
+    try {
+      writeFileSync(join(root, 'PropA', 'Leases', 'notes.txt'), 'plain text lease note');
+      const { files } = listIndexableFiles();
+      const rel = files.map((f) => f.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/')).sort();
+      expect(rel).toEqual(['PropA/Leases/Lease Scan.pdf', 'PropA/Leases/notes.txt']);
+      expect(files.includes(estate)).toBe(false);
+
+      putOcr(scan, 'cached');
+      const pdfs = listIndexablePdfs();
+      expect(pdfs.length).toBe(1); // PDFs only; the estate PDF is excluded upstream
+      expect(pdfs[0]!.path).toBe(scan);
+      expect(pdfs[0]!.rel.replace(/\\/g, '/')).toBe('PropA/Leases/Lease Scan.pdf');
+      expect(pdfs[0]!.key).toBe(ocrCacheKey(scan));
+      expect(pdfs[0]!.cached).toBe(true);
+      expect(pdfs[0]!.size).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
   });
 });
 

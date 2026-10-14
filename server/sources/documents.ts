@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
-import { extname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { extname, join, resolve } from 'node:path';
 import Database, { type Database as BetterSQLite3Database, type Statement } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
@@ -72,6 +74,21 @@ const DEFAULT_EXCLUDE: RegExp[] = [
   // the E. Fulton target by address+owner), so keep these spreadsheets out of the searchable corpus.
   /motivated[\s_-]*leads/i,
   /parcel[\s_-]*screen/i,
+  // IRS Form W-9 / taxpayer-ID forms carry a name, address and TIN. 2026-10-14: 31 W-9 PDFs sat in the
+  // live index across ~12 folders (not just a "W9s" folder), so this is a filename/folder pattern, not a
+  // folder allowlist entry. Matches W9 / W-9 / W_9 / "W 9" / en-dash, an optional leading "f" (the IRS's own
+  // download is fw9.pdf), and ANY trailing text except another digit — so "W9(2)", "w9form", "W9signed",
+  // "W9's", "(W9)", "[W9]", ".W9." all match. The leading boundary stops "Window9"/"NW9th" from matching;
+  // the digit lookahead stops "W91", and the ordinal/"Mile" lookaheads stop "123 W 9th St" and "500 W 9 Mile
+  // Rd" (street addresses). Errs toward privacy like `tax return` above: it still catches a unit literally
+  // named "W9" ("Suite W9 Lease"), and misses a name that glues W9 onto a word ("AcmeW9.pdf").
+  /(^|[^a-z0-9])f?w[\s_–—-]?9s?(?![0-9])(?!th\b)(?!\s*mile)/i,
+  /tax[\s_-]*payer[\s_-]*(?:id|profile|identification)/i,
+  // "Tax ID Number", "Tax Identification Letter", "Tax-ID", "FederalTaxIdentification" — the same TIN carried
+  // under non-W-9 names (17 in-scope PDFs, 2026-10-14 review). The letter guards keep "Syntax ID" and a
+  // parcel "Tax Identifier" out. Residual (not matched): bare "EIN letter", "SS-4", "CP575".
+  /(^|[^a-z])tax[\s_-]*id(?:entification)?(?![a-z])/i,
+  /federal[\s_-]*tax[\s_-]*id/i,
 ];
 
 /** Personal/estate defaults + any confidential patterns from `DOCUMENTS_EXCLUDE` (gitignored env). */
@@ -132,7 +149,11 @@ const OVERLAP = 120;
 const EMBED_DIM_DEFAULT = 384; // all-MiniLM-L6-v2
 /** Skip files larger than this (env `DOCUMENTS_MAX_FILE_MB`, default 25) — memory safety on the box,
  * and a backstop against the giant master workbook ever slipping into the corpus. */
-const MAX_FILE_BYTES = (Number(process.env.DOCUMENTS_MAX_FILE_MB) || 25) * 1024 * 1024;
+// A function, not a module constant: it must read the env when called. A constant is frozen at import time,
+// which (ESM hoists imports above `loadEnvFile()`) is BEFORE `.env` is loaded by the offline scripts.
+function maxFileBytes(): number {
+  return (Number(process.env.DOCUMENTS_MAX_FILE_MB) || 25) * 1024 * 1024;
+}
 
 /** Split text into overlapping chunks on paragraph boundaries where possible. Pure. */
 export function chunkText(text: string, size = CHUNK, overlap = OVERLAP): string[] {
@@ -413,8 +434,18 @@ export const realEmbedder: Embedder = async (texts) => {
 async function extractFile(path: string): Promise<string> {
   const ext = extname(path).toLowerCase();
   try {
-    if (statSync(path).size > MAX_FILE_BYTES) return ''; // oversized → skip (memory safety)
-    if (ext === '.pdf') return (await pdfToText(readFileSync(path))).text;
+    if (statSync(path).size > maxFileBytes()) return ''; // oversized → skip (memory safety)
+    if (ext === '.pdf') {
+      let text = '';
+      try {
+        text = (await pdfToText(readFileSync(path))).text;
+      } catch {
+        /* unparseable PDF → fall through: an OCR cache entry may still rescue it */
+      }
+      // Scanned PDFs yield ~nothing from the text layer. Prefer the OCR sidecar only when it is longer.
+      const ocr = readOcrText(path);
+      return ocr !== null && ocr.trim().length > text.trim().length ? ocr : text;
+    }
     if (ext === '.txt' || ext === '.md' || ext === '.csv' || ext === '.tsv') return readFileSync(path, 'utf8');
     if (ext === '.docx') return (await mammoth.extractRawText({ path })).value;
     if (ext === '.xlsx') return await extractXlsxText(path);
@@ -523,11 +554,59 @@ export function maxDepth(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 6;
 }
 
-/** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 25). Bounds the
- * worst case from a long PDF that slipped past the non-lease filter. */
+/** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 120). Bounds the
+ * worst case from a long PDF that slipped past the non-lease filter. Chunks advance ~1,380 chars
+ * (1,500 size − 120 overlap), so 120 chunks ≈ 165K chars. Measured on the Eurosort executed lease: 129K
+ * chars OCR'd ≈ 87 chunks, with its "Option to Renew" clause at 90% of the text — the old 25-chunk cap kept
+ * ~14 pages and an 80-chunk cap (~110K chars) still cut the clause off. */
 export function maxChunksPerDoc(): number {
   const n = Number(process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 25;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 120;
+}
+
+// ── OCR cache (text sidecars for scanned PDFs) ──────────────────────────────────
+// The indexer has no OCR engine. `scripts/ocr-scanned-pdfs.py` OCRs image-only PDFs OFFLINE and writes
+// one UTF-8 text file per PDF into this cache, keyed by (path, size, mtime) so an edited/replaced PDF
+// never reuses stale text. Source PDFs and the OneDrive tree are never written. The cache is only ever
+// READ from `extractFile`, which runs AFTER `listFiles` has applied the exclusion + allowlist filters, so
+// a cache entry can never resurrect an excluded path.
+
+/** Where OCR text sidecars live (env `DOCUMENTS_OCR_CACHE_DIR`; default outside the repo and OneDrive). */
+export function ocrCacheDir(): string {
+  const override = process.env.DOCUMENTS_OCR_CACHE_DIR?.trim();
+  if (override) return override;
+  const base = process.env.LOCALAPPDATA?.trim() || join(homedir(), '.cache');
+  return join(base, 'ora-doc-index', 'ocr-cache');
+}
+
+/** Stable cache key for a file's current identity (path + size + mtime); null when missing/unreadable.
+ * KNOWN LIMITATION: a content change that keeps BOTH the size and the mtime (e.g. an mtime-preserving
+ * copy of a same-size file) yields the same key and would reuse the old sidecar. Closing that needs a
+ * content hash on every cache hit; judged not worth it for PDFs, where a same-size edit is rare. */
+export function ocrCacheKey(path: string): string | null {
+  try {
+    const st = statSync(path);
+    return createHash('sha1').update(`${resolve(path).toLowerCase()}|${st.size}|${Math.floor(st.mtimeMs)}`).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** Absolute path of the cache sidecar for `path` (null when the file has no key). */
+export function ocrCachePathFor(path: string): string | null {
+  const key = ocrCacheKey(path);
+  return key ? join(ocrCacheDir(), `${key}.txt`) : null;
+}
+
+/** Cached OCR text for `path`, or null on a miss (no entry, stale key, unreadable). Never throws. */
+export function readOcrText(path: string): string | null {
+  const p = ocrCachePathFor(path);
+  if (!p) return null;
+  try {
+    return readFileSync(p, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 /** On-disk index location (env `DOC_INDEX_PATH`, default `<cwd>/data/doc-index.sqlite`). Gitignored;
@@ -606,6 +685,59 @@ function listFiles(
   };
   walk(root, 0);
   return { files, truncated };
+}
+
+/**
+ * The exact file list the indexer will read (same exclusions, allowlist, include filter, depth and file
+ * cap as `collectDocChunks`), exposed so the offline OCR step works from the SAME scope — it must never
+ * build its own listing, or it could OCR (and cache) paths the indexer is forbidden to read.
+ */
+export function listIndexableFiles(
+  dir: string | undefined = process.env.DOCUMENTS_DIR,
+): { files: string[]; truncated: boolean } {
+  if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) return { files: [], truncated: false };
+  return listFiles(dir);
+}
+
+export interface IndexablePdf {
+  /** Absolute path. */
+  path: string;
+  /** Path relative to DOCUMENTS_DIR (the indexer's docName). */
+  rel: string;
+  size: number;
+  mtimeMs: number;
+  /** `ocrCacheKey` — the OCR script writes `<key>.txt`; computed here so there is one key implementation. */
+  key: string;
+  /** True when a current OCR sidecar already exists. */
+  cached: boolean;
+}
+
+/** In-scope PDFs with their OCR cache keys/state — the manifest `scripts/ocr-scanned-pdfs.py` consumes. */
+export function listIndexablePdfs(dir: string | undefined = process.env.DOCUMENTS_DIR): IndexablePdf[] {
+  const out: IndexablePdf[] = [];
+  const root = dir ?? '';
+  for (const path of listIndexableFiles(dir).files) {
+    if (extname(path).toLowerCase() !== '.pdf') continue;
+    const key = ocrCacheKey(path);
+    const sidecar = ocrCachePathFor(path);
+    if (!key || !sidecar) continue; // vanished between listing and stat
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(path);
+    } catch {
+      continue; // vanished between the key and this stat — skip it rather than abort the whole manifest
+    }
+    if (st.size > maxFileBytes()) continue; // `extractFile` never reads these, so OCR'ing them is wasted
+    out.push({
+      path,
+      rel: path.slice(root.length).replace(/^[\\/]+/, ''),
+      size: st.size,
+      mtimeMs: Math.floor(st.mtimeMs),
+      key,
+      cached: existsSync(sidecar),
+    });
+  }
+  return out;
 }
 
 // `fromDisk` distinguishes a real, persisted index (builtAt is a meaningful timestamp for freshness
