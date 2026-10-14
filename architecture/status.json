@@ -18,7 +18,7 @@
   },
   "pca-intelligence": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
-    "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts. Display only; no contracts, migrations, server, hooks or governor files touched.",
+    "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts, plus module 10 (cost segregation property data: src/analytics/cost-seg.ts, data/cost-seg, Cost seg view). Display only; no contracts, migrations, server, hooks or governor files touched.",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,

@@ -113,11 +113,11 @@ describe('PropertyConditionModule', () => {
     expect(screen.getByText('Report-currency alerts')).toBeTruthy();
   });
 
-  it('?view=open adds the 8-item PCA decision queue, all Open and unassigned', () => {
+  it('?view=open adds the 9-item PCA decision queue, all Open and unassigned', () => {
     renderModule('/property-condition?view=open');
     expect(screen.getByText('PCA decision queue')).toBeTruthy();
-    expect(screen.getAllByText('Open')).toHaveLength(8);
-    expect(screen.getAllByText('Owner: unassigned')).toHaveLength(8);
+    expect(screen.getAllByText('Open')).toHaveLength(9);
+    expect(screen.getAllByText('Owner: unassigned')).toHaveLength(9);
   });
 
   it('?view=infolane never shows the Year 1 / Year 2 reserve outlays as Immediate or Short-term', () => {
@@ -171,6 +171,22 @@ describe('PropertyConditionModule', () => {
     // The ledger exposes per-row, year-labeled estimates and says outright that there are no totals.
     expect(screen.getByText(/no totals/)).toBeTruthy();
   }, 30000);
+
+  it('?view=costseg renders the study register, spec sheet, PCA cross-check and D1-D14 queue, with DERIVED/OCR/UNVERIFIED flags', async () => {
+    renderModule('/property-condition?view=costseg');
+    expect(await screen.findByText('Cost segregation property data', {}, { timeout: 20000 })).toBeTruthy();
+    expect(screen.getByText('Study register & basis (read-only)')).toBeTruthy();
+    expect(screen.getByText('6/6 allocations tie')).toBeTruthy();
+    expect(screen.getByText(/Property spec sheet/)).toBeTruthy();
+    expect(screen.getByText('PCA vs cost seg — quantity cross-check')).toBeTruthy();
+    expect(screen.getByText('Cost seg discrepancy queue (D1–D14)')).toBeTruthy();
+    expect(screen.getAllByText('Owner: unassigned')).toHaveLength(14);
+    // Default study is Livingston: three roof surfaces and the GBA flag.
+    expect(screen.getAllByText(/Roof — 3883 aluminum corrugated panel/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('differs').length).toBeGreaterThan(0);
+    // The firewall statement is on the page.
+    expect(screen.getByText(/not a condition assessment/i)).toBeTruthy();
+  }, 40000);
 
   it('an UNREADABLE report renders as UNREADABLE with the path that was tried', () => {
     render(

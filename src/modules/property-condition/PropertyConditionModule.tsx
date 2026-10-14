@@ -1,8 +1,8 @@
 // src/modules/property-condition/PropertyConditionModule.tsx
 //
 // Property Condition — standalone destination in the rail's Capital group (Capital itself is at the
-// 5-tab house cap, so this is not a sixth Capital tab). Four KPIs + a 7-view SegmentedControl on `?view=`
-// (Capex outlook / Replacement schedule / Estimate vs actual / Quotes & prices / Open items / 29000 Info Ln / Building specs); only the
+// 5-tab house cap, so this is not a sixth Capital tab). Four KPIs + an 8-view SegmentedControl on `?view=`
+// (Capex outlook / Replacement schedule / Estimate vs actual / Quotes & prices / Open items / 29000 Info Ln / Building specs / Cost seg); only the
 // selected view is mounted (R5: no nested tab strips).
 //
 // READ-ONLY. Phase 2 of docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md: nothing here feeds
@@ -32,6 +32,7 @@ import { IssuesQueue } from './IssuesQueue';
 import { AlertsBanner } from './AlertsBanner';
 import { InfoLaneView } from './InfoLaneView';
 import { SpecsPanel } from './SpecsView';
+import { CostSegPanel } from './CostSegView';
 import { buildClockRows } from './clock';
 import { EXTRA_ASSET_FACTS, INFO_LANE_DETAIL, PCA_OVERLAY } from './pca-overlay';
 import { CALIBRATION_LEDGER, CALIBRATION_PENDING } from './calibration-data';
@@ -152,6 +153,7 @@ export function PropertyConditionModule() {
         </div>
       )}
       {view === 'specs' && <SpecsPanel enabled />}
+      {view === 'costseg' && <CostSegPanel registerSf={Object.fromEntries(adjusted.properties.map((p) => [p.propertyKey, p.current.sf]))} />}
       {view === 'infolane' && <InfoLaneView rentRollMonths={monthsSince(INFO_LANE_DETAIL.rentRoll.asOf, today)} />}
     </div>
   );

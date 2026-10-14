@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { parseRegister, resolveProperty, type ParsedRegister } from './import-pca-register';
 import { reportStatus } from '../src/analytics/pca-intelligence';
+import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
 import {
   CalibrationProposal,
   classifyComponent,
@@ -278,7 +279,10 @@ async function main(argv: string[]): Promise<number> {
     else { pca = pca.concat(n.pca); quotes = quotes.concat(n.quotes); from.push('notion'); }
   }
 
-  const proposals = proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none');
+  const costSegPath = join(process.cwd(), 'data', 'cost-seg', 'cost-seg.json');
+  const costSegFacts = existsSync(costSegPath) ? parseCostSeg(JSON.parse(readFileSync(costSegPath, 'utf-8'))).facts : [];
+  // Cost seg quantities are only ever OFFERED as a candidate qty on a pending proposal; a human promotes (or not).
+  const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none'), costSegFacts);
   const next = [...pending, ...proposals];
   writeFileSync(PENDING_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
   console.log(`calibration-propose: ${proposals.length} new proposal(s) -> ${PENDING_PATH} (${next.length} pending total). Ledger untouched.`);

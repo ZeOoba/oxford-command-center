@@ -263,4 +263,6 @@ export const PCA_ISSUES: PcaIssue[] = [
     '6300 vs 6410 Sheriff; 2920 vs 2892 E 14th.'),
   issue(8, '29000 Info Ln', 'Compliance, rent roll and cost conflicts',
     'CO / lot / vintage mismatch; S-1 COs vs church / fitness tenants [SPECULATIVE]; stale rent roll; paving / paint look light [SPECULATIVE; no bid]; CAM recoverability; Delmarva vs Town of Easton and generator / transformer location conflicts.'),
+  issue(9, 'Cost seg (D1–D14)', 'Cost segregation discrepancies',
+    'D1–D14: Livingston GBA 11,280 vs 10,950 SF and a three-surface roof; Northwood modeled 54,000 SF roof, alarm-only / church / auto-service use [SPECULATIVE] and "septic" / "120V 400A" wording; Red Branch "Muirkirk" naming vs the PCA register; Rarig books vs study basis; Fishel PIS date, lease status (ran to 9/30/2026) and generator; Broadway elevator / sprinkler / PES PCA gap. Full list on the Cost seg view.'),
 ];
