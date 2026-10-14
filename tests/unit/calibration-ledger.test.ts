@@ -229,8 +229,15 @@ describe('promotion: pending → observation', () => {
     expect(() => promoteProposal([obs()], [proposal()], 'nope', '2026-10-14')).toThrow(/no pending proposal/);
   });
 
+  it('heals a half-finished promote: identical row already in the ledger just clears pending', () => {
+    const first = promoteProposal([], [proposal()], proposal().obs_id, '2026-10-14');
+    const healed = promoteProposal(first.ledger, [proposal()], proposal().obs_id, '2026-10-20');
+    expect(healed.ledger).toEqual(first.ledger); // untouched, original added_at kept
+    expect(healed.pending).toEqual([]);
+  });
+
   it('refuses a duplicate obs_id (append-only)', () => {
-    const dup = { ...proposal(), obs_id: obs().obs_id };
+    const dup = { ...proposal(), obs_id: obs().obs_id, pca_unit_cost: (obs().pca_unit_cost ?? 0) + 1 }; // differing row: never overwritten
     expect(() => promoteProposal([obs()], [dup], obs().obs_id, '2026-10-14')).toThrow(/already exists/);
   });
 

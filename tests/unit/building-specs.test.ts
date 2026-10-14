@@ -317,6 +317,16 @@ describe('review regressions', () => {
     expect(r.find((x) => x.key === 'unclassified')).toBeUndefined();
   });
 
+  it('sprinkler rollup: a "no ..." that does not attach to the sprinkler noun is not a negation', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ component: 'fire_life_safety', attribute: 'sprinkler_system', value: 'No deficiencies noted with the sprinkler system', scope: 'A', as_of: '2025-10' }),
+      rawFact({ component: 'fire_life_safety', attribute: 'sprinkler_system', value: 'No automatic sprinkler system', scope: 'B', as_of: '2025-10' }),
+    ]).facts;
+    const r = sprinklerRollup(f);
+    expect(r.find((x) => x.key === 'sprinklered')!.CURRENT).toBe(1);
+    expect(r.find((x) => x.key === 'not sprinklered')!.CURRENT).toBe(1);
+  });
+
   it('projectRoofs emits one projection per install-year fact, even in a scope-less section', () => {
     const f = stamp(STALE, [
       rawFact({ scope: null, attribute: 'install_year', value: 2001 }),

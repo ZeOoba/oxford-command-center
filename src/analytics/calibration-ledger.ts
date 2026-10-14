@@ -243,8 +243,15 @@ export function promoteProposal(
 ): PromotionResult {
   const proposal = pending.find((p) => p.obs_id === obsId);
   if (!proposal) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
-  if (ledger.some((o) => o.obs_id === obsId)) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
   const { proposed_at: _proposedAt, proposed_from: _proposedFrom, ...fields } = proposal;
+  const existing = ledger.find((o) => o.obs_id === obsId);
+  if (existing) {
+    // Crash recovery: a prior promote appended the identical row to the ledger but died before clearing pending.
+    // Only that exact case is healed (pending dropped, ledger untouched); any differing row is still refused.
+    const same = JSON.stringify(CalibrationObservation.parse({ ...fields, added_at: existing.added_at })) === JSON.stringify(existing);
+    if (!same) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
+    return { ledger, pending: pending.filter((p) => p.obs_id !== obsId), promoted: existing };
+  }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
 }
