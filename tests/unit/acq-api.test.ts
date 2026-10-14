@@ -165,6 +165,8 @@ describe('GET /acq/intel', () => {
         advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json)
       VALUES (?, ?, 'efgh5678efgh5678', 50, 'T2', 'WATCH', 1, 0, 1, 1, 0, '{}')
     `).run(cand2, si2);
+    // Fixture inserts bypass persistAndLogScore; set the current-score pointers it would set.
+    for (const id of [cand1, cand2]) db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run(id, id);
 
     const res = await app.request('/acq/intel?status=active');
     expect(res.status).toBe(200);
@@ -205,51 +207,33 @@ describe('GET /acq/intel', () => {
     expect(parseLimitParam('42', 100, 500)).toBe(42);
   });
 
-  it('tie-case: same scored_at, higher id wins (id DESC tiebreaker — SQL-level assertion)', () => {
-    // This test targets the SQL join fix directly. The API response does not expose `composite`
-    // as a top-level field, so we assert at the DB query level with the same subquery the API uses.
+  it('GET /acq/intel serves the current_score_id row, not the newest-written one (same scored_at, pointer at the LOWER id)', async () => {
     const db = freshDb();
-
-    // Seed a candidate so the FK is satisfied.
-    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES (?, 'parcel-screen', 'active')`).run('parcel:oh:test:tie-apn');
+    const app = makeApp(db);
     const cand = 'parcel:oh:test:tie-apn';
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES (?, 'parcel-screen', 'active')`).run(cand);
+    const ids: number[] = [];
+    for (const [iv, dscr] of [['aaaa0000aaaa0000', 1], ['bbbb1111bbbb1111', 0]] as const) {
+      db.prepare(`
+        INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
+        VALUES (?, ?, '{}', '1.0.0', 'replacement-cost.v1')
+      `).run(cand, iv);
+      const si = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get(iv) as { id: number }).id;
+      db.prepare(`
+        INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+          advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate,
+          governor_dscr_cleared, score_json, scored_at)
+        VALUES (?, ?, ?, 40, 'T2', 'WATCH', 1, 0, 1, 1, 0, ?, '{}', '2026-06-20T10:00:00')
+      `).run(cand, si, iv, dscr);
+      ids.push((db.prepare('SELECT id FROM acq_scores WHERE score_input_id = ?').get(si) as { id: number }).id);
+    }
+    // Same scored_at: write order would pick ids[1] (dscr cleared = false). The pointer says ids[0] (true).
+    db.prepare('UPDATE acq_candidates SET current_score_id = ? WHERE id = ?').run(ids[0], cand);
 
-    db.prepare(`
-      INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
-      VALUES (?, 'aaaa0000aaaa0000', '{}', '1.0.0', 'replacement-cost.v1')
-    `).run(cand);
-    db.prepare(`
-      INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
-      VALUES (?, 'bbbb1111bbbb1111', '{}', '1.0.0', 'replacement-cost.v1')
-    `).run(cand);
-    const si1 = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get('aaaa0000aaaa0000') as { id: number }).id;
-    const si2 = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get('bbbb1111bbbb1111') as { id: number }).id;
-
-    // Two scores for the same candidate, identical scored_at, different composite.
-    const TIE_TS = '2026-06-20T10:00:00';
-    db.prepare(`
-      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
-        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json, scored_at)
-      VALUES (?, ?, 'aaaa0000aaaa0000', 40, 'T2', 'WATCH', 1, 0, 1, 1, 0, '{}', ?)
-    `).run(cand, si1, TIE_TS);
-    db.prepare(`
-      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
-        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json, scored_at)
-      VALUES (?, ?, 'bbbb1111bbbb1111', 85, 'T1', 'PURSUE', 1, 0, 1, 1, 0, '{}', ?)
-    `).run(cand, si2, TIE_TS);
-
-    // Replicate the exact subquery the API uses. The higher-id row (si2, composite=85) must win.
-    const row = db.prepare(`
-      SELECT s.composite FROM acq_scores s
-      WHERE s.id = (
-        SELECT s2.id FROM acq_scores s2
-        WHERE s2.candidate_id = ?
-        ORDER BY s2.scored_at DESC, s2.id DESC
-        LIMIT 1
-      )
-    `).get(cand) as { composite: number } | undefined;
-    expect(row).toBeDefined();
-    expect(row!.composite).toBe(85);
+    const res = await app.request('/acq/intel?status=active');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rankedCandidates: Array<{ governorDscrCleared: boolean | null }> };
+    expect(body.rankedCandidates[0]!.governorDscrCleared).toBe(true);
   });
 });
 

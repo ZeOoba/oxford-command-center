@@ -97,6 +97,8 @@ function seedCandidate(
     opts.id, scoreInputId, inputsVersion, opts.composite, opts.tier, opts.verdict ?? 'PURSUE',
     opts.governorDscrCleared ?? null, opts.governorLtvCleared ?? null, scoreJson,
   );
+  // Direct fixture insert bypasses persistAndLogScore, so set the current-score pointer it would set.
+  db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run(opts.id, opts.id);
 }
 
 function makeMacro(dgs5: number | null) {

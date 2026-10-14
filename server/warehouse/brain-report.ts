@@ -298,7 +298,7 @@ interface FloorIndeterminateRow {
  *  first, capped. wouldClose is the fixed, literal reason per the spec — the underwriting inputs
  *  gap, not a per-row derivation. */
 function buildFloorIndeterminateQuestions(db: WarehouseDb): OpenQuestion[] {
-  // Dedup to the LATEST row per candidate (refute finding): the I1 governor-fingerprint fix mints
+  // Dedup to the candidate's CURRENT score (acq_candidates.current_score_id; refute finding): the I1 governor-fingerprint fix mints
   // a new acq_scores row per governor regime, so a re-scored candidate can leave an older
   // floor_indeterminate=1 row behind it — an un-deduped scan double-lists the SAME candidate,
   // which under OPEN_QUESTION_GROUP_CAP can evict a genuinely distinct candidate from the report.
@@ -306,14 +306,8 @@ function buildFloorIndeterminateQuestions(db: WarehouseDb): OpenQuestion[] {
     SELECT s.id AS id, s.candidate_id AS candidateId,
            c.address AS address, c.county AS county, c.state AS state
     FROM acq_scores s
-    LEFT JOIN acq_candidates c ON c.id = s.candidate_id
+    JOIN acq_candidates c ON c.current_score_id = s.id
     WHERE s.floor_indeterminate = 1
-      AND s.id = (
-        SELECT s2.id FROM acq_scores s2
-        WHERE s2.candidate_id = s.candidate_id
-        ORDER BY s2.scored_at DESC, s2.id DESC
-        LIMIT 1
-      )
     ORDER BY s.scored_at DESC, s.id DESC
     LIMIT ?
   `).all(OPEN_QUESTION_GROUP_CAP) as FloorIndeterminateRow[];

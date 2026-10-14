@@ -653,12 +653,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
           s.governor_dscr_cleared, s.governor_ltv_cleared,
           s.score_json, s.scored_at, s.calibration_verdict_id
         FROM acq_candidates c
-        LEFT JOIN acq_scores s ON s.id = (
-          SELECT s2.id FROM acq_scores s2
-          WHERE s2.candidate_id = c.id
-          ORDER BY s2.scored_at DESC, s2.id DESC
-          LIMIT 1
-        )
+        LEFT JOIN acq_scores s ON s.id = c.current_score_id
         WHERE ${where.join(' AND ')}
         ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
         LIMIT ?

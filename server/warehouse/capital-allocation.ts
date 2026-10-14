@@ -676,13 +676,14 @@ function loadPipelineCandidates(db: WarehouseDb): {
 
   // Hoist prepared statement outside the map loop (Fix A-2)
   const latestScoreStmt = db.prepare(
-    `SELECT candidate_id, composite, tier, verdict, governor_dscr_cleared, governor_ltv_cleared, score_json
-     FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1`,
+    `SELECT s.candidate_id, s.composite, s.tier, s.verdict, s.governor_dscr_cleared, s.governor_ltv_cleared, s.score_json
+     FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id
+     WHERE c.id = ?`,
   );
 
   const buyIneligible = new Set<string>();
   const pipeline = candidates.map((c) => {
-    // Use acq_scores (Phase 4 table) — get latest score by scored_at DESC
+    // Use acq_scores (Phase 4 table) — current score = acq_candidates.current_score_id (history-independent)
     const scoreRow = latestScoreStmt.get(c.id) as AcqScoreRow | undefined;
 
     // Validate tier against known values before casting (Fix A-1)
