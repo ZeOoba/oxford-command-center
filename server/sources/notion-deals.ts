@@ -238,6 +238,20 @@ export function mapNotionPage(page: NotionPage): Deal | null {
  * fail-closed confidential default applies — nothing is destroyed in either direction, and the
  * error-severity flag blocks the write until a human adjudicates.
  */
+/**
+ * Roster wins over a seed `confidential:false` (Hard Invariant 3). The seed flag is the intended
+ * escape hatch, but only while no ACTIVE roster group claims the deal — checked on the whole record
+ * (live location/price/nextAction included) and fail-closed on an unreadable or placeholder roster.
+ * Applied on EVERY path that returns seed deals, including loadDeals' degraded fallbacks.
+ */
+export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
+  return deals.map((d) => {
+    if (d.confidential || !rosterClaimsDeal(d)) return d;
+    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it (or the roster could not be verified) — forcing confidential.`);
+    return { ...d, confidential: true };
+  });
+}
+
 export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[] = []): Deal[] {
   // ── Seed-side ambiguity ───────────────────────────────────────────────────────────────────────
   // Two seed rows claiming one live row made one of them merge it while the other "refused" it,
@@ -393,7 +407,12 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
       estimatedFields,
       // A live row the pipeline already marks confidential (name patterns) is never un-flagged by
       // the seed merge; the roster check below then covers the case where neither flag fires.
-      confidential: s.confidential || live.confidential,
+      confidential: (() => {
+        if (!s.confidential && live.confidential) {
+          console.warn(`[notion-deals] ${s.id}: live row is confidential (name pattern) — overriding the seed's confidential:false.`);
+        }
+        return s.confidential || live.confidential;
+      })(),
       // id, name, shortName, notionDealId, buildings, holdYrs preserved from the seed.
     };
   });
@@ -413,14 +432,7 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     .filter((d) => !d.notionDealId || !usedIds.has(d.notionDealId))
     .map((d) => (d.confidential ? d : { ...d, confidential: !isDeclassified(d) }));
 
-  // Roster wins over the seed flag (Hard Invariant 3). A seed confidential:false is the intended
-  // escape hatch, but only while no ACTIVE roster group claims the deal — checked here on the
-  // MERGED record (live location/price/nextAction included), fail-closed on an unreadable roster.
-  const rosterChecked = merged.map((d) => {
-    if (d.confidential || !rosterClaimsDeal(d)) return d;
-    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it — forcing confidential.`);
-    return { ...d, confidential: true };
-  });
+  const rosterChecked = applyRosterOverride(merged);
 
   const published = [...rosterChecked, ...extras];
 
@@ -773,7 +785,7 @@ export function hasDealsPipelineFailure(flags: readonly DataQualityFlag[]): bool
 export async function loadDeals(): Promise<DealsLoad> {
   const token = process.env.NOTION_TOKEN;
   if (!token) {
-    return { deals: SEED_DEALS, degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' }, flags: [] };
+    return { deals: applyRosterOverride(SEED_DEALS), degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' }, flags: [] };
   }
   try {
     const stageDrift = new Set<string>();
@@ -782,7 +794,7 @@ export async function loadDeals(): Promise<DealsLoad> {
       // A configured token returning zero deals is anomalous, not a legitimately empty pipeline:
       // it wipes the live set exactly like a thrown fetch does, so it degrades identically.
       console.warn('[notion-deals] live fetch returned 0 deals, using seed');
-      return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' }, flags: [] };
+      return { deals: applyRosterOverride(SEED_DEALS), degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' }, flags: [] };
     }
     const flags: DataQualityFlag[] = [];
     if (stageDrift.size) {
@@ -811,6 +823,6 @@ export async function loadDeals(): Promise<DealsLoad> {
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.warn(`[notion-deals] live fetch failed, using seed: ${detail}`);
-    return { deals: SEED_DEALS, degraded: { reason: 'fetch-failed', detail }, flags: [] };
+    return { deals: applyRosterOverride(SEED_DEALS), degraded: { reason: 'fetch-failed', detail }, flags: [] };
   }
 }
