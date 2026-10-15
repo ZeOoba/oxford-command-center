@@ -24,6 +24,8 @@ import {
   formatSpecValue,
   hvacOwnershipRollup,
   projectRoofs,
+  roofEulText,
+  roofForecastText,
   roofRollup,
   sprinklerRollup,
   type CoverageRow,
@@ -129,8 +131,8 @@ const ROOF_COLS: Column<RoofProjection & { label2: string }>[] = [
     key: 'eul',
     header: 'EUL',
     align: 'right',
-    render: (r) => <span className="num text-xs">{r.eul === null ? 'not stated' : yrs(r.eul)}</span>,
-    sortValue: (r) => r.eul,
+    render: (r) => <span className="num text-xs">{roofEulText(r)}</span>,
+    sortValue: (r) => r.eulMin,
   },
   {
     key: 'age',
@@ -145,10 +147,10 @@ const ROOF_COLS: Column<RoofProjection & { label2: string }>[] = [
     align: 'right',
     render: (r) =>
       r.yearsRemaining === null ? (
-        <span className="num text-xs" style={muted}>n/a — no EUL stated</span>
+        <span className="num text-xs" style={muted}>{roofForecastText(r)}</span>
       ) : (
-        <span className="num text-xs" style={{ color: r.pastEul && r.vintage !== 'STALE' ? 'var(--text-neg)' : undefined }}>
-          {r.pastEul ? `${yrs(Math.abs(r.yearsRemaining))} past EUL` : `${yrs(r.yearsRemaining)} left`}
+        <span className="num text-xs" style={{ color: r.pastEul && r.vintage !== 'STALE' ? 'var(--text-neg)' : r.pastEul === null && r.vintage !== 'STALE' ? 'var(--text-warn)' : undefined }}>
+          {roofForecastText(r)}
         </span>
       ),
     sortValue: (r) => r.yearsRemaining,
@@ -165,7 +167,8 @@ function RoofClockCard({ projections, labels }: { projections: RoofProjection[];
       <CardHeader title="Roof age & past-EUL list" trailing={<Badge tone={past > 0 ? 'amber' : 'neutral'}>{past} past EUL (current + draft) · {rows.length} roofs with an install year ({staleN} stale, history only)</Badge>} />
       <p className="num px-4 pb-2 text-2xs" style={muted}>
         Projected status is install year + the report's own EUL, computed from today's date and labeled [FORECAST] — it is not a finding and
-        does not assert present condition. Where a report states no EUL, nothing is assumed.
+        does not assert present condition. Where a report states no EUL, nothing is assumed; where it states conflicting EULs, the
+        range is shown, sorted on the shortest, and a roof counts as past EUL only when it is past every stated EUL.
       </p>
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-secondary)' }}>No roof install years in the current filter.</div>
@@ -296,7 +299,7 @@ function profileColumns(projectionByKey: Map<string, RoofProjection>): Column<Ef
             {proj && (
               <div className="num text-2xs" style={{ color: 'var(--text-warn)' }}>
                 [FORECAST] {yrs(proj.ageToday)} old today
-                {proj.yearsRemaining === null ? '; EUL not stated' : proj.pastEul ? `; ${yrs(Math.abs(proj.yearsRemaining))} past EUL` : `; ${yrs(proj.yearsRemaining)} left`}
+                {proj.yearsRemaining === null ? '; EUL not stated' : `; ${roofForecastText(proj)}`}
               </div>
             )}
             {e.effective.note && <div className="text-2xs" style={muted}>{e.effective.note}</div>}
