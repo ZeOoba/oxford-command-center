@@ -124,12 +124,9 @@ class Brain extends EventEmitter {
       // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
       this.dealsDegraded = dealsDegraded;
       this.m365Degraded = m365Degraded;
-      const overlaid = applyOverlay(snapshot, this.overlay);
-      // Hard Invariant 3: parseWorkbook roster-checked deals[] at PARSE time, but the parse is async and
-      // the roster can be edited while it runs. The roster watcher's re-check would then fire BEFORE this
-      // adoption and be overwritten by the stale parse-time verdict. Re-check synchronously at adoption
-      // so any edit landed before this line is seen, and any edit after it triggers the watcher.
-      const merged = { ...overlaid, deals: applyRosterOverride(overlaid.deals) };
+      // Roster re-check happens inside adoptSnapshot() (the parse is async and the roster can be edited
+      // while it runs, so the check must be synchronous with adoption, not at parse time).
+      const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals via resolveQuickbooks (2026-08-17 fix): a live server's refresh()
       // fires far more often than either CLI writer, so a transient read/parse failure here (a
       // OneDrive sync lock on QUICKBOOKS_CSV, a momentary schema hiccup) is MORE likely to hit,
@@ -144,14 +141,14 @@ class Brain extends EventEmitter {
       const withQb = { ...merged, quickbooks };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
       const rtFlags = checkSnapshot(withQb);
-      this.snapshot = rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb;
-      this.persist(this.snapshot);
+      const adopted = this.adoptSnapshot(rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb);
+      this.persist(adopted);
       this.setState({
         status: 'fresh',
         source: 'workbook',
         lastUpdated: new Date().toISOString(),
         lastError: null,
-        flagCount: this.snapshot.dataQuality.length,
+        flagCount: adopted.dataQuality.length,
         workbookPath: workbookPath(),
       });
       this.emit('snapshot', { reason, flags: [...flags, ...rtFlags] });
@@ -177,10 +174,7 @@ class Brain extends EventEmitter {
     const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(this.base.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
     if (preservedFrom === 'memory') console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
     else if (preservedFrom) console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
-    const overlaid = applyOverlay(this.base, this.overlay);
-    // Hard Invariant 3: base.deals were roster-checked at PARSE time; the roster may have claimed a
-    // deal since. Re-check on every re-derive so a UI write-back never re-serves/mirrors a stale flag.
-    const merged = { ...overlaid, deals: applyRosterOverride(overlaid.deals), quickbooks };
+    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks };
     // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
     // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
     // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
@@ -190,11 +184,11 @@ class Brain extends EventEmitter {
     // pre-overlay parse result), so recomputing cannot double-add them.
     // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.)
     const rtFlags = checkSnapshot(merged);
-    this.snapshot = rtFlags.length
-      ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] }
-      : merged;
+    const adopted = this.adoptSnapshot(
+      rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged,
+    );
     void saveOverlay(this.overlay);
-    this.persist(this.snapshot);
+    this.persist(adopted);
     this.setState({ lastUpdated: new Date().toISOString() });
     this.emit('snapshot', { reason, flags: [] as DataQualityFlag[] });
   }
@@ -401,18 +395,44 @@ class Brain extends EventEmitter {
     }
   }
 
+  /**
+   * Roster-check a deals array (Hard Invariant 3). applyRosterOverride fails closed internally; if it
+   * throws anyway, serving the stale verdicts is the one wrong answer, so force everything confidential.
+   */
+  private rosterChecked(deals: PortfolioSnapshot['deals'], where: string): PortfolioSnapshot['deals'] {
+    try {
+      return applyRosterOverride(deals);
+    } catch (err) {
+      console.error(`✗ Brain ${where}: roster check threw — forcing all deals confidential:`, err instanceof Error ? err.message : err);
+      return deals.map((d) => (d.confidential ? d : { ...d, confidential: true }));
+    }
+  }
+
+  /**
+   * THE choke point: the only place `this.snapshot` is assigned (pinned by
+   * tests/unit/brain-snapshot-chokepoint.test.ts). Every snapshot Brain serves — fresh parse, UI
+   * write-back, on-disk or in-memory fallback, roster re-check — passes through here, so a deal the
+   * ACTIVE roster claims can never be served confidential:false, whatever path produced it or however
+   * long ago its flag was stamped (Hard Invariant 3). Idempotent (only ever false -> true), so callers
+   * that already checked may pass through it again. Returns the adopted snapshot.
+   */
+  private adoptSnapshot(next: PortfolioSnapshot): PortfolioSnapshot {
+    const adopted = { ...next, deals: this.rosterChecked(next.deals, 'adoptSnapshot') };
+    this.snapshot = adopted;
+    return adopted;
+  }
+
   private loadFallback(): boolean {
     if (this.snapshot) {
-      // Warm path: adopted earlier, roster may have changed since (Hard Invariant 3).
-      this.snapshot = { ...this.snapshot, deals: applyRosterOverride(this.snapshot.deals) };
+      // Warm path: adopted earlier, roster may have changed since — re-adopt to re-check.
+      this.adoptSnapshot(this.snapshot);
       return true;
     }
     if (!existsSync(SNAPSHOT_PATH)) return false;
     try {
       const stored = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
-      // Hard Invariant 3: the stored deals[] were stamped when the snapshot was written; the roster may
-      // have claimed a deal since. Re-apply it before serving, exactly as every live deals path does.
-      this.snapshot = { ...stored, deals: applyRosterOverride(stored.deals) };
+      // The stored deals[] were stamped when the snapshot was written; adoptSnapshot re-checks them.
+      this.adoptSnapshot(stored);
       return true;
     } catch {
       return false;
@@ -436,21 +456,13 @@ class Brain extends EventEmitter {
   private recheckRoster(reason: string) {
     const current = this.snapshot;
     if (!current) return;
-    let deals: PortfolioSnapshot['deals'];
-    try {
-      const source = this.base ? applyOverlay(this.base, this.overlay).deals : current.deals;
-      deals = applyRosterOverride(source);
-    } catch (err) {
-      // Nothing here is expected to throw (applyRosterOverride fails closed internally); if it does,
-      // serving the stale verdicts is the one wrong answer, so force everything confidential.
-      console.error(`✗ Brain.recheckRoster (${reason}): re-check threw — forcing all deals confidential:`, err instanceof Error ? err.message : err);
-      deals = current.deals.map((d) => (d.confidential ? d : { ...d, confidential: true }));
-    }
+    const source = this.base ? applyOverlay(this.base, this.overlay).deals : current.deals;
+    const deals = this.rosterChecked(source, `recheckRoster:${reason}`);
     const was = new Map(current.deals.map((d) => [d.id, d.confidential]));
     const tightened = deals.filter((d) => d.confidential && was.get(d.id) === false).length;
     const released = deals.filter((d) => !d.confidential && was.get(d.id) === true).length;
     if (tightened === 0 && released === 0) return;
-    this.snapshot = { ...current, deals };
+    this.adoptSnapshot({ ...current, deals });
     console.warn(`[brain] confidential roster changed (${reason}): ${tightened} deal(s) now confidential, ${released} released.`);
     // `action:` prefix: server/index.ts's snapshot listener skips those reasons, and it must — it writes
     // occupancy / debt time series from the snapshot on workbook refreshes only, and a roster edit can
