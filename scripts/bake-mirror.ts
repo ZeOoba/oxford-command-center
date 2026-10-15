@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
+import { mentionsAnyTerm } from '../server/briefing/confidential-normalize';
 import type { DealsDegradation } from '../server/sources/notion-deals';
 import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
@@ -86,9 +87,8 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
   // computed once, applied to every free-text field below.
   const removedNames = confidential
     .flatMap((d) => [d.name, d.shortName])
-    .filter((s): s is string => !!s)
-    .map((s) => s.toLowerCase());
-  const mentionsRemoved = (s: string | null): boolean => !!s && removedNames.some((n) => s.toLowerCase().includes(n));
+    .filter((s): s is string => !!s);
+  const mentionsRemoved = (s: string | null): boolean => mentionsAnyTerm(s, removedNames);
   const scrub = (s: string | null): string | null => (mentionsRemoved(s) ? null : s);
 
   const deals = snapshot.deals

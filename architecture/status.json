@@ -8,6 +8,14 @@
     "review_detail": "Gabriel acknowledged the Architect-owned migration in-turn 2026-10-13 (AskUserQuestion, pointer-column option). Made: server/warehouse/migrations/036_acq_current_score_id.sql (new; ADD COLUMN acq_candidates.current_score_id + backfill). db.ts/migrate.ts unchanged. Refute: wf_f7898ae5-2da, wf_ba4886b3-1a9, wf_96d87140-319, wf_8d7273d2-bfb (clean). Branch fix/acq-current-score-pointer, rebased on origin/main 64a4363, unpushed. Deploy note: restart the always-on Brain Server so no pre-036 code writes scores.",
     "last_updated": "2026-10-14T00:00:00Z"
   },
+  "festive-bartik-42b09f": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
+    "phase": "Stale governor-regime BUY gate (refute wf_f5f45202-de8 follow-up): acq-engine stamps score_json.governorRegime; capital-allocation withholds BUY from stale scores. Touches ARCHITECT-OWNED src/contracts/capital.ts (additive PortfolioAllocation.dataQuality, default []).",
+    "status": "in_progress",
+    "blocked_by": "PR #456 (isBuyEligible) unmerged - branched from its head",
+    "review_needed": true,
+    "last_updated": "2026-10-13T00:00:00Z"
+  },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
     "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
@@ -16,6 +24,15 @@
     "review_needed": true,
     "review_detail": "Gabriel approved the plan and all four placement/source/engine/current decisions in-turn 2026-10-07 and approved the architect-edit-ok sentinel in-turn (AskUserQuestion). Architect-owned files touched: server/warehouse/migrations/035_property_condition.sql (new), src/contracts/property-condition.ts (new) + one export line in src/contracts/index.ts, package.json (one script), server/warehouse/sub-routers.ts (one mount line). Registry change: new standalone destination 'property-condition' in the Capital rail group (Capital is at the 5-tab cap, so not a 6th tab); tests/unit/ia-registry.test.ts updated 13→14 destinations, Capital group 2→3. No governor/model files touched. Needs architect acknowledgment at PR review.",
     "last_updated": "2026-10-07T00:00:00Z"
+  },
+  "pca-intelligence": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
+    "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts, plus module 10 (cost segregation property data: src/analytics/cost-seg.ts, data/cost-seg, Cost seg view). Display only; no contracts, migrations, server, hooks or governor files touched.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned files touched: package.json (two scripts: calibration:propose, calibration:promote) and this architecture/status.json claim. No contracts, migrations, server, hooks or governor files. Branch feat/pca-intelligence, worktree .claude/worktrees/pca-intelligence; not pushed, not merged. Needs architect acknowledgment at PR review.",
+    "last_updated": "2026-10-13T00:00:00Z"
   },
   "_comment":"Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
   "property-financials": {

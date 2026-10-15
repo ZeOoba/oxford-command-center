@@ -77,6 +77,9 @@ export default defineConfig({
     // `git config` spawns via GIT_TRACE2_EVENT rather than by timing them.
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    // One private temp root per run (redirects os.tmpdir(), removed afterwards) - the suite's ~130 mkdtemp
+    // users mostly never clean up and filled the CI runner's disk. See tests/support/temp-run-dir.ts.
+    globalSetup: ['./tests/global-setup.ts'],
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/unit/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
