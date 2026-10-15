@@ -78,6 +78,39 @@ describe('functions/api/ai — edge confidentiality scan', () => {
     expect(scan(null)).toBeNull();
   });
 
+  it('is not fooled by zero-width / NBSP / fullwidth spellings of a confidential deal name (refute wf_d43de08e-49f)', () => {
+    const scan = edgeConfidentialScan(snap([{ name: 'Project Orchard', confidential: true }]))!;
+    const zw = String.fromCodePoint(0x200b);
+    const nbsp = String.fromCodePoint(0xa0);
+    expect(scan({ note: `follow up on Project${zw} Orchard` })).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ note: `follow up on Project${nbsp}Orchard` })).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ note: `follow up on Pro${zw}ject Orch${zw}ard` })).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ note: 'Public Deal LOI countersigned' })).toBeNull();
+  });
+
+  it('flattens Map / Set / BigInt / Error values like the server scanner does (collectText widening)', () => {
+    const scan = edgeConfidentialScan(snap([{ name: 'Project Orchard', confidential: true }]))!;
+    expect(scan(new Map([['note', 'call re: Project Orchard']]))).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan(new Set(['Project Orchard']))).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ err: new Error('Project Orchard LOI withdrawn') })).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ n: 12n })).toBeNull();
+  });
+
+  it('reads the own enumerable fields of an Error, as the old flatten did (edge parity with the server scan)', () => {
+    const scan = edgeConfidentialScan(snap([{ name: 'Project Orchard', confidential: true }]))!;
+    const e = new Error('lookup failed') as Error & { deal?: string };
+    e.deal = 'Project Orchard';
+    expect(scan(e)).toEqual({ dealLabel: 'Project Orchard' });
+    expect(scan({ err: e })).toEqual({ dealLabel: 'Project Orchard' });
+  });
+
+  it('keeps the original adjacency: a name spanning a neighbour and an Error own field still hits', () => {
+    const scan = edgeConfidentialScan(snap([{ name: 'Zephyr Corp', confidential: true }]))!;
+    const e = new Error('x') as Error & { n?: string };
+    e.n = 'Corp';
+    expect(scan(['Zephyr', e])).toEqual({ dealLabel: 'Zephyr Corp' });
+  });
+
   it('also matches the deal shortName (bake-mirror residue-sweep parity)', () => {
     const scan = edgeConfidentialScan(snap([{ name: 'Project Orchard', shortName: 'Orchard', confidential: true }]))!;
     expect(scan('call re: orchard tomorrow')).toEqual({ dealLabel: 'Project Orchard' });

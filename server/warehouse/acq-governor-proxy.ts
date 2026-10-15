@@ -40,6 +40,18 @@ import type { AcquisitionInput, AcquisitionScore, Verdict } from '../../src/cont
  *  Gabriel G3 — RATIFIED 2026-06-20. Screening heuristic, NOT a capital_config governor constant. */
 export const SCREENING_DEBT_CONSTANT = 0.085;
 
+/**
+ * The governor-regime identity of a score: the capital_config `version` + the governor values + the
+ * screening debt constant. Lives here (pure, DB-free) so the persistence funnel (acq-engine.ts, which
+ * folds it into inputs_version and stamps it into score_json.governorRegime) and the BUY gate
+ * (capital-allocation.ts, which compares a row's stamp to the CURRENT regime) share one definition.
+ * Format pinned — changing it re-keys every candidate once. Rationale for leading with `version`:
+ * see acq-engine.ts.
+ */
+export function governorFingerprint(g: { version: number; dscrFloor: number; ltvCeiling: number }): string {
+  return `${g.version}:${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
+}
+
 /** The governor values the proxy reads — supplied by the caller (DB-loaded server-side, bundled
  *  defaults at the edge) so this module stays pure and DB-free. */
 export interface GovernorProxyGovernors {

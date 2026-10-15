@@ -1,20 +1,35 @@
 // server/briefing/confidential.ts
 //
-// A server-side confidential-term scanner for the briefing pipeline — the TypeScript mirror of the
-// egress hook's `find_hit` (C:/Users/Owner/.claude/hooks/confidentiality-guard.py). A BriefingModel
+// A server-side confidential-term scanner for the briefing pipeline — the TypeScript twin of the
+// egress hook's `find_hit` (C:/Users/Owner/.claude/hooks/confidentiality-guard.py). The hook twin ships
+// through ora-claude-config PRs and must ALSO be deployed to the live ~/.claude checkout: until then the
+// deployed hook may still be the raw lowercase match, so read the live file before assuming parity. A BriefingModel
 // is an ownership-FINANCIAL artifact and by construction carries NO deal terms; this module exists
 // to PROVE that invariant in a test (Behavior contract #3) and to fail loud if a future change ever
 // let a confidential identifier reach the model.
 //
-// Lowercase substring match on each active deal's `always` terms, plus the `context` terms gated by a
-// `context_requires_any` anchor — identical semantics to the Python guard. The terms come from the live
+// Normalized substring match (NFKD, invisible chars, whitespace, punctuation, digit groups: see
+// confidential-normalize.ts) on each active deal's `always` terms, plus the `context` terms gated by a
+// `context_requires_any` anchor — the same semantics as the Python guard once that is deployed. The terms come from the live
 // confidential-terms.json; this is a confidentiality gate, so it FAILS CLOSED (throws) if that file is
 // absent, unreadable, or empty. The only way to run with reduced (placeholder-only) coverage is the
 // explicit CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 opt-out — never an automatic/silent fallback (see
 // loadTerms() below). NEVER echo a matched term back out (don't widen the leak) — report only the label.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import {
+  NORMALIZATION_TABLES,
+  collectText,
+  formsContain,
+  mentionsAnyTerm,
+  normalizeForScan,
+  scanTexts,
+  tightForm,
+} from './confidential-normalize';
+export { collectText, mentionsAnyTerm, normalizeForScan };
+export type { ScanForms } from './confidential-normalize';
 
 interface DealTerms {
   label?: string;
@@ -43,8 +58,9 @@ const FALLBACK_TERMS: Record<string, DealTerms> = {
  * Resolves the path to the confidential terms configuration file.
  *
  * @returns The path to the confidential terms JSON file, using the `CONFIDENTIAL_TERMS_PATH` environment variable if set, otherwise a default location in the user's home directory.
+ * Exported so Brain's roster watcher observes the exact file `loadTerms` reads (one resolver, no drift).
  */
-function termsPath(): string {
+export function termsPath(): string {
   return (
     process.env.CONFIDENTIAL_TERMS_PATH ??
     join(homedir(), '.claude', 'hooks', 'confidential-terms.json')
@@ -103,18 +119,9 @@ function loadTerms(): Record<string, DealTerms> {
   );
 }
 
-/**
- * Converts any value into a single flattened string.
- *
- * @returns A flattened string representation of the input value, with nested array and object elements separated by spaces.
- */
-export function collectText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map(collectText).join(' ');
-  if (typeof value === 'object') return Object.values(value).map(collectText).join(' ');
-  return '';
+/** SHA-256 of the four tables, pinned by tests on both sides of the TS/Python mirror. */
+export function normalizationTablesSha256(): string {
+  return createHash('sha256').update(NORMALIZATION_TABLES.join('|')).digest('hex');
 }
 
 export interface ConfidentialHit {
@@ -124,23 +131,31 @@ export interface ConfidentialHit {
 /**
  * Scans a value for confidential deal terms.
  *
- * Checks `always` terms (which match unconditionally) and `context` terms (which match only when a `context_requires_any` anchor is present). Matching is case-insensitive and uses substring inclusion.
+ * Checks `always` terms (which match unconditionally) and `context` terms (which match only when a `context_requires_any` anchor is present). Matching is case-insensitive substring inclusion over NFKD-normalized text with invisible characters, typographic punctuation, whitespace variants and digit-group separators folded (see `normalizeForScan`).
  *
  * @returns `{ dealLabel: string }` for the first confidential term detected, or `null` if none found.
  */
 export function scanForConfidential(value: unknown, terms = loadTerms()): ConfidentialHit | null {
-  const low = collectText(value).toLowerCase();
-  if (!low) return null;
+  const hays = scanTexts(value)
+    .map((t) => normalizeForScan(t))
+    .filter((h) => h.text.some((x) => x));
+  if (hays.length === 0) return null;
+  const found = (t: string): boolean => hays.some((h) => formsContain(h, t));
   for (const [key, deal] of Object.entries(terms)) {
     if (deal.active === false) continue;
     const label = deal.label ?? key;
     for (const t of deal.always ?? []) {
-      if (t && low.includes(t.toLowerCase())) return { dealLabel: label };
+      if (t && found(t)) return { dealLabel: label };
     }
-    const anchors = (deal.context_requires_any ?? []).map((r) => r.toLowerCase());
-    if (anchors.length > 0 && anchors.some((a) => low.includes(a))) {
+    const anchors = deal.context_requires_any ?? [];
+    // An anchor that normalizes to nothing (empty, whitespace or invisible-only) matches everywhere, as
+    // '' always did in the pre-normalization matcher, so ANY such anchor leaves the group unanchored
+    // (context terms always active): fail closed. A blank anchor must not be skipped just because a
+    // real one sits next to it.
+    const unanchored = anchors.length > 0 && anchors.some((a) => !a || !tightForm(a));
+    if (anchors.length > 0 && (unanchored || anchors.some((a) => a && found(a)))) {
       for (const t of deal.context ?? []) {
-        if (t && low.includes(t.toLowerCase())) return { dealLabel: label };
+        if (t && found(t)) return { dealLabel: label };
       }
     }
   }

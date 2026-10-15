@@ -23,8 +23,7 @@
 // lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
-import type { Governors } from './governors';
-import { applyGovernorProxy, SCREENING_DEBT_CONSTANT } from './acq-governor-proxy';
+import { applyGovernorProxy, governorFingerprint } from './acq-governor-proxy';
 import {
   scoreAcquisition,
   computeInputsVersion,
@@ -60,9 +59,7 @@ export interface PersistAndLogScoreResult {
  * while this function kept returning the correct v3 one. Version-leading means EVERY regime —
  * even a values-identical reversion — mints its own row and becomes the new latest.
  */
-export function governorFingerprint(g: Governors): string {
-  return `${g.version}:${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
-}
+export { governorFingerprint };
 
 /**
  * Score a candidate, evaluate governor thresholds, persist to acq_score_inputs + acq_scores,
@@ -121,6 +118,11 @@ export async function persistAndLogScore(
   // columns (refute finding: the engine's self-computed hash is un-fingerprinted, so score_json
   // and API responses would otherwise embed a hash that matches no DB key).
   const persistedScore: AcquisitionScore = { ...score, verdict: finalVerdict, inputsVersion };
+  // 6c. Stamp the governor regime this verdict was derived under into the persisted blob ONLY (not the
+  // returned score — AcquisitionScore is a contract). The capital BUY gate compares it to the CURRENT
+  // regime and treats an older/missing stamp as BUY-ineligible until re-scored (refute wf_f5f45202-de8:
+  // a capital_config change otherwise leaves a verdict made under looser governors emitting BUY).
+  const persistedBlob = { ...persistedScore, governorRegime: governorFingerprint(governors) };
 
   // 7. INSERT OR IGNORE into acq_score_inputs (idempotent on UNIQUE(candidate_id, inputs_version)).
   db.prepare(`
@@ -156,13 +158,27 @@ export async function persistAndLogScore(
       score_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  // #463: a row written before the governorRegime stamp existed can be stamped on an idempotent re-score
+  // IF the stored result still equals what the CURRENT engine just computed. The key carries no
+  // engine-code version (scoreAcquisition has changed under a fixed RULESET_VERSION, e.g. #414), so a
+  // drifted row (different composite/tier/verdict/flags) is deliberately left UNSTAMPED — BUY stays
+  // withheld rather than a stale score being certified current. Only fills a MISSING stamp; never
+  // overwrites one; json_valid keeps a corrupt blob from aborting the re-score.
+  const stampMissingRegime = db.prepare(`
+    UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', ?)
+    WHERE score_input_id = ?
+      AND json_valid(score_json)
+      AND json_extract(score_json, '$.governorRegime') IS NULL
+      AND composite = ? AND tier = ? AND verdict = ?
+      AND governor_dscr_cleared IS ? AND governor_ltv_cleared IS ?
+  `);
   const setCurrent = db.prepare(`
     UPDATE acq_candidates
        SET current_score_id = (SELECT id FROM acq_scores WHERE score_input_id = ?)
      WHERE id = ?
   `);
   db.transaction(() => {
-    insertScore.run(
+    const insertedScore = insertScore.run(
       candidateId,
       scoreInputId,
       inputsVersion,
@@ -176,14 +192,25 @@ export async function persistAndLogScore(
       score.floorIndeterminate ? 1 : 0,
       governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
       governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
-      JSON.stringify(persistedScore),
+      JSON.stringify(persistedBlob),
     );
+    // changes === 0 means this is an idempotent re-score (no new row): only the stamp backfill applies.
+    if (insertedScore.changes === 0) {
+      stampMissingRegime.run(
+        governorFingerprint(governors),
+        scoreInputId,
+        score.composite,
+        score.tier,
+        finalVerdict,
+        governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
+        governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
+      );
+    }
     // 8b. CURRENT-SCORE POINTER — set on EVERY call, including the idempotent no-op path above, so the
     //     'current' score is the one for the inputs most recently scored (A->B->A leaves it on A) and
     //     never depends on write order. Same transaction as the insert: no window with a stale pointer.
     setCurrent.run(scoreInputId, candidateId);
   })();
-  // changes === 0 means this is an idempotent re-score — no-op is correct.
 
   // 9. Retrieve the acq_scores id for calibration FK update.
   const acqScoreRow = db.prepare(`
