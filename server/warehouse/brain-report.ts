@@ -308,7 +308,7 @@ function buildFloorIndeterminateQuestions(db: WarehouseDb): OpenQuestion[] {
     FROM acq_scores s
     JOIN acq_candidates c ON c.current_score_id = s.id
     WHERE s.floor_indeterminate = 1
-    ORDER BY s.scored_at DESC, s.id DESC
+    ORDER BY COALESCE(c.current_scored_at, s.scored_at) DESC, s.id DESC
     LIMIT ?
   `).all(OPEN_QUESTION_GROUP_CAP) as FloorIndeterminateRow[];
 

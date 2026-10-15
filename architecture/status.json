@@ -5,7 +5,7 @@
     "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "Gabriel acknowledged the Architect-owned migration in-turn 2026-10-13 (AskUserQuestion, pointer-column option). Made: server/warehouse/migrations/036_acq_current_score_id.sql (new; ADD COLUMN acq_candidates.current_score_id + backfill). db.ts/migrate.ts unchanged. Refute: wf_f7898ae5-2da, wf_ba4886b3-1a9, wf_96d87140-319, wf_8d7273d2-bfb (clean). Branch fix/acq-current-score-pointer, rebased on origin/main 64a4363, unpushed. Deploy note: restart the always-on Brain Server so no pre-036 code writes scores.",
+    "review_detail": "Gabriel acknowledged the Architect-owned migration in-turn 2026-10-13 (AskUserQuestion, pointer-column option). Made: server/warehouse/migrations/036_acq_current_score_id.sql (new; ADD COLUMN acq_candidates.current_score_id + backfill). Also server/warehouse/migrations/037_acq_current_scored_at.sql (new; current_scored_at column + AFTER INSERT rolling-deploy trigger; Gabriel chose last-scored semantics + trigger in-turn 2026-10-15; kept separate because 036 was already pushed and migrations are tracked by filename). db.ts/migrate.ts unchanged. Refute: wf_f7898ae5-2da, wf_ba4886b3-1a9, wf_96d87140-319, wf_8d7273d2-bfb (clean). Branch fix/acq-current-score-pointer, pushed as PR 464; merged origin/main 4c4d9d6b. Deploy note: restart the always-on Brain Server so no pre-036 code writes scores.",
     "last_updated": "2026-10-14T00:00:00Z"
   },
   "festive-bartik-42b09f": {

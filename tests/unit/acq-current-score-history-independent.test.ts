@@ -190,6 +190,43 @@ describe('current acq score is history-independent', () => {
     expect(blessed(s2)).toBe(1);
   });
 
+  it('rolling deploy: a raw acq_scores insert (pre-036 code path) makes that row current, not a stale old pointer', async () => {
+    const db = freshDb();
+    await persistAndLogScore(db, 'c1', A, RULESET, RCT);
+    const row = (iv: string) =>
+      db.prepare(
+        `INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json) VALUES ('c1', ?, '{}')`,
+      ).run(iv);
+    row('iv-legacy');
+    const si = (db.prepare("SELECT id FROM acq_score_inputs WHERE inputs_version = 'iv-legacy'").get() as { id: number }).id;
+    // Exactly what old code does: insert the score row and never touch acq_candidates.
+    db.prepare(
+      `INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict, score_json)
+       VALUES ('c1', ?, 'iv-legacy', 1, 'T2', 'WATCH', '{}')`,
+    ).run(si);
+    const cur = db
+      .prepare("SELECT s.inputs_version AS iv FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id WHERE c.id = 'c1'")
+      .get() as { iv: string };
+    expect(cur.iv).toBe('iv-legacy');
+  });
+
+  it('current_scored_at moves on EVERY scoring call, incl. the no-op re-score; /acq/intel scoredAt follows it', async () => {
+    const db = freshDb();
+    const stamp = () =>
+      (db.prepare("SELECT current_scored_at AS t FROM acq_candidates WHERE id = 'c1'").get() as { t: string | null }).t;
+    await persistAndLogScore(db, 'c1', A, RULESET, RCT);
+    await persistAndLogScore(db, 'c1', B, RULESET, RCT);
+    db.prepare("UPDATE acq_candidates SET current_scored_at = '2000-01-01 00:00:00' WHERE id = 'c1'").run();
+    await persistAndLogScore(db, 'c1', A, RULESET, RCT); // no new acq_scores row
+    expect(stamp()! > '2000-01-01 00:00:00').toBe(true);
+    const firstScored = (db.prepare('SELECT MIN(scored_at) AS t FROM acq_scores').get() as { t: string }).t;
+    db.prepare("UPDATE acq_candidates SET current_scored_at = '2099-01-01 00:00:00' WHERE id = 'c1'").run();
+    const res = await warehouseRoutes(() => db).request('/acq/intel?status=active');
+    const body = (await res.json()) as { rankedCandidates: Array<{ scoredAt: string | null }> };
+    expect(body.rankedCandidates[0]!.scoredAt).toBe('2099-01-01 00:00:00'); // not acq_scores.scored_at
+    expect(firstScored).not.toBe('2099-01-01 00:00:00');
+  });
+
   it('migration 036 backfills current_score_id from the latest (scored_at, id) row; unscored stays NULL', () => {
     const dir = resolve(process.cwd(), 'server/warehouse/migrations');
     const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
@@ -223,5 +260,14 @@ describe('current acq score is history-independent', () => {
     expect(cur('x')).toBe(xNewer);
     expect(cur('y')).toBe(yTie);
     expect(cur('z')).toBeNull();
+    // 037 lands on a database that has ALREADY applied 036 as pushed (migrations are tracked by filename,
+    // so 036 must never be edited after it ships) and adds current_scored_at + the rolling-deploy trigger.
+    const idx37 = files.indexOf('037_acq_current_scored_at.sql');
+    expect(idx37).toBe(idx + 1);
+    db.exec(readFileSync(join(dir, files[idx37]!), 'utf8'));
+    const at = (id: string) =>
+      (db.prepare('SELECT current_scored_at AS v FROM acq_candidates WHERE id = ?').get(id) as { v: string | null }).v;
+    expect(at('x')).toBe('2026-06-02T00:00:00');
+    expect(at('z')).toBeNull();
   });
 });
