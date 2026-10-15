@@ -35,7 +35,7 @@ function methodBody(code: string, name: string): { start: number; end: number; t
 /** Every syntactic way to (re)bind or mutate the served snapshot: `=`, `??=`, `||=`, `&&=`, Object.assign. */
 const SNAPSHOT_WRITE = /this\.snapshot\s*(?:\?\?|\|\||&&)?=(?!=)|Object\.assign\(\s*this\.snapshot/g;
 /** In-place mutation of the served deals array (bypasses reassignment entirely). */
-const DEALS_MUTATION = /\.snapshot!?\??\.deals(?:\s*(?:\?\?|\|\||&&)?=(?!=)|\s*\.(?:push|splice|unshift|pop|shift|sort|reverse|fill|copyWithin)\()/;
+const DEALS_MUTATION = /\.snapshot!?\??\.deals(?:\s*(?:\?\?|\|\||&&)?=(?!=)|\s*\.(?:push|splice|unshift|pop|shift|sort|reverse|fill|copyWithin)\(|\s*\[[^\]]*\]!?(?:\s*\.\w+)?\s*(?:\?\?|\|\||&&)?=(?!=))/;
 
 describe('guard detector (self-test: the regexes must flag the bypass forms)', () => {
   const flags = (src: string) => [...src.matchAll(SNAPSHOT_WRITE)].length > 0 || DEALS_MUTATION.test(src);
@@ -48,6 +48,8 @@ describe('guard detector (self-test: the regexes must flag the bypass forms)', (
     'this.snapshot.deals = [];',
     'this.snapshot!.deals.push(d);',
     'this.snapshot?.deals.splice(0, 1);',
+    'this.snapshot!.deals[idx] = { ...d, confidential: false };',
+    'this.snapshot!.deals[0]!.confidential = false;',
   ])('flags %s', (src) => expect(flags(src)).toBe(true));
   it.each(['if (this.snapshot === null) return;', 'const s = this.snapshot;', 'this.snapshot?.quickbooks ?? null'])(
     'does not flag %s',

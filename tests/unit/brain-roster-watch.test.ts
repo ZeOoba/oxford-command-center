@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Deal } from '../../src/contracts/index';
 import type * as ConfigModule from '../../server/config';
 import type * as NotionDealsModule from '../../server/sources/notion-deals';
+import type * as ReconcileRuntimeModule from '../../server/reconcile-runtime';
 
 // Hard Invariant 3 regression: Brain serves a cached snapshot, and the roster was only re-applied on
 // refresh / loadFallback / rederive. A roster edit with no subsequent Brain event therefore left the
@@ -35,6 +36,8 @@ const h = vi.hoisted(() => ({
   base: null as unknown,
   /** Runs inside the mocked parseWorkbook — lets a test edit the roster MID-refresh. */
   duringParse: null as null | (() => void),
+  /** When true, the next checkSnapshot call throws once — a failure AFTER Brain.refresh set this.base. */
+  checkThrow: false,
   watchers: [] as Array<{ path: unknown; opts: unknown; handlers: Record<string, Array<(...a: unknown[]) => void>> }>,
 }));
 
@@ -55,6 +58,19 @@ vi.mock('../../server/workbook/parse', () => ({
     return { snapshot, flags: [], dealsDegraded: null };
   }),
 }));
+vi.mock('../../server/reconcile-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof ReconcileRuntimeModule>();
+  return {
+    ...actual,
+    checkSnapshot: (snap: Parameters<typeof actual.checkSnapshot>[0]) => {
+      if (h.checkThrow) {
+        h.checkThrow = false;
+        throw new Error('injected post-base failure');
+      }
+      return actual.checkSnapshot(snap);
+    },
+  };
+});
 vi.mock('chokidar', () => ({
   watch: vi.fn((path: unknown, opts: unknown) => {
     const w: FakeWatcher = { path, opts, handlers: {} };
@@ -102,6 +118,7 @@ beforeEach(() => {
   h.snapshotPath = join(dir, 'portfolio.json');
   h.parseError = null;
   h.duringParse = null;
+  h.checkThrow = false;
   h.watchers.length = 0;
   h.base = snapshotWith([deal({ id: 'a', name: 'Zephyr Logistics' }), deal({ id: 'b', name: 'Clean Deal' })]);
   vi.resetModules();
@@ -264,6 +281,87 @@ describe('Brain roster watcher — change detection is positional, not id-keyed 
     fire('change');
     settle();
     expect(brain.getSnapshot()!.deals.map((d) => d.confidential)).toEqual([true, true]);
+  });
+});
+
+describe('Brain roster watcher — base/snapshot divergence after a failed refresh (refute wf_b43ef00d-6d9)', () => {
+  it('still tightens the deal the roster claims when the new parse listed the same deals in a different order', async () => {
+    // refresh() sets this.base BEFORE adoption; a throw in between falls back to the OLD snapshot while base is
+    // the NEW parse (different row order). A per-index diff then compared different deals and skipped adoption.
+    h.base = snapshotWith([
+      deal({ id: 'x', name: 'Zephyr Logistics', confidential: false }),
+      deal({ id: 'q', name: 'Quiet Deal', confidential: true }),
+    ]);
+    const { brain } = await import('../../server/brain');
+    await brain.refresh('manual');
+    brain.startWatching();
+    h.base = snapshotWith([
+      deal({ id: 'q', name: 'Quiet Deal', confidential: false }),
+      deal({ id: 'x', name: 'Zephyr Logistics', confidential: false }),
+    ]);
+    h.checkThrow = true;
+    const state = await brain.refresh('file-change');
+    expect(state.source).toBe('snapshot-fallback');
+
+    setRoster(CLAIMING_ROSTER);
+    fire('change');
+    settle();
+    const byId = Object.fromEntries(brain.getSnapshot()!.deals.map((d) => [d.id, d.confidential]));
+    expect(byId.x).toBe(true);
+  });
+
+  it('same ids in the same order but DIFFERENT content: checks what is actually served, not the stale base (wf_6240b736-133)', async () => {
+    // Served row carries the term the roster is about to claim; the base (a newer, failed-to-adopt parse) does not.
+    // An id-only row match judged the base's content and skipped the tighten.
+    h.base = snapshotWith([deal({ id: 'a', name: 'Alpha', nextAction: 'tour 9900 Quarry Rd' })]);
+    const { brain } = await import('../../server/brain');
+    await brain.refresh('manual');
+    brain.startWatching();
+    h.base = snapshotWith([deal({ id: 'a', name: 'Alpha', nextAction: 'call broker' })]);
+    h.checkThrow = true;
+    await brain.refresh('file-change');
+    setRoster(CLAIMING_ROSTER);
+    fire('change');
+    settle();
+    const snap = brain.getSnapshot()!;
+    expect(snap.deals[0]!.nextAction).toBe('tour 9900 Quarry Rd');
+    expect(snap.deals[0]!.confidential).toBe(true);
+  });
+
+  it('a served row the roster claims tightens even when the stale base holds the same values in a different KEY ORDER (wf_5298d3e7-dfa)', async () => {
+    // The roster scan joins field values in key order, so a term spanning two adjacent fields matches only in one
+    // order. rowKey sorts keys, so the stale base looked "equal" and its (non-matching) verdict was used.
+    const SPAN_ROSTER = { live_deal: { label: 'Live Deal', active: true, always: ['alphafield bravofield'] } };
+    const served = deal({ id: 'a', name: 'alphafield', shortName: 'bravofield' });
+    const reordered = { id: 'a', shortName: 'bravofield', name: 'alphafield' } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(served)) if (!(k in reordered)) reordered[k] = v;
+    h.base = snapshotWith([served]);
+    const { brain } = await import('../../server/brain');
+    await brain.refresh('manual');
+    brain.startWatching();
+    h.base = snapshotWith([reordered as unknown as Deal]);
+    h.checkThrow = true;
+    await brain.refresh('file-change');
+    setRoster(SPAN_ROSTER);
+    fire('change');
+    settle();
+    expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(true);
+  });
+
+  it('does not graft a different-length new parse onto the served snapshot', async () => {
+    h.base = snapshotWith([deal({ id: 'x', name: 'Zephyr Logistics' }), deal({ id: 'q', name: 'Quiet Deal' }), deal({ id: 'r', name: 'Other' })]);
+    const { brain } = await import('../../server/brain');
+    await brain.refresh('manual');
+    brain.startWatching();
+    h.base = snapshotWith([deal({ id: 'q', name: 'Quiet Deal' }), deal({ id: 'x', name: 'Zephyr Logistics' })]);
+    h.checkThrow = true;
+    await brain.refresh('file-change');
+    setRoster(CLAIMING_ROSTER);
+    fire('change');
+    settle();
+    const snap = brain.getSnapshot()!;
+    expect(snap.deals.map((d) => d.id)).toEqual(['x', 'q', 'r']);
+    expect(snap.deals.find((d) => d.id === 'x')!.confidential).toBe(true);
   });
 });
 
