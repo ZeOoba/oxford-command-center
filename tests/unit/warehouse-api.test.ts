@@ -6,7 +6,7 @@
 // seeded → HVAC Repair + Distribution come back unmapped). The fixture writer + SEED
 // are copied locally — tests never import across test files.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -226,6 +226,35 @@ describe('warehouse api routes', () => {
     const ok = await approve();
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ ok: true });
+  });
+
+  it('POST approve on an OLDER pending version while a newer one is committed → 409 {ok:false, unmapped:[], reason:"newer-version-committed"}; the newer version keeps serving', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whapi-sup-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const a = join(dir, 'a');
+    const b = join(dir, 'b');
+    mkdirSync(a);
+    mkdirSync(b);
+    const pathA = join(a, 'P&L 2025 -- 1100 Rarig.xlsx');
+    const pathB = join(b, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(pathA);
+    await writeFixture(pathB);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(pathB);
+    wb.worksheets[0]!.getCell('D6').value = 110000;
+    await wb.xlsx.writeFile(pathB);
+    const v1 = await ingestFile(db, pathA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+    const v2 = await ingestFile(db, pathB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+    expect([v1.status, v2.status]).toEqual(['pending-review', 'committed']);
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/imports/${v1.importId}/action`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action: 'approve' }) });
+    expect(res.status).toBe(409); // a policy refusal, not the 404 not-found / not-pending status
+    const body = (await res.json()) as { ok: boolean; unmapped: string[]; reason?: string; error?: string };
+    expect(body).toMatchObject({ ok: false, unmapped: [], reason: 'newer-version-committed' });
+    expect(body.error).toContain('v2');
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'committed' });
   });
 
   it('POST /mappings then approve: 200 {mappingId, rederived}; approve → 200 {ok:true}', async () => {
