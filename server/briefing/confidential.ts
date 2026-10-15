@@ -58,8 +58,9 @@ const FALLBACK_TERMS: Record<string, DealTerms> = {
  * Resolves the path to the confidential terms configuration file.
  *
  * @returns The path to the confidential terms JSON file, using the `CONFIDENTIAL_TERMS_PATH` environment variable if set, otherwise a default location in the user's home directory.
+ * Exported so Brain's roster watcher observes the exact file `loadTerms` reads (one resolver, no drift).
  */
-function termsPath(): string {
+export function termsPath(): string {
   return (
     process.env.CONFIDENTIAL_TERMS_PATH ??
     join(homedir(), '.claude', 'hooks', 'confidential-terms.json')
