@@ -22,6 +22,7 @@
  */
 import { PortfolioSnapshot } from '../../src/contracts/index';
 import { runAgent, sanitizeAgentInput, type AgentEvent } from '../../server/ai/agent';
+import { formsContain, normalizeForScan, scanTexts } from '../../server/briefing/confidential-normalize';
 
 interface Env {
   ANTHROPIC_API_KEY?: string;
@@ -79,27 +80,19 @@ export function resetRateLimit(): void {
   windows.clear();
 }
 
-function flatten(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map(flatten).join(' ');
-  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).map(flatten).join(' ');
-  return '';
-}
-
 /** Roster-free confidential scan built from the snapshot's own flagged deals (see header). */
 export function edgeConfidentialScan(snapshot: PortfolioSnapshot): ((value: unknown) => { dealLabel: string } | null) | undefined {
   // Same identity set as scripts/bake-mirror.ts's residue sweep: the deal's name AND its shortName.
   const terms = snapshot.deals
     .filter((d) => d.confidential)
-    .flatMap((d) => [d.name, d.shortName].map((t) => ({ label: d.name, needle: (t ?? '').trim().toLowerCase() })))
+    .flatMap((d) => [d.name, d.shortName].map((t) => ({ label: d.name, needle: (t ?? '').trim() })))
     .filter((t) => t.needle.length >= 3);
   if (terms.length === 0) return undefined;
   return (value: unknown) => {
-    const low = flatten(value).toLowerCase();
-    if (!low) return null;
-    for (const t of terms) if (low.includes(t.needle)) return { dealLabel: t.label };
+    // Normalized (zero-width / NBSP / fullwidth / accent-proof) like the server-side scanner, over the
+    // same two flattenings; the module is pure, so it is safe on the edge.
+    const hays = scanTexts(value).map((t) => normalizeForScan(t));
+    for (const t of terms) if (hays.some((h) => formsContain(h, t.needle))) return { dealLabel: t.label };
     return null;
   };
 }

@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot, ScenarioName } from '../../src/contracts/index';
+import { mentionsAnyTerm } from '../briefing/confidential-normalize';
 import {
   buildAnalytics,
   portfolioKpis,
@@ -61,12 +62,11 @@ function confidentialScope(s: PortfolioSnapshot): {
   const ids = new Set(confidential.map((d) => d.id));
   const names = confidential
     .flatMap((d) => [d.name, d.shortName])
-    .filter((n): n is string => !!n)
-    .map((n) => n.toLowerCase());
+    .filter((n): n is string => !!n);
   return {
     ids,
     any: confidential.length > 0,
-    mentions: (text) => !!text && names.some((n) => text.toLowerCase().includes(n)),
+    mentions: (text) => mentionsAnyTerm(text, names),
   };
 }
 
