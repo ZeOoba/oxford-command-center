@@ -17,9 +17,9 @@ import { DealCompsActionInput } from '../src/contracts/index';
 import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
-import { runAgent, sanitizeAgentInput, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE } from './ai/agent';
+import { runAgent, sanitizeAgentInput } from './ai/agent';
 import { parseLimitParam } from './lib/query-params';
-import { scanForConfidential } from './briefing/confidential';
+import { agentEgressGuards, resolveOmExtractEgress } from './ai/egress-guards';
 import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { serverPort } from './config';
@@ -492,16 +492,16 @@ app.post('/api/actions/om-extract', async (c) => {
   // No dealId (blank-deal upload) means nothing to check against — extraction proceeds as today.
   // A dealId that fails to resolve (snapshot unavailable / unknown id) is a DIFFERENT case — that
   // fails closed via dealLookupFailed below rather than silently proceeding as non-confidential.
-  const dealId = form.get('dealId');
-  const hasDealId = typeof dealId === 'string' && dealId !== '';
-  const deal = hasDealId ? brain.getSnapshot()?.deals.find((d) => d.id === dealId) : undefined;
+  // Resolution + guards live in server/ai/egress-guards.ts so tests drive this exact code.
+  const { deal, guards } = resolveOmExtractEgress(form.get('dealId'), brain.getSnapshot());
 
   const buf = Buffer.from(await file.arrayBuffer());
   const result = await extractOmFields(buf, {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
-    dealConfidential: deal?.confidential,
-    dealLookupFailed: hasDealId && !deal,
+    // Confidentiality guards (live roster verdict, re-taken before the network call; placeholder-aware
+    // text scan) — built in server/ai/egress-guards.ts, spread in LAST and unmodified (pinned by test).
+    ...guards,
   });
   if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as 403 | 422 | 500 | 502 | 503);
 
@@ -601,24 +601,12 @@ app.post('/api/ai', (c) =>
       signal: ac.signal,
       docSearch: searchDocuments,
       macroProvider: getMacro,
-      // OI-225 layer 2. Server-only: scanForConfidential reads the roster off disk, so it cannot be
-      // imported into the runtime-agnostic agent module (the mirror has no filesystem) — it is
-      // injected here instead. Evaluated per tool result rather than hoisted, so a roster edit takes
-      // effect without a restart. If the roster is absent/unreadable, loadTerms THROWS by design and
-      // runAgent's catch would otherwise surface e.message: a confidentiality gate
-      // fails closed, but that raw message embeds the roster's absolute filesystem path and the
-      // ALLOW_PLACEHOLDER opt-out's name (refute finding, LOW) — fine on stderr, not fine streamed to
-      // whatever is reading the browser's network tab. Catch here, log the real detail server-side,
-      // and re-throw a generic message; the fail-closed behavior (still throws, still halts) and the
-      // documented CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 opt-out are both unchanged.
-      confidentialScan: (value) => {
-        try {
-          return scanForConfidential(value);
-        } catch (err) {
-          console.error('[ai] confidentiality guard unavailable:', err);
-          throw new Error(CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE); // runAgent passes exactly this through
-        }
-      },
+      // OI-225 layer 2 + the live-roster verdict (dealClaimed: per-tool-call tighten and pre-request
+      // egress gate). Server-only — they read the roster off disk, so they are injected into the
+      // runtime-agnostic agent module rather than imported by it. Built in server/ai/egress-guards.ts
+      // (which also keeps the roster path out of the SSE error text) and spread in unmodified
+      // (pinned by test).
+      ...agentEgressGuards(),
       emit: async (e) => {
         await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
       },
