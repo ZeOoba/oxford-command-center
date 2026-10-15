@@ -413,6 +413,39 @@ describe('runAgent — streaming tool loop', () => {
     // the model — match the stub's exact body shape, not the substring.)
     expect(bodies[1]).not.toContain('Live macro is not available on this surface');
   });
+
+  it('search_documents asks the injected docSearch for 8 passages and feeds alsoIn/draft back to the model', async () => {
+    const bodies: string[] = [];
+    const turn1 = sse(
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_d', name: 'search_documents' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":"renewal option in the Eurosort lease"}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+      { type: 'message_stop' },
+    );
+    const turn2 = sse(
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'See the executed lease.' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+      { type: 'message_stop' },
+    );
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return new Response(bodies.length === 1 ? turn1 : turn2, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }));
+    const docSearch = vi.fn(async () => [
+      { doc: 'Business/55 New Plant Court/Lease Eurosort 10-2022.pdf', snippet: 'Option to Renew ... Renewal Term', alsoIn: ['Business/Master Lease Database/15/Lease Eurosort 10-2022.pdf'], draft: false },
+    ]);
+    await runAgent({ question: 'renewal option in the Eurosort lease', snapshot: makeSnap(), apiKey: 'test-key', docSearch, emit: () => undefined });
+    vi.unstubAllGlobals();
+
+    expect(docSearch).toHaveBeenCalledTimes(1);
+    expect(docSearch).toHaveBeenCalledWith('renewal option in the Eurosort lease', 8); // was 5 — see doc-rank.ts
+    expect(bodies[1]).toContain('alsoIn');
+    expect(bodies[1]).toContain('Master Lease Database');
+    expect(bodies[1]).toContain('Lease Eurosort 10-2022.pdf');
+  });
 });
 
 describe('runAgent — unexpected failure', () => {

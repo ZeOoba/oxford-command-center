@@ -55,6 +55,19 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     expect(rows[0]!.chunk.docId).toBe('eurosort');
   });
 
+  it('scoped resolves the chunks of exactly the named documents, and rejects after close', async () => {
+    const p = await diskIndex();
+    const c = DocIndexClient.start(p, inProcessDocIndexTransport());
+    clients.push(c);
+    const [qv] = await fakeEmbedder(['renewal']);
+    const rows = await c.scoped(qv!, ['Eurosort Lease.pdf'], 100);
+    expect(rows.map((r) => r.chunk.docName)).toEqual(['Eurosort Lease.pdf']);
+    expect(await c.scoped(qv!, ['No Such Document.pdf'], 100)).toEqual([]);
+    expect(await c.scoped(qv!, ['Eurosort Lease.pdf', 'Roof Warranty.pdf'], 1)).toEqual([]); // 2 chunks > maxChunks 1
+    await c.close();
+    await expect(c.scoped(qv!, ['Eurosort Lease.pdf'], 100)).rejects.toThrow();
+  });
+
   it('a load failure rejects ready and every later knn', async () => {
     const root = mkdtempSync(join(tmpdir(), 'diclient-missing-'));
     roots.push(root);

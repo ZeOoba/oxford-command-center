@@ -46,6 +46,52 @@ export function knn(db: BetterSQLite3Database, vector: Float32Array, limit: numb
   return out;
 }
 
+/** sqlite-vec returns a Float32 blob; copy it out (a Buffer view's byteOffset need not be 4-aligned). */
+function blobToVector(blob: Buffer): Float32Array {
+  return new Float32Array(blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength));
+}
+
+function l2(a: Float32Array, b: Float32Array): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    s += d * d;
+  }
+  return Math.sqrt(s);
+}
+
+/** SQLite allows 999 bound variables per statement by default; stay well under it. */
+const SCOPED_NAME_BATCH = 400;
+
+/**
+ * Entity-scoped candidates: every EMBEDDED chunk of EXACTLY the named documents (the indexed names, as listed in
+ * `DocIndexInfo.docs`; equality, so `%`/`_` are literal), scored by L2 distance to `vector` — exactly the metric
+ * the vec0 table uses, so scores stay comparable with `knn`. The caller (doc-rank.ts `pickEntities`) decides which
+ * documents; this does no matching of its own. More than `maxChunks` chunks means the caller picked too broad a
+ * scope and yields []. Closest first.
+ */
+export function scopedChunks(db: BetterSQLite3Database, vector: Float32Array, docNames: readonly string[], maxChunks: number): KnnRow[] {
+  const names = [...new Set(docNames)].filter((n) => n.length > 0);
+  if (names.length === 0 || maxChunks <= 0) return [];
+  const rows: Array<{ rowid: number; docId: string; docName: string; idx: number; text: string }> = [];
+  for (let i = 0; i < names.length; i += SCOPED_NAME_BATCH) {
+    const batch = names.slice(i, i + SCOPED_NAME_BATCH);
+    const found = db
+      .prepare(`SELECT rowid, docId, docName, idx, text FROM chunk_meta WHERE docName IN (${batch.map(() => '?').join(',')})`)
+      .all(...batch) as typeof rows;
+    rows.push(...found);
+    if (rows.length > maxChunks) return []; // the caller picked too broad a scope
+  }
+  const getVec = db.prepare('SELECT embedding FROM vec_chunks WHERE rowid = ?');
+  const out: KnnRow[] = [];
+  for (const r of rows) {
+    const v = getVec.get(r.rowid) as { embedding: Buffer } | undefined;
+    if (!v) continue; // planned but not yet embedded (resumable build): never matches
+    out.push({ chunk: { docId: r.docId, docName: r.docName, idx: r.idx, text: r.text }, distance: l2(vector, blobToVector(v.embedding)) });
+  }
+  return out.sort((a, b) => a.distance - b.distance);
+}
+
 export interface DocIndexHandler {
   /** `emit` is called as soon as each response is ready — the worker posts `opened` BEFORE the
    *  chunk-count scan, so /api/health can report the build time during a cold load. */
@@ -90,6 +136,18 @@ export function createDocIndexHandler(): DocIndexHandler {
             emit({ type: 'knn-result', id: msg.id, rows: knn(db, msg.vector, msg.limit) });
           } catch (e) {
             emit({ type: 'knn-error', id: msg.id, message: errMsg(e) });
+          }
+          return;
+        }
+        case 'scoped': {
+          if (!db) {
+            emit({ type: 'scoped-error', id: msg.id, message: 'index not loaded' });
+            return;
+          }
+          try {
+            emit({ type: 'scoped-result', id: msg.id, rows: scopedChunks(db, msg.vector, msg.docNames, msg.maxChunks) });
+          } catch (e) {
+            emit({ type: 'scoped-error', id: msg.id, message: errMsg(e) });
           }
           return;
         }
