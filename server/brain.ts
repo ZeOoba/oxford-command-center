@@ -12,6 +12,7 @@ import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { renameSyncWithRetry } from './lib/rename-retry';
 import { hasDealsPipelineFailure, applyRosterOverride, type DealsDegradation } from './sources/notion-deals';
+import { rosterClaimsDeal } from './sources/deal-declassification';
 import { termsPath as confidentialRosterPath } from './briefing/confidential';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
@@ -46,6 +47,15 @@ function resolveQuickbooksPreferMemory(
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
  * watches it for changes, and notifies subscribers (→ SSE → client refetch).
  */
+/** Canonical form of a deal for equality ignoring the confidential flag (sorted keys, so key order cannot matter). */
+function rowKey(d: PortfolioSnapshot['deals'][number]): string {
+  return JSON.stringify({ ...d, confidential: null }, (_k, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
 class Brain extends EventEmitter {
   /** The freshly-parsed workbook (read-only canonical), before overlay merge. */
   private base: PortfolioSnapshot | null = null;
@@ -456,17 +466,40 @@ class Brain extends EventEmitter {
   private recheckRoster(reason: string) {
     const current = this.snapshot;
     if (!current) return;
-    const source = this.base ? applyOverlay(this.base, this.overlay).deals : current.deals;
-    const deals = this.rosterChecked(source, `recheckRoster:${reason}`);
-    // Positional, NOT keyed by deal id: nothing enforces unique Deal.id on a disk snapshot, and an id-keyed
-    // Map keeps only the last row's flag, so a newly claimed row sharing an id with an already-confidential
-    // one counted as unchanged and was never adopted (refute wf_2881eb22-27c / wf_dbf6e86a-30a). `deals` is
-    // derived from base+overlay or from current.deals in the same order; a length mismatch means the two
-    // diverged, which is itself a change worth adopting.
-    const aligned = deals.length === current.deals.length;
-    const tightened = aligned ? deals.filter((d, i) => d.confidential && !current.deals[i]!.confidential).length : 0;
-    const released = aligned ? deals.filter((d, i) => !d.confidential && current.deals[i]!.confidential).length : 0;
-    if (aligned && tightened === 0 && released === 0) return;
+    let derived: PortfolioSnapshot['deals'] | null = null;
+    if (this.base) {
+      try {
+        derived = applyOverlay(this.base, this.overlay).deals;
+      } catch (err) {
+        // Guarded like rosterChecked: an overlay failure must not stop the check on what is actually served.
+        console.error(`✗ Brain.recheckRoster (${reason}): overlay derivation threw — checking the served deals only:`, err instanceof Error ? err.message : err);
+      }
+    }
+    // TIGHTEN subject is ALWAYS the served rows — what clients actually see — so a claim on a served row can never
+    // depend on how a stale rebuild compares (rowKey sorts keys; the roster scan joins values in key order:
+    // wf_5298d3e7-dfa). The base-derived rebuild is used ONLY to release (transient fail-closed recovery), and only
+    // while it IS what is served: every row equal to the served row in everything except the flag. Ids alone are
+    // not enough — a newer parse can keep the same ids in the same order with different content, and the roster
+    // scans the whole record (wf_6240b736-133). Any divergence (rows, order, count or content) => served only
+    // (wf_b43ef00d-6d9).
+    const claimedNow = current.deals.map((d) => {
+      try {
+        return rosterClaimsDeal(d);
+      } catch {
+        return true; // fail closed: an unverifiable claim counts as a claim
+      }
+    });
+    const tighten = (rows: PortfolioSnapshot['deals']) => rows.map((d, i) => (!d.confidential && claimedNow[i] ? { ...d, confidential: true } : d));
+    let deals = tighten(current.deals);
+    if (derived && derived.length === current.deals.length && derived.every((d, i) => rowKey(d) === rowKey(current.deals[i]!))) {
+      deals = tighten(this.rosterChecked(derived, `recheckRoster:${reason}`));
+    }
+    // Positional, NOT keyed by deal id: nothing enforces unique Deal.id on a disk snapshot, and an id-keyed Map
+    // keeps only the last row's flag (wf_2881eb22-27c / wf_dbf6e86a-30a). `deals` now lines up with
+    // current.deals by construction.
+    const tightened = deals.filter((d, i) => d.confidential && !current.deals[i]!.confidential).length;
+    const released = deals.filter((d, i) => !d.confidential && current.deals[i]!.confidential).length;
+    if (tightened === 0 && released === 0) return;
     this.adoptSnapshot({ ...current, deals });
     console.warn(`[brain] confidential roster changed (${reason}): ${tightened} deal(s) now confidential, ${released} released.`);
     // `action:` prefix: server/index.ts's snapshot listener skips those reasons, and it must — it writes
