@@ -192,6 +192,26 @@ describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
     expect(removedTasks).toBe(2);
   });
 
+  it('drops tasks that name a removed deal with invisible characters or odd spaces (refute wf_d43de08e-49f)', () => {
+    const ZWSP = String.fromCodePoint(0x200b);
+    const NBSP = String.fromCodePoint(0xa0);
+    const s = snap(
+      [deal({ id: 'deal-x', name: 'Quiet Deal', shortName: 'QD-Short', confidential: true })],
+      [],
+      {
+        tasks: [
+          task({ id: 't1', label: `Send PSA redline - Quiet${ZWSP} Deal, 42 Elm St` }),
+          task({ id: 't2', label: 'Call lender', notes: `follow up on QD${ZWSP}-Short appraisal` }),
+          task({ id: 't3', label: `Quiet${NBSP}Deal closing checklist` }),
+          task({ id: 't4', label: 'File quarterly CAM reconciliation' }),
+        ],
+      },
+    );
+    const { snapshot, removedTasks } = redactConfidential(s);
+    expect(snapshot.tasks.map((t) => t.id)).toEqual(['t4']);
+    expect(removedTasks).toBe(3);
+  });
+
   it('scrubs a KEPT counterparty note that mentions a removed deal by name (refute finding)', () => {
     const s = snap(
       [deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true }), deal({ id: 'deal-y', name: 'Public Deal' })],
