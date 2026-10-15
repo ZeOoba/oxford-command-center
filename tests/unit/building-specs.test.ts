@@ -20,6 +20,8 @@ import {
   hvacOwnershipRollup,
   formatSpecValue,
   projectRoofs,
+  roofEulText,
+  roofForecastText,
   roofRollup,
   roofTypeCategory,
   sprinklerRollup,
@@ -347,16 +349,71 @@ describe('review regressions', () => {
     expect(p.every((x) => x.eul === 20)).toBe(true);
   });
 
-  it('conflicting report-wide EULs are ambiguous: no EUL is assumed for a roof that states none', () => {
+  it('conflicting report-wide EULs are ambiguous: no single EUL, the candidates are kept and projected conservatively', () => {
     const f = stamp(CURRENT, [
       rawFact({ scope: 'Building A', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
       rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
       rawFact({ scope: null, attribute: 'eul', value: 30, unit: 'years', as_of: '2025-10' }),
     ]).facts;
     const [p] = projectRoofs(f, 2026);
-    expect(p!.eul).toBeNull();
-    expect(p!.yearsRemaining).toBeNull();
+    expect(p).toMatchObject({ eul: null, eulAmbiguous: true, eulCandidates: [20, 30], eulMin: 20, eulMax: 30 });
+    // Projected from the SHORTEST stated life (soonest replacement); the longest is kept alongside.
+    expect(p).toMatchObject({ yearsRemaining: -5, yearsRemainingMax: 5 });
+    // One candidate past, one not: whether it is past EUL is genuinely undecided.
     expect(p!.pastEul).toBeNull();
+    expect(roofEulText(p!)).toBe('conflicting EULs 20/30 yrs');
+    expect(roofForecastText(p!)).toBe('5 yrs past to 5 yrs left (conflicting EULs)');
+  });
+
+  it('issue #474: when EVERY conflicting EUL is already past, the roof is past EUL (and counts in the badge)', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: null, attribute: 'install_year', value: 2000, as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 15, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    const [p] = projectRoofs(f, 2026);
+    expect(p).toMatchObject({ eul: null, eulAmbiguous: true, eulMin: 15, eulMax: 20, yearsRemaining: -11, yearsRemainingMax: -6, pastEul: true });
+    expect(roofEulText(p!)).toBe('conflicting EULs 15/20 yrs');
+    expect(roofForecastText(p!)).toBe('6–11 yrs past EUL (conflicting EULs)');
+  });
+
+  it('when no conflicting EUL is past yet, the roof is not past EUL and the range of years left is shown', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'A', attribute: 'install_year', value: 2020, as_of: '2025-10' }),
+      rawFact({ scope: 'A', attribute: 'eul', value: 15, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'A', attribute: 'eul', value: 25, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    const [p] = projectRoofs(f, 2026);
+    expect(p).toMatchObject({ pastEul: false, yearsRemaining: 9, yearsRemainingMax: 19 });
+    expect(roofForecastText(p!)).toBe('9–19 yrs left (conflicting EULs)');
+  });
+
+  it('sorts an ambiguous roof by its conservative (shortest-life) projection, not last', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'Amb', attribute: 'install_year', value: 2000, as_of: '2025-10' }),
+      rawFact({ scope: 'Amb', attribute: 'eul', value: 15, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'Amb', attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'Sole', attribute: 'install_year', value: 2010, as_of: '2025-10' }),
+      rawFact({ scope: 'Sole', attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'None', attribute: 'install_year', value: 1990, as_of: '2025-10' }),
+    ]).facts;
+    expect(projectRoofs(f, 2026).map((r) => r.scope)).toEqual(['Amb', 'Sole', 'None']);
+  });
+
+  it('text for the unambiguous and no-EUL cases is unchanged', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'S', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: 'S', attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'L', attribute: 'install_year', value: 2020, as_of: '2025-10' }),
+      rawFact({ scope: 'L', attribute: 'eul', value: 25, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'N', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+    ]).facts;
+    const by = (s: string) => projectRoofs(f, 2026).find((r) => r.scope === s)!;
+    expect([roofEulText(by('S')), roofForecastText(by('S'))]).toEqual(['20 yrs', '5 yrs past EUL']);
+    expect(roofForecastText(by('L'))).toBe('19 yrs left');
+    expect(by('L')).toMatchObject({ eulAmbiguous: false, eulCandidates: [25], eulMin: 25, eulMax: 25, yearsRemainingMax: 19 });
+    expect([roofEulText(by('N')), roofForecastText(by('N'))]).toEqual(['not stated', 'n/a — no EUL stated']);
+    expect(by('N')).toMatchObject({ eulAmbiguous: false, eulCandidates: [], eulMin: null, eulMax: null, yearsRemainingMax: null });
   });
 
   it('repeating the same report-wide EUL is not a conflict', () => {
@@ -374,7 +431,17 @@ describe('review regressions', () => {
       rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
       rawFact({ scope: null, attribute: 'eul', value: 30, unit: 'years', as_of: '2025-10' }),
     ]).facts;
-    expect(projectRoofs(f, 2026)[0]!.eul).toBeNull();
+    expect(projectRoofs(f, 2026)[0]).toMatchObject({ eul: null, eulAmbiguous: true, eulCandidates: [20, 30] });
+  });
+
+  it("a group's own conflicting EULs still win over a single report-wide one (no fallback)", () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'A', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: 'A', attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: 'A', attribute: 'eul', value: 30, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 40, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    expect(projectRoofs(f, 2026).find((r) => r.scope === 'A')).toMatchObject({ eulCandidates: [20, 30] });
   });
 
   it('a report-wide EUL (no scope) applies to scoped roofs that state none', () => {
