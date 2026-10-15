@@ -15,9 +15,10 @@
 //
 // CADENCE: this is the HEAVY, infrequent bake (daily / on-backfill) — kept OUT of the light hourly
 // snapshot bake. scripts/bake-mirror.ts calls bakeWarehouseJson() only under --warehouse / BAKE_WAREHOUSE=1.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
+import { serializeForPublication } from '../server/sources/deal-declassification';
 import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
 import { leaseMarketApi } from '../server/warehouse/lease-market-api';
 import Database from 'better-sqlite3';
@@ -304,6 +305,30 @@ export function leaseMarketBakeMode(includeConfidential: boolean): LeaseMarketBa
   };
 }
 
+/**
+ * The publication step for public/warehouse.json, extracted so the roster boundary is testable.
+ * Redacted bakes only: a FULL bake targets an Access-gated mirror by design. Same roster boundary as
+ * snapshot.json -- /brain/report titles carry acquisition addresses (PR #457 refute C2). On refusal it
+ * also REMOVES any previous warehouse.json: that file may predate the roster term or come from a FULL
+ * bake, and leaving it would ship unscanned content next to the fresh snapshot (review round 2, C3b).
+ */
+export function writeWarehouseEnvelope(env: unknown, includeConfidential: boolean, pubDir: string): string {
+  mkdirSync(pubDir, { recursive: true });
+  const outPath = join(pubDir, 'warehouse.json');
+  if (includeConfidential) {
+    writeFileSync(outPath, JSON.stringify(env));
+    return outPath;
+  }
+  // Write the exact bytes that were scanned (serializeForPublication serializes once).
+  const { json, refusal } = serializeForPublication(env);
+  if (refusal || json === null) {
+    rmSync(outPath, { force: true });
+    throw new Error(refusal ?? 'refusing to publish \u2014 unverifiable payload.');
+  }
+  writeFileSync(outPath, json);
+  return outPath;
+}
+
 export async function bakeWarehouseJson(opts: { now?: number; includeConfidential?: boolean } = {}): Promise<BakeResult> {
   const now = opts.now ?? Date.now();
   const includeConfidential = opts.includeConfidential ?? false;
@@ -363,10 +388,7 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
 
   try {
     const env = await buildWarehouseEnvelope(resolver, { now, warehouseSource, includeLeaseMarket });
-    const pub = join(process.cwd(), 'public');
-    mkdirSync(pub, { recursive: true });
-    const outPath = join(pub, 'warehouse.json');
-    writeFileSync(outPath, JSON.stringify(env));
+    const outPath = writeWarehouseEnvelope(env, includeConfidential, join(process.cwd(), 'public'));
     return { path: outPath, warehouseSource, count: Object.keys(env.endpoints).length };
   } finally {
     db?.close();

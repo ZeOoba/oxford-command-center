@@ -8,7 +8,7 @@
 
 import type { Deal } from '../../src/contracts/index';
 import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
-import { scanForConfidential } from '../briefing/confidential';
+import { collectText, scanForConfidential } from '../briefing/confidential';
 
 /**
  * The sentinel term carried by `confidential.ts`'s FALLBACK_TERMS — the placeholder roster returned
@@ -79,6 +79,85 @@ export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC
  */
 export function rosterClaimsDeal(deal: Deal): boolean {
   try {
+    if (scanForConfidential(PLACEHOLDER_SENTINEL)) return true;
+    return scanForConfidential(deal) !== null;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * True when the confidential roster cannot be relied on at all: unreadable/absent (the scan throws)
+ * or the placeholder stand-in (CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 with no real file). The
+ * publication-boundary counterpart of the per-deal checks above -- used by writers that must refuse
+ * outright rather than decide per deal, and by the aggregate `deals / confidential-roster` flag.
+ */
+export function rosterUnavailable(): boolean {
+  try {
+    return scanForConfidential(PLACEHOLDER_SENTINEL) !== null;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Roster scan of a payload about to be published to a redacted PUBLIC surface (PR #457 refute
+ * wf_d42a89c6-fe5). Redaction is flag- and name-only, so text naming an ACTIVE roster deal by an
+ * `always` term (e.g. an M365 task carrying its address) survives whenever the Notion name differs;
+ * the roster is the source of record for Hard Invariant 3 and gets the last word. Returns the
+ * refusal text, or null when the payload may publish.
+ *
+ * Fails CLOSED three ways: a hit, a throw (unreadable roster), and the placeholder stand-in. The
+ * message never carries a matched term or deal label -- this text reaches logs.
+ *
+ * Scans the flattened values (collectText, the egress hook's semantics), every object KEY (collectText
+ * walks Object.values and never sees keys -- yet tenantNotes / dealComps / marketRents are keyed by free
+ * text), AND the serialized bytes. Keys are walked raw, not via the bytes, because JSON.stringify
+ * escapes quotes and backslashes and would hide a term containing one.
+ * Callers must not use this for FULL (Access-gated) bakes, where confidential content is the point.
+ */
+/** Every object key in the value, space-joined, for scanning (collectText skips keys). */
+function collectKeys(value: unknown): string {
+  if (value === null || typeof value !== 'object') return '';
+  if (Array.isArray(value)) return value.map(collectKeys).join(' ');
+  return Object.entries(value).map(([k, v]) => `${k} ${collectKeys(v)}`).join(' ');
+}
+
+export function serializeForPublication(payload: unknown): { json: string | null; refusal: string | null } {
+  const tail = 'Leaving the last good public output in place.';
+  const refuse = (why: string) => ({ json: null, refusal: `\u2717 refusing to publish \u2014 ${why} ${tail}` });
+  try {
+    if (rosterUnavailable()) {
+      return refuse('the confidential-terms roster is unreadable or the placeholder stand-in, so this publicly served payload cannot be verified against it.');
+    }
+    // Serialize ONCE and scan exactly what will be written. Scanning the live object and then
+    // re-serializing it let a getter / toJSON return different content on the second pass (review round 4,
+    // C1b/C1c); the parse below is the bytes' own value+key view, so toJSON rewrites are covered too.
+    const json = JSON.stringify(payload);
+    if (typeof json !== 'string') return refuse('the payload does not serialize.');
+    const parsed: unknown = JSON.parse(json);
+    // ONE combined text for values + keys: a context term and its anchor may be split between a key and a
+    // value, and a per-text scan would see only one half of the pair (review round 3, C1b). The raw
+    // serialized text is scanned as well, as a backstop for anything the structured walk misses.
+    const hit = scanForConfidential(`${collectText(parsed)} ${collectKeys(parsed)}`) || scanForConfidential(json);
+    // The roster is re-read on every scan; if it vanished between the check above and the scans, they ran
+    // against the placeholder and a clean result means nothing (review round 3, C1d).
+    if (rosterUnavailable()) {
+      return refuse('the confidential-terms roster became unreadable during the scan, so this payload cannot be verified.');
+    }
+    if (hit) {
+      return refuse('the redacted payload still matches an ACTIVE confidential roster term. Find and remove the leaking field at its source (term withheld from this log).');
+    }
+    return { json, refusal: null };
+  } catch {
+    return refuse('the confidential roster scan threw, so the payload cannot be verified.');
+  }
+}
+
+/** Refusal text only (null = may publish). Writers should prefer serializeForPublication and write its `json`. */
+export function publicPayloadRosterRefusal(payload: unknown): string | null {
+  return serializeForPublication(payload).refusal;
+}
     if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
       console.warn('[deal-declassification] confidential roster is the PLACEHOLDER stand-in — treating every deal as roster-claimed (fail closed).');
       return true;

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
+import { publicPayloadRosterRefusal, serializeForPublication } from '../server/sources/deal-declassification';
 import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
@@ -51,6 +52,31 @@ export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string 
     `served publicly. Both CLI writers refuse the same state. Reconciliation error(s): ${which}. ` +
     `Leaving the last good public/snapshot.json in place.`
   );
+}
+
+/**
+ * Writer policy for the PUBLIC mirror, part three: roster scan of the WHOLE payload at the
+ * publication boundary -- see publicPayloadRosterRefusal. Not applied in FULL
+ * (MIRROR_INCLUDE_CONFIDENTIAL=1) mode, where confidential content is the point and the target is
+ * verified Access-gated (deploy-mirror.ps1 always runs FULL, so this guards redacted bakes only).
+ */
+export const refuseBakeOnRosterScan = publicPayloadRosterRefusal;
+
+/**
+ * The publication step for public/snapshot.json, extracted so the roster boundary is testable
+ * (review round 3, C4: removing the inline call left every test green). Redacted bakes throw on a
+ * roster refusal BEFORE anything is written, so the last good snapshot.json stays in place; main()'s
+ * catch turns the throw into exit 1, which halts the `bake && deploy` chain.
+ */
+export function writeSnapshotPayload(payload: unknown, includeConfidential: boolean, pubDir: string): void {
+  if (includeConfidential) {
+    writeFileSync(join(pubDir, 'snapshot.json'), JSON.stringify(payload));
+    return;
+  }
+  // Write the exact bytes that were scanned (serializeForPublication serializes once).
+  const { json, refusal } = serializeForPublication(payload);
+  if (refusal || json === null) throw new Error(refusal ?? 'refusing to publish \u2014 unverifiable payload.');
+  writeFileSync(join(pubDir, 'snapshot.json'), json);
 }
 
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
@@ -275,7 +301,7 @@ async function main() {
     ? { snapshot: raw, removed: [], removedCounterparties: [], removedTasks: 0 }
     : redactConfidential(raw);
 
-  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify({ ...snapshot, governors }));
+  writeSnapshotPayload({ ...snapshot, governors }, includeConfidential, pub);
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
 
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';

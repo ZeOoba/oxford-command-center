@@ -20,7 +20,8 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
-import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sources/notion-deals';
+import { loadDeals, dealsDegradationFlag, confidentialRosterFlag, type DealsDegradation } from '../sources/notion-deals';
+import { rosterUnavailable } from '../sources/deal-declassification';
 import { loadM365Tasks, m365TasksDegradationFlag, type M365TasksDegradation } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { crossCheckDebtService } from './debt-service-crosscheck';
@@ -2132,6 +2133,10 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const { deals, degraded: dealsDegraded, flags: dealsMergeFlags } = await loadDeals();
   const dealsFlag = dealsDegradationFlag(dealsDegraded, deals.length);
   if (dealsFlag) flags.push(dealsFlag);
+  // Roster unreadable/placeholder: mergeDeals forced seed deals confidential blind. Error flag so every
+  // writer refuses (PR #457 refute) -- see confidentialRosterFlag.
+  const rosterFlag = confidentialRosterFlag(rosterUnavailable());
+  if (rosterFlag) flags.push(rosterFlag);
   // Merge-time join-key flags (collisions, refused locality-strip merges). Error-severity, so
   // evaluateReconciliationGate refuses the write until the names are disambiguated -- the joiner used
   // to log these and rely on a detector keyed differently that could miss them entirely.

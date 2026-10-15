@@ -252,6 +252,20 @@ export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
  * fail-closed confidential default applies — nothing is destroyed in either direction, and the
  * error-severity flag blocks the write until a human adjudicates.
  */
+/**
+ * Roster wins over a seed `confidential:false` (Hard Invariant 3). The seed flag is the intended
+ * escape hatch, but only while no ACTIVE roster group claims the deal — checked on the whole record
+ * (live location/price/nextAction included) and fail-closed on an unreadable or placeholder roster.
+ * Applied on EVERY path that returns seed deals, including loadDeals' degraded fallbacks.
+ */
+export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
+  return deals.map((d) => {
+    if (d.confidential || !rosterClaimsDeal(d)) return d;
+    console.warn(`[notion-deals] ${d.id} is confidential:false but the active confidential roster claims it (or the roster could not be verified) — forcing confidential.`);
+    return { ...d, confidential: true };
+  });
+}
+
 export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[] = []): Deal[] {
   // ── Seed-side ambiguity ───────────────────────────────────────────────────────────────────────
   // Two seed rows claiming one live row made one of them merge it while the other "refused" it,
@@ -768,6 +782,32 @@ export function dealsDegradationFlag(
       `Refusing rather than publishing placeholders. Cause: ${degraded.detail}`,
     severity: 'error',
   };
+}
+
+/**
+ * Aggregate error flag for an unreadable or placeholder confidential roster (PR #457 refute). With no
+ * usable roster, mergeDeals forces every seed deal confidential and applyRosterOverride cannot vouch
+ * for anything -- but that was only a server-log warn, so CLI writers and Brain.persist wrote a
+ * snapshot whose confidentiality calls were made blind. Same policy as dealsDegradationFlag: ERROR
+ * severity so evaluateReconciliationGate refuses. One flag for the whole roster, never per deal, and
+ * deliberately no rawValue -- it must not carry a matched term or deal name.
+ */
+export function confidentialRosterFlag(rosterUnavailable: boolean): DataQualityFlag | null {
+  if (!rosterUnavailable) return null;
+  return {
+    entity: 'deals',
+    field: 'confidential-roster',
+    issue:
+      'The confidential-terms roster is unreadable or the placeholder stand-in, so deal confidentiality ' +
+      'could not be verified against the source of record (Hard Invariant 3). Refusing rather than ' +
+      'publishing a snapshot whose confidential flags were set blind.',
+    severity: 'error',
+  };
+}
+
+/** True when a snapshot's flags carry the confidential-roster refusal above (Brain.persist's check). */
+export function hasConfidentialRosterFailure(flags: readonly DataQualityFlag[]): boolean {
+  return flags.some((f) => f.severity === 'error' && f.entity === 'deals' && f.field === 'confidential-roster');
 }
 
 /**

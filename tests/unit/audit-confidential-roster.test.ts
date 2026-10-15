@@ -87,6 +87,7 @@ describe('mergeDeals — the roster outranks a seed confidential:false (finding 
     expect(out.find((d) => d.id === 's3')!.confidential).toBe(false);
   });
 
+  it('never un-flags a live row the pipeline already marked confidential', () => {
   it('never un-flags a live row the pipeline already marked confidential (and warns)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const out = mergeDeals(

@@ -11,7 +11,7 @@ import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { renameSyncWithRetry } from './lib/rename-retry';
-import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
+import { hasDealsPipelineFailure, hasConfidentialRosterFailure, type DealsDegradation } from './sources/notion-deals';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
 /**
@@ -296,6 +296,16 @@ class Brain extends EventEmitter {
           `${dealsReason ? `degraded (${dealsReason})` : 'unavailable'}, so this snapshot's ` +
           `deals/counterparties are seed placeholders. Serving it in memory; the on-disk mirror is ` +
           `left at its last good state.`,
+      );
+      return;
+    }
+    // Roster unreadable/placeholder (PR #457 refute): confidential flags were set blind, and this mirror
+    // is git-tracked and pushed off-machine. Serving from memory is unchanged.
+    if (hasConfidentialRosterFailure(snapshot.dataQuality)) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the confidential-terms roster is ` +
+          `unreadable or the placeholder, so deal confidentiality could not be verified. Serving it in ` +
+          `memory; the on-disk mirror is left at its last good state.`,
       );
       return;
     }
