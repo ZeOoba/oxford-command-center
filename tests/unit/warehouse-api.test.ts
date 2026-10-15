@@ -182,6 +182,52 @@ describe('warehouse api routes', () => {
     expect(body.unmapped).toEqual(expect.arrayContaining(['HVAC Repair', 'Distribution to Owner']));
   });
 
+  it('POST approve on a sign-undecidable pending import → 409 {ok:false, unmapped:[], reason:"sign-undecidable"}; after POST /issues/:id/resolve → 200 {ok:true}', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whapi-undec-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, [
+      { account: 'Rent', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+      { account: 'HVAC Repair', code: null, normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+      { account: 'Insurance Expense', code: null, normalized_category: 'Insurance', classification: 'opex' },
+    ]);
+    // EXPENSE section closed by a stray zero Total before its negative-booked leaves => sign undecidable, no flip
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<[string | null, string | null, string | null, number | null]> = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          Total Expense', 0],
+      [null, null, '          Insurance Expense', -30000],
+      [null, null, '          HVAC Repair', -10000],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+    const ing = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-10-15T00:00:00Z' });
+    expect(ing.status).toBe('pending-review');
+    const importId = ing.importId!;
+    const app = warehouseRoutes(() => db);
+    const approve = () => app.request(`/imports/${importId}/action`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action: 'approve' }) });
+
+    const refused = await approve();
+    expect(refused.status).toBe(409); // NOT 404 (the not-found / not-pending status)
+    const body = (await refused.json()) as { ok: boolean; unmapped: string[]; reason?: string; error?: string };
+    expect(body).toMatchObject({ ok: false, unmapped: [], reason: 'sign-undecidable' });
+    expect(body.error).toContain('sign');
+
+    const issueId = (db.prepare("SELECT id FROM data_quality_issues WHERE import_id=? AND kind='sign-undecidable' AND status='open'").get(importId) as { id: number }).id;
+    const resolved = await app.request(`/issues/${issueId}/resolve`, { method: 'POST', headers: JSON_HEADERS });
+    expect(resolved.status).toBe(200);
+    const ok = await approve();
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true });
+  });
+
   it('POST /mappings then approve: 200 {mappingId, rederived}; approve → 200 {ok:true}', async () => {
     const { db, importId } = await pendingWarehouse();
     const app = warehouseRoutes(() => db);

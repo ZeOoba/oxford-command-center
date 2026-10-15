@@ -264,11 +264,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const r = rejectImport(db, id);
         return c.json(r, r.ok ? 200 : 404);
       }
-      // approve: a refusal carrying an unmapped list is a 409 (the client resolves the
-      // mappings then retries); any other failure (not found / not pending) is a 404.
+      // approve: a refusal carrying an unmapped list, or the sign-undecidable gate, is a 409 (the
+      // client resolves the mappings / verifies the sign, then retries); any other failure (not
+      // found / not pending) is a 404.
       const r = approveImport(db, id);
       if (r.ok) return c.json(r, 200);
-      return c.json(r, r.unmapped.length > 0 ? 409 : 404);
+      return c.json(r, r.unmapped.length > 0 || r.reason === 'sign-undecidable' ? 409 : 404);
     }),
   );
 

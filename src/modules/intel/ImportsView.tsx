@@ -15,6 +15,7 @@ import {
   useImportDetail,
   useImportAction,
   useAddMapping,
+  useResolveIssue,
   type ImportSummary,
   type LedgerRowView,
   type ApproveResult,
@@ -60,6 +61,7 @@ export function ImportsView({ imports }: { imports: ImportSummary[] }) {
 function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void }) {
   const detail = useImportDetail(id);
   const action = useImportAction();
+  const resolveIssue = useResolveIssue();
   const [unmapped, setUnmapped] = useState<string[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -140,6 +142,25 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
                   <Badge tone={severityTone(i.severity)}>{i.severity}</Badge>
                   <span className="num text-2xs uppercase" style={{ letterSpacing: '0.06em', color: 'var(--text-tertiary)' }}>{i.kind}</span>
                   <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{i.detail}</span>
+                  {/* Approve is refused while a sign-undecidable issue is open: the reviewer verifies the flagged
+                      side's sign against the source statement, then marks it verified (reject if the sign is wrong). */}
+                  {i.kind === 'sign-undecidable' && i.status === 'open' && isPending && (
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      onPress={() => {
+                        setActionError(null); // drop the stale approve refusal once the reviewer acts on it
+                        resolveIssue.mutate(i.id, {
+                          onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
+                          onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
+                        });
+                      }}
+                      isDisabled={resolveIssue.isPending}
+                    >
+                      Mark sign verified
+                    </Button>
+                  )}
+                  {i.kind === 'sign-undecidable' && i.status === 'resolved' && <Badge tone="neutral">sign verified</Badge>}
                 </div>
               ))}
             </div>

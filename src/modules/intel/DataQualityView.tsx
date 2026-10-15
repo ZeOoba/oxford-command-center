@@ -35,9 +35,14 @@ export function DataQualityView({ issues }: { issues: WarehouseIssue[] }) {
               variant="subtle"
               onPress={() => resolve.mutate(i.id)}
               isDisabled={resolve.isPending}
-              aria-label={`Resolve issue ${i.id}`}
+              aria-label={
+                i.kind === 'sign-undecidable'
+                  ? `Mark sign verified for issue ${i.id} (check the import's ledger signs against the source statement first)`
+                  : `Resolve issue ${i.id}`
+              }
             >
-              Resolve
+              {/* For a sign-undecidable issue this click is the acknowledgement that unlocks Approve. */}
+              {i.kind === 'sign-undecidable' ? 'Mark sign verified' : 'Resolve'}
             </Button>
           ),
         }] as Column<WarehouseIssue>[])
