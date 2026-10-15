@@ -1,4 +1,12 @@
 {
+  "festive-bartik-42b09f": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
+    "phase": "Stale governor-regime BUY gate (refute wf_f5f45202-de8 follow-up): acq-engine stamps score_json.governorRegime; capital-allocation withholds BUY from stale scores. Touches ARCHITECT-OWNED src/contracts/capital.ts (additive PortfolioAllocation.dataQuality, default []).",
+    "status": "in_progress",
+    "blocked_by": "PR #456 (isBuyEligible) unmerged - branched from its head",
+    "review_needed": true,
+    "last_updated": "2026-10-13T00:00:00Z"
+  },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
     "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",

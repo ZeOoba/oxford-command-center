@@ -58,6 +58,7 @@ import { isDistrusted } from './debt-trust';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
+import { governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
@@ -87,7 +88,7 @@ import type {
   RiskBand,
   AllocationAction,
 } from '../../src/contracts/capital';
-import type { Confidence } from '../../src/contracts/common';
+import type { Confidence, DataQualityFlag } from '../../src/contracts/common';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type {
   CapitalAllocationReport,
@@ -153,6 +154,21 @@ function confidenceTierFrom(c01: number): Confidence {
 const BUY_COMPOSITE_FLOOR = 70;
 const BASIS_DISCOUNT_FLOOR = 0.05; // [RATIFY] 5% all-in basis discount vs replacement cost
 
+/** Disclosure for BUY candidates withheld because their score predates the current governor regime. */
+function staleGovernorFlag(entity: string, ids: readonly string[]): DataQualityFlag {
+  const SHOWN = 10;
+  const named = ids.slice(0, SHOWN).join(', ');
+  const more = ids.length > SHOWN ? ` (+${ids.length - SHOWN} more)` : '';
+  return {
+    entity,
+    field: 'governorRegime',
+    issue:
+      `${ids.length} active candidate(s) were scored under an older governor regime ` +
+      `(capital_config version / screening constant) and are withheld from BUY until re-scored: ${named}${more}.`,
+    severity: 'warn',
+  };
+}
+
 function buildBuyVerdict(
   candidate: PortfolioAllocation['pipeline'][number],
   asOf: string,
@@ -172,7 +188,7 @@ function buildBuyVerdict(
   // A null basisDiscountPct passes the buyable gate (spec §3.5), but null is indistinguishable
   // between "genuinely not applicable" and "the acquisition score never computed it" — surface
   // that ambiguity rather than letting it silently disappear once the gate has passed.
-  const dataQuality =
+  const dataQuality: AllocationVerdict['dataQuality'] =
     candidate.basisDiscountPct === null
       ? [
           {
@@ -184,7 +200,6 @@ function buildBuyVerdict(
           },
         ]
       : [];
-
   return {
     propertyId: `pipeline:${candidate.candidateId}`,
     propertyName: candidate.address,
@@ -666,10 +681,31 @@ function isBuyEligible(row: AcqScoreRow | undefined): boolean {
   return row.governor_dscr_cleared !== 0 && row.governor_ltv_cleared !== 0;
 }
 
+/**
+ * True when the latest score's governor verdict was derived under the CURRENT governor regime.
+ * acq-engine stamps `governorRegime` (governorFingerprint: capital_config version + values + screening
+ * constant) into score_json. A missing, malformed, or different stamp is STALE — fail-closed: the
+ * persisted governor_*_cleared flags describe a regime that is no longer in force (or, for legacy
+ * rows scored before the stamp existed, an unknown one), so the row cannot support a BUY until
+ * re-scored. Regime-based on purpose (not value-based): a values-identical reversion still re-scores
+ * under its own inputs_version (see governorFingerprint).
+ */
+function isCurrentGovernorRegime(row: AcqScoreRow, currentRegime: string): boolean {
+  if (!row.score_json) return false;
+  try {
+    const parsed = JSON.parse(row.score_json) as { governorRegime?: unknown };
+    return parsed.governorRegime === currentRegime;
+  } catch {
+    return false;
+  }
+}
+
 function loadPipelineCandidates(db: WarehouseDb): {
   pipeline: PortfolioAllocation['pipeline'];
   buyIneligible: ReadonlySet<string>;
+  staleGovernorIds: readonly string[];
 } {
+  const currentRegime = governorFingerprint(loadGovernors(db));
   const candidates = db
     .prepare(`SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`)
     .all() as AcqCandRow[];
@@ -681,6 +717,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
   );
 
   const buyIneligible = new Set<string>();
+  const staleGovernorIds: string[] = [];
   const pipeline = candidates.map((c) => {
     // Use acq_scores (Phase 4 table) — get latest score by scored_at DESC
     const scoreRow = latestScoreStmt.get(c.id) as AcqScoreRow | undefined;
@@ -692,7 +729,15 @@ function loadPipelineCandidates(db: WarehouseDb): {
         ? tierRaw
         : null;
 
-    if (!isBuyEligible(scoreRow)) buyIneligible.add(c.id);
+    const eligibleOnItsFace = isBuyEligible(scoreRow);
+    if (!eligibleOnItsFace) buyIneligible.add(c.id);
+    if (scoreRow && !isCurrentGovernorRegime(scoreRow, currentRegime)) {
+      buyIneligible.add(c.id);
+      // Disclose rows a re-score could plausibly promote: stale and not hard-KILLED. A governor-demoted
+      // PASS (tier still T1/T2) belongs to the superseded regime, so it is included; the caller then
+      // applies tier / composite / basis-floor.
+      if (eligibleOnItsFace || scoreRow.verdict === 'PASS') staleGovernorIds.push(c.id);
+    }
 
     // score_json is a stringified AcquisitionScore: the basis discount and levered IRR are the
     // `actual` of its floors[] entries (ids 'basis' / 'irr'), NOT top-level keys — reading
@@ -729,7 +774,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
       basisDiscountPct,
     };
   });
-  return { pipeline, buyIneligible };
+  return { pipeline, buyIneligible, staleGovernorIds };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -814,7 +859,7 @@ export async function buildPortfolioAllocation(
   });
 
   // Pipeline candidates (active status only)
-  const { pipeline, buyIneligible } = loadPipelineCandidates(db);
+  const { pipeline, buyIneligible, staleGovernorIds } = loadPipelineCandidates(db);
 
   // C-3: portfolio-level buy verdict (spec §3.5) — emitted ONLY when a T1/T2 candidate
   // clears the composite floor and the basis-discount floor (or basis discount is unknown).
@@ -827,6 +872,23 @@ export async function buildPortfolioAllocation(
       !buyIneligible.has(c.candidateId) &&
       (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
   );
+  // Disclose only stale candidates that would otherwise have competed for BUY (T1/T2, above the
+  // composite floor) — listing every stale PASS-tier row would be noise.
+  const staleSet = new Set(staleGovernorIds);
+  const staleWouldBeBuyable = pipeline
+    .filter(
+      (c) =>
+        staleSet.has(c.candidateId) &&
+        (c.tier === 'T1' || c.tier === 'T2') &&
+        c.composite !== null &&
+        c.composite >= BUY_COMPOSITE_FLOOR &&
+        (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
+    )
+    .map((c) => c.candidateId);
+  const allocationDataQuality: PortfolioAllocation['dataQuality'] = [];
+  if (staleWouldBeBuyable.length > 0) {
+    allocationDataQuality.push(staleGovernorFlag('portfolio', staleWouldBeBuyable));
+  }
   if (buyable.length > 0) {
     // Top-ranked = highest composite; tie-break by candidateId for determinism.
     const top = [...buyable].sort((a, b) => {
@@ -853,6 +915,7 @@ export async function buildPortfolioAllocation(
     verdicts,
     actionCounts,
     pipeline,
+    dataQuality: allocationDataQuality,
   };
 }
 
