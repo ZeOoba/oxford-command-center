@@ -180,7 +180,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_documents',
-    description: 'Search indexed lease/PSA/OM documents and return cited passages (e.g. "renewal option in the Eurosort lease"). Available on the local server when documents are indexed; returns none on the read-only mirror.',
+    description: 'Search indexed lease/PSA/OM documents and return cited passages (e.g. "renewal option in the Eurosort lease"). Name the tenant or property in the query: results from documents whose path names it are ranked first. Each passage carries `doc` (path) and, when present, `alsoIn` (other folders holding the identical passage) and `draft` (true = file name marks a draft/markup/proposal, NOT the executed instrument: say so, and prefer a non-draft passage for contract terms). If no passage states the answer, say it was not found; never assume terms from a different lease. Available on the local server when documents are indexed; returns none on the read-only mirror.',
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false },
   },
   {
