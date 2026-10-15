@@ -91,7 +91,7 @@ export interface AgentOptions {
   signal?: AbortSignal;
   maxTurns?: number;
   /** Server-only document search (RAG). Absent on the mirror → search_documents stays a stub. */
-  docSearch?: (query: string, limit?: number) => Promise<Array<{ doc: string; snippet: string }>>;
+  docSearch?: (query: string, limit?: number) => Promise<Array<{ doc: string; snippet: string; alsoIn?: string[]; draft?: boolean }>>;
   /** Live macro provider (FRED w/ key, seeded fallback otherwise). Absent on the mirror → get_macro
    *  stays a stub. Mirrors the docSearch precedent — async; returns null only on a hard failure. */
   macroProvider?: () => Promise<MacroSnapshot | null>;
@@ -120,6 +120,11 @@ export interface AgentOptions {
    */
   confidentialScan?: (value: unknown) => { dealLabel: string } | null;
 }
+
+/** Passages handed to the model per search_documents call. Was 5; with ~450 near-identical "option to renew"
+ *  chunks in the index, 5 slots (often spent on identical copies) never reached the named lease. The search
+ *  re-ranks and de-duplicates (server/sources/doc-rank.ts), so 8 are 8 DISTINCT passages. */
+const DOC_SEARCH_PASSAGES = 8;
 
 const TOOL_LABELS: Record<string, string> = {
   get_portfolio_summary: 'reading portfolio summary',
@@ -340,7 +345,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
           if (b.name === 'search_documents' && opts.docSearch) {
             // RAG: real document search on the server (injected); the spine tools don't have it.
             const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
-            const passages = await opts.docSearch(q, 5);
+            const passages = await opts.docSearch(q, DOC_SEARCH_PASSAGES);
             result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
           } else if (b.name === 'get_macro' && opts.macroProvider) {
             // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
