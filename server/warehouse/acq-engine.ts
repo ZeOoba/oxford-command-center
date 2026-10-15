@@ -149,7 +149,7 @@ export async function persistAndLogScore(
   const scoreInputId = scoreInputRow.id;
 
   // 8. INSERT OR IGNORE into acq_scores (idempotent on UNIQUE(score_input_id)).
-  const insertedScore = db.prepare(`
+  const insertScore = db.prepare(`
     INSERT OR IGNORE INTO acq_scores (
       candidate_id, score_input_id, inputs_version,
       composite, tier, verdict, advisory_only,
@@ -157,47 +157,61 @@ export async function persistAndLogScore(
       governor_dscr_cleared, governor_ltv_cleared,
       score_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    candidateId,
-    scoreInputId,
-    inputsVersion,
-    score.composite,
-    score.tier,
-    finalVerdict,
-    advisoryOnly ? 1 : 0,
-    score.cappedAtT2 ? 1 : 0,
-    score.gatesPassed ? 1 : 0,
-    score.floorsPassed ? 1 : 0,
-    score.floorIndeterminate ? 1 : 0,
-    governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
-    governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
-    JSON.stringify(persistedBlob),
-  );
-  // changes === 0 means this is an idempotent re-score. The governor half of the stored row is exact
-  // (the key folds in the governor fingerprint), so a row written before the governorRegime stamp
-  // existed can be stamped IF the stored result still equals what the CURRENT engine just computed.
-  // The key carries no engine-code version (scoreAcquisition has changed under a fixed RULESET_VERSION,
-  // e.g. #414), so a drifted row (different composite/tier/verdict/flags) is deliberately left
-  // UNSTAMPED — BUY stays withheld rather than a stale score being certified current. Only fills a
-  // MISSING stamp; never overwrites one; json_valid keeps a corrupt blob from aborting the re-score.
-  if (insertedScore.changes === 0) {
-    db.prepare(`
-      UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', ?)
-      WHERE score_input_id = ?
-        AND json_valid(score_json)
-        AND json_extract(score_json, '$.governorRegime') IS NULL
-        AND composite = ? AND tier = ? AND verdict = ?
-        AND governor_dscr_cleared IS ? AND governor_ltv_cleared IS ?
-    `).run(
-      governorFingerprint(governors),
+  `);
+  // #463: a row written before the governorRegime stamp existed can be stamped on an idempotent re-score
+  // IF the stored result still equals what the CURRENT engine just computed. The key carries no
+  // engine-code version (scoreAcquisition has changed under a fixed RULESET_VERSION, e.g. #414), so a
+  // drifted row (different composite/tier/verdict/flags) is deliberately left UNSTAMPED — BUY stays
+  // withheld rather than a stale score being certified current. Only fills a MISSING stamp; never
+  // overwrites one; json_valid keeps a corrupt blob from aborting the re-score.
+  const stampMissingRegime = db.prepare(`
+    UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', ?)
+    WHERE score_input_id = ?
+      AND json_valid(score_json)
+      AND json_extract(score_json, '$.governorRegime') IS NULL
+      AND composite = ? AND tier = ? AND verdict = ?
+      AND governor_dscr_cleared IS ? AND governor_ltv_cleared IS ?
+  `);
+  const setCurrent = db.prepare(`
+    UPDATE acq_candidates
+       SET current_score_id = (SELECT id FROM acq_scores WHERE score_input_id = ?),
+           current_scored_at = datetime('now')
+     WHERE id = ?
+  `);
+  db.transaction(() => {
+    const insertedScore = insertScore.run(
+      candidateId,
       scoreInputId,
+      inputsVersion,
       score.composite,
       score.tier,
       finalVerdict,
+      advisoryOnly ? 1 : 0,
+      score.cappedAtT2 ? 1 : 0,
+      score.gatesPassed ? 1 : 0,
+      score.floorsPassed ? 1 : 0,
+      score.floorIndeterminate ? 1 : 0,
       governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
       governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
+      JSON.stringify(persistedBlob),
     );
-  }
+    // changes === 0 means this is an idempotent re-score (no new row): only the stamp backfill applies.
+    if (insertedScore.changes === 0) {
+      stampMissingRegime.run(
+        governorFingerprint(governors),
+        scoreInputId,
+        score.composite,
+        score.tier,
+        finalVerdict,
+        governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
+        governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
+      );
+    }
+    // 8b. CURRENT-SCORE POINTER — set on EVERY call, including the idempotent no-op path above, so the
+    //     'current' score is the one for the inputs most recently scored (A->B->A leaves it on A) and
+    //     never depends on write order. Same transaction as the insert: no window with a stale pointer.
+    setCurrent.run(scoreInputId, candidateId);
+  })();
 
   // 9. Retrieve the acq_scores id for calibration FK update.
   const acqScoreRow = db.prepare(`
@@ -307,7 +321,7 @@ export { RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH };
 /**
  * Log a calibration OUTCOME for a candidate when its deal lifecycle resolves (acquired | passed).
  *
- * Links to the candidate's MOST RECENT acquisition-score calibration_verdict and writes ONE
+ * Links to the calibration_verdict of the candidate's CURRENT score and writes ONE
  * blessed (is_resolution=1) calibration_outcome row. FAIL-OPEN: never throws to the caller.
  * If the candidate has no acquisition-score verdict (never scored), this is a no-op.
  *
@@ -322,6 +336,8 @@ export { RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH };
  *
  * STATUS REVERSAL: if a candidate's status is corrected (acquired→passed), the first blessed
  *   outcome row is NOT superseded (idempotency no-op). For corrections use resolveManualOutcome().
+ *   ONE lifecycle outcome per DEAL: a deal re-pursued after 'passed' (re-scored, later acquired) keeps only
+ *   its first outcome — record the re-pursuit via resolveManualOutcome (refute wf_8d7273d2-bfb).
  *   outcomePeriod may equal as_of_period (same-year deals) — deal-lifecycle events are exempt from
  *   the resolveManualOutcome strictly-later guard; horizonActual=0 marks same-period resolutions.
  *
@@ -334,15 +350,38 @@ export function logAcqOutcome(
   outcome: 'acquired' | 'passed',
 ): void {
   try {
-    const verdict = db.prepare(`
-      SELECT id, predicted_band, as_of_period
-      FROM calibration_verdict
-      WHERE subject_kind = 'deal'
-        AND subject_id = ?
-        AND verdict_kind = 'acquisition-score'
-      ORDER BY id DESC
-      LIMIT 1
-    `).get(candidateId) as { id: number; predicted_band: string | null; as_of_period: string } | undefined;
+    // Resolve the verdict of the candidate's CURRENT score (acq_candidates.current_score_id), keyed on
+    // that score's inputs_version — NOT the newest calibration_verdict by id: logVerdicts is INSERT OR
+    // IGNORE on its dedup key, so re-scoring A after B (A->B->A) writes no new verdict and "newest" would
+    // stay B's. A candidate with a pointer but no matching verdict (calibration fail-open) is a no-op
+    // rather than being scored against some other inputs' verdict.
+    type VerdictRow = { id: number; predicted_band: string | null; as_of_period: string };
+    const pointer = db.prepare(`
+      SELECT s.inputs_version AS inputsVersion
+      FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id
+      WHERE c.id = ?
+    `).get(candidateId) as { inputsVersion: string } | undefined;
+    const verdict = (pointer
+      ? db.prepare(`
+          SELECT id, predicted_band, as_of_period
+          FROM calibration_verdict
+          WHERE subject_kind = 'deal'
+            AND subject_id = ?
+            AND verdict_kind = 'acquisition-score'
+            AND inputs_version = ?
+          ORDER BY id DESC
+          LIMIT 1
+        `).get(candidateId, pointer.inputsVersion)
+      // No pointer (never scored through persistAndLogScore): legacy newest-verdict lookup.
+      : db.prepare(`
+          SELECT id, predicted_band, as_of_period
+          FROM calibration_verdict
+          WHERE subject_kind = 'deal'
+            AND subject_id = ?
+            AND verdict_kind = 'acquisition-score'
+          ORDER BY id DESC
+          LIMIT 1
+        `).get(candidateId)) as VerdictRow | undefined;
 
     if (!verdict) return; // never scored → no-op
 
@@ -350,6 +389,22 @@ export function logAcqOutcome(
       'SELECT id FROM calibration_outcome WHERE calibration_id = ? AND is_resolution = 1',
     ).get(verdict.id) as { id: number } | undefined;
     if (existing) return; // idempotent — one blessed resolution per verdict
+
+    // ...and one blessed LIFECYCLE resolution per DEAL. The current-score pointer can move back to inputs
+    // scored earlier (A->B->A), landing on a verdict with no resolution yet; without this a second
+    // acquired/passed PATCH would bless a second, contradictory outcome for the same deal (STATUS
+    // REVERSAL contract: the first blessed outcome is NOT superseded). Any blessed resolution of ANY basis
+    // blocks (a manual analyst ruling is authoritative), and so does any lifecycle row even once
+    // superseded: resolveManualOutcome demotes the lifecycle row to is_resolution=0 when it corrects it,
+    // which must not re-open the deal to a fresh auto-outcome.
+    const dealResolved = db.prepare(`
+      SELECT o.id FROM calibration_outcome o
+      JOIN calibration_verdict v ON v.id = o.calibration_id
+      WHERE v.subject_kind = 'deal' AND v.subject_id = ? AND v.verdict_kind = 'acquisition-score'
+        AND (o.is_resolution = 1 OR o.resolution_basis = 'deal-lifecycle-event')
+      LIMIT 1
+    `).get(candidateId) as { id: number } | undefined;
+    if (dealResolved) return;
 
     const predicted = verdict.predicted_band;
     const pursued = predicted === 'PURSUE' || predicted === 'WATCH';

@@ -444,6 +444,7 @@ describe('buildBrainReport — openQuestions (honest gap surfacing)', () => {
       INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict, floor_indeterminate, score_json)
       VALUES ('parcel:test:1', ?, 'test-inputs', 50, 'T2', 'WATCH', 1, '{}')
     `).run(scoreInputId);
+    db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run('parcel:test:1', 'parcel:test:1');
 
     const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
 
@@ -491,6 +492,7 @@ describe('buildBrainReport — openQuestions (honest gap surfacing)', () => {
         VALUES ('parcel:test:dup', ?, ?, 50, 'T2', 'WATCH', 1, '{}', ?)
       `).run(scoreInputId, iv, iv === 'iv-old' ? '2026-06-01T00:00:00Z' : '2026-07-01T00:00:00Z');
     }
+    db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run('parcel:test:dup', 'parcel:test:dup');
 
     const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
     const floor = report.openQuestions.filter((q) => q.kind === 'floor-indeterminate' && q.title.includes('999 Dup Ave'));
@@ -517,6 +519,7 @@ describe('buildBrainReport — openQuestions (honest gap surfacing)', () => {
         INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict, floor_indeterminate, score_json, scored_at)
         VALUES (?, ?, ?, 50, 'T2', 'WATCH', 1, '{}', ?)
       `).run(id, scoreInputId, `iv-tie-${i}`, TIED_AT);
+      db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run(id, id);
     }
     const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
     const tied = report.openQuestions.filter((q) => q.kind === 'floor-indeterminate' && q.title.includes('Tie St'));
