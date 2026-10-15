@@ -88,6 +88,9 @@ export const PortfolioAllocation = z.object({
     leveredIrr: z.number().nullable(),
     basisDiscountPct: z.number().nullable(),
   })),
+  /** Portfolio-level data-quality disclosures not tied to one verdict (e.g. BUY candidates withheld
+   *  because their score predates the current governor regime). Additive; defaults to []. */
+  dataQuality: z.array(DataQualityFlag).default([]),
 });
 export type PortfolioAllocation = z.infer<typeof PortfolioAllocation>;
 

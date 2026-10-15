@@ -23,8 +23,7 @@
 // lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
-import type { Governors } from './governors';
-import { applyGovernorProxy, SCREENING_DEBT_CONSTANT } from './acq-governor-proxy';
+import { applyGovernorProxy, governorFingerprint } from './acq-governor-proxy';
 import {
   scoreAcquisition,
   computeInputsVersion,
@@ -60,9 +59,7 @@ export interface PersistAndLogScoreResult {
  * while this function kept returning the correct v3 one. Version-leading means EVERY regime —
  * even a values-identical reversion — mints its own row and becomes the new latest.
  */
-export function governorFingerprint(g: Governors): string {
-  return `${g.version}:${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
-}
+export { governorFingerprint };
 
 /**
  * Score a candidate, evaluate governor thresholds, persist to acq_score_inputs + acq_scores,
@@ -121,6 +118,11 @@ export async function persistAndLogScore(
   // columns (refute finding: the engine's self-computed hash is un-fingerprinted, so score_json
   // and API responses would otherwise embed a hash that matches no DB key).
   const persistedScore: AcquisitionScore = { ...score, verdict: finalVerdict, inputsVersion };
+  // 6c. Stamp the governor regime this verdict was derived under into the persisted blob ONLY (not the
+  // returned score — AcquisitionScore is a contract). The capital BUY gate compares it to the CURRENT
+  // regime and treats an older/missing stamp as BUY-ineligible until re-scored (refute wf_f5f45202-de8:
+  // a capital_config change otherwise leaves a verdict made under looser governors emitting BUY).
+  const persistedBlob = { ...persistedScore, governorRegime: governorFingerprint(governors) };
 
   // 7. INSERT OR IGNORE into acq_score_inputs (idempotent on UNIQUE(candidate_id, inputs_version)).
   db.prepare(`
@@ -147,7 +149,7 @@ export async function persistAndLogScore(
   const scoreInputId = scoreInputRow.id;
 
   // 8. INSERT OR IGNORE into acq_scores (idempotent on UNIQUE(score_input_id)).
-  db.prepare(`
+  const insertedScore = db.prepare(`
     INSERT OR IGNORE INTO acq_scores (
       candidate_id, score_input_id, inputs_version,
       composite, tier, verdict, advisory_only,
@@ -169,9 +171,33 @@ export async function persistAndLogScore(
     score.floorIndeterminate ? 1 : 0,
     governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
     governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
-    JSON.stringify(persistedScore),
+    JSON.stringify(persistedBlob),
   );
-  // changes === 0 means this is an idempotent re-score — no-op is correct.
+  // changes === 0 means this is an idempotent re-score. The governor half of the stored row is exact
+  // (the key folds in the governor fingerprint), so a row written before the governorRegime stamp
+  // existed can be stamped IF the stored result still equals what the CURRENT engine just computed.
+  // The key carries no engine-code version (scoreAcquisition has changed under a fixed RULESET_VERSION,
+  // e.g. #414), so a drifted row (different composite/tier/verdict/flags) is deliberately left
+  // UNSTAMPED — BUY stays withheld rather than a stale score being certified current. Only fills a
+  // MISSING stamp; never overwrites one; json_valid keeps a corrupt blob from aborting the re-score.
+  if (insertedScore.changes === 0) {
+    db.prepare(`
+      UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', ?)
+      WHERE score_input_id = ?
+        AND json_valid(score_json)
+        AND json_extract(score_json, '$.governorRegime') IS NULL
+        AND composite = ? AND tier = ? AND verdict = ?
+        AND governor_dscr_cleared IS ? AND governor_ltv_cleared IS ?
+    `).run(
+      governorFingerprint(governors),
+      scoreInputId,
+      score.composite,
+      score.tier,
+      finalVerdict,
+      governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
+      governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
+    );
+  }
 
   // 9. Retrieve the acq_scores id for calibration FK update.
   const acqScoreRow = db.prepare(`
