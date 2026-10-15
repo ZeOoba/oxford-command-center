@@ -247,6 +247,8 @@ export interface EffectiveSpec {
   conflicts: boolean;
 }
 
+const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   const groups = new Map<string, SpecFactT[]>();
   for (const f of facts) {
@@ -258,7 +260,7 @@ export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   const out: EffectiveSpec[] = [];
   for (const g of groups.values()) {
     const ordered = [...g].sort(
-      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || b.as_of.localeCompare(a.as_of) || b.report_date.localeCompare(a.report_date) || a.report_id.localeCompare(b.report_id) || JSON.stringify(a).localeCompare(JSON.stringify(b)),
+      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || byCode(b.as_of, a.as_of) || byCode(b.report_date, a.report_date) || byCode(a.report_id, b.report_id) || byCode(JSON.stringify(a), JSON.stringify(b)),
     );
     const effective = ordered[0] as SpecFactT;
     const history = ordered.slice(1);

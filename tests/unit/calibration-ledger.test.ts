@@ -299,6 +299,30 @@ describe('promotion: pending → observation', () => {
     expect(skipped).toHaveLength(1); // the dropped twin is reported, not silent
   });
 
+  it('a quote dropped because only its slugified vendor collides is still reported (punctuation variants of one vendor)', () => {
+    const a: PcaLine = { propertyKey: 'p', component: 'roof_epdm', unit: 'SF', unitCost: 12, qty: null, consultant: 'c', reportDate: '2025-03-01', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
+    const mk = (vendor: string, qty: number): QuoteLine => ({ propertyKey: 'p', propertyLabel: 'P', component: 'roof_epdm', unit: 'SF', qty, totalUsd: 9000, isActual: false, vendor, docDate: '2026-05-01', status: 'BID', superseded: false, title: 't', sourceFile: 's' });
+    for (const quotes of [[mk('REDACTED-555, Inc.', 1000), mk('REDACTED-555 Inc', 1500)], [mk('REDACTED-555 Inc', 1500), mk('REDACTED-555, Inc.', 1000)]]) {
+      const skipped: unknown[] = [];
+      expect(proposePairs([a], quotes, { ledger: [], pending: [] }, '2026-10-14', 't', (d) => skipped.push(d))).toHaveLength(1);
+      expect(skipped).toHaveLength(1);
+    }
+  });
+
+  it('supersedes tolerates null / a bare string / missing on read, ignores argument order on recovery, and a non-counting row cannot retire counted ones', () => {
+    const base = JSON.parse(JSON.stringify(obs()));
+    expect(CalibrationObservation.parse({ ...base, supersedes: null }).supersedes).toEqual([]);
+    expect(CalibrationObservation.parse({ ...base, supersedes: 'x' }).supersedes).toEqual(['x']);
+    expect(CalibrationObservation.parse(base).supersedes).toEqual([]);
+    const lo = obs({ obs_id: 'b:lo', property: 'Banwick', component: 'roof_epdm' });
+    const hi = obs({ obs_id: 'b:hi', property: 'Banwick', component: 'roof_epdm' });
+    const prop = { ...proposal(), obs_id: 'b:real', property: 'Banwick', component: 'roof_epdm' as const };
+    const done = promoteProposal([lo, hi], [prop], 'b:real', '2026-10-14', ['b:hi', 'b:lo']);
+    expect(promoteProposal(done.ledger, [prop], 'b:real', '2026-10-20', ['b:lo', 'b:hi']).ledger).toEqual(done.ledger);
+    const noQty = { ...prop, obs_id: 'b:noqty', qty: null };
+    expect(() => promoteProposal([lo, hi], [noQty], 'b:noqty', '2026-10-14', ['b:lo', 'b:hi'])).toThrow(/cannot supersede/);
+  });
+
   it('refuses to promote when two pending proposals share an obs_id (never picks by array order)', () => {
     const a = proposal();
     const b = { ...proposal(), pca_unit_cost: (proposal().pca_unit_cost ?? 0) + 1 };

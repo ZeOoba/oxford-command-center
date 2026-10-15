@@ -109,11 +109,14 @@ export function linesFromRegister(parsed: ParsedRegister, workbookName: string):
   return { pca, quotes };
 }
 
+/** Locale-independent string compare (code units): ICU / machine locale must never decide which quote or fact survives. */
+const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /** Best PCA line for a quote: same property + component + unit; newest report, then largest quantity. */
 function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
   const hits = pca.filter((p) => p.propertyKey === q.propertyKey && p.component === q.component && p.unit === q.unit);
   // Total order (register row order must never decide the unit-cost basis): newest report, largest qty, then stable keys.
-  hits.sort((a, b) => b.reportDate.localeCompare(a.reportDate) || (b.qty ?? 0) - (a.qty ?? 0) || a.reportId.localeCompare(b.reportId) || a.sourceFile.localeCompare(b.sourceFile) || a.unitCost - b.unitCost);
+  hits.sort((a, b) => byCode(b.reportDate, a.reportDate) || (b.qty ?? 0) - (a.qty ?? 0) || byCode(a.reportId, b.reportId) || byCode(a.sourceFile, b.sourceFile) || a.unitCost - b.unitCost);
   return hits[0] ?? null;
 }
 
@@ -123,7 +126,7 @@ function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string
   const ids = ledger
     .filter((o) => !retired.has(o.obs_id) && o.property.toLowerCase() === q.propertyLabel.toLowerCase() && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
     .map((o) => o.obs_id);
-  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> so it is not counted twice.`;
+  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one and itself counts toward the stats, promote with --supersedes <obs_id> (repeat for each) so it is not counted twice.`;
 }
 
 export function proposePairs(
@@ -137,13 +140,16 @@ export function proposePairs(
   const seen = new Set<string>([...existing.ledger, ...existing.pending].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
   // Seed with rows already on file so a collapse against an earlier run is reported too, not only one within this run.
   const keptByKey = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [pairKey(o), o.obs_id]));
+  // A collision can also be on obs_id alone (vendor strings that slugify alike but differ in punctuation), so remember ids too.
+  const keptById = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [`id:${o.obs_id}`, o.obs_id]));
   const out: CalibrationProposal[] = [];
   // Deterministic order: when two quotes share an obs_id the live (non-superseded), newest, lowest-vendor one is kept, never input order.
   const ordered = [...quotes].sort(
     (a, b) =>
-      Number(a.superseded) - Number(b.superseded) || b.docDate.localeCompare(a.docDate) || a.vendor.localeCompare(b.vendor) ||
-      a.component.localeCompare(b.component) || a.unit.localeCompare(b.unit) || (a.totalUsd ?? 0) - (b.totalUsd ?? 0) ||
-      (a.qty ?? Infinity) - (b.qty ?? Infinity) || a.sourceFile.localeCompare(b.sourceFile) || a.title.localeCompare(b.title),
+      Number(a.superseded) - Number(b.superseded) || byCode(b.docDate, a.docDate) || byCode(a.vendor, b.vendor) ||
+      byCode(a.component, b.component) || byCode(a.unit, b.unit) || (a.totalUsd ?? 0) - (b.totalUsd ?? 0) ||
+      (a.qty ?? Infinity) - (b.qty ?? Infinity) || byCode(a.sourceFile, b.sourceFile) || byCode(a.title, b.title) ||
+      byCode(a.propertyLabel, b.propertyLabel) || byCode(a.status, b.status) || Number(a.isActual) - Number(b.isActual),
   );
   for (const q of ordered) {
     const p = pickPca(pca, q);
@@ -169,13 +175,14 @@ export function proposePairs(
     if (seen.has(key) || seen.has(idKey)) {
       // One quote document is one observation (pairKey), but a document pricing two scopes on one date collapses here —
       // say so instead of dropping the second scope silently.
-      const kept = keptByKey.get(key);
+      const kept = keptByKey.get(key) ?? keptById.get(idKey);
       if (kept !== undefined) onDuplicate({ obsId: proposal.obs_id, keptObsId: kept }); // also when the colliding quote prices a different qty / unit under the same id
       continue;
     }
     seen.add(key);
     seen.add(idKey);
     keptByKey.set(key, proposal.obs_id);
+    keptById.set(idKey, proposal.obs_id);
     out.push(proposal);
   }
   return out;
