@@ -121,9 +121,11 @@ export class DocIndexClient {
           break;
         }
         case 'knn-result':
+        case 'scoped-result':
           this.settle(m.id, (p) => p.resolve(m.rows));
           break;
         case 'knn-error':
+        case 'scoped-error':
           this.settle(m.id, (p) => p.reject(new Error(m.message)));
           break;
       }
@@ -152,6 +154,16 @@ export class DocIndexClient {
   }
 
   async knn(vector: Float32Array, limit: number): Promise<KnnRow[]> {
+    return this.request((id) => ({ type: 'knn', id, vector, limit }));
+  }
+
+  /** Every embedded chunk of exactly these documents (see `scopedChunks`), scored against `vector`.
+   *  Same deadline / crash / close behaviour as `knn`. */
+  async scoped(vector: Float32Array, docNames: string[], maxChunks: number): Promise<KnnRow[]> {
+    return this.request((id) => ({ type: 'scoped', id, vector, docNames, maxChunks }));
+  }
+
+  private async request(build: (id: number) => DocIndexRequest): Promise<KnnRow[]> {
     await this.ready;
     if (this.failure) throw this.failure; // the first failure (crash, deadline, or close) is the cause worth surfacing
     if (this.closedValue) throw new Error('doc index client is closed');
@@ -165,7 +177,7 @@ export class DocIndexClient {
       }, this.knnTimeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
-      this.transport.send({ type: 'knn', id, vector, limit });
+      this.transport.send(build(id));
     });
   }
 
