@@ -1,0 +1,176 @@
+[
+  {
+    "obs_id": "new-plant:roof_epdm:rd-bean:2017-02",
+    "property": "55 New Plant Ct",
+    "component": "roof_epdm",
+    "unit": "SF",
+    "qty": 28700,
+    "pca_unit_cost": 7.0,
+    "pca_source": {
+      "consultant": "PCI Consultants",
+      "report_date": "2016-10",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R13 TPO re-roof 28,900 SF @ $7.00 = $202,300)",
+      "source_date": "2016-10",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "STALE"
+    },
+    "contractor_unit_cost": 2.852613,
+    "contractor_source": {
+      "vendor": "R.D. Bean Inc",
+      "doc_date": "2017-02-03",
+      "status": "EXECUTED",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (R.D. Bean base bid $81,870 / 28,700 SF; completed 2017-12-05)",
+      "source_date": "2017-02-03",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "Scope differs: PCA priced a TPO re-roof; contractor installed .060 EPDM loose-laid reusing insulation and ballast. Base bid excludes options (+$30,930 smoke vents, +$18,515 skylights, +$770 hatch).",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  },
+  {
+    "obs_id": "e-fifth:roof_tpo:contractors-inc:2022-04",
+    "property": "3540 E Fifth Ave",
+    "component": "roof_tpo",
+    "unit": "SF",
+    "qty": 26700,
+    "pca_unit_cost": 22.0,
+    "pca_source": {
+      "consultant": "ASI (budget proposal, not a PCA report)",
+      "report_date": "2021-10",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (ASI roof replacement budget $792,000 / 36,000 SF)",
+      "source_date": "2021-10",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "STALE"
+    },
+    "contractor_unit_cost": 9.117524,
+    "contractor_source": {
+      "vendor": "Contractors Inc.",
+      "doc_date": "2022-04-14",
+      "status": "EXECUTED",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (executed contract $243,437.88 / 26,700 SF)",
+      "source_date": "2022-04-14",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "PCA side is a 2021 budget over 36,000 SF; executed scope is 26,700 SF 60-mil TPO, tear-off, 2 layers ISO R-25 (deck change order $29.23/SF). Quantities differ by scope.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  },
+  {
+    "obs_id": "e-livingston:roof_tpo:able-roofing:2026-08",
+    "property": "3875-3883 E Livingston",
+    "component": "roof_tpo",
+    "unit": "SF",
+    "qty": 2376,
+    "pca_unit_cost": 12.0,
+    "pca_source": {
+      "consultant": "AEI",
+      "report_date": "2025-04",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R04 3883 mod-bit roof replacement 2,400 SF @ $12 = $28,800)",
+      "source_date": "2025-04",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "DRAFT"
+    },
+    "contractor_unit_cost": 12.336991,
+    "contractor_source": {
+      "vendor": "Able Roofing",
+      "doc_date": "2026-08-05",
+      "status": "SIGNED",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Able signed $29,312.69 / 2,376 SF)",
+      "source_date": "2026-08-05",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "3883 back building. PCA priced a mod-bit replacement from a DRAFT PCA; contractor scope is Firestone 60-mil TPO with cover board, new metal and gutters. Signed price is +$4,300.85 vs Able v1 with no explanation on file.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  },
+  {
+    "obs_id": "e-fulton:roof_epdm:able-roofing:2026-05",
+    "property": "3520 E Fulton St",
+    "component": "roof_epdm",
+    "unit": "SF",
+    "qty": 52500,
+    "pca_unit_cost": 4.0,
+    "pca_source": {
+      "consultant": "CBRE Assessment & Consulting",
+      "report_date": "2025-04",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R03 EPDM re-roof 150,000 SF @ $4.00)",
+      "source_date": "2025-04-28",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "CURRENT"
+    },
+    "contractor_unit_cost": 12.5,
+    "contractor_source": {
+      "vendor": "Able Roofing",
+      "doc_date": "2026-05-07",
+      "status": "BID",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Able budget proposal, $1,250/sq, 525 sq + $20k repairs)",
+      "source_date": "2026-05-07",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "Budget-level (Low confidence, OCR-unverified) covering ~52,500 SF of ~195,000 SF of roof; CBRE had no roof access and priced 150,000 SF. Contractor qty shown.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  },
+  {
+    "obs_id": "banwick:roof_epdm:quote-low:2026",
+    "property": "2800-2826 Banwick",
+    "component": "roof_epdm",
+    "unit": "SF",
+    "qty": 24000,
+    "pca_unit_cost": 6.0,
+    "pca_source": {
+      "consultant": "Intertek",
+      "report_date": "2026-04",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $6.00 = $144,000, Yr3)",
+      "source_date": "2026-04-07",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "CURRENT"
+    },
+    "contractor_unit_cost": 10.5,
+    "contractor_source": {
+      "vendor": "Unidentified roofer (low end of quote range)",
+      "doc_date": "2026",
+      "status": "BID",
+      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $10.5-12.5/SF; quote documents not in the register)",
+      "source_date": "2026-10-13",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "One row per quote, not a midpoint. Vendor and quote date are not in any source on file; doc_date year is inferred (after the 2026-04 PCA). Verify against the quote documents. Quotes, not awards.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  },
+  {
+    "obs_id": "banwick:roof_epdm:quote-high:2026",
+    "property": "2800-2826 Banwick",
+    "component": "roof_epdm",
+    "unit": "SF",
+    "qty": 24000,
+    "pca_unit_cost": 6.0,
+    "pca_source": {
+      "consultant": "Intertek",
+      "report_date": "2026-04",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $6.00 = $144,000, Yr3)",
+      "source_date": "2026-04-07",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "CURRENT"
+    },
+    "contractor_unit_cost": 12.5,
+    "contractor_source": {
+      "vendor": "Unidentified roofer (high end of quote range)",
+      "doc_date": "2026",
+      "status": "BID",
+      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $10.5-12.5/SF; quote documents not in the register)",
+      "source_date": "2026-10-13",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "One row per quote, not a midpoint. Vendor and quote date are not in any source on file; doc_date year is inferred. Verify against the quote documents. Quotes, not awards.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "added_at": "2026-10-13"
+  }
+]
