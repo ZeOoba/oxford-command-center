@@ -33,7 +33,9 @@ import {
   readOcrText,
   listIndexableFiles,
   listIndexablePdfs,
+  shapeFused,
 } from '../../server/sources/documents';
+import type { FusedRow } from '../../server/sources/doc-rank';
 
 /**
  * Restore a process.env key to a previously-captured snapshot value. Assigning `process.env.X =
@@ -866,3 +868,27 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
 // here — transformers.js/onnxruntime hit a Float32Array realm mismatch under Vitest's test
 // environment (the model runs fine in the real server's plain-Node process). Unit tests above cover
 // the chunking, exclusion guard, and sqlite-vec plumbing with a deterministic fake embedder.
+
+describe('shapeFused — fused rows become cited hits with a 0..1 score and an unchanged order', () => {
+  const fused = (docName: string, score: number, extra: Partial<FusedRow> = {}): FusedRow => ({
+    row: { chunk: { docId: docName, docName, idx: 3, text: 'Option to renew for five years.' }, distance: 1 },
+    score,
+    semantic: 0.5,
+    alsoIn: [],
+    draft: false,
+    ...extra,
+  });
+
+  it('caps the score at 1 (boosted scores can exceed it) without reordering the hits', () => {
+    const hits = shapeFused([fused('a.pdf', 1.07), fused('b.pdf', 1.03), fused('c.pdf', 0.6)], 'renewal');
+    expect(hits.map((h) => h.doc)).toEqual(['a.pdf', 'b.pdf', 'c.pdf']);
+    expect(hits.map((h) => h.score)).toEqual([1, 1, 0.6]);
+    for (const h of hits) expect(h.score).toBeLessThanOrEqual(1);
+  });
+
+  it('carries the document, chunk index, alsoIn and draft flag, and a condensed snippet', () => {
+    const [h] = shapeFused([fused('Business/X/Lease.pdf', 0.7, { alsoIn: ['Business/Y/Lease.pdf'], draft: true })], 'renewal');
+    expect(h).toMatchObject({ doc: 'Business/X/Lease.pdf', chunkIdx: 3, alsoIn: ['Business/Y/Lease.pdf'], draft: true });
+    expect(h!.snippet.toLowerCase()).toContain('renew');
+  });
+});

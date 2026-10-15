@@ -10,6 +10,7 @@ import mammoth from 'mammoth';
 import ExcelJS from 'exceljs';
 import { DocIndexClient, inProcessDocIndexTransport, workerTransport, type DocIndexTransport } from './doc-index-client';
 import type { KnnRow } from './doc-index-protocol';
+import { buildPathVocab, fuseCandidates, pickEntities, type FusedRow, type PathVocab } from './doc-rank';
 
 /**
  * Document RAG (Phase 3 — semantic) — vector search over lease/PSA/OM text so the agent can
@@ -34,9 +35,13 @@ export interface DocChunk {
 export interface DocHit {
   doc: string;
   snippet: string;
-  score: number; // 0..1 similarity (1 = closest); derived from sqlite-vec distance
+  score: number; // 0..1 similarity (1 = closest); derived from sqlite-vec distance (+ rank boosts, capped at 1)
   docId: string;
   chunkIdx: number;
+  /** Other documents carrying this identical passage (copies filed in other folders), collapsed into this hit. */
+  alsoIn?: string[];
+  /** The file name marks a negotiation draft / markup / proposal — prefer an executed instrument when one exists. */
+  draft?: boolean;
 }
 
 /**
@@ -414,6 +419,41 @@ export function shapeHits(rows: readonly KnnRow[], query: string): DocHit[] {
     docId: chunk.docId,
     chunkIdx: chunk.idx,
   }));
+}
+
+/** Fused (re-ranked, de-duplicated) rows → cited passages, best first. `score` is capped at 1 so it keeps its
+ *  documented 0..1 meaning; the cap only ever ties already-top results, the order is unaffected. */
+export function shapeFused(rows: readonly FusedRow[], query: string): DocHit[] {
+  return rows.map(({ row, score, alsoIn, draft }) => ({
+    doc: row.chunk.docName,
+    snippet: condense(row.chunk.text, query),
+    score: Math.min(1, score),
+    docId: row.chunk.docId,
+    chunkIdx: row.chunk.idx,
+    alsoIn,
+    draft,
+  }));
+}
+
+/** Vector candidates fetched BEFORE re-ranking (env `DOCUMENTS_SEARCH_POOL`, default 200). Measured on the
+ *  150K-chunk index: the Eurosort renewal clause ranks 55th-127th for every phrasing, so a top-5 never saw it. */
+export function searchPool(): number {
+  const n = Number(process.env.DOCUMENTS_SEARCH_POOL);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 200;
+}
+
+/** Most chunks an entity-scoped lookup may return; a scope bigger than this is too broad to be a name. */
+const SCOPED_MAX_CHUNKS = 3000;
+
+/** The path-word vocabulary of one loaded index, built once per document list (a reload gets a new list). */
+const vocabCache = new WeakMap<object, PathVocab>();
+function pathVocabFor(docs: Array<{ name: string; chunks: number }>): PathVocab {
+  let v = vocabCache.get(docs);
+  if (!v) {
+    v = buildPathVocab(docs);
+    vocabCache.set(docs, v);
+  }
+  return v;
 }
 
 // ── Real embedder (lazy singleton, transformers.js) ─────────────────────────────
@@ -911,7 +951,22 @@ export async function searchDocuments(query: string, limit = 5, embed: Embedder 
     if (!q || c.chunkCount === 0) return [];
     const [qv] = await embed([q]);
     if (!qv) return [];
-    return shapeHits(await c.client.knn(qv, limit), q);
+    // Wide vector pool + (when the question names something that occurs in document paths) the chunks of
+    // exactly those documents, fused: boosted by path/text match, drafts demoted, identical copies
+    // collapsed. The names are grounded in the index's own document list. See doc-rank.ts.
+    const { terms, docNames } = pickEntities(q, pathVocabFor(c.docs));
+    const [knnRows, scopedRows] = await Promise.all([
+      c.client.knn(qv, Math.max(searchPool(), limit)),
+      docNames.length > 0
+        ? c.client.scoped(qv, docNames, SCOPED_MAX_CHUNKS).catch((e: unknown) => {
+            // A scoped-pool failure must not fail the search: the vector pool alone is still a valid answer.
+            // (A dead/hung worker also rejects the knn above, which is what surfaces to the caller.)
+            console.warn('[documents] entity-scoped pool failed; ranking vector results only:', e instanceof Error ? e.message : e);
+            return [] as KnnRow[];
+          })
+        : Promise.resolve([] as KnnRow[]),
+    ]);
+    return shapeFused(fuseCandidates({ terms, knn: knnRows, scoped: scopedRows, limit }), q);
   }
   if (!c.index) return [];
   return queryIndex(c.index, query, embed, limit);
