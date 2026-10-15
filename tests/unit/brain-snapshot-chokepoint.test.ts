@@ -32,9 +32,32 @@ function methodBody(code: string, name: string): { start: number; end: number; t
   return { start, end: i, text: code.slice(start, i) };
 }
 
+/** Every syntactic way to (re)bind or mutate the served snapshot: `=`, `??=`, `||=`, `&&=`, Object.assign. */
+const SNAPSHOT_WRITE = /this\.snapshot\s*(?:\?\?|\|\||&&)?=(?!=)|Object\.assign\(\s*this\.snapshot/g;
+/** In-place mutation of the served deals array (bypasses reassignment entirely). */
+const DEALS_MUTATION = /\.snapshot!?\??\.deals(?:\s*(?:\?\?|\|\||&&)?=(?!=)|\s*\.(?:push|splice|unshift|pop|shift|sort|reverse|fill|copyWithin)\()/;
+
+describe('guard detector (self-test: the regexes must flag the bypass forms)', () => {
+  const flags = (src: string) => [...src.matchAll(SNAPSHOT_WRITE)].length > 0 || DEALS_MUTATION.test(src);
+  it.each([
+    'this.snapshot = x;',
+    'this.snapshot ??= x;',
+    'this.snapshot ||= x;',
+    'this.snapshot  &&= x;',
+    'Object.assign(this.snapshot, { deals: [] });',
+    'this.snapshot.deals = [];',
+    'this.snapshot!.deals.push(d);',
+    'this.snapshot?.deals.splice(0, 1);',
+  ])('flags %s', (src) => expect(flags(src)).toBe(true));
+  it.each(['if (this.snapshot === null) return;', 'const s = this.snapshot;', 'this.snapshot?.quickbooks ?? null'])(
+    'does not flag %s',
+    (src) => expect(flags(src)).toBe(false),
+  );
+});
+
 describe('Brain snapshot choke point (Hard Invariant 3)', () => {
   const code = stripComments(SRC);
-  const assignments = [...code.matchAll(/this\.snapshot\s*=(?!=)/g)].map((m) => m.index!);
+  const assignments = [...code.matchAll(SNAPSHOT_WRITE)].map((m) => m.index!);
 
   it('defines adoptSnapshot()', () => {
     expect(methodBody(code, 'adoptSnapshot')).not.toBeNull();
@@ -51,7 +74,7 @@ describe('Brain snapshot choke point (Hard Invariant 3)', () => {
     expect(methodBody(code, 'adoptSnapshot')!.text).toMatch(/rosterChecked\(|applyRosterOverride\(/);
   });
 
-  it('never spreads or mutates the snapshot object around the choke point (no `.snapshot.deals =`)', () => {
-    expect(code).not.toMatch(/\.snapshot\.deals\s*=(?!=)/);
+  it('never mutates the served deals array in place', () => {
+    expect(code).not.toMatch(DEALS_MUTATION);
   });
 });
