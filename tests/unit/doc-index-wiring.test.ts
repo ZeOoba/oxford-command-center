@@ -213,3 +213,109 @@ describe('documents.ts over DocIndexClient (item 11)', () => {
     });
   });
 });
+
+describe('searchDocuments — wide pool + entity-scoped pool + fusion (2026-10-14 retrieval upgrade)', () => {
+  const poolPrev = process.env.DOCUMENTS_SEARCH_POOL;
+  afterEach(() => restore('DOCUMENTS_SEARCH_POOL', poolPrev));
+
+  // 12 generic leases whose "renew + roof" chunk sits at vector distance 1 from a "renewal" query, plus a
+  // named lease whose clause is FARTHER away (distance ~1.41) — so with a tiny vector pool it is invisible to
+  // plain KNN, exactly like the REDACTED-659 clause that ranked 55th-127th of 150K chunks.
+  const generic = Array.from({ length: 12 }, (_, i): DocChunk => ({
+    docId: `g${i}`, docName: `Business/G${i}/Lease G${i}.pdf`, idx: 0, text: `Tenant may renew once; the roof is repaired by landlord. Variant ${i}.`,
+  }));
+  const named: DocChunk = {
+    docId: 'euro', docName: 'Business/55 New Plant Court/Lease REDACTED-659 10-2022.pdf', idx: 96, text: 'Base rent steps up annually during the extension period.', // no "renew"/"roof": vector [0,0,1], distance sqrt(2) from a renewal query
+  };
+
+  async function indexOf(chunks: DocChunk[]): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), 'diwire-rank-')); roots.push(root);
+    const p = join(root, 'doc-index.sqlite');
+    (await buildIndex(chunks, fakeEmbedder, { dbPath: p })).close();
+    process.env.DOC_INDEX_PATH = p;
+    delete process.env.DOCUMENTS_DIR;
+    counting();
+  }
+
+  it('finds the chunk of a named document that the vector pool alone cannot reach, and ranks it first', async () => {
+    await indexOf([...generic, named]);
+    process.env.DOCUMENTS_SEARCH_POOL = '3';
+    const hits = await searchDocuments('renewal option in the REDACTED-659 lease', 5, fakeEmbedder);
+    expect(hits[0]!.doc).toBe(named.docName);
+    expect(hits[0]!.chunkIdx).toBe(96);
+  });
+
+  it('the same corpus WITHOUT a named entity stays purely semantic (the named chunk does not jump the queue)', async () => {
+    await indexOf([...generic, named]);
+    process.env.DOCUMENTS_SEARCH_POOL = '3';
+    const hits = await searchDocuments('renewal option', 5, fakeEmbedder);
+    expect(hits.map((h) => h.doc)).not.toContain(named.docName);
+    expect(hits).toHaveLength(5); // pool = max(DOCUMENTS_SEARCH_POOL, limit) = 5, all generic leases
+  });
+
+  it('collapses identical copies in different folders into one hit that lists the other paths', async () => {
+    const text = 'Cell tower lease: automatic renewal for successive five year terms.';
+    await indexOf([
+      { docId: 'a', docName: 'Business/Leases/Cell Tower Lease.pdf', idx: 0, text },
+      { docId: 'b', docName: 'Business/Master Lease Database/00/Cell Tower Lease.pdf', idx: 0, text },
+      { docId: 'c', docName: 'Business/Sepich/Leases/Cell Tower Lease.pdf', idx: 0, text },
+    ]);
+    const hits = await searchDocuments('cell tower renewal', 5, fakeEmbedder);
+    expect(hits).toHaveLength(1);
+    expect([...hits[0]!.alsoIn ?? []].sort()).toEqual(
+      ['Business/Master Lease Database/00/Cell Tower Lease.pdf', 'Business/Sepich/Leases/Cell Tower Lease.pdf', 'Business/Leases/Cell Tower Lease.pdf']
+        .filter((n) => n !== hits[0]!.doc).sort(),
+    );
+  });
+
+  it('fetches a WIDE vector pool, so collapsed copies do not shrink the number of distinct passages returned', async () => {
+    const dup = 'Cell tower lease: automatic renewal for successive five year terms.';
+    await indexOf([
+      // Six byte-identical copies are the closest chunks; three DIFFERENT renewal clauses are a little farther.
+      ...Array.from({ length: 6 }, (_, i): DocChunk => ({ docId: `d${i}`, docName: `Business/Copy${i}/Cell Tower Lease.pdf`, idx: 0, text: dup })),
+      { docId: 'p', docName: 'Business/P/Lease P.pdf', idx: 0, text: 'Tenant may renew; roof repaired by landlord.' },
+      { docId: 'q', docName: 'Business/Q/Lease Q.pdf', idx: 0, text: 'Tenant may renew; roof repaired by tenant.' },
+      { docId: 'r', docName: 'Business/R/Lease R.pdf', idx: 0, text: 'Tenant may renew twice; roof is shared.' },
+    ]);
+    // limit 3 asks for THREE distinct passages. A vector pool of only 3 would return three identical copies,
+    // collapse them to ONE hit, and silently return 1 result; the default wide pool (200) fills all 3 slots.
+    const hits = await searchDocuments('cell tower renewal', 3, fakeEmbedder);
+    expect(hits).toHaveLength(3);
+    expect(new Set(hits.map((h) => h.snippet)).size).toBe(3); // three distinct passages, not copies
+  });
+
+  it('marks drafts, and every score stays within 0..1', async () => {
+    await indexOf([
+      { docId: 'x', docName: 'Business/55 New Plant Court/Lease REDACTED-659 -- 08-2022 EG Comments.pdf', idx: 0, text: 'Option to renew for five years. Roof. [EG comment: consider ten years.]' },
+      { docId: 'y', docName: 'Business/55 New Plant Court/Lease REDACTED-659 -- 10-2022.pdf', idx: 0, text: 'Option to renew for five years. Roof.' },
+    ]);
+    const hits = await searchDocuments('REDACTED-659 renewal option', 5, fakeEmbedder);
+    expect(hits[0]!.doc).toContain('10-2022'); // executed beats the EG-comments draft
+    expect(hits.find((h) => h.doc.includes('Comments'))!.draft).toBe(true);
+    for (const h of hits) {
+      expect(h.score).toBeGreaterThan(0);
+      expect(h.score).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('degrades to vector-only results (and warns) if the scoped pool fails, instead of failing the search', async () => {
+    await indexOf([...generic, named]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    setDocIndexTransportForTests(() => {
+      const inner = inProcessDocIndexTransport();
+      let cb: ((m: DocIndexResponse) => void) | null = null;
+      return {
+        send(msg) {
+          if (msg.type === 'scoped') { setImmediate(() => cb?.({ type: 'scoped-error', id: msg.id, message: 'boom' })); return; }
+          inner.send(msg);
+        },
+        onMessage(c) { cb = c; inner.onMessage(c); },
+        onFailure: (c) => inner.onFailure(c),
+        terminate: () => inner.terminate(),
+      };
+    });
+    const hits = await searchDocuments('renewal option in the REDACTED-659 lease', 5, fakeEmbedder);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('scoped'), expect.anything());
+  });
+});
