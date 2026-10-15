@@ -352,3 +352,24 @@ describe('OI-225 layer 2 — injected pre-send scan on the agent egress', () => 
     expect(bodies[1]).not.toContain(SECRET_SHORT);
   });
 });
+
+describe('confidentialScope.mentions — the free-text residue sweep survives invisible-character obfuscation', () => {
+  // refute wf_d43de08e-49f on PR #461: the sweep used a bare lowercase substring match, so a name
+  // typed with a zero-width space (or NBSP for the space) walked past it. Synthetic names only.
+  const ZWSP = String.fromCodePoint(0x200b);
+  const NBSP = String.fromCodePoint(0xa0);
+  it.each([
+    ['a zero-width space inside the short name', `Compare pricing against Zeph${ZWSP}yr before signing`],
+    ['a fullwidth spelling', `Compare pricing against ${[...SECRET_SHORT].map((c) => String.fromCodePoint(c.charCodeAt(0) + 0xfee0)).join('')} before signing`],
+    ['an NBSP-spaced mention of a multi-word name', `Compare pricing against Zephyr${NBSP}Logistics before signing`],
+  ])('get_alerts still redacts the residue: %s', (_label, nextAction) => {
+    const snap = makeSnap();
+    const pub = snap.deals.find((d) => !d.confidential && /Public Deal/.test(d.name));
+    expect(pub).toBeDefined();
+    pub!.nextAction = nextAction;
+    const data = runTool('get_alerts', snap, {}).data as { alerts: Array<{ title: string; detail: string }> };
+    const row = data.alerts.find((a) => a.title.includes('Public Deal'));
+    expect(row).toBeDefined();
+    expect(row!.detail).toBe('Detail withheld — references a confidential deal.');
+  });
+});
