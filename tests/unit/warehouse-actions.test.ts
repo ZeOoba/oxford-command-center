@@ -513,4 +513,98 @@ describe('warehouse actions', () => {
     if (!refusal.ok) expect(refusal.error).toContain('no ledger rows');
     expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ status: 'pending-review' });
   });
+
+  describe('sign-undecidable approve gate', () => {
+    // Fully-mapped statement whose EXPENSE section is closed by a stray zero Total BEFORE its negative-booked
+    // leaves: the section-scoped sign decision is undecidable (ingest routes it to pending-review, no flip).
+    const UNDECIDABLE_SEED = [
+      { account: 'Rent', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+      { account: 'HVAC Repair', code: null, normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+      { account: 'Insurance Expense', code: null, normalized_category: 'Insurance', classification: 'opex' },
+    ];
+    // Ingests the undecidable fixture into `into` (a fresh warehouse by default). `property` varies the bytes and the
+    // property so a SECOND undecidable import can share one database with another pending import.
+    async function undecidablePending(
+      into?: { db: WarehouseDb; dir: string },
+      property = '1100 Rarig Ave',
+      fileLabel = '1100 Rarig',
+    ): Promise<{ db: WarehouseDb; dir: string; importId: number }> {
+      const dir = into?.dir ?? mkdtempSync(join(tmpdir(), 'wha-undec-'));
+      const db = into?.db ?? openWarehouse(join(dir, 'f.sqlite'));
+      if (!into) {
+        seedPropertyMaster(db);
+        seedMappings(db, UNDECIDABLE_SEED);
+      }
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Sheet1');
+      const rows: Array<[string | null, string | null, string | null, number | null]> = [
+        ['Profit & Loss', null, null, null],
+        [`Property: ${property}`, null, null, null],
+        ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+        [null, 'INCOME', null, null],
+        [null, null, '          Rent', 100000],
+        [null, 'EXPENSE', null, null],
+        [null, null, '          Total Expense', 0],
+        [null, null, '          Insurance Expense', -30000],
+        [null, null, '          HVAC Repair', -10000],
+      ];
+      for (const r of rows) ws.addRow(r);
+      const file = join(dir, `P&L 2025 -- ${fileLabel}.xlsx`);
+      await wb.xlsx.writeFile(file);
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-10-15T00:00:00Z' });
+      expect(r.status).toBe('pending-review');
+      return { db, dir, importId: r.importId! };
+    }
+    const openUndecidable = (db: WarehouseDb, importId: number) =>
+      db.prepare("SELECT id FROM data_quality_issues WHERE import_id=? AND kind='sign-undecidable' AND status='open'").all(importId) as Array<{ id: number }>;
+
+    it('(o) approve refuses while a sign-undecidable issue is open: nothing is activated or committed', async () => {
+      const { db, importId } = await undecidablePending();
+      expect(openUndecidable(db, importId)).toHaveLength(1);
+      const refusal = approveImport(db, importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('sign-undecidable');
+        expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toContain('sign');
+      }
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
+      expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE is_active=1').get() as { c: number }).c).toBe(0);
+    });
+
+    it('(p) after the reviewer resolves the sign-undecidable issue, approve commits (explicit acknowledgement path)', async () => {
+      const { db, importId } = await undecidablePending();
+      for (const i of openUndecidable(db, importId)) expect(resolveIssue(db, i.id).ok).toBe(true);
+      const ok = approveImport(db, importId);
+      expect(ok.ok).toBe(true);
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'committed' });
+    });
+
+    it('(q) the gate keys on THIS import (one shared database): an open sign-undecidable issue on a different import neither blocks it nor is bypassed', async () => {
+      // Import A: fully mapped CLEAN-ish pending (unmapped accounts mapped below). Import B: undecidable, in the SAME db.
+      const a = await pendingWarehouse();
+      seedMappings(a.db, UNDECIDABLE_SEED); // Insurance Expense etc. (idempotent; A's own accounts are mapped via overrides below)
+      const b = await undecidablePending({ db: a.db, dir: a.dir }, '1900 N Broadway', '1900 N Broadway');
+      expect(b.importId).not.toBe(a.importId);
+      expect(openUndecidable(a.db, b.importId)).toHaveLength(1);
+      expect(openUndecidable(a.db, a.importId)).toHaveLength(0);
+      addMappingOverride(a.db, { account: 'HVAC Repair', normalizedCategory: 'Repairs & Maintenance', classification: 'opex' });
+      addMappingOverride(a.db, { account: 'Distribution to Owner', normalizedCategory: 'Distributions', classification: 'excluded' });
+      // A has its own warn issues (unmapped-account) still open: other kinds never block
+      const aOpen = (a.db.prepare("SELECT COUNT(*) AS c FROM data_quality_issues WHERE import_id=? AND status='open'").get(a.importId) as { c: number }).c;
+      expect(aOpen).toBeGreaterThan(0);
+      // A commits while B's sign issue is still open ...
+      expect(approveImport(a.db, a.importId).ok).toBe(true);
+      // ... and B is still refused (its own issue), proving the gate is per-import, not off
+      const refusal = approveImport(a.db, b.importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) expect(refusal.reason).toBe('sign-undecidable');
+    });
+
+    it('(r) rejecting a sign-undecidable import is never blocked (the safe path)', async () => {
+      const { db, importId } = await undecidablePending();
+      expect(rejectImport(db, importId).ok).toBe(true);
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'rejected' });
+    });
+  });
 });
