@@ -72,7 +72,8 @@ export const CalibrationObservation = z
     include_in_stats: z.boolean().default(true),
     exclusion_reason: z.string().nullable().default(null),
     /** obs_ids of EARLIER rows this one replaces (e.g. a real quote replacing the two placeholder range rows). Older rows are never edited; they stop counting. */
-    supersedes: z.array(z.string().min(1)).default([]),
+    // Tolerant on read: an older row serialized `null`, a hand edit may give one bare id.
+    supersedes: z.preprocess((v) => (v == null ? [] : typeof v === 'string' ? [v] : v), z.array(z.string().min(1))).default([]),
     /** Date this row entered the ledger (drives the "what changed" line). */
     added_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   })
@@ -267,11 +268,13 @@ export function promoteProposal(
   const fields = { ...rest };
   // Apply the operator's --supersedes BEFORE the crash-recovery comparison, so re-running the identical command heals a half-finished promote.
   if (supersedes !== undefined) fields.supersedes = [...new Set(supersedes)];
+  fields.supersedes = [...fields.supersedes].sort(); // order of the --supersedes arguments must not matter
   const existing = ledger.find((o) => o.obs_id === obsId);
   if (existing) {
     // Crash recovery: a prior promote appended the identical row to the ledger but died before clearing pending.
     // Only that exact case is healed (pending dropped, ledger untouched); any differing row is still refused.
-    const same = JSON.stringify(CalibrationObservation.parse({ ...fields, added_at: existing.added_at })) === JSON.stringify(existing);
+    const norm = (o: CalibrationObservation): string => JSON.stringify({ ...o, supersedes: [...o.supersedes].sort() });
+    const same = norm(CalibrationObservation.parse({ ...fields, added_at: existing.added_at })) === norm(existing);
     if (!same) throw new Error(`calibration: obs_id "${obsId}" already exists in the ledger (append-only)`);
     return { ledger, pending: pending.filter((p) => p.obs_id !== obsId), promoted: existing };
   }
@@ -286,6 +289,10 @@ export function promoteProposal(
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
+  // A row that does not count itself must not retire counted rows (one no-price promote would otherwise delete both Banwick rows).
+  if (promoted.supersedes.length > 0 && exclusionFor(promoted) !== null) {
+    throw new Error(`calibration: "${obsId}" does not count toward the stats (${exclusionFor(promoted)}), so it cannot supersede other rows`);
+  }
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
 }
 
