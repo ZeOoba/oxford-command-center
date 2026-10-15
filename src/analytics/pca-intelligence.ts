@@ -77,14 +77,23 @@ export function monthsSince(partial: string | null, asOf: string): number | null
   return b.y * 12 + b.m - (a.y * 12 + a.m);
 }
 
-export function reportStatus(b: Pick<PcaReportBrief, 'usabilityClass' | 'reportDate'>): PcaStatus {
-  const y = b.reportDate === null ? null : ymOf(b.reportDate)?.y ?? null;
+/**
+ * The ONE vintage rule, shared by the capex register (reportStatus) and Building specs (vintageFor): pre-2024 is
+ * STALE whatever else is flagged; an explicit stale flag beats draft; an undated report (draft or not) cannot be
+ * shown to be 2024 or later, so it cannot feed totals (matches the calibration loaders and the lifecycle filter);
+ * draft otherwise; else CURRENT.
+ */
+export function classifyVintage(reportDate: string | null, flags: { draft?: boolean; stale?: boolean }): PcaStatus {
+  const y = reportDate === null ? null : ymOf(reportDate)?.y ?? null;
   if (y !== null && y < STALE_BEFORE_YEAR) return 'STALE';
-  if (b.usabilityClass === 'stale') return 'STALE';
-  // An undated report (draft or not) cannot be shown to be 2024 or later, so it cannot feed totals (matches the calibration loaders and the lifecycle filter).
+  if (flags.stale) return 'STALE';
   if (y === null) return 'STALE';
-  if (b.usabilityClass === 'draft') return 'DRAFT';
+  if (flags.draft) return 'DRAFT';
   return 'CURRENT';
+}
+
+export function reportStatus(b: Pick<PcaReportBrief, 'usabilityClass' | 'reportDate'>): PcaStatus {
+  return classifyVintage(b.reportDate, { stale: b.usabilityClass === 'stale', draft: b.usabilityClass === 'draft' });
 }
 
 // ── $/SF/yr ─────────────────────────────────────────────────────────────────────────────────

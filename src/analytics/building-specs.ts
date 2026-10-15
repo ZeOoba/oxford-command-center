@@ -10,7 +10,7 @@
 // and exposes no total. When a current-vintage fact covers the same component, it wins and the stale value is kept as
 // history (see effectiveSpecs).
 import { z } from 'zod';
-import { STALE_BEFORE_YEAR } from './pca-intelligence';
+import { classifyVintage } from './pca-intelligence';
 
 export const SPEC_COMPONENTS = [
   'site', 'structure', 'roof', 'paving', 'envelope', 'hvac', 'electrical', 'plumbing', 'fire_life_safety',
@@ -108,8 +108,7 @@ export type ReportMetaT = z.infer<typeof ReportMeta>;
 const yearOf = (d: string): number => Number(d.slice(0, 4));
 
 export function vintageFor(meta: Pick<ReportMetaT, 'report_date' | 'draft'>, draft?: boolean): Vintage {
-  if (yearOf(meta.report_date) < STALE_BEFORE_YEAR) return 'STALE';
-  return (draft ?? meta.draft) ? 'DRAFT' : 'CURRENT';
+  return classifyVintage(meta.report_date, { draft: draft ?? meta.draft });
 }
 
 // ── stamped records ─────────────────────────────────────────────────────────────────────────
@@ -304,13 +303,17 @@ const plainYears = (v: string | number | boolean): number | null => {
 export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProjection[] {
   const byKey = new Map<string, SpecFactT[]>();
   // An EUL stated once for the whole report (no scope) applies to every roof in that report that states none of its own.
-  const reportEul = new Map<string, number>();
+  // Conflicting values (an EUL per roof type, say) are ambiguous: no figure is assumed rather than the last one read.
+  const reportEulValues = new Map<string, Set<number>>();
   for (const f of facts) {
     if (f.component === 'roof' && f.scope === null && canonicalAttribute('roof', f.attribute) === 'eul') {
       const n = plainYears(f.value);
-      if (n !== null) reportEul.set(`${f.property}|${f.report_id}`, n);
+      if (n === null) continue;
+      const k = `${f.property}|${f.report_id}`;
+      reportEulValues.set(k, (reportEulValues.get(k) ?? new Set<number>()).add(n));
     }
   }
+  const soleValue = (s: Set<number> | undefined): number | null => (s !== undefined && s.size === 1 ? ([...s][0] as number) : null);
   for (const f of facts) {
     if (f.component !== 'roof') continue;
     const k = [f.property, f.report_id, f.scope ?? ''].join('|');
@@ -321,9 +324,15 @@ export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProject
   const rows: RoofProjection[] = [];
   for (const g of byKey.values()) {
     // One projection per install-year fact: a scope-less report section can state several roofs.
-    const eulFact = g.find((f) => canonicalAttribute('roof', f.attribute) === 'eul');
     const first = g[0] as SpecFactT;
-    const eul = (eulFact ? plainYears(eulFact.value) : null) ?? reportEul.get(`${first.property}|${first.report_id}`) ?? null;
+    const ownEuls = new Set<number>();
+    for (const f of g) {
+      if (canonicalAttribute('roof', f.attribute) !== 'eul') continue;
+      const n = plainYears(f.value);
+      if (n !== null) ownEuls.add(n);
+    }
+    // Own EUL(s) win; conflicting own values stay null (no fallback); only a group with none inherits the report-wide one.
+    const eul = ownEuls.size > 0 ? soleValue(ownEuls) : soleValue(reportEulValues.get(`${first.property}|${first.report_id}`));
     for (const inst of g.filter((f) => canonicalAttribute('roof', f.attribute) === 'install_year')) {
       const installYear = firstYear(inst.value);
       if (installYear === null) continue;

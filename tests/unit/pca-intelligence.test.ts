@@ -13,7 +13,9 @@ import {
   reportStatus,
   reservePsfYr,
   warrantyClock,
+  classifyVintage,
 } from '../../src/analytics/pca-intelligence';
+import { vintageFor } from '../../src/analytics/building-specs';
 import {
   INFO_LANE_DETAIL,
   PCA_ISSUES,
@@ -86,6 +88,29 @@ describe('reservePsfYr', () => {
     const r = reservePsfYr({ reservesUninflUsd: 292500, sf: 34560, termYears: 12, psfYrStated: 21.25 });
     expect(r.origin).toBe('derived');
     expect(r.value).toBeCloseTo(0.7053, 3);
+  });
+});
+
+describe('one STALE rule for PCA register and building specs', () => {
+  const cases: Array<{ date: string; draft: boolean; stale: boolean }> = [
+    { date: '2025-04-28', draft: false, stale: false },
+    { date: '2025-04-28', draft: true, stale: false },
+    { date: '2023-12-31', draft: false, stale: false },
+    { date: '2023-12-31', draft: true, stale: false },
+    { date: '2026-04', draft: false, stale: true },
+    { date: '2026-04', draft: true, stale: true },
+  ];
+  it.each(cases)('classifyVintage agrees with reportStatus and vintageFor for %j', ({ date, draft, stale }) => {
+    const usabilityClass = stale ? 'stale' : draft ? 'draft' : 'current';
+    const fromRegister = reportStatus(brief({ reportDate: date, usabilityClass }));
+    expect(classifyVintage(date, { draft, stale })).toBe(fromRegister);
+    if (!stale) expect(vintageFor({ report_date: date, draft })).toBe(classifyVintage(date, { draft }));
+  });
+  it('a pre-2024 report is STALE even when flagged draft; stale flag beats draft', () => {
+    expect(classifyVintage('2015-08', { draft: true })).toBe('STALE');
+    expect(classifyVintage('2026-04', { draft: true, stale: true })).toBe('STALE');
+    expect(classifyVintage('2026-04', { draft: true })).toBe('DRAFT');
+    expect(classifyVintage('2026-04', {})).toBe('CURRENT');
   });
 });
 

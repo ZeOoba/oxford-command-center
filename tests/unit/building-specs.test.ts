@@ -347,6 +347,36 @@ describe('review regressions', () => {
     expect(p.every((x) => x.eul === 20)).toBe(true);
   });
 
+  it('conflicting report-wide EULs are ambiguous: no EUL is assumed for a roof that states none', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'Building A', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 30, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    const [p] = projectRoofs(f, 2026);
+    expect(p!.eul).toBeNull();
+    expect(p!.yearsRemaining).toBeNull();
+    expect(p!.pastEul).toBeNull();
+  });
+
+  it('repeating the same report-wide EUL is not a conflict', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'Building A', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: '20 years', as_of: '2025-10' }),
+    ]).facts;
+    expect(projectRoofs(f, 2026)[0]!.eul).toBe(20);
+  });
+
+  it('two different EULs inside one scope-less section are ambiguous too', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: null, attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 30, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    expect(projectRoofs(f, 2026)[0]!.eul).toBeNull();
+  });
+
   it('a report-wide EUL (no scope) applies to scoped roofs that state none', () => {
     const f = stamp(CURRENT, [
       rawFact({ scope: 'Buildings 2, 3, 4', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
