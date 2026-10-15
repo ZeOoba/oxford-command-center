@@ -174,7 +174,8 @@ export async function persistAndLogScore(
   `);
   const setCurrent = db.prepare(`
     UPDATE acq_candidates
-       SET current_score_id = (SELECT id FROM acq_scores WHERE score_input_id = ?)
+       SET current_score_id = (SELECT id FROM acq_scores WHERE score_input_id = ?),
+           current_scored_at = datetime('now')
      WHERE id = ?
   `);
   db.transaction(() => {
