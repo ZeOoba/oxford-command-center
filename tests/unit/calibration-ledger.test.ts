@@ -35,7 +35,7 @@ import {
   type PcaLine,
   type QuoteLine,
 } from '../../scripts/calibration-propose';
-import type { ParsedRegister } from '../../scripts/import-pca-register';
+import { resolveProperty, type ParsedRegister } from '../../scripts/import-pca-register';
 
 function obs(over: Partial<CalibrationObservation> = {}): CalibrationObservation {
   return CalibrationObservation.parse({
@@ -217,7 +217,8 @@ describe('promotion: pending → observation', () => {
   };
 
   it('appends the proposal to the ledger and removes it from pending', () => {
-    const ledger = [obs()];
+    // A different quote document from the proposal (same-document twins are refused; see the issue #474 block below).
+    const ledger = [obs({ contractor_source: { ...obs().contractor_source, vendor: 'Other Roofer' } })];
     const r = promoteProposal(ledger, [proposal()], 'p:roof_tpo:v:2026', '2026-10-14');
     expect(r.ledger).toHaveLength(2);
     expect(r.ledger[1]!.obs_id).toBe('p:roof_tpo:v:2026');
@@ -530,5 +531,83 @@ describe('committed seed data', () => {
     expect(aggs.find((a) => a.component === 'roof_epdm')).toMatchObject({ n: 3, excluded: 1, tier: 'LIMITED', meanRatio: null });
     expect(aggs.find((a) => a.component === 'roof_tpo')).toMatchObject({ n: 1, excluded: 1, tier: 'THIN', meanRatio: null });
     expect(underwritingUse(aggs).usable).toEqual([]);
+  });
+});
+
+describe('quote-document dedupe against the committed ledger (issue #474)', () => {
+  const read = (name: string) => JSON.parse(readFileSync(join(process.cwd(), 'data', 'calibration', name), 'utf-8')) as unknown;
+  const ledger = parseLedger(read('observations.json'));
+  const KEPT = 'e-fulton:roof_epdm:able-roofing:2026-05'; // hand-written row: obs_id date truncated to YYYY-MM
+  const pcaLine: PcaLine = { propertyKey: 'e-fulton', component: 'roof_epdm', unit: 'SF', unitCost: 4, qty: null, consultant: 'c', reportDate: '2025-04-28', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
+  const fulton = (over: Partial<QuoteLine> = {}): QuoteLine => ({
+    propertyKey: 'e-fulton', propertyLabel: '3520 E Fulton St', component: 'roof_epdm', unit: 'SF', qty: 52500, totalUsd: 656250, isActual: false,
+    vendor: 'Able Roofing', docDate: '2026-05-07', status: 'BID', superseded: false, title: 't', sourceFile: 's', ...over,
+  });
+  const keyOf = (label: string) => resolveProperty(label, new Set()).key;
+
+  it.each([
+    ['a property-label alias', { propertyLabel: '3520 E. Fulton St' }],
+    ['a vendor-suffix variant', { vendor: 'Able Roofing, Inc.' }],
+    ['both at once', { propertyLabel: '3520 E. Fulton Street', vendor: 'ABLE ROOFING LLC' }],
+  ])('proposePairs skips the Fulton quote re-read with %s, and reports it against the ledger row', (_label, over) => {
+    const skipped: Array<{ obsId: string; keptObsId: string }> = [];
+    const out = proposePairs([pcaLine], [fulton(over)], { ledger, pending: [] }, '2026-10-15', 't', (d) => skipped.push(d));
+    expect(out).toHaveLength(0);
+    expect(skipped).toEqual([expect.objectContaining({ keptObsId: KEPT })]);
+  });
+
+  it('the onDuplicate payload names the dropped and kept vendor, property and contractor unit cost', () => {
+    const skipped: unknown[] = [];
+    proposePairs([pcaLine], [fulton({ vendor: 'Able Roofing, Inc.' })], { ledger, pending: [] }, '2026-10-15', 't', (d) => skipped.push(d));
+    expect(skipped[0]).toMatchObject({
+      obsId: 'e-fulton:roof_epdm:able-roofing-inc:2026-05-07', keptObsId: KEPT,
+      vendor: 'Able Roofing, Inc.', keptVendor: 'Able Roofing', property: '3520 E Fulton St', keptProperty: '3520 E Fulton St',
+      contractorUnitCost: 12.5, keptContractorUnitCost: 12.5,
+    });
+  });
+
+  it('a ledger row dated only YYYY-MM still matches a quote dated inside that month', () => {
+    const monthOnly = obs({ obs_id: 'e-fulton:roof_epdm:able-roofing:2026-05', property: '3520 E Fulton St', contractor_source: { vendor: 'Able Roofing', doc_date: '2026-05', status: 'BID', source_file: 'q', source_date: '2026-05', price_basis: 'CONTRACTOR_QUOTE' } });
+    expect(proposePairs([pcaLine], [fulton()], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(0);
+    // ...but a different month from the same vendor is a different document.
+    expect(proposePairs([pcaLine], [fulton({ docDate: '2026-06-02' })], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(1);
+  });
+
+  it('a different vendor at the same property and date is still proposed', () => {
+    expect(proposePairs([pcaLine], [fulton({ vendor: 'Able Roofing Supply' })], { ledger, pending: [] }, '2026-10-15', 't')).toHaveLength(1);
+  });
+
+  it('promoteProposal refuses a row that is the same quote document as a live ledger row, unless overridden', () => {
+    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === KEPT)!;
+    const dup: CalibrationProposal = {
+      ...base, obs_id: 'e-fulton:roof_epdm:able-roofing-inc:2026-05-07', property: '3520 E. Fulton St',
+      contractor_source: { ...base.contractor_source, vendor: 'Able Roofing, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't',
+    };
+    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*e-fulton:roof_epdm:able-roofing:2026-05/);
+    // Default normalization (no resolver) still catches the punctuation-only label variant.
+    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15')).toThrow(/same quote document/);
+    const r = promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowDuplicateDocument: true });
+    expect(r.ledger).toHaveLength(ledger.length + 1);
+  });
+
+  it('promoteProposal: a resolver alias the default slug cannot see is caught with the resolver', () => {
+    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === KEPT)!;
+    const dup: CalibrationProposal = { ...base, obs_id: 'e-fulton:alias', property: 'E Fulton bldg (3520)', proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document/);
+  });
+
+  it('promoteProposal: a row that supersedes the matching ledger row is a replacement, not a duplicate', () => {
+    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === KEPT)!;
+    const repl: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:able-roofing:2026-05-07', proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(() => promoteProposal(ledger, [repl], repl.obs_id, '2026-10-15', [KEPT], { propertyKeyOf: keyOf })).not.toThrow();
+  });
+});
+
+describe('supersededMap: only a counting row retires others (issue #474 LOW)', () => {
+  it('a ledger row that does not count itself does not retire counted rows in the aggregate', () => {
+    const lo = obs({ obs_id: 'b:lo', contractor_source: { vendor: 'Lo', doc_date: '2026-01-01', status: 'BID', source_file: 'q', source_date: '2026-01-01', price_basis: 'CONTRACTOR_QUOTE' } });
+    const noQty = obs({ obs_id: 'b:noqty', qty: null, supersedes: ['b:lo'] }); // hand-edited into the ledger, bypassing promote
+    expect(supersededMap([lo, noQty]).has('b:lo')).toBe(false);
+    expect(aggregateByComponent([lo, noQty]).find((a) => a.component === 'roof_epdm')!.n).toBe(1);
   });
 });

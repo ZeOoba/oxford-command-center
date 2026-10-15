@@ -122,12 +122,18 @@ export function exclusionFor(o: CalibrationObservation, supersededBy: ReadonlyMa
 }
 export const includedInStats = (o: CalibrationObservation, supersededBy: ReadonlyMap<string, string> = new Map()): boolean => exclusionFor(o, supersededBy) === null;
 
-/** obs_id → the obs_id of the row that supersedes it. A later row supersedes only an id that already exists earlier in the ledger. */
+/**
+ * obs_id → the obs_id of the row that supersedes it. A later row supersedes only an id that already exists earlier in the
+ * ledger, and only when that row itself counts toward the stats — the same rule promoteProposal enforces, applied here too
+ * so a hand-edited non-counting row cannot retire counted ones.
+ */
 export function supersededMap(ledger: readonly CalibrationObservation[]): Map<string, string> {
   const out = new Map<string, string>();
   const seen = new Set<string>();
   for (const o of ledger) {
-    for (const t of o.supersedes) if (seen.has(t) && !out.has(t)) out.set(t, o.obs_id); // first superseder wins; never re-pointed
+    if (o.supersedes.length > 0 && exclusionFor(o, out) === null) {
+      for (const t of o.supersedes) if (seen.has(t) && !out.has(t)) out.set(t, o.obs_id); // first superseder wins; never re-pointed
+    }
     seen.add(o.obs_id);
   }
   return out;
@@ -250,7 +256,9 @@ export interface PromotionResult {
 /**
  * Explicit, human-triggered promotion. Append-only: never edits an existing observation, refuses a duplicate
  * obs_id, and removes the proposal from pending. A proposal with a null quantity or cost can be promoted — it
- * is simply excluded from stats until the data is completed (by appending a corrected row).
+ * is simply excluded from stats until the data is completed (by appending a corrected row). A proposal that is the same
+ * quote document (`sameQuoteDocument`) as a live ledger row it does not supersede is refused, so one document is never
+ * counted twice under two obs_ids; `allowDuplicateDocument` overrides that for a genuinely separate scope on one document.
  */
 export function promoteProposal(
   ledger: CalibrationObservation[],
@@ -258,7 +266,9 @@ export function promoteProposal(
   obsId: string,
   today: string,
   supersedes?: string[],
+  opts: { propertyKeyOf?: PropertyKeyOf; allowDuplicateDocument?: boolean } = {},
 ): PromotionResult {
+  const keyOf = opts.propertyKeyOf ?? slugPropertyKey;
   const matches = pending.filter((p) => p.obs_id === obsId);
   if (matches.length === 0) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
   // Never pick by array order: a duplicated id means two different quotes collide, so the human must resolve it.
@@ -283,10 +293,19 @@ export function promoteProposal(
     const target = ledger.find((o) => o.obs_id === t);
     if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${t}", which is not in the ledger`);
     // A mistyped target must not silently retire an unrelated observation, and a retired row is not retired twice.
-    if (target.component !== fields.component || target.unit !== fields.unit || target.property.toLowerCase() !== fields.property.toLowerCase()) {
+    if (target.component !== fields.component || target.unit !== fields.unit || keyOf(target.property) !== keyOf(fields.property)) {
       throw new Error(`calibration: "${t}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
     }
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
+  }
+  if (!opts.allowDuplicateDocument) {
+    const twin = ledger.find((o) => !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && sameQuoteDocument(o, fields, keyOf));
+    if (twin) {
+      throw new Error(
+        `calibration: "${obsId}" is the same quote document (property / vendor / date) as ledger row "${twin.obs_id}" - it would be counted twice. ` +
+          'If it replaces that row, promote with --supersedes; if it is a separate scope on the same document, pass --allow-duplicate-document',
+      );
+    }
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   // A row that does not count itself must not retire counted rows (one no-price promote would otherwise delete both Banwick rows).
@@ -314,10 +333,39 @@ export function classifyComponent(text: string): CalibrationComponent {
   return 'other';
 }
 
+/** Property label → stable property key. Callers with the register's alias rules pass them in (scripts/import-pca-register `resolveProperty`). */
+export type PropertyKeyOf = (label: string) => string;
+/** Fallback key: punctuation and case insensitive ("3520 E. Fulton St" = "3520 E Fulton St"), no alias knowledge. */
+export const slugPropertyKey: PropertyKeyOf = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+const VENDOR_SUFFIXES = new Set(['inc', 'incorporated', 'llc', 'pllc', 'co', 'corp', 'corporation', 'company', 'ltd', 'limited', 'lp', 'llp']);
+/** "Able Roofing, Inc." / "ABLE ROOFING LLC" / "Able Roofing" → "able-roofing": case, punctuation and trailing entity suffixes are not identity. */
+export function normalizeVendor(vendor: string): string {
+  const tokens = vendor.toLowerCase().replace(/\./g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  while (tokens.length > 1 && VENDOR_SUFFIXES.has(tokens[tokens.length - 1] as string)) tokens.pop();
+  if (tokens.length > 1 && tokens[0] === 'the') tokens.shift();
+  return tokens.join('-');
+}
+
+type QuoteDoc = Pick<CalibrationObservation, 'property' | 'contractor_source'>;
+
 /**
  * Identity of a priced quote document for de-duplication: property + vendor + document date. Neither component nor
  * unit price is part of the key — one quote document is one observation, however an auto-classifier labels its scope
- * and however its total divides out.
+ * and however its total divides out. Property and vendor are normalized (see `slugPropertyKey`, `normalizeVendor`).
+ * Exact-date key only; `sameQuoteDocument` is the comparison that also matches a hand-written YYYY-MM / YYYY date.
  */
-export const pairKey = (o: Pick<CalibrationObservation, 'property' | 'contractor_source'>): string =>
-  [o.property.toLowerCase(), o.contractor_source.vendor.toLowerCase(), o.contractor_source.doc_date].join('|');
+export const pairKey = (o: QuoteDoc): string => documentKey(o, slugPropertyKey);
+export const documentKey = (o: QuoteDoc, propertyKeyOf: PropertyKeyOf): string =>
+  [propertyKeyOf(o.property), normalizeVendor(o.contractor_source.vendor), o.contractor_source.doc_date].join('|');
+
+/** Same property (by key), same normalized vendor, and dates that agree to the precision both state ("2026-05" matches "2026-05-07"). */
+export function sameQuoteDocument(a: QuoteDoc, b: QuoteDoc, propertyKeyOf: PropertyKeyOf = slugPropertyKey): boolean {
+  const da = a.contractor_source.doc_date;
+  const db = b.contractor_source.doc_date;
+  return (
+    propertyKeyOf(a.property) === propertyKeyOf(b.property) &&
+    normalizeVendor(a.contractor_source.vendor) === normalizeVendor(b.contractor_source.vendor) &&
+    (da.startsWith(db) || db.startsWith(da))
+  );
+}
