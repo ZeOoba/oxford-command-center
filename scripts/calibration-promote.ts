@@ -3,7 +3,8 @@
 // The explicit human step that turns a reviewed proposal into a ledger observation:
 //   npm run calibration:promote -- <obs_id>
 // Append-only: the observation is added to data/calibration/observations.json and removed from
-// data/calibration/calibration_pending.json. Existing observations are never edited; a duplicate obs_id is refused.
+// data/calibration/calibration_pending.json. Existing observations are never edited; a duplicate obs_id is refused, and so is
+// a second row for the same quote document (property / vendor / date) unless --allow-duplicate-document says it is a separate scope.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
@@ -19,13 +20,15 @@ const write = (path: string, data: unknown): void => {
   renameSyncWithRetry(tmp, path);
 };
 
-/** `<obs_id> [--supersedes <id>]...` (also `--supersedes=<id>`). A missing value or an unknown flag is an error, never silently ignored. */
-export function parseArgs(argv: string[]): { obsId: string | undefined; supersedes: string[] | undefined } | string {
+/** `<obs_id> [--supersedes <id>]... [--allow-duplicate-document]` (also `--supersedes=<id>`). A missing value or an unknown flag is an error, never silently ignored. */
+export function parseArgs(argv: string[]): { obsId: string | undefined; supersedes: string[] | undefined; allowDuplicateDocument: boolean } | string {
   const supersedes: string[] = [];
   const positional: string[] = [];
+  let allowDuplicateDocument = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
-    if (a === '--supersedes') {
+    if (a === '--allow-duplicate-document') allowDuplicateDocument = true;
+    else if (a === '--supersedes') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return '--supersedes needs an obs_id';
       supersedes.push(v);
@@ -37,23 +40,25 @@ export function parseArgs(argv: string[]): { obsId: string | undefined; supersed
     else positional.push(a);
   }
   if (positional.length > 1) return `unexpected extra argument "${positional[1]}"`;
-  return { obsId: positional[0], supersedes: supersedes.length > 0 ? supersedes : undefined };
+  return { obsId: positional[0], supersedes: supersedes.length > 0 ? supersedes : undefined, allowDuplicateDocument };
 }
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   if (typeof parsed === 'string') {
     console.error(`calibration-promote: ${parsed}`);
     return 1;
   }
-  const { obsId, supersedes } = parsed;
+  const { obsId, supersedes, allowDuplicateDocument } = parsed;
   if (!obsId) {
-    console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>]   (see data/calibration/calibration_pending.json)');
+    console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>] [--allow-duplicate-document]   (see data/calibration/calibration_pending.json)');
     return 1;
   }
   try {
+    // Lazy: the register's alias rules pull in exceljs, which the argument parser (and its test) never needs.
+    const { registerPropertyKey } = await import('./calibration-propose');
     const today = new Date().toISOString().slice(0, 10);
-    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today, supersedes);
+    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today, supersedes, { propertyKeyOf: registerPropertyKey, allowDuplicateDocument });
     write(LEDGER_PATH, result.ledger);
     write(PENDING_PATH, result.pending);
     console.log(`calibration-promote: ${obsId} appended to the ledger (${result.ledger.length} observations, ${result.pending.length} still pending).`);
@@ -65,5 +70,5 @@ function main(argv: string[]): number {
 }
 
 if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/calibration-promote.ts')) {
-  process.exit(main(process.argv.slice(2)));
+  main(process.argv.slice(2)).then((code) => process.exit(code), (e) => { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); });
 }
