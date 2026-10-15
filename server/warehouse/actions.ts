@@ -12,7 +12,9 @@ import { detectAnomalies } from './anomalies';
 import { propertyPeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
 
-export type ApproveResult = { ok: true } | { ok: false; unmapped: string[]; error?: string };
+export type ApproveResult =
+  | { ok: true }
+  | { ok: false; unmapped: string[]; error?: string; reason?: 'sign-undecidable' };
 
 /** Options for approveImport. `forceCalibrationError` (tests only) poisons the post-commit emit
  *  hook to prove the fail-open guarantee — the commit still returns {ok:true}. */
@@ -94,6 +96,26 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
   }));
   const unmapped = resolved.filter((r) => r.m.matchKind === 'unmapped').map((r) => r.rawAccount);
   if (unmapped.length > 0) return { ok: false, unmapped };
+
+  // Sign gate. Ingest held this batch because a statement side's sign convention was undecidable and NO flip
+  // was applied, so its rows carry the signs as booked. Approving would commit them as-is, and nothing here
+  // can flip them. Require the reviewer to acknowledge first: verify each flagged side against the source
+  // statement, then resolve the 'sign-undecidable' issue(s). Reject is always available and is the right
+  // call when the sign is wrong. Keyed on THIS import's open issues only.
+  const openSignIssues = db
+    .prepare("SELECT COUNT(*) AS c FROM data_quality_issues WHERE import_id = ? AND kind = 'sign-undecidable' AND status = 'open'")
+    .get(importId) as { c: number };
+  if (openSignIssues.c > 0) {
+    return {
+      ok: false,
+      unmapped: [],
+      reason: 'sign-undecidable',
+      error:
+        `sign convention undecidable for ${openSignIssues.c} statement side(s): no sign flip was applied, so approving would commit the ` +
+        `amounts as booked. Verify each flagged side against the source statement, mark the sign-undecidable issue(s) verified, then ` +
+        `approve — or reject the import if the sign is wrong.`,
+    };
+  }
 
   db.transaction(() => {
     const upd = db.prepare(

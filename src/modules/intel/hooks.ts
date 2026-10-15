@@ -72,7 +72,7 @@ export interface NoiMatrixCell {
   noi: number;
 }
 
-export type ApproveResult = { ok: true } | { ok: false; unmapped: string[]; error?: string };
+export type ApproveResult = { ok: true } | { ok: false; unmapped: string[]; error?: string; reason?: 'sign-undecidable' };
 export type SimpleResult = { ok: true } | { ok: false; error?: string };
 export interface AddMappingResult {
   mappingId: number;

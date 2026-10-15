@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS data_quality_issues (
 );
 ```
 
-**`kind`:** `'empty-parse'` | `'foot-mismatch'` | `'unmapped-account'` | `'basis-unknown'` | `'cross-basis-comparison'`.
+**`kind`:** `'empty-parse'` | `'foot-mismatch'` | `'unmapped-account'` | `'basis-unknown'` | `'cross-basis-comparison'` | `'sign-normalized'` (info) | `'sign-undecidable'` (warn; ingest holds the import in `pending-review` with no flip applied, and `approveImport` refuses while it is open) | `'restale-skipped'` (warn).
 **`severity`:** `'error'` (blocks commit) | `'warn'` (logged, non-blocking).
 **Gate rule:** Zero `empty-parse` issues + zero `foot-mismatch` issues required by `warehouse:verify`.
 
