@@ -651,14 +651,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
           s.composite, s.tier, s.verdict, s.advisory_only, s.capped_at_t2,
           s.gates_passed, s.floors_passed, s.floor_indeterminate,
           s.governor_dscr_cleared, s.governor_ltv_cleared,
-          s.score_json, s.scored_at, s.calibration_verdict_id
+          s.score_json, COALESCE(c.current_scored_at, s.scored_at) AS scored_at, s.calibration_verdict_id
         FROM acq_candidates c
-        LEFT JOIN acq_scores s ON s.id = (
-          SELECT s2.id FROM acq_scores s2
-          WHERE s2.candidate_id = c.id
-          ORDER BY s2.scored_at DESC, s2.id DESC
-          LIMIT 1
-        )
+        LEFT JOIN acq_scores s ON s.id = c.current_score_id
         WHERE ${where.join(' AND ')}
         ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
         LIMIT ?
