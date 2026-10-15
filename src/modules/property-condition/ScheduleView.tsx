@@ -10,7 +10,7 @@ import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtUsd } from '@analytics/index';
 import type { PcaLifecycleRow } from '@contracts/property-condition';
-import type { ClockScheduleRow } from './clock';
+import { yearsLeftSortKey, type ClockScheduleRow } from './clock';
 import { fmtPartialDate, warrantyBadge } from './hooks';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
@@ -68,7 +68,7 @@ const SCHEDULE_COLS: Column<ClockScheduleRow>[] = [
         </div>
       </div>
     ),
-    sortValue: (r) => r.warrantyYearsRemaining ?? r.lifeYearsRemaining,
+    sortValue: yearsLeftSortKey,
   },
   {
     key: 'flag',

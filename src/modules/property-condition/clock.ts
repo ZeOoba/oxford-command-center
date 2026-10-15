@@ -24,6 +24,12 @@ function statusFor(endYear: number | null, asOfYear: number): PcaWarrantyStatus 
   return endYear - asOfYear <= 2 ? 'expiring' : 'active';
 }
 
+/** Sort key for "Years left": the soonest-to-expire of warranty and life; one missing side never stands in for the other. */
+export function yearsLeftSortKey(r: Pick<ClockScheduleRow, 'warrantyYearsRemaining' | 'lifeYearsRemaining'>): number | null {
+  const vals = [r.warrantyYearsRemaining, r.lifeYearsRemaining].filter((v): v is number => v !== null);
+  return vals.length === 0 ? null : Math.min(...vals);
+}
+
 export function buildClockRows(schedule: PcaScheduleRow[], extras: ExtraAssetFact[], asOf: string): ClockScheduleRow[] {
   const asOfYear = Number(asOf.slice(0, 4));
   const superseded = (r: PcaScheduleRow) =>

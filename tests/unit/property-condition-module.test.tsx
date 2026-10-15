@@ -93,6 +93,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+import { yearsLeftSortKey } from '../../src/modules/property-condition/clock';
+
+describe('yearsLeftSortKey', () => {
+  it('sorts on the soonest-to-expire of warranty and life, never mixing in a missing side', () => {
+    expect(yearsLeftSortKey({ warrantyYearsRemaining: 3, lifeYearsRemaining: -2 })).toBe(-2);
+    expect(yearsLeftSortKey({ warrantyYearsRemaining: -1, lifeYearsRemaining: 5 })).toBe(-1);
+    expect(yearsLeftSortKey({ warrantyYearsRemaining: null, lifeYearsRemaining: 5 })).toBe(5);
+    expect(yearsLeftSortKey({ warrantyYearsRemaining: 4, lifeYearsRemaining: null })).toBe(4);
+    expect(yearsLeftSortKey({ warrantyYearsRemaining: null, lifeYearsRemaining: null })).toBeNull();
+  });
+});
+
 describe('PropertyConditionModule', () => {
   it('renders the KPI strip and defaults to the Capex outlook view', () => {
     renderModule();
