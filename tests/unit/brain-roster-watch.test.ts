@@ -227,6 +227,46 @@ describe('Brain — a roster edit with NO subsequent Brain event still reaches s
   });
 });
 
+describe('Brain roster watcher — change detection is positional, not id-keyed (refute wf_2881eb22-27c / wf_dbf6e86a-30a)', () => {
+  it('tightens a newly claimed deal even when another served row shares its id and is already confidential', async () => {
+    // Nothing enforces unique Deal.id on a disk snapshot. An id-keyed Map keeps only the LAST row's flag,
+    // so [claimed(false), sibling(true)] counted 0 tightened and returned without adopting.
+    h.base = snapshotWith([
+      deal({ id: 'x', name: 'Zephyr Logistics', confidential: false }),
+      deal({ id: 'x', name: 'Other Row', confidential: true }),
+    ]);
+    writeFileSync(h.snapshotPath, JSON.stringify(h.base), 'utf8');
+    h.parseError = new Error('workbook locked');
+    const { brain } = await import('../../server/brain');
+    const state = await brain.refresh('manual');
+    expect(state.source).toBe('snapshot-fallback');
+    brain.startWatching();
+    expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(false);
+
+    setRoster(CLAIMING_ROSTER);
+    fire('change');
+    settle();
+    expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(true);
+    expect(brain.getSnapshot()!.deals[1]!.confidential).toBe(true);
+  });
+
+  it('is order-independent: the same two rows swapped give the same served verdicts', async () => {
+    h.base = snapshotWith([
+      deal({ id: 'x', name: 'Other Row', confidential: true }),
+      deal({ id: 'x', name: 'Zephyr Logistics', confidential: false }),
+    ]);
+    writeFileSync(h.snapshotPath, JSON.stringify(h.base), 'utf8');
+    h.parseError = new Error('workbook locked');
+    const { brain } = await import('../../server/brain');
+    await brain.refresh('manual');
+    brain.startWatching();
+    setRoster(CLAIMING_ROSTER);
+    fire('change');
+    settle();
+    expect(brain.getSnapshot()!.deals.map((d) => d.confidential)).toEqual([true, true]);
+  });
+});
+
 describe('Brain roster watcher — fail closed', () => {
   it('marks every served deal confidential when the roster file is deleted', async () => {
     const { byId } = await adoptCleanSnapshot();
@@ -319,6 +359,23 @@ describe('Brain roster watcher — fail closed', () => {
 });
 
 describe('Brain.refresh — adoption re-checks the roster (closes the in-flight-refresh race)', () => {
+  it('an OVERLAY stage override that is the only thing making the roster claim a deal is caught on refresh (refute wf_3765e727-a6c)', async () => {
+    // Roster claims on name AND stage. parseWorkbook roster-checks the PARSED stage ('Sourcing' - no claim);
+    // the overlay then moves the deal to 'LOI/PSA'. The check must run AFTER the overlay, on every path.
+    setRoster({ live_deal: { label: 'Live Deal', active: true, context: ['zebrafield'], context_requires_any: ['loi/psa'] } });
+    h.base = snapshotWith([deal({ id: 'd1', name: 'Zebrafield Flex', stage: 'Sourcing' as Deal['stage'] })]);
+    const { brain } = await import('../../server/brain');
+    setRoster(CLEAN_ROSTER);
+    await brain.refresh('manual');
+    brain.setDealStage('d1', 'LOI/PSA' as never); // overlay now carries the stage; deal not claimed under CLEAN_ROSTER
+    expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(false);
+
+    setRoster({ live_deal: { label: 'Live Deal', active: true, context: ['zebrafield'], context_requires_any: ['loi/psa'] } });
+    await brain.refresh('file-change'); // parse-time check sees stage 'Sourcing'; overlay then sets 'LOI/PSA'
+    expect(brain.getSnapshot()!.deals[0]!.stage).toBe('LOI/PSA');
+    expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(true);
+  });
+
   it('a roster edit made WHILE the parse runs is not overwritten by the parse-time verdict', async () => {
     // parseWorkbook's own roster check ran before this edit (mocked here as "no check"); without an
     // adoption-time re-check the refresh would install confidential:false AFTER the watcher fired.

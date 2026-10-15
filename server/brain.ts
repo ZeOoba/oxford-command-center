@@ -458,10 +458,15 @@ class Brain extends EventEmitter {
     if (!current) return;
     const source = this.base ? applyOverlay(this.base, this.overlay).deals : current.deals;
     const deals = this.rosterChecked(source, `recheckRoster:${reason}`);
-    const was = new Map(current.deals.map((d) => [d.id, d.confidential]));
-    const tightened = deals.filter((d) => d.confidential && was.get(d.id) === false).length;
-    const released = deals.filter((d) => !d.confidential && was.get(d.id) === true).length;
-    if (tightened === 0 && released === 0) return;
+    // Positional, NOT keyed by deal id: nothing enforces unique Deal.id on a disk snapshot, and an id-keyed
+    // Map keeps only the last row's flag, so a newly claimed row sharing an id with an already-confidential
+    // one counted as unchanged and was never adopted (refute wf_2881eb22-27c / wf_dbf6e86a-30a). `deals` is
+    // derived from base+overlay or from current.deals in the same order; a length mismatch means the two
+    // diverged, which is itself a change worth adopting.
+    const aligned = deals.length === current.deals.length;
+    const tightened = aligned ? deals.filter((d, i) => d.confidential && !current.deals[i]!.confidential).length : 0;
+    const released = aligned ? deals.filter((d, i) => !d.confidential && current.deals[i]!.confidential).length : 0;
+    if (aligned && tightened === 0 && released === 0) return;
     this.adoptSnapshot({ ...current, deals });
     console.warn(`[brain] confidential roster changed (${reason}): ${tightened} deal(s) now confidential, ${released} released.`);
     // `action:` prefix: server/index.ts's snapshot listener skips those reasons, and it must — it writes
