@@ -183,7 +183,8 @@ describe('PropertyConditionModule', () => {
     expect(screen.getAllByText('Owner: unassigned')).toHaveLength(14);
     // Default study is Livingston: three roof surfaces and the GBA flag.
     expect(screen.getAllByText(/Roof — 3883 aluminum corrugated panel/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('differs').length).toBeGreaterThan(0);
+    // The PCA side of the cross-check comes from the lazily loaded building-specs chunk (a second query), so wait for it.
+    expect((await screen.findAllByText('differs', {}, { timeout: 20000 })).length).toBeGreaterThan(0);
     // The firewall statement is on the page.
     expect(screen.getByText(/not a condition assessment/i)).toBeTruthy();
   }, 40000);
