@@ -16,6 +16,10 @@ export interface NoiVarianceSummary {
   totalActual: number;
   totalVariance: number;
   belowBudgetCount: number;
+  /** Coverage behind the totals: rows with both budget AND actual (totals sum only these). */
+  pairedCount: number;
+  budgetedCount: number;
+  actualCount: number;
   expenseRatio: number | null; // Σ expense / Σ income (QB)
   hasActuals: boolean;
 }
@@ -52,6 +56,9 @@ export function noiVariance(s: PortfolioSnapshot): NoiVarianceSummary {
     totalActual,
     totalVariance: totalActual - totalBudget,
     belowBudgetCount: rows.filter((r) => r.belowBudget).length,
+    pairedCount: paired.length,
+    budgetedCount: rows.filter((r) => r.budget !== null).length,
+    actualCount: rows.filter((r) => r.actual !== null).length,
     expenseRatio: totalIncome > 0 ? totalExpense / totalIncome : null,
     hasActuals: qbByProp.size > 0 || (s.quickbooks?.properties.length ?? 0) > 0,
   };
