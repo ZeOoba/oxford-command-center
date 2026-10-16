@@ -89,3 +89,39 @@ export function rosterClaimsDeal(deal: Deal): boolean {
     return true;
   }
 }
+
+/**
+ * scanForConfidential for an EXTERNAL egress: identical, except it THROWS on the placeholder roster
+ * instead of silently matching nothing. Raw scanForConfidential returns FALLBACK_TERMS under
+ * CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1, so every real term fails to match and the scan fails OPEN —
+ * the render-only concession isDeclassified already refuses to carry into a publication decision,
+ * and that an Anthropic-API send must refuse too (refute wf_fb398b02-494). Callers already treat a
+ * throw as "roster unavailable" and fail closed.
+ */
+export function egressScan(value: unknown): { dealLabel: string } | null {
+  if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+    throw new Error('confidential roster is the PLACEHOLDER stand-in — external egress refused');
+  }
+  return scanForConfidential(value);
+}
+
+/**
+ * The confidentiality verdict for a deal at the moment of an EXTERNAL egress: the cached flag OR a
+ * live roster check, never the flag alone. A served `confidential:false` only moves when Brain's
+ * roster watcher fires recheckRoster() (a restartable trailing debounce, and never if watch() failed
+ * to arm), so between a roster edit and that recheck the flag is stale. The egress asks the roster
+ * itself, as server/ai/comps.ts does (post-merge refute wf_e6ffdd97-245 on PR #470).
+ *
+ * `undefined` in, `undefined` out: no resolved deal is the caller's blank-deal / lookup-failed case,
+ * which it handles separately. The try/catch is belt-and-braces over rosterClaimsDeal's own fail-closed
+ * catch, so a throw from anywhere in the check still reads as confidential.
+ */
+export function dealConfidentialForEgress(deal: Deal | undefined): boolean | undefined {
+  if (!deal) return undefined;
+  if (deal.confidential) return true;
+  try {
+    return rosterClaimsDeal(deal);
+  } catch {
+    return true;
+  }
+}
