@@ -1,6 +1,6 @@
 import type { Deal } from '../../src/contracts/index';
 import { CompSet, RECORD_COMPS_TOOL } from '../../src/contracts/index';
-import { publicationRosterScan, rosterClaimsDeal } from '../sources/deal-declassification';
+import { egressRosterScanner } from '../briefing/roster-match';
 
 export type FetchCompsResult = { ok: true; comps: CompSet } | { ok: false; error: string };
 
@@ -8,7 +8,7 @@ export interface FetchCompsOptions {
   apiKey?: string;
   model?: string;
   now: string; // ISO — injected for deterministic sourcedAt
-  /** Roster scan over the outbound prompt; injectable for tests. Defaults to publicationRosterScan
+  /** Roster scan over the outbound prompt; injectable for tests. Defaults to the egressRosterScanner bound for the deal check
    *  (throws on an unreadable OR placeholder roster). */
   confidentialScan?: (value: unknown) => { dealLabel: string } | null;
   fetchImpl?: typeof fetch;
@@ -51,14 +51,17 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
 
   // Roster guard on the EXACT outbound text (Hard Invariant 3). The deal.confidential flag above is
   // only a flag; the roster is the source of record, so scan the prompt itself and fail closed.
-  // publicationRosterScan throws on an unreadable roster AND on the CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER
+  // egressRosterScanner (the publication-decision scanner) throws on an unreadable roster AND on the CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER
   // stand-in: sending a deal identity to external web search is an egress decision, not a local
   // render, so the reduced-coverage opt-out must not clear it.
   try {
     // Whole-record, placeholder-aware check FIRST (a prompt-only scan misses roster terms held in
     // owner/lender/nextAction anchors, raw numeric terms, and fails OPEN on the placeholder roster),
     // then the exact outbound text.
-    const hit = rosterClaimsDeal(deal) ? { dealLabel: 'roster' } : (opts.confidentialScan ?? publicationRosterScan)(prompt);
+    // One roster read for the record AND the prompt (#478): egressRosterScanner throws on an
+    // unreadable, empty or placeholder roster, which the catch below refuses.
+    const scan = egressRosterScanner();
+    const hit = scan(deal) ? { dealLabel: 'roster' } : (opts.confidentialScan ?? scan)(prompt);
     if (hit) {
       return { ok: false, error: 'Market comps blocked — the request matches an active confidential deal on the roster.' };
     }
