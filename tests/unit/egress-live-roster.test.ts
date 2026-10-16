@@ -26,11 +26,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Deal, PortfolioSnapshot } from '../../src/contracts/index';
+import type { DataQualityFlag, Deal, PortfolioSnapshot } from '../../src/contracts/index';
 import { dealConfidentialForEgress, rosterClaimsDeal, egressScan } from '../../server/sources/deal-declassification';
 import { extractOmFields } from '../../server/warehouse/om-extract';
 import { runAgent, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, type AgentEvent } from '../../server/ai/agent';
-import { agentEgressGuards, omExtractEgressGuards, resolveOmExtractEgress } from '../../server/ai/egress-guards';
+import { agentEgressGuards, omExtractEgressGuards, resolveOmExtractEgress, type OmExtractSnapshot } from '../../server/ai/egress-guards';
 
 const TARGET_NAME = 'Quillfeather Flex Park';
 const TARGET_SHORT = 'Quillfeather';
@@ -255,7 +255,7 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
     }));
     const target = (o: Partial<Deal> = {}) => deal({ id: 'd-target', name: TARGET_NAME, shortName: TARGET_SHORT, owner: TARGET_OWNER, ...o });
     const pub = deal({ id: 'd-pub', name: 'Public Sentinel Deal' });
-    const extract = async (rawDealId: unknown, snap: { deals: readonly Deal[] } | null, parse: () => Promise<{ text: string }>) => {
+    const extract = async (rawDealId: unknown, snap: OmExtractSnapshot | null, parse: () => Promise<{ text: string }>) => {
       const fetchImpl = okFetch();
       const { guards } = resolveOmExtractEgress(rawDealId, snap);
       const r = await extractOmFields(Buffer.from('fake-pdf'), {
@@ -299,6 +299,31 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
 
     it('a blank-deal upload with the brain snapshot unavailable is refused (names cannot be checked)', async () => {
       refused(await extract('', null, async () => ({ text: 'clean OM body' })));
+    });
+
+    // Independent refute wf_7e107bc5-f6c (MEDIUM): during a Notion outage Brain serves a seed-only
+    // snapshot carrying the deals/pipeline error flag, so a Notion-only confidential deal is simply
+    // absent from snapshot.deals and the name gate could not see it.
+    const PIPELINE_FAILURE: DataQualityFlag = { entity: 'deals', field: 'pipeline', issue: 'Notion deals pipeline unavailable (fetch-failed)', severity: 'error' };
+
+    it.each([
+      ['blank-deal upload', ''],
+      ['upload tied to a PUBLIC (seed) deal id', 'd-pub'],
+    ])('%s is refused while the snapshot carries the deals/pipeline failure flag (its deal list is incomplete)', async (_l, id) => {
+      refused(await extract(id, { deals: [pub], dataQuality: [PIPELINE_FAILURE] }, async () => ({ text: `Offering: ${TARGET_NAME}, 40,000 SF` })));
+    });
+
+    it('a warn-severity deals flag or an unrelated error flag does not refuse (no over-block)', async () => {
+      const snap: OmExtractSnapshot = {
+        deals: [target(), pub],
+        dataQuality: [
+          { ...PIPELINE_FAILURE, severity: 'warn' },
+          { entity: 'deals', field: 'stage', issue: 'stage drift', severity: 'warn' },
+          { entity: 'tasks', field: 'm365', issue: 'x', severity: 'error' },
+        ],
+      };
+      const { fetchImpl } = await extract('', snap, async () => ({ text: 'clean OM body' }));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     it('a clean OM with only public deals still reaches the network (no over-block), and a public deal named in it is fine', async () => {
