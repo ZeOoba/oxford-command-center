@@ -17,9 +17,9 @@ import { DealCompsActionInput } from '../src/contracts/index';
 import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
-import { runAgent, sanitizeAgentInput, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE } from './ai/agent';
+import { runAgent, sanitizeAgentInput } from './ai/agent';
 import { parseLimitParam } from './lib/query-params';
-import { scanForConfidential } from './briefing/confidential';
+import { agentConfidentialScan } from './ai/egress-scan';
 import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { serverPort } from './config';
@@ -601,24 +601,13 @@ app.post('/api/ai', (c) =>
       signal: ac.signal,
       docSearch: searchDocuments,
       macroProvider: getMacro,
-      // OI-225 layer 2. Server-only: scanForConfidential reads the roster off disk, so it cannot be
-      // imported into the runtime-agnostic agent module (the mirror has no filesystem) — it is
-      // injected here instead. Evaluated per tool result rather than hoisted, so a roster edit takes
-      // effect without a restart. If the roster is absent/unreadable, loadTerms THROWS by design and
-      // runAgent's catch would otherwise surface e.message: a confidentiality gate
-      // fails closed, but that raw message embeds the roster's absolute filesystem path and the
-      // ALLOW_PLACEHOLDER opt-out's name (refute finding, LOW) — fine on stderr, not fine streamed to
-      // whatever is reading the browser's network tab. Catch here, log the real detail server-side,
-      // and re-throw a generic message; the fail-closed behavior (still throws, still halts) and the
-      // documented CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 opt-out are both unchanged.
-      confidentialScan: (value) => {
-        try {
-          return scanForConfidential(value);
-        } catch (err) {
-          console.error('[ai] confidentiality guard unavailable:', err);
-          throw new Error(CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE); // runAgent passes exactly this through
-        }
-      },
+      // OI-225 layer 2: the per-tool-result confidentiality scan. It lives in server/ai/egress-scan.ts
+      // (server-only, it reads the roster off disk; the runtime-agnostic agent module cannot). It
+      // runs per tool result, so a roster edit takes effect without a restart. It uses
+      // egressRosterMatch (normalised matching; refuses an unreadable AND the placeholder roster,
+      // refute round 3 U3), logs the real detail server-side and throws the generic
+      // CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, which runAgent passes through (fail closed).
+      confidentialScan: agentConfidentialScan,
       emit: async (e) => {
         await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
       },

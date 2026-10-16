@@ -28,6 +28,7 @@ import {
   scanTexts,
   tightForm,
 } from './confidential-normalize';
+import { normalizeRosterText } from './roster-core';
 export { collectText, mentionsAnyTerm, normalizeForScan };
 export type { ScanForms } from './confidential-normalize';
 
@@ -44,15 +45,26 @@ interface DealTerms {
  *  real deal identifier — those live ONLY in confidential-terms.json (gitignored, off-machine) and
  *  must never land in a git-tracked file (the pre-push hook scans history for them). The structural
  *  placeholder term is impossible to collide with real ownership-financial text. */
-const FALLBACK_TERMS: Record<string, DealTerms> = {
-  placeholder: {
+const FALLBACK_TERMS: Record<string, DealTerms> = Object.freeze({
+  placeholder: Object.freeze({
     label: 'Confidential Deal',
     active: true,
     always: ['__ora_confidential_placeholder__'],
     context: [],
     context_requires_any: [],
-  },
-};
+  }),
+});
+
+/**
+ * True only when `terms` IS the placeholder stand-in loadTerms returns under
+ * CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 (refute round 6, G7). Identity, not a scan of the sentinel
+ * string: a real roster term that happens to be a substring of the sentinel ('Ora', 'Confidential',
+ * 'placeholder') must not make every egress path treat the real roster as the placeholder.
+ * loadTerms returns FALLBACK_TERMS itself (never a copy), and it is frozen.
+ */
+export function isPlaceholderRoster(terms: Record<string, DealTerms>): boolean {
+  return terms === FALLBACK_TERMS;
+}
 
 /**
  * Resolves the path to the confidential terms configuration file.
@@ -65,6 +77,83 @@ export function termsPath(): string {
     process.env.CONFIDENTIAL_TERMS_PATH ??
     join(homedir(), '.claude', 'hooks', 'confidential-terms.json')
   );
+}
+
+/** Thrown by validateEntry: a PRESENT, parseable roster whose active entry can never match. Not
+ *  caught by loadTerms' absent/unreadable fallback, so the placeholder opt-out cannot mask it. */
+export class RosterSchemaError extends Error {}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** A term either matcher can ever match: it normalises to something under main's tightForm OR
+ *  roster-core's normalizeRosterText (final refute, L2). An empty, whitespace-only or invisible-only
+ *  term normalises to nothing under both and matches nothing at any gate. */
+const isUsableTerm = (t: string): boolean => tightForm(t) !== '' || normalizeRosterText(t) !== '';
+
+/** Count of usable terms (isUsableTerm) in a match field; throws if the field is present but is not
+ *  an array of strings. */
+function usableTerms(entry: Record<string, unknown>, field: keyof DealTerms, where: string): number {
+  const v = entry[field];
+  if (v === undefined) return 0;
+  if (!Array.isArray(v) || !v.every((t) => typeof t === 'string')) {
+    throw new RosterSchemaError(`confidential roster entry ${where}: "${field}" must be an array of strings`);
+  }
+  return v.filter(isUsableTerm).length;
+}
+
+/**
+ * Refute round 5, F3: every ACTIVE entry must be able to match something. Before this, any
+ * non-'_' object loaded as a valid entry, so a typo ({"x":["..."]}, {"x":{"terms":[...]}},
+ * context with no anchors, {"x":{}}) loaded as "readable" and silently dropped that deal from
+ * every gate. Rules, against the schema the matchers actually read (always / context /
+ * context_requires_any; label / note are free metadata):
+ *  - the entry is a plain object, and `active`, when present, is a boolean;
+ *  - an entry with `active: false` is retired and is not term-checked (retiring a deal must never
+ *    break the gate);
+ *  - every present match field is an array of strings;
+ *  - it has a USABLE `always` term, or BOTH a usable `context` term and a NON-EMPTY
+ *    `context_requires_any` array (usable = normalises to something under either matcher, so an
+ *    empty / whitespace / invisible-only term does not count); usable `context` without anchors is
+ *    a half-configured gate and is rejected even when `always` is non-empty. Anchors without usable
+ *    context gate nothing and load when a usable `always` term covers the deal. A non-empty anchor
+ *    array whose anchors are all blank / invisible-only is VALID: it leaves the group unanchored
+ *    (context always active, fail closed), matching scanForConfidential and the hook twin.
+ * An all-retired roster stays valid: "no active confidential deal" is a legitimate state (and the
+ * live roster's state as of this change), so throwing on it would disable every egress path.
+ * Messages carry the entry's POSITION only, never its key (a deal slug) or a term.
+ */
+function validateEntry(val: unknown, position: number): DealTerms {
+  const where = `#${position}`;
+  if (!isPlainObject(val)) throw new RosterSchemaError(`confidential roster entry ${where} is not an object`);
+  if (val.active !== undefined && typeof val.active !== 'boolean') {
+    throw new RosterSchemaError(`confidential roster entry ${where}: "active" must be a boolean`);
+  }
+  if (val.active === false) return val as DealTerms;
+  const always = usableTerms(val, 'always', where);
+  const context = usableTerms(val, 'context', where);
+  usableTerms(val, 'context_requires_any', where); // shape check only: throws unless an array of strings
+  // Reconciliation with origin/main (c04bf53b): a PRESENT, non-empty `context_requires_any` array
+  // counts as anchors even when every anchor is blank or invisible-only. scanForConfidential (and
+  // the hook twin) treat such an anchor as matching everywhere, i.e. the group is UNANCHORED and its
+  // context terms are always active: a fail-closed configuration, not a half-configured gate, so it
+  // must load. Only a missing or EMPTY anchor list next to context terms (which can never fire) is
+  // rejected.
+  const anchorList = val['context_requires_any'];
+  const anchorsPresent = Array.isArray(anchorList) && anchorList.length > 0;
+  // Final refute, L2: usable context terms with no (or an empty) anchor array are a context group
+  // that can never fire: rejected. The opposite shape, anchors with NO usable context term, gates
+  // nothing; it is harmless when a usable `always` term covers the deal (both parents and the hook
+  // accept it), so it loads, and with no usable `always` term the no-usable-term rule below throws.
+  if (context > 0 && !anchorsPresent) {
+    throw new RosterSchemaError(
+      `confidential roster entry ${where}: "context" terms need a non-empty "context_requires_any" anchor list`,
+    );
+  }
+  if (always === 0 && context === 0) {
+    throw new RosterSchemaError(`confidential roster entry ${where} is active but has no usable term`);
+  }
+  return val as DealTerms;
 }
 
 /**
@@ -91,13 +180,17 @@ function loadTerms(): Record<string, DealTerms> {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     const out: Record<string, DealTerms> = {};
+    let position = 0;
     for (const [key, val] of Object.entries(raw)) {
-      if (key.startsWith('_') || typeof val !== 'object' || val === null) continue;
-      out[key] = val as DealTerms;
+      if (key.startsWith('_')) continue;
+      position++;
+      out[key] = validateEntry(val, position);
     }
     if (Object.keys(out).length > 0) return out;
-  } catch {
-    // unreadable/invalid → fall through to the closed-by-default handling below
+  } catch (e) {
+    // A present-but-malformed roster fails closed outright (F3); only an absent / unreadable /
+    // unparseable file falls through to the closed-by-default handling below.
+    if (e instanceof RosterSchemaError) throw e;
   }
   if (process.env['CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER'] === '1') {
     // Deliberate, explicit opt-in to reduced coverage -- always warn, regardless of NODE_ENV,
@@ -118,6 +211,16 @@ function loadTerms(): Record<string, DealTerms> {
       'with placeholder-only scanning.',
   );
 }
+
+/** Read-only accessor for the live roster with loadTerms()' exact fail-closed semantics (throws when
+ *  unreadable; placeholder only under the explicit opt-out). Lets a caller pass normalised copies of
+ *  the terms to scanForConfidential (server/sources/deal-declassification.ts publicationRosterScan)
+ *  without duplicating the load logic. Adds no behaviour to this module. */
+export function loadConfidentialTerms(): Record<string, DealTerms> {
+  return loadTerms();
+}
+
+export type { DealTerms };
 
 /** SHA-256 of the four tables, pinned by tests on both sides of the TS/Python mirror. */
 export function normalizationTablesSha256(): string {

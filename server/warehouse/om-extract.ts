@@ -1,5 +1,5 @@
 // server/warehouse/om-extract.ts
-import { scanForConfidential } from '../briefing/confidential';
+import { egressRosterMatch } from '../briefing/roster-match';
 import { pdfToText } from '../lib/pdf-text';
 import fieldsConfig from './om-extract-fields.json';
 
@@ -27,8 +27,8 @@ export interface OmExtractOptions {
   // Roster scan of the extracted OM text BEFORE it is sent to Anthropic (cc-audit-army
   // 2026-09-28, om-extract-flag-only-guard): the flags above only cover an upload tied to a known
   // Deal, so a blank-deal upload of a confidential OM skipped every check. Returns a hit (deal
-  // label only, never the matched term) or null. Defaults to server/briefing/confidential.ts's
-  // scanForConfidential, which THROWS when the roster is unavailable; that fails CLOSED here.
+  // label only, never the matched term) or null. Defaults to
+  // egressRosterMatch (server/briefing/roster-match.ts: normalised matching), which THROWS when the roster is unavailable OR is the placeholder stand-in (refute U3); that fails CLOSED here.
   // Injectable so unit tests need no machine-local roster.
   confidentialScan?: (text: string) => { dealLabel: string } | null;
 }
@@ -137,7 +137,7 @@ export async function extractOmFields(
   // Egress roster scan: exactly the text that will leave the machine. Fail closed on any error
   // (missing/unparseable roster) — an unverifiable OM is not sent (Invariant 3).
   try {
-    const hit = (opts.confidentialScan ?? scanForConfidential)(body);
+    const hit = (opts.confidentialScan ?? egressRosterMatch)(body);
     if (hit) {
       return {
         ok: false,

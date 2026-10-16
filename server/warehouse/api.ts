@@ -62,7 +62,7 @@ import { composeNarrative } from '../ai/narrative';
 import { buildCapitalAllocationReport, buildPortfolioAllocation } from './capital-allocation';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
-import { assertNoConfidential } from '../briefing/confidential';
+import { assertNoEgressRosterMatch } from '../briefing/roster-match';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
@@ -427,6 +427,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     model: PropertyBriefingModel | ManagerBriefingModel,
     narrative?: NarrativeBlock | null,
   ): Promise<Response> => {
+    // A PDF is a file artifact that leaves the machine (download / forward / attachment), so it gets
+    // the EGRESS roster match (refute round 5, F4): normalised, and it refuses an unreadable OR
+    // placeholder roster. The compose step already ran the normalised local-render match; this
+    // re-checks the model AND the AI narrative that lands in the same file. A throw is caught by
+    // safeBriefing (structured 500, label-free).
+    assertNoEgressRosterMatch({ model, narrative: narrative ?? null });
     const bytes = await renderBriefingPdf(model, narrative);
     return new Response(new Uint8Array(bytes), {
       status: 200,
@@ -438,7 +444,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   };
 
   // The briefing handler body can throw where the analytics routes cannot: the compose layer runs the
-  // fail-loud confidential guard (assertNoConfidential), and renderBriefingPdf can reject on a render
+  // fail-loud confidential guard (assertNoRosterMatch; the PDF path adds assertNoEgressRosterMatch),
+  // and renderBriefingPdf can reject on a render
   // failure. withDb only guards getDb(); so wrap the whole handler and return a STRUCTURED 500 — never
   // a raw stack trace, and never the matched confidential term (the guard's message names only the deal
   // label, which we DON'T echo: a leak would otherwise re-surface the very thing we're protecting).
@@ -998,8 +1005,11 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   // Investment Committee review. The browser's "Print to PDF" turns it into an extractable-text
   // PDF — per the firm rule that exported PDFs carry a text layer.
   //
-  // assertNoConfidential is defense-in-depth: the portfolio is an ownership-financial artifact
-  // and by construction carries no deal terms, but we PROVE it before emitting.
+  // assertNoEgressRosterMatch is defense-in-depth: the portfolio is an ownership-financial artifact
+  // and by construction carries no deal terms, but we PROVE it before emitting. The memo is an
+  // attachment that leaves the machine for IC review, so it gets the EGRESS match (refute round 5,
+  // F4: normalised, refuses an unreadable or placeholder roster), over everything the HTML renders
+  // (the portfolio AND the report entries), not the portfolio alone.
   app.get('/capital-allocation/ic-memo', () =>
     withDb(async (db) => {
       try {
@@ -1012,8 +1022,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const { brain } = await import('../brain');
         const snapshot = await brain.getSnapshot();
         const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot ?? undefined);
-        assertNoConfidential(portfolio);
         const entries = snapshot ? (await buildCapitalAllocationReport(db, snapshot, asOf)).entries : undefined;
+        assertNoEgressRosterMatch({ portfolio, entries: entries ?? null });
         const html = buildIcMemoHtml(portfolio, entries);
         return new Response(html, {
           status: 200,

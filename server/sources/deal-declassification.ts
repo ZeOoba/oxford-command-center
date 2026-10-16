@@ -8,15 +8,21 @@
 
 import type { Deal } from '../../src/contracts/index';
 import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
-import { scanForConfidential } from '../briefing/confidential';
+import {
+  loadConfidentialTerms, isPlaceholderRoster, type ConfidentialHit,
+} from '../briefing/confidential';
+import { egressRosterMatch } from '../briefing/roster-match';
+
+// Re-exported for existing callers/tests; the implementation lives in ../briefing/roster-match.
+export { normalizeRosterText } from '../briefing/roster-match';
 
 /**
- * The sentinel term carried by `confidential.ts`'s FALLBACK_TERMS — the placeholder roster returned
- * (instead of throwing) when CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 is set and the real file is
- * absent. Probing for it is how we detect that we are scanning against a roster with NO real terms.
- * `loadTerms` is not exported, so this probe is the available seam.
+ * True when the roster in use is the placeholder stand-in returned (instead of throwing) under
+ * CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 with the real file absent. THROWS on an unreadable roster
+ * (callers catch that as "cannot verify"). Detected by identity (refute round 6, G7), no longer by
+ * scanning the sentinel string, which a real term like 'Ora' or 'Confidential' also matched.
  */
-const PLACEHOLDER_SENTINEL = '__ora_confidential_placeholder__';
+const rosterIsPlaceholder = (): boolean => isPlaceholderRoster(loadConfidentialTerms());
 
 /**
  * True only if this deal may be published. Returns false — keeping the deal confidential — for any
@@ -42,21 +48,24 @@ const PLACEHOLDER_SENTINEL = '__ora_confidential_placeholder__';
  */
 export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC_DEAL_IDS): boolean {
   if (!allowlist.includes(deal.id)) return false;
+  // Logs name the allowlist POSITION, never the deal id (a slug of the deal's name) nor the roster
+  // label (refute round 5, F6): this deal may be roster-claimed, and logs are a sink.
+  const entry = `PUBLIC_DEAL_IDS entry #${allowlist.indexOf(deal.id) + 1}`;
   try {
-    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+    if (rosterIsPlaceholder()) {
       console.warn(
         `[deal-declassification] the confidential roster is the PLACEHOLDER stand-in ` +
           `(CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER is set and the real file is unreadable) — refusing ` +
-          `to declassify ${deal.id}. A publication decision must never run against a disabled roster.`,
+          `to declassify ${entry}. A publication decision must never run against a disabled roster.`,
       );
       return false;
     }
-    const hit = scanForConfidential(deal);
+    const hit = publicationRosterScan(deal); // normalised match (refute R1)
     if (hit) {
       console.warn(
-        `[deal-declassification] ${deal.id} is on PUBLIC_DEAL_IDS but still matches the ACTIVE ` +
-          `confidential roster (${hit.dealLabel}) — keeping it confidential. The roster wins; ` +
-          `remove the allowlist entry or retire the roster group (active:false), not both blindly.`,
+        `[deal-declassification] ${entry} still matches the ACTIVE confidential roster — keeping it ` +
+          `confidential. The roster wins; remove the allowlist entry or retire the roster group ` +
+          `(active:false), not both blindly.`,
       );
       return false;
     }
@@ -64,7 +73,7 @@ export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC
   } catch (e) {
     console.warn(
       `[deal-declassification] confidential roster unreadable (${e instanceof Error ? e.message : String(e)}) ` +
-        `— allowlist ignored, ${deal.id} stays confidential.`,
+        `— allowlist ignored, ${entry} stays confidential.`,
     );
     return false;
   }
@@ -79,13 +88,30 @@ export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC
  */
 export function rosterClaimsDeal(deal: Deal): boolean {
   try {
-    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+    if (rosterIsPlaceholder()) {
       console.warn('[deal-declassification] confidential roster is the PLACEHOLDER stand-in — treating every deal as roster-claimed (fail closed).');
       return true;
     }
-    return scanForConfidential(deal) !== null;
+    // publicationRosterScan: the same strict publication-decision scan every egress gate uses
+    // (it also throws on the placeholder, a second guard behind the explicit check above).
+    return publicationRosterScan(deal) !== null;
   } catch (e) {
     console.warn(`[deal-declassification] confidential roster unreadable (${e instanceof Error ? e.message : String(e)}) — treating the deal as roster-claimed (fail closed).`);
     return true;
   }
 }
+
+/**
+ * Roster scan for a PUBLICATION decision (anything bound for a mirror or other external surface).
+ * Same matching as scanForConfidential, but strict about the roster itself: THROWS when the roster
+ * is unreadable (scanForConfidential already does) AND when it is the placeholder stand-in that
+ * CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 substitutes — that opt-out is a reduced-coverage concession
+ * for a local briefing render and must never clear data for publication. Callers treat a throw as
+ * "cannot verify" and withhold the data.
+ */
+export function publicationRosterScan(value: unknown): ConfidentialHit | null {
+  // Same matcher and placeholder refusal as every other egress gate (refute round 3, U3): raw +
+  // normalised + compact passes, throwing on an unreadable or placeholder roster.
+  return egressRosterMatch(value);
+}
+

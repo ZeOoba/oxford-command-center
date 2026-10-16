@@ -10,7 +10,7 @@
 // NEVER throws — always returns { narrative, degraded } in all failure paths.
 import { NarrativeBlock } from '../../src/contracts/briefing';
 import type { BriefingModel } from '../../src/contracts/briefing';
-import { assertNoConfidential, scanForConfidential } from '../briefing/confidential';
+import { assertNoEgressRosterMatch, rosterMatch } from '../briefing/roster-match';
 
 export const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -118,9 +118,9 @@ export async function composeNarrative(
     // Pre-send confidentiality guard — must fire BEFORE any HTTP call. Scan the FULL model, not
     // just the subset: the model's text is a superset of the subset's, so this also catches a term
     // in a field the subset never forwards. Defense-in-depth — does not rely on the caller having
-    // already run compose's assertNoConfidential (compose.ts) on the model.
+    // already run compose's assertNoRosterMatch (compose.ts) on the model.
     try {
-      assertNoConfidential(model);
+      assertNoEgressRosterMatch(model); // refuses the placeholder too (U3); a throw degrades
     } catch {
       return DEGRADED;
     }
@@ -189,7 +189,7 @@ export async function composeNarrative(
 
     // Post-receive confidentiality scan — discard if a term leaked into the AI output
     const combined = [block.headline, block.summary, ...block.bullets].join(' ');
-    const hit = scanForConfidential(combined);
+    const hit = rosterMatch(combined);
     if (hit) {
       return DEGRADED;
     }
@@ -251,7 +251,7 @@ export async function composeLeaseNarrative(
 
     // Pre-send confidentiality guard — scan the full input object before any HTTP call.
     try {
-      assertNoConfidential(data);
+      assertNoEgressRosterMatch(data); // refuses the placeholder too (U3); a throw degrades
     } catch {
       return DEGRADED;
     }
@@ -330,7 +330,7 @@ export async function composeLeaseNarrative(
 
     // Post-receive confidentiality scan — discard if a term leaked into the AI output
     const combined = [block.headline, block.summary, ...block.bullets].join(' ');
-    const hit = scanForConfidential(combined);
+    const hit = rosterMatch(combined);
     if (hit) {
       return DEGRADED;
     }
