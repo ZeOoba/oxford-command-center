@@ -18,12 +18,13 @@ import { classifyUsability, parseRegister, resolveProperty, type ParsedRegister 
 import { reportStatus } from '../src/analytics/pca-intelligence';
 import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
 import {
-  supersededMap,
   CalibrationProposal,
   classifyComponent,
-  pairKey,
+  placeholdersFor,
   parseLedger,
   parsePending,
+  sameQuoteDocument,
+  type PropertyKeyOf,
   type CalibrationComponent,
   type CalibrationObservation,
   type CalibrationUnit,
@@ -120,14 +121,36 @@ function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
   return hits[0] ?? null;
 }
 
-/** Ledger rows that stand in for an unidentified / undated quote on the same scope: a real quote may replace one (promote --supersedes). */
+/** Ledger rows that stand in for a quote with no identified vendor on the same scope: a real quote may replace one (promote --supersedes). */
 function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string {
-  const retired = supersededMap(ledger);
-  const ids = ledger
-    .filter((o) => !retired.has(o.obs_id) && o.property.toLowerCase() === q.propertyLabel.toLowerCase() && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
-    .map((o) => o.obs_id);
-  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one and itself counts toward the stats, promote with --supersedes <obs_id> (repeat for each) so it is not counted twice.`;
+  const ids = placeholdersFor(ledger, { property: q.propertyLabel, component: q.component }, registerPropertyKey).map((o) => o.obs_id);
+  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> (repeat for each); otherwise promote refuses a counted row beside them (a separate document needs --allow-beside-placeholder).`;
 }
+
+/** The register's alias rules ("3520 E. Fulton St", "E Fulton bldg") → one property key. */
+export const registerPropertyKey: PropertyKeyOf = (label) => resolveProperty(label, new Set()).key;
+
+/** Who was dropped and who was kept, so the reviewer can tell a true duplicate from a second scope on one document. */
+export interface DuplicateReport {
+  obsId: string;
+  keptObsId: string;
+  vendor: string;
+  keptVendor: string;
+  property: string;
+  keptProperty: string;
+  contractorUnitCost: number | null;
+  keptContractorUnitCost: number | null;
+}
+
+type Row = CalibrationObservation | CalibrationProposal;
+/** The row on file that `p` duplicates: same obs_id, or the same quote document (normalized property / vendor, date to the precision both state). */
+export function findTwin(p: Row, onFile: readonly Row[]): Row | undefined {
+  return onFile.find((o) => o.obs_id === p.obs_id) ?? onFile.find((o) => sameQuoteDocument(o, p, registerPropertyKey));
+}
+const duplicateReport = (p: Row, kept: Row): DuplicateReport => ({
+  obsId: p.obs_id, keptObsId: kept.obs_id, vendor: p.contractor_source.vendor, keptVendor: kept.contractor_source.vendor,
+  property: p.property, keptProperty: kept.property, contractorUnitCost: p.contractor_unit_cost, keptContractorUnitCost: kept.contractor_unit_cost,
+});
 
 export function proposePairs(
   pca: PcaLine[],
@@ -135,13 +158,10 @@ export function proposePairs(
   existing: { ledger: CalibrationObservation[]; pending: CalibrationProposal[] },
   today: string,
   proposedFrom: string,
-  onDuplicate: (skipped: { obsId: string; keptObsId: string }) => void = () => {},
+  onDuplicate: (skipped: DuplicateReport) => void = () => {},
 ): CalibrationProposal[] {
-  const seen = new Set<string>([...existing.ledger, ...existing.pending].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
-  // Seed with rows already on file so a collapse against an earlier run is reported too, not only one within this run.
-  const keptByKey = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [pairKey(o), o.obs_id]));
-  // A collision can also be on obs_id alone (vendor strings that slugify alike but differ in punctuation), so remember ids too.
-  const keptById = new Map<string, string>([...existing.ledger, ...existing.pending].map((o) => [`id:${o.obs_id}`, o.obs_id]));
+  // Seed with rows already on file so a collapse against an earlier run (or a hand-written ledger row) is caught and reported too.
+  const onFile: Row[] = [...existing.ledger, ...existing.pending];
   const out: CalibrationProposal[] = [];
   // Deterministic order: when two quotes share an obs_id the live (non-superseded), newest, lowest-vendor one is kept, never input order.
   const ordered = [...quotes].sort(
@@ -168,21 +188,16 @@ export function proposePairs(
       exclusion_reason: q.superseded ? 'quote superseded by a later version' : null,
       proposed_at: today, proposed_from: proposedFrom,
     });
-    // Two identities exist (pairKey: raw label + vendor; obs_id: slugified). Dedupe on both so two quotes that slugify to
-    // the same obs_id can never both reach pending (promote would keep the first and silently drop the other).
-    const key = pairKey(proposal);
-    const idKey = `id:${proposal.obs_id}`;
-    if (seen.has(key) || seen.has(idKey)) {
-      // One quote document is one observation (pairKey), but a document pricing two scopes on one date collapses here —
+    // Two identities exist (obs_id, and the quote document: resolved property + normalized vendor + date). Dedupe on both:
+    // hand-written ledger obs_ids truncate the date and labels vary ("3520 E. Fulton St"), so obs_id alone never matches them.
+    const twin = findTwin(proposal, onFile);
+    if (twin) {
+      // One quote document is one observation, but a document pricing two scopes on one date collapses here —
       // say so instead of dropping the second scope silently.
-      const kept = keptByKey.get(key) ?? keptById.get(idKey);
-      if (kept !== undefined) onDuplicate({ obsId: proposal.obs_id, keptObsId: kept }); // also when the colliding quote prices a different qty / unit under the same id
+      onDuplicate(duplicateReport(proposal, twin));
       continue;
     }
-    seen.add(key);
-    seen.add(idKey);
-    keptByKey.set(key, proposal.obs_id);
-    keptById.set(idKey, proposal.obs_id);
+    onFile.push(proposal);
     out.push(proposal);
   }
   return out;
@@ -322,12 +337,18 @@ async function main(argv: string[]): Promise<number> {
   const costSegPath = join(process.cwd(), 'data', 'cost-seg', 'cost-seg.json');
   const costSegFacts = existsSync(costSegPath) ? parseCostSeg(JSON.parse(readFileSync(costSegPath, 'utf-8'))).facts : [];
   // Cost seg quantities are only ever OFFERED as a candidate qty on a pending proposal; a human promotes (or not).
-  const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none', (d) => console.warn(`calibration-propose: skipped ${d.obsId} — same property/vendor/date as ${d.keptObsId} (one quote document = one observation); add it by hand if it is a separate scope.`)), costSegFacts);
+  const warnSkip = (d: DuplicateReport): void =>
+    console.warn(`calibration-propose: skipped ${d.obsId} (${d.vendor} @ ${d.property}, $${d.contractorUnitCost ?? 'n/a'}/unit) — same quote document as ${d.keptObsId} (${d.keptVendor} @ ${d.keptProperty}, $${d.keptContractorUnitCost ?? 'n/a'}/unit); one quote document = one observation. Add it by hand if it is a separate scope.`);
+  const proposals = bridgeCostSegQuantities(proposePairs(pca, quotes, { ledger, pending }, today, from.join('+') || 'none', warnSkip), costSegFacts);
   // Re-read both files right before writing: the loads above are async (workbook, Notion pagination) and a
   // `calibration:promote` run in that window must not be undone by writing back the stale snapshot.
   const fresh = readJson(PENDING_PATH, parsePending);
-  const taken = new Set([...readJson(LEDGER_PATH, parseLedger), ...fresh].flatMap((o) => [pairKey(o), `id:${o.obs_id}`]));
-  const toAdd = proposals.filter((p) => !taken.has(pairKey(p)) && !taken.has(`id:${p.obs_id}`));
+  const taken: Row[] = [...readJson(LEDGER_PATH, parseLedger), ...fresh];
+  const toAdd = proposals.filter((p) => {
+    const twin = findTwin(p, taken);
+    if (twin) warnSkip(duplicateReport(p, twin)); // landed on file while we were loading: say so, never drop silently
+    return twin === undefined;
+  });
   const next = [...fresh, ...toAdd];
   const tmp = `${PENDING_PATH}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');

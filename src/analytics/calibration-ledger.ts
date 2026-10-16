@@ -122,12 +122,18 @@ export function exclusionFor(o: CalibrationObservation, supersededBy: ReadonlyMa
 }
 export const includedInStats = (o: CalibrationObservation, supersededBy: ReadonlyMap<string, string> = new Map()): boolean => exclusionFor(o, supersededBy) === null;
 
-/** obs_id → the obs_id of the row that supersedes it. A later row supersedes only an id that already exists earlier in the ledger. */
+/**
+ * obs_id → the obs_id of the row that supersedes it. A later row supersedes only an id that already exists earlier in the
+ * ledger, and only when that row itself counts toward the stats — the same rule promoteProposal enforces, applied here too
+ * so a hand-edited non-counting row cannot retire counted ones.
+ */
 export function supersededMap(ledger: readonly CalibrationObservation[]): Map<string, string> {
   const out = new Map<string, string>();
   const seen = new Set<string>();
   for (const o of ledger) {
-    for (const t of o.supersedes) if (seen.has(t) && !out.has(t)) out.set(t, o.obs_id); // first superseder wins; never re-pointed
+    if (o.supersedes.length > 0 && exclusionFor(o, out) === null) {
+      for (const t of o.supersedes) if (seen.has(t) && !out.has(t)) out.set(t, o.obs_id); // first superseder wins; never re-pointed
+    }
     seen.add(o.obs_id);
   }
   return out;
@@ -250,7 +256,10 @@ export interface PromotionResult {
 /**
  * Explicit, human-triggered promotion. Append-only: never edits an existing observation, refuses a duplicate
  * obs_id, and removes the proposal from pending. A proposal with a null quantity or cost can be promoted — it
- * is simply excluded from stats until the data is completed (by appending a corrected row).
+ * is simply excluded from stats until the data is completed (by appending a corrected row). A proposal that is the same
+ * quote document (`sameQuoteDocument`) as any ledger row it does not itself supersede (live or already retired) is refused, so one document is never
+ * counted twice under two obs_ids; `allowDuplicateDocument` overrides that for a genuinely separate scope on one document.
+ * The placeholder guard below has its OWN override, `allowBesidePlaceholder`: one flag never switches off both guards.
  */
 export function promoteProposal(
   ledger: CalibrationObservation[],
@@ -258,7 +267,9 @@ export function promoteProposal(
   obsId: string,
   today: string,
   supersedes?: string[],
+  opts: { propertyKeyOf?: PropertyKeyOf; allowDuplicateDocument?: boolean; allowBesidePlaceholder?: boolean } = {},
 ): PromotionResult {
+  const keyOf = opts.propertyKeyOf ?? slugPropertyKey;
   const matches = pending.filter((p) => p.obs_id === obsId);
   if (matches.length === 0) throw new Error(`calibration: no pending proposal with obs_id "${obsId}"`);
   // Never pick by array order: a duplicated id means two different quotes collide, so the human must resolve it.
@@ -283,10 +294,61 @@ export function promoteProposal(
     const target = ledger.find((o) => o.obs_id === t);
     if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${t}", which is not in the ledger`);
     // A mistyped target must not silently retire an unrelated observation, and a retired row is not retired twice.
-    if (target.component !== fields.component || target.unit !== fields.unit || target.property.toLowerCase() !== fields.property.toLowerCase()) {
+    // A placeholder may be replaced across a classifier relabel inside one scope family (roof_other quote for roof_epdm range rows).
+    const sameScope = target.component === fields.component || (isPlaceholder(target) && placeholderScopeMatch(target.component, fields.component));
+    if (!sameScope || target.unit !== fields.unit || keyOf(target.property) !== keyOf(fields.property)) {
       throw new Error(`calibration: "${t}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
     }
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
+  }
+  // A placeholder stands in for an unidentified quote document on this scope; a real counted quote beside it would count
+  // that document twice (Banwick: n 3 -> 5, LIMITED -> USABLE). Checked whatever --supersedes lists (a partial supersede
+  // leaves the other range row counting) and in both promote orders. Placeholder beside placeholder is allowed ONLY for a
+  // hand-entered range pair (isRangePartner); an 'Unknown vendor' register row is the very quote such a range stands in for.
+  if (!opts.allowBesidePlaceholder && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
+    const inScope = (o: CalibrationObservation): boolean =>
+      !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && placeholderScopeMatch(o.component, fields.component) && keyOf(o.property) === keyOf(fields.property);
+    // One predicate both ways (isPlaceholder), and only rows that count can conflict: a non-counting row adds nothing to n.
+    const counts = (o: CalibrationObservation): boolean => exclusionFor(o, retired) === null;
+    if (isPlaceholder(fields)) {
+      const real = ledger.filter((o) => inScope(o) && !isPlaceholder(o) && counts(o));
+      if (real.length > 0) {
+        throw new Error(
+          `calibration: placeholder "${obsId}" would count next to real quote row(s) for the same scope (${real.map((o) => o.obs_id).join(', ')}). ` +
+            'A placeholder stands in for a quote not yet on file; if it is a separate document, pass --allow-beside-placeholder',
+        );
+      }
+      // A range is a PAIR: a third same-date 'Unidentified' row beside two counting partners is one too many.
+      const partners = ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o) && isRangePartner(o, fields));
+      const other = [
+        ...ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o) && !isRangePartner(o, fields)),
+        ...(partners.length >= 2 ? partners : []),
+      ];
+      if (other.length > 0) {
+        throw new Error(
+          `calibration: placeholder "${obsId}" would count next to placeholder row(s) for the same scope (${other.map((o) => o.obs_id).join(', ')}) that are not its range partner (a range is one low/high pair). ` +
+            'If it is the quote those rows stand in for, promote with --supersedes <placeholder obs_id> for EACH of them; if it is a separate document, pass --allow-beside-placeholder',
+        );
+      }
+    } else {
+      const stand = ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o));
+      if (stand.length > 0) {
+        throw new Error(
+          `calibration: "${obsId}" would count next to placeholder row(s) for the same scope (${stand.map((o) => o.obs_id).join(', ')}). ` +
+            'If it is the quote a placeholder stands in for, promote with --supersedes <placeholder obs_id> for EACH of them; if it is a separate document, pass --allow-beside-placeholder',
+        );
+      }
+    }
+  }
+  if (!opts.allowDuplicateDocument) {
+    // Retired rows count too: a superseded document is history, and re-promoting it would count it next to its own revision.
+    const twin = ledger.find((o) => !fields.supersedes.includes(o.obs_id) && sameQuoteDocument(o, fields, keyOf));
+    if (twin) {
+      throw new Error(
+        `calibration: "${obsId}" is the same quote document (property / vendor / date) as ledger row "${twin.obs_id}" - it would be counted twice. ` +
+          'If it replaces that row, promote with --supersedes; if it is a separate scope on the same document, pass --allow-duplicate-document',
+      );
+    }
   }
   const promoted = CalibrationObservation.parse({ ...fields, added_at: today });
   // A row that does not count itself must not retire counted rows (one no-price promote would otherwise delete both Banwick rows).
@@ -294,6 +356,44 @@ export function promoteProposal(
     throw new Error(`calibration: "${obsId}" does not count toward the stats (${exclusionFor(promoted)}), so it cannot supersede other rows`);
   }
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
+}
+
+/**
+ * A row standing in for a quote whose vendor is not identified: a hand-entered "Unidentified roofer" range end, or the
+ * proposer's own "Unknown vendor" fallback for a register / Notion row with no Vendor. The ONE placeholder predicate, used in
+ * both directions of the promote guard, by the supersede exemption and by propose's note. A named vendor with a year-only
+ * date is a real quote (its imprecise date is handled by sameQuoteDocument's precision-tolerant match).
+ */
+export const isPlaceholder = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean => {
+  const v = o.contractor_source.vendor.trim();
+  return /^unidentified\b/i.test(v) || /^unknown vendor$/i.test(v);
+};
+
+/** Two ends of one hand-entered quote range: both 'Unidentified ...' and the same stated date. 'Unknown vendor' never pairs. */
+export const isRangePartner = (a: Pick<CalibrationObservation, 'contractor_source'>, b: Pick<CalibrationObservation, 'contractor_source'>): boolean =>
+  /^unidentified\b/i.test(a.contractor_source.vendor.trim()) && /^unidentified\b/i.test(b.contractor_source.vendor.trim()) &&
+  a.contractor_source.doc_date === b.contractor_source.doc_date;
+
+/**
+ * Scope family, matching what classifyComponent can emit for one physical scope: every roof_* is 'roof'; paving_* and
+ * seal_stripe are 'paving'; anything else is its own family. THE family function — cost-seg's quantity bridge uses it too.
+ */
+export const scopeFamily = (c: CalibrationComponent): string =>
+  c.startsWith('roof_') ? 'roof' : c.startsWith('paving_') || c === 'seal_stripe' ? 'paving' : c;
+
+/** Placeholder matching: same family, or either side is the classifier's catch-all 'other' (it could be any scope). */
+export const placeholderScopeMatch = (a: CalibrationComponent, b: CalibrationComponent): boolean =>
+  a === 'other' || b === 'other' || scopeFamily(a) === scopeFamily(b);
+
+/** Live, counting placeholder rows standing in for a quote on this property + scope family (propose's note; the same rows promote's guard checks). */
+export function placeholdersFor(
+  ledger: readonly CalibrationObservation[],
+  scope: { property: string; component: CalibrationComponent },
+  propertyKeyOf: PropertyKeyOf = slugPropertyKey,
+): CalibrationObservation[] {
+  const retired = supersededMap(ledger);
+  const key = propertyKeyOf(scope.property);
+  return ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && exclusionFor(o, retired) === null && placeholderScopeMatch(o.component, scope.component) && propertyKeyOf(o.property) === key);
 }
 
 // ── candidate-pair matching (pure; I/O lives in scripts/calibration-propose.ts) ──────────────
@@ -314,10 +414,38 @@ export function classifyComponent(text: string): CalibrationComponent {
   return 'other';
 }
 
+/** Property label → stable property key. Callers with the register's alias rules pass them in (scripts/import-pca-register `resolveProperty`). */
+export type PropertyKeyOf = (label: string) => string;
+/** Fallback key: punctuation and case insensitive ("3520 E. Fulton St" = "3520 E Fulton St"), no alias knowledge. */
+export const slugPropertyKey: PropertyKeyOf = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+const VENDOR_SUFFIXES = new Set(['inc', 'incorporated', 'llc', 'pllc', 'co', 'corp', 'corporation', 'company', 'ltd', 'limited', 'lp', 'llp']);
 /**
- * Identity of a priced quote document for de-duplication: property + vendor + document date. Neither component nor
- * unit price is part of the key — one quote document is one observation, however an auto-classifier labels its scope
- * and however its total divides out.
+ * "Able Roofing, Inc." / "ABLE ROOFING LLC" / "Able Roofing" → "ableroofing". Case, punctuation, spacing ("R.D." = "R. D." =
+ * "R D"), apostrophes, "&" vs "and" and trailing entity suffixes are not identity. Tokens are joined with no separator so
+ * spaced and unspaced initials agree.
  */
-export const pairKey = (o: Pick<CalibrationObservation, 'property' | 'contractor_source'>): string =>
-  [o.property.toLowerCase(), o.contractor_source.vendor.toLowerCase(), o.contractor_source.doc_date].join('|');
+export function normalizeVendor(vendor: string): string {
+  const tokens = vendor.toLowerCase().replace(/&/g, ' and ').replace(/[.'’]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  while (tokens.length > 1 && VENDOR_SUFFIXES.has(tokens[tokens.length - 1] as string)) tokens.pop();
+  if (tokens.length > 1 && tokens[0] === 'the') tokens.shift();
+  return tokens.join('');
+}
+
+type QuoteDoc = Pick<CalibrationObservation, 'property' | 'contractor_source'>;
+
+/**
+ * THE identity of a priced quote document for de-duplication: same property (by key), same normalized vendor, and dates
+ * that agree to the precision both state ("2026-05" matches "2026-05-07"). Neither component nor unit price is part of it —
+ * one quote document is one observation, however an auto-classifier labels its scope and however its total divides out.
+ * There is deliberately no string key: a precision-tolerant date match is not an equality, so callers compare pairwise.
+ */
+export function sameQuoteDocument(a: QuoteDoc, b: QuoteDoc, propertyKeyOf: PropertyKeyOf = slugPropertyKey): boolean {
+  const da = a.contractor_source.doc_date;
+  const db = b.contractor_source.doc_date;
+  return (
+    propertyKeyOf(a.property) === propertyKeyOf(b.property) &&
+    normalizeVendor(a.contractor_source.vendor) === normalizeVendor(b.contractor_source.vendor) &&
+    (da.startsWith(db) || db.startsWith(da))
+  );
+}
