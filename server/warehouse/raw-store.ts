@@ -69,3 +69,31 @@ export function registerImport(db: WarehouseDb, input: RegisterInput): RegisterR
   );
   return { kind: 'new', importId: Number(res.lastInsertRowid), version, rawPath, hash };
 }
+
+/** The (property, period span) key that a commit supersedes by. Passed explicitly because the stored row is not
+ *  always the key a commit acts on: a stale re-derive supersedes by the freshly DETECTED property/period. */
+export interface PeriodKey {
+  propertyId: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+/**
+ * The newest COMMITTED import in `key` that ARRIVED AFTER this import (registration order, import_batches.id), or
+ * null when none did. Both commit paths supersede every committed import of the period, so an older arrival must
+ * never commit while a newer one is committed: it would replace newer data with older data.
+ *
+ * Ordered by arrival (id), not by `version`: version is numbered per (property, period) at REGISTRATION, but a
+ * stale-parser re-derive rewrites a row's period in place and keeps that number, after which versions from two
+ * different counters collide or invert. `id` is global and total. A null key.propertyId guards nothing (the
+ * supersede SQL joins with `=`, so a property-less import supersedes nothing).
+ */
+export function newerCommittedImport(db: WarehouseDb, importId: number, key: PeriodKey): { id: number; version: number } | null {
+  if (key.propertyId === null) return null;
+  const row = db.prepare(`
+    SELECT id, version FROM import_batches
+    WHERE property_id = ? AND period_start IS ? AND period_end IS ? AND status = 'committed' AND id > ?
+    ORDER BY id DESC LIMIT 1
+  `).get(key.propertyId, key.periodStart, key.periodEnd, importId) as { id: number; version: number } | undefined;
+  return row ?? null;
+}
