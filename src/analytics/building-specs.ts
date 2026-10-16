@@ -368,6 +368,14 @@ export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProject
   return rows.sort((a, b) => (a.yearsRemaining ?? 1e9) - (b.yearsRemaining ?? 1e9));
 }
 
+/**
+ * Lookup key for one roof projection: property + report + scope + install year. A scope-less section can state several
+ * roofs, so the install year is part of the key (pass the projection's installYear, or an install_year fact's raw value).
+ */
+export function roofProjectionKey(property: string, reportId: string, scope: string | null, installYear: string | number | boolean): string {
+  return [property, reportId, scope ?? '', firstYear(installYear) ?? ''].join('|');
+}
+
 const yrsText = (n: number): string => `${n} yr${n === 1 ? '' : 's'}`;
 
 /** EUL cell: "20 yrs", "conflicting EULs 15/20 yrs" (the report stated both), or "not stated". */

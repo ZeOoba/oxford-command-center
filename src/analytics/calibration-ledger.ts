@@ -257,7 +257,7 @@ export interface PromotionResult {
  * Explicit, human-triggered promotion. Append-only: never edits an existing observation, refuses a duplicate
  * obs_id, and removes the proposal from pending. A proposal with a null quantity or cost can be promoted — it
  * is simply excluded from stats until the data is completed (by appending a corrected row). A proposal that is the same
- * quote document (`sameQuoteDocument`) as a live ledger row it does not supersede is refused, so one document is never
+ * quote document (`sameQuoteDocument`) as any ledger row it does not itself supersede (live or already retired) is refused, so one document is never
  * counted twice under two obs_ids; `allowDuplicateDocument` overrides that for a genuinely separate scope on one document.
  */
 export function promoteProposal(
@@ -299,7 +299,8 @@ export function promoteProposal(
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
   }
   if (!opts.allowDuplicateDocument) {
-    const twin = ledger.find((o) => !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && sameQuoteDocument(o, fields, keyOf));
+    // Retired rows count too: a superseded document is history, and re-promoting it would count it next to its own revision.
+    const twin = ledger.find((o) => !fields.supersedes.includes(o.obs_id) && sameQuoteDocument(o, fields, keyOf));
     if (twin) {
       throw new Error(
         `calibration: "${obsId}" is the same quote document (property / vendor / date) as ledger row "${twin.obs_id}" - it would be counted twice. ` +
@@ -339,12 +340,16 @@ export type PropertyKeyOf = (label: string) => string;
 export const slugPropertyKey: PropertyKeyOf = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 const VENDOR_SUFFIXES = new Set(['inc', 'incorporated', 'llc', 'pllc', 'co', 'corp', 'corporation', 'company', 'ltd', 'limited', 'lp', 'llp']);
-/** "REDACTED-555, Inc." / "REDACTED-555 LLC" / "REDACTED-555" → "able-roofing": case, punctuation and trailing entity suffixes are not identity. */
+/**
+ * "REDACTED-555, Inc." / "REDACTED-555 LLC" / "REDACTED-555" → "ableroofing". Case, punctuation, spacing ("R.D." = "R. D." =
+ * "R D"), apostrophes, "&" vs "and" and trailing entity suffixes are not identity. Tokens are joined with no separator so
+ * spaced and unspaced initials agree.
+ */
 export function normalizeVendor(vendor: string): string {
-  const tokens = vendor.toLowerCase().replace(/\./g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  const tokens = vendor.toLowerCase().replace(/&/g, ' and ').replace(/[.'’]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
   while (tokens.length > 1 && VENDOR_SUFFIXES.has(tokens[tokens.length - 1] as string)) tokens.pop();
   if (tokens.length > 1 && tokens[0] === 'the') tokens.shift();
-  return tokens.join('-');
+  return tokens.join('');
 }
 
 type QuoteDoc = Pick<CalibrationObservation, 'property' | 'contractor_source'>;

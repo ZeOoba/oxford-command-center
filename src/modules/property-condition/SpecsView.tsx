@@ -25,6 +25,7 @@ import {
   hvacOwnershipRollup,
   projectRoofs,
   roofEulText,
+  roofProjectionKey,
   roofForecastText,
   roofRollup,
   sprinklerRollup,
@@ -288,7 +289,7 @@ function profileColumns(projectionByKey: Map<string, RoofProjection>): Column<Ef
       header: 'Value',
       render: (e) => {
         const proj = e.attribute === 'install_year' && e.component === 'roof'
-          ? projectionByKey.get(`${e.property}|${e.effective.report_id}|${e.scope ?? ''}`)
+          ? projectionByKey.get(roofProjectionKey(e.property, e.effective.report_id, e.scope, e.effective.value))
           : undefined;
         return (
           <div>
@@ -427,7 +428,7 @@ export function SpecsView({ model, todayYear }: { model: BuildingSpecsModel; tod
   // project from property + vintage only, otherwise a search drops the EUL fact and the roof reads "EUL not stated".
   const roofBase = useMemo(() => filterFacts(model.facts, { property: property || undefined, vintage: vintage || undefined }), [model.facts, property, vintage]);
   const projections = useMemo(() => projectRoofs(roofBase, todayYear), [roofBase, todayYear]);
-  const projectionByKey = useMemo(() => new Map(projections.map((p) => [`${p.propertyKey}|${p.reportId}|${p.scope ?? ''}`, p])), [projections]);
+  const projectionByKey = useMemo(() => new Map(projections.map((p) => [roofProjectionKey(p.propertyKey, p.reportId, p.scope, p.installYear), p])), [projections]);
   const ledger = useMemo(() => buildFindingsLedger(model.findings, model.resolutions), [model.findings, model.resolutions]);
   const findings = useMemo(
     () => filterFindings(ledger, { ...filter, unresolvedOnly }),
