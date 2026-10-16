@@ -10,11 +10,12 @@ import { accountKey, classificationSide, resolveMapping } from './mapping';
 import { computeInputsVersion, logVerdicts, verdictsFromAnomalies, verdictsFromScores } from './calibration';
 import { detectAnomalies } from './anomalies';
 import { propertyPeriodMetrics } from './metrics';
+import { newerCommittedImport } from './raw-store';
 import { scoreProperties } from './scores';
 
 export type ApproveResult =
   | { ok: true }
-  | { ok: false; unmapped: string[]; error?: string; reason?: 'sign-undecidable' };
+  | { ok: false; unmapped: string[]; error?: string; reason?: 'sign-undecidable' | 'newer-version-committed' };
 
 /** Options for approveImport. `forceCalibrationError` (tests only) poisons the post-commit emit
  *  hook to prove the fail-open guarantee — the commit still returns {ok:true}. */
@@ -29,6 +30,7 @@ interface BatchRow {
   period_start: string | null;
   period_end: string | null;
   status: string;
+  version: number;
 }
 
 /**
@@ -36,6 +38,14 @@ interface BatchRow {
  * set (so manual overrides added since ingest take effect), and only commit if nothing is
  * still unmapped. On success the rows are activated, prior committed versions of the same
  * logical period are superseded, and the batch flips to 'committed'.
+ *
+ * Refusals (all leave the batch pending-review and every ledger row untouched):
+ *  - not found / not pending-review / no ledger rows;
+ *  - reason 'newer-version-committed': a NEWER ARRIVAL (higher import id) for the same property and period is
+ *    already committed, so approving this older one would supersede it and serve older data (reject it instead);
+ *  - unmapped accounts remain (`unmapped` lists them);
+ *  - reason 'sign-undecidable': ingest held the batch with no sign flip applied and the reviewer has not yet
+ *    marked the sign-undecidable issue verified.
  *
  * Re-resolution of SEED/learned mappings is CONSTRAINED to each row's EXISTING classification side
  * (derived via classificationSide). The ledger does not store the source section, but it DOES store
@@ -59,11 +69,32 @@ interface BatchRow {
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
   const batch = db
-    .prepare('SELECT id, property_id, period_start, period_end, status FROM import_batches WHERE id=?')
+    .prepare('SELECT id, property_id, period_start, period_end, status, version FROM import_batches WHERE id=?')
     .get(importId) as BatchRow | undefined;
   if (!batch) return { ok: false, unmapped: [], error: `import ${importId} not found` };
   if (batch.status !== 'pending-review') {
     return { ok: false, unmapped: [], error: `import is ${batch.status}, not pending-review` };
+  }
+
+  // Supersede guard. Approving commits this batch and supersedes EVERY committed version of the same period. If a
+  // NEWER arrival is already committed, that would replace newer data with older data, so refuse before asking the
+  // reviewer to map accounts or verify signs for a batch that can never be approved. Reject it instead; the newer
+  // import stays served. (An older batch can still be approved while the newer one is only pending.) Same key the
+  // supersede below uses: this batch's stored property/period.
+  const newerCommitted = newerCommittedImport(db, importId, {
+    propertyId: batch.property_id,
+    periodStart: batch.period_start,
+    periodEnd: batch.period_end,
+  });
+  if (newerCommitted !== null) {
+    return {
+      ok: false,
+      unmapped: [],
+      reason: 'newer-version-committed',
+      error:
+        `a newer version (v${newerCommitted.version}, import #${newerCommitted.id}) of this period is already committed; approving this older ` +
+        `import (v${batch.version}, #${importId}) would supersede it and serve older data. Reject this import — the newer version stays.`,
+    };
   }
 
   const rows = db
