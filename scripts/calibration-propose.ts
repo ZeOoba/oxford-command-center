@@ -124,7 +124,7 @@ function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
 /** Ledger rows that stand in for a quote with no identified vendor on the same scope: a real quote may replace one (promote --supersedes). */
 function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string {
   const ids = placeholdersFor(ledger, { property: q.propertyLabel, component: q.component }, registerPropertyKey).map((o) => o.obs_id);
-  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> (repeat for each); promote refuses a counted row beside a live placeholder otherwise.`;
+  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> (repeat for each); otherwise promote refuses a counted row beside them (a separate document needs --allow-beside-placeholder).`;
 }
 
 /** The register's alias rules ("3520 E. Fulton St", "E Fulton bldg") → one property key. */

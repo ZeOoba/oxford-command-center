@@ -639,7 +639,7 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
       expect(isPlaceholder(v('Unknown Roofing Co'))).toBe(false); // a real firm whose name starts with "Unknown"
     });
 
-    it('round 4: no promote order ever leaves a counting placeholder beside a counting real quote for one scope', () => {
+    it('rounds 4-5: no promote order of {range low, range high, real year-only quote, Unknown-vendor quote} ever counts one document twice', () => {
       const LOWID = 'banwick:roof_epdm:quote-low:2026';
       const HIGHID = 'banwick:roof_epdm:quote-high:2026';
       const without = ledger.filter((o) => o.obs_id !== LOWID && o.obs_id !== HIGHID);
@@ -647,10 +647,13 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
         const { added_at: _a, ...rest } = o;
         return { ...rest, proposed_at: '2026-10-15', proposed_from: 't' };
       };
-      const items = [asProposal(ledger.find((o) => o.obs_id === LOWID)!), asProposal(ledger.find((o) => o.obs_id === HIGHID)!), real('Acme Roofing Co', '2026', 'banwick:roof_epdm:acme-roofing:2026')];
+      const items = [
+        asProposal(ledger.find((o) => o.obs_id === LOWID)!), asProposal(ledger.find((o) => o.obs_id === HIGHID)!),
+        real('Acme Roofing Co', '2026', 'banwick:roof_epdm:acme-roofing:2026'), real('Unknown vendor', '2026-06-15', 'banwick:roof_epdm:unknown-vendor:2026-06-15'),
+      ];
       const perms = (xs: CalibrationProposal[]): CalibrationProposal[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r) => [x, ...r])));
       const orders = perms(items);
-      expect(orders).toHaveLength(6);
+      expect(orders).toHaveLength(24);
       for (const order of orders) {
         let l = without;
         for (const p of order) {
@@ -659,12 +662,25 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
         const retired = supersededMap(l);
         const counted = l.filter((o) => o.property === '2800-2826 Banwick' && includedInStats(o, retired));
         const label = order.map((p) => p.obs_id).join(' > ');
-        // Never a mix: either the placeholder range counts, or the real quote does — one quote document, one observation.
-        // Judged by the vendor itself, not by isPlaceholder (the predicate under test).
-        const unidentified = (o: { contractor_source: { vendor: string } }) => /^unidentified/i.test(o.contractor_source.vendor);
-        expect(counted.some(unidentified) && counted.some((o) => !unidentified(o)), label).toBe(false);
-        expect(counted.length, label).toBeGreaterThan(0);
+        // One quote document, one observation: what counts is EITHER exactly one real quote OR exactly one vendor-less
+        // stand-in, where the hand-entered range pair (same 'Unidentified' stem, same date) is one stand-in.
+        // Judged from the vendor strings themselves, not by isPlaceholder (the predicate under test).
+        const kinds = new Set(counted.map((o) => {
+          const v = o.contractor_source.vendor;
+          return /^unidentified/i.test(v) ? `range@${o.contractor_source.doc_date}` : /^unknown vendor$/i.test(v.trim()) ? `unknown:${o.obs_id}` : `real:${o.obs_id}`;
+        }));
+        expect(kinds.size, `${label} -> ${[...kinds].join(', ')}`).toBe(1);
       }
+    });
+
+    it("round 5: an 'Unknown vendor' quote is refused beside the committed 'Unidentified roofer' range (not a range partner)", () => {
+      const unknown = real('Unknown vendor', '2026-06-15', 'banwick:roof_epdm:unknown-vendor:2026-06-15');
+      expect(() => promoteProposal(ledger, [unknown], unknown.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder.*quote-(low|high):2026/);
+      expect(() => promoteProposal(ledger, [unknown], unknown.obs_id, '2026-10-15', ['banwick:roof_epdm:quote-low:2026', 'banwick:roof_epdm:quote-high:2026'], { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it("round 5: isPlaceholder trims both alternatives (' Unidentified roofer' is still a placeholder)", () => {
+      expect(isPlaceholder({ contractor_source: { ...low.contractor_source, vendor: '  Unidentified roofer' } })).toBe(true);
     });
 
     it("round 4: a quote first proposed as 'Unknown vendor' blocks the same quote later promoted under its real vendor", () => {
@@ -699,8 +715,10 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
       // Replacing the placeholders is the intended path; the count stays at 3 (2 placeholders out, 1 real quote in).
       const done = promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', ['banwick:roof_epdm:quote-low:2026', 'banwick:roof_epdm:quote-high:2026'], { propertyKeyOf: keyOf });
       expect(aggregateByComponent(done.ledger).find((a) => a.component === 'roof_epdm')).toMatchObject({ n: 2, tier: 'LIMITED' });
-      // An explicit override still exists for a genuinely separate scope.
-      expect(() => promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowDuplicateDocument: true })).not.toThrow();
+      // An explicit, placeholder-specific override still exists for a genuinely separate document.
+      expect(() => promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowBesidePlaceholder: true })).not.toThrow();
+      // Round 5: the same-document override does NOT also switch off the placeholder guard.
+      expect(() => promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowDuplicateDocument: true })).toThrow(/placeholder/);
     });
 
     it('a row that does not count (no qty) may be promoted beside a placeholder — it adds nothing to n', () => {
@@ -718,7 +736,7 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     const LOW = 'banwick:roof_epdm:quote-low:2026';
     const HIGH = 'banwick:roof_epdm:quote-high:2026';
     const promote = (l: typeof ledger, p: CalibrationProposal, sup?: string[], allow = false) =>
-      promoteProposal(l, [p], p.obs_id, '2026-10-15', sup, { propertyKeyOf: keyOf, allowDuplicateDocument: allow });
+      promoteProposal(l, [p], p.obs_id, '2026-10-15', sup, { propertyKeyOf: keyOf, allowBesidePlaceholder: allow });
 
     it('round 3: superseding only ONE of the placeholder pair is refused (the other would keep counting)', () => {
       const acme = real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme:2026-06-01');
