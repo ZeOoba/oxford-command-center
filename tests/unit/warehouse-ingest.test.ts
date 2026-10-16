@@ -1,9 +1,10 @@
 // tests/unit/warehouse-ingest.test.ts
 import ExcelJS from 'exceljs';
-import { copyFileSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { approveImport } from '../../server/warehouse/actions';
 import { openWarehouse } from '../../server/warehouse/db';
 import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
@@ -618,6 +619,137 @@ describe('parser-version re-ingest (self-healing backfill)', () => {
     const r3 = await ingestFile(db, fileB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
     expect(r3.status).toBe('duplicate'); // superseded rows are historical — never resurrected
     expect((db.prepare('SELECT status FROM import_batches WHERE id = ?').get(v1Id) as { status: string }).status).toBe('superseded');
+  });
+
+  it('a stale re-derive of an OLDER pending-review version must NOT auto-commit over a NEWER committed version (it stays pending, flagged stale-version)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileA);
+    mkdirSync(join(dir, 'older'));
+    const fileB = join(dir, 'older', 'P&L 2025 -- 1100 Rarig.xlsx'); // same P&L filename, other directory
+    copyFileSync(fileA, fileB); // fileB keeps v1's exact bytes (fileA is edited below)
+    // v1 held in review (high threshold), then a corrected export commits as v2
+    const r1 = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+    expect(r1.status).toBe('pending-review');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fileA);
+    wb.worksheets[0]!.getCell('D6').value = 110000;
+    await wb.xlsx.writeFile(fileA);
+    const r2 = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+    expect(r2.status).toBe('committed');
+    expect(r2.version).toBe(2);
+
+    // parser bumps: v1 (pending) is stale and re-presented at a normal threshold, where it would qualify to commit
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(r1.importId);
+    const r3 = await ingestFile(db, fileB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r3.importId).toBe(r1.importId); // re-derived in place
+    expect(r3.status).toBe('pending-review'); // NOT committed
+    expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(r2.importId)).toMatchObject({ status: 'committed' });
+    expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(r1.importId)).toMatchObject({ status: 'pending-review' });
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(r2.importId) as { c: number }).c).toBe(3);
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(r1.importId) as { c: number }).c).toBe(0);
+    const flagged = db.prepare("SELECT severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'stale-version' AND status = 'open'").all(r1.importId) as Array<{ severity: string; detail: string }>;
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]!.severity).toBe('warn');
+    expect(flagged[0]!.detail).toContain('v2');
+  });
+
+  // refute wf_6ab6dbee-770: `version` is numbered per (property, period) at REGISTRATION, but a stale re-derive can rewrite
+  // a row's period/property in place while keeping that number. Comparing versions then crosses two counters, so ARRIVAL
+  // ORDER (id) is the ordering key, and the guard must use the same property/period key the supersede uses.
+  async function periodMovedScenario(olderVersionAfterMove: number) {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileA);
+    mkdirSync(join(dir, 'older'));
+    const fileOlder = join(dir, 'older', 'P&L 2025 -- 1100 Rarig.xlsx');
+    copyFileSync(fileA, fileOlder); // the OLDER export's exact bytes
+    const older = await ingestFile(db, fileOlder, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+    expect(older.status).toBe('pending-review');
+    // simulate an older parser that stored a different period_end and a version numbered in THAT bucket
+    db.prepare('UPDATE import_batches SET period_end = NULL, version = ?, parser_version = 0 WHERE id = ?').run(olderVersionAfterMove, older.importId);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fileA);
+    wb.worksheets[0]!.getCell('D6').value = 110000; // corrected export => the NEWER arrival
+    await wb.xlsx.writeFile(fileA);
+    const newer = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+    expect(newer.status).toBe('committed'); // full-year bucket was empty => v1, commits
+    expect(newer.version).toBe(1);
+    return { db, dir, fileOlder, olderId: older.importId!, newerId: newer.importId! };
+  }
+
+  for (const [label, v] of [['TIED version (both v1)', 1], ['INVERTED version (older carries v3)', 3]] as const) {
+    it(`a stale re-derive that MOVES the period (${label}) must not let older data supersede the newer committed import`, async () => {
+      const { db, dir, fileOlder, olderId, newerId } = await periodMovedScenario(v);
+      const r = await ingestFile(db, fileOlder, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+      expect(r.importId).toBe(olderId); // re-derived in place, now in the full-year bucket
+      expect(r.status).toBe('pending-review'); // NOT committed
+      expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(newerId)).toMatchObject({ status: 'committed' });
+      expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(olderId)).toMatchObject({ status: 'pending-review' });
+      expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(newerId) as { c: number }).c).toBe(3);
+      expect((db.prepare("SELECT COUNT(*) c FROM data_quality_issues WHERE import_id = ? AND kind = 'stale-version' AND status = 'open'").get(olderId) as { c: number }).c).toBe(1);
+      // the approve path must agree (same ordering key), whatever the version numbers say
+      const refusal = approveImport(db, olderId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) expect(refusal.reason).toBe('newer-version-committed');
+      expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(newerId)).toMatchObject({ status: 'committed' });
+    });
+  }
+
+  it('the guard keys on the property the supersede uses (detected), not the stored property: a NULL-stored-property stale row cannot supersede', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileA);
+    mkdirSync(join(dir, 'older'));
+    const fileOlder = join(dir, 'older', 'P&L 2025 -- 1100 Rarig.xlsx');
+    copyFileSync(fileA, fileOlder);
+    const older = await ingestFile(db, fileOlder, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+    expect(older.status).toBe('pending-review');
+    db.prepare('UPDATE import_batches SET property_id = NULL, parser_version = 0 WHERE id = ?').run(older.importId);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fileA);
+    wb.worksheets[0]!.getCell('D6').value = 110000;
+    await wb.xlsx.writeFile(fileA);
+    const newer = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+    expect(newer.status).toBe('committed');
+    const r = await ingestFile(db, fileOlder, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r.importId).toBe(older.importId);
+    expect(r.status).toBe('pending-review'); // detected property = Rarig => the newer committed import is in its key
+    expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(newer.importId)).toMatchObject({ status: 'committed' });
+  });
+
+  it('a stale re-derive of the NEWEST pending version still commits and supersedes the older committed one (no regression)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileA);
+    const r1 = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r1.status).toBe('committed');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fileA);
+    wb.worksheets[0]!.getCell('D6').value = 110000;
+    await wb.xlsx.writeFile(fileA);
+    mkdirSync(join(dir, 'newer'));
+    const fileB = join(dir, 'newer', 'P&L 2025 -- 1100 Rarig.xlsx');
+    copyFileSync(fileA, fileB);
+    const r2 = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z', autoCommitThreshold: 0.99 });
+    expect(r2.status).toBe('pending-review'); // v2 held; v1 still committed
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(r2.importId);
+    const r3 = await ingestFile(db, fileB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r3.importId).toBe(r2.importId);
+    expect(r3.status).toBe('committed'); // newest version: allowed to supersede
+    expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(r1.importId)).toMatchObject({ status: 'superseded' });
   });
 });
 
