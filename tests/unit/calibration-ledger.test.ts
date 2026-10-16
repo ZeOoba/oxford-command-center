@@ -15,7 +15,9 @@ import {
   includedInStats,
   latestObservation,
   median,
+  normalizeVendor,
   pairKey,
+  sameQuoteDocument,
   parseLedger,
   parsePending,
   promoteProposal,
@@ -571,6 +573,46 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     expect(proposePairs([pcaLine], [fulton()], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(0);
     // ...but a different month from the same vendor is a different document.
     expect(proposePairs([pcaLine], [fulton({ docDate: '2026-06-02' })], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(1);
+  });
+
+  it.each([
+    ['R.D. Bean Inc', 'R. D. Bean, Inc.'],
+    ['R.D. Bean Inc', 'R D Bean'],
+    ['Able & Sons Roofing', 'Able and Sons Roofing Co.'],
+    ["O'Brien Roofing", 'OBrien Roofing LLC'],
+    ['Able Roofing', 'Able Roofing, Inc'],
+  ])('normalizeVendor treats %s and %s as one vendor', (a, b) => {
+    expect(normalizeVendor(a)).toBe(normalizeVendor(b));
+  });
+
+  it('normalizeVendor still separates genuinely different vendors', () => {
+    expect(normalizeVendor('Able Roofing')).not.toBe(normalizeVendor('Able Roofing Supply'));
+    expect(normalizeVendor('Co-op Roofing')).not.toBe(normalizeVendor('Roofing'));
+  });
+
+  it('the spaced-initials variant of the committed New Plant row is caught by propose and promote', () => {
+    const np: PcaLine = { ...pcaLine, propertyKey: 'new-plant' };
+    const q = fulton({ propertyKey: 'new-plant', propertyLabel: '55 New Plant Ct.', vendor: 'R. D. Bean, Inc.', docDate: '2017-02-03' });
+    const skipped: Array<{ keptObsId: string }> = [];
+    expect(proposePairs([np], [q], { ledger, pending: [] }, '2026-10-15', 't', (d) => skipped.push(d))).toHaveLength(0);
+    expect(skipped[0]!.keptObsId).toBe('new-plant:roof_epdm:rd-bean:2017-02');
+    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === 'new-plant:roof_epdm:rd-bean:2017-02')!;
+    const dup: CalibrationProposal = { ...base, obs_id: 'new-plant:roof_epdm:r-d-bean-inc:2017-02-03', property: '55 New Plant Ct.', contractor_source: { ...base.contractor_source, vendor: 'R. D. Bean, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document/);
+  });
+
+  it('promoteProposal refuses re-promoting a quote document whose ledger row was already superseded', () => {
+    const kept = ledger.find((o) => o.obs_id === KEPT)!;
+    const revision = { ...kept, obs_id: 'e-fulton:roof_epdm:able-roofing:2026-09-01', contractor_source: { ...kept.contractor_source, doc_date: '2026-09-01', source_date: '2026-09-01' }, supersedes: [KEPT] };
+    const withRevision = [...ledger, revision];
+    expect(supersededMap(withRevision).get(KEPT)).toBe(revision.obs_id);
+    const { added_at: _a, ...base } = kept;
+    const again: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:able-roofing-inc:2026-05-07', property: '3520 E. Fulton St', contractor_source: { ...base.contractor_source, vendor: 'Able Roofing, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(() => promoteProposal(withRevision, [again], again.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*2026-05/);
+  });
+
+  it('the committed ledger holds no two rows for one quote document (alias- and precision-aware)', () => {
+    for (const [i, a] of ledger.entries()) for (const b of ledger.slice(i + 1)) expect(sameQuoteDocument(a, b, keyOf), `${a.obs_id} vs ${b.obs_id}`).toBe(false);
   });
 
   it('a different vendor at the same property and date is still proposed', () => {

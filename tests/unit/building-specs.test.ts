@@ -21,6 +21,7 @@ import {
   formatSpecValue,
   projectRoofs,
   roofEulText,
+  roofProjectionKey,
   roofForecastText,
   roofRollup,
   roofTypeCategory,
@@ -591,5 +592,23 @@ describe('committed extraction data', () => {
     const ids = new Set(metas.map((m) => m.report_id));
     for (let i = 1; i <= 17; i += 1) expect(ids.has(`R${String(i).padStart(2, '0')}`)).toBe(true);
     for (const m of metas) if (m.status === 'UNREADABLE') expect(m.path_tried).toBeTruthy();
+  });
+});
+
+describe('roofProjectionKey (issue #474 LOW: one projection per install fact, not per group)', () => {
+  it('two install years in one scope-less section each find their own projection', () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: null, attribute: 'install_year', value: 1998, as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'install_year', value: '2012 (reported)', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 15, unit: 'years', as_of: '2025-10' }),
+      rawFact({ scope: null, attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    const projections = projectRoofs(f, 2026);
+    const index = new Map(projections.map((p) => [roofProjectionKey(p.propertyKey, p.reportId, p.scope, p.installYear), p]));
+    expect(index.size).toBe(2);
+    const old = f.find((x) => x.value === 1998)!;
+    const newer = f.find((x) => x.value === '2012 (reported)')!;
+    expect(index.get(roofProjectionKey(old.property, old.report_id, old.scope, old.value))).toMatchObject({ installYear: 1998, ageToday: 28 });
+    expect(index.get(roofProjectionKey(newer.property, newer.report_id, newer.scope, newer.value))).toMatchObject({ installYear: 2012, ageToday: 14 });
   });
 });
