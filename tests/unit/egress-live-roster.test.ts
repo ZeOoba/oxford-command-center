@@ -247,6 +247,16 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
 
 // ── AI agent ─────────────────────────────────────────────────────────────────────────────────────
 
+/** A counsel linked ONLY to the target deal: tools.ts withholds it once the deal is confidential
+ *  (an orphaned counsel name + market identifies the deal) — and its payload never names the deal. */
+const COUNTERPARTIES = [
+  {
+    id: 'cp-only', name: 'Marisol Vantreese', kind: 'counsel', firm: 'Vantreese Law', role: 'Seller counsel',
+    email: 'mv@vantreese.example', phone: null, market: 'Columbus OH', notes: null, source: 'memory',
+    links: { properties: [], loans: [], deals: ['d-target'], insurance: [] },
+  },
+];
+
 function makeSnap(target: Partial<Deal> = {}): PortfolioSnapshot {
   const snap = {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: new Date().toISOString(), source: 't', scenario: 'Base' },
@@ -258,7 +268,7 @@ function makeSnap(target: Partial<Deal> = {}): PortfolioSnapshot {
       { ...deal({ id: 'd-target', name: TARGET_NAME, shortName: TARGET_SHORT, owner: TARGET_OWNER, stage: 'LOI/PSA', market: 'Columbus OH', ...target }), flags: [] },
       { ...deal({ id: 'd-pub', name: 'Public Sentinel Deal', stage: 'Candidate', market: 'Cincinnati OH', nextAction: `Compare pricing against ${TARGET_SHORT}` }), flags: [] },
     ],
-    tasks: [], counterparties: [],
+    tasks: [], counterparties: COUNTERPARTIES,
     renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
   };
   return snap as unknown as PortfolioSnapshot;
@@ -338,16 +348,18 @@ describe('runAgent with the REAL agentEgressGuards (live roster file, synthetic)
     expect(events.some((e) => e.type === 'done')).toBe(false);
   });
 
-  it('a claim landing DURING a same-turn await (get_macro) blocks the get_deals result produced before it', async () => {
-    const { fetchMock } = scriptedModel([toolTurn(['toolu_1', 'get_deals'], ['toolu_2', 'get_macro'])]);
+  it('a claim landing DURING a same-turn await (get_macro) reaches get_deals even though get_deals came first', async () => {
+    const { bodies } = scriptedModel([toolTurn(['toolu_1', 'get_deals'], ['toolu_2', 'get_macro'])]);
     const events: AgentEvent[] = [];
     await runAgent({
       question: 'deals and rates?', snapshot: makeSnap(), apiKey: 'k', emit: (e) => void events.push(e),
       macroProvider: async () => { writeRoster(CLAIMING_ROSTER); return null; },
       ...agentEgressGuards(),
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(firstError(events)).toBeDefined();
+    // Awaited tools run first (wf_63d61f49-653), so get_deals is computed under the claim: withheld,
+    // not halted after the fact.
+    expect(bodies.slice(1).join('\n')).not.toContain(TARGET_NAME);
+    expect(toolResultFor(bodies[1]!, 'toolu_1')).toContain('Public Sentinel Deal');
   });
 
   it('search_documents passages naming a claimed deal never reach the API (no tool-layer filter covers them)', async () => {
@@ -538,6 +550,38 @@ describe('runAgent with the REAL agentEgressGuards (live roster file, synthetic)
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(events.at(-1)).toMatchObject({ type: 'done' });
+  });
+
+  // ── independent refute wf_63d61f49-653 ──
+
+  it.each([
+    ['spine tool first', [['toolu_1', 'get_relationships'], ['toolu_2', 'search_documents', '{"query":"om"}']]],
+    ['awaited tool first', [['toolu_1', 'search_documents', '{"query":"om"}'], ['toolu_2', 'get_relationships']]],
+  ] as const)('a claim landing during a same-turn await withholds the orphaned counterparty regardless of tool order (%s)', async (_label, uses) => {
+    const { bodies } = scriptedModel([toolTurn(...(uses as unknown as Array<[string, string, string?]>))]);
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question: 'who is counsel?', snapshot: makeSnap(), apiKey: 'k', emit: (e) => void events.push(e),
+      docSearch: async () => { writeRoster(CLAIMING_ROSTER); return [{ doc: 'notes.pdf', snippet: 'nothing relevant' }]; },
+      ...agentEgressGuards(),
+    });
+    const sentAfterClaim = bodies.slice(1).join('\n');
+    expect(sentAfterClaim).not.toContain('Vantreese');
+    expect(sentAfterClaim).not.toContain('Marisol');
+  });
+
+  it.each([
+    ['all-caps hyphen path', 'summarize MCKEE-RD_OM.pdf'],
+    ['lowercase folder', 'see mckee_rd folder'],
+  ])('a camelCase name is matched with and without the camel split (%s)', async (_label, question) => {
+    const { fetchMock } = scriptedModel([]);
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question, snapshot: makeSnap({ confidential: true, name: 'McKee Rd', shortName: null }), apiKey: 'k', emit: (e) => void events.push(e),
+      ...agentEgressGuards(),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(firstError(events)).toBeDefined();
   });
 
   it('a Safe Links URL pasted in the QUESTION naming a flagged deal is refused before any request', async () => {
