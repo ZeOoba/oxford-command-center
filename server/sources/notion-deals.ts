@@ -226,6 +226,9 @@ export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
   return out;
 }
 
+/** Alias of applyRosterOverride (the name the audit-W1 branch introduced; kept for its callers/tests). */
+export const rosterEnforce = applyRosterOverride;
+
 /**
  * Merge live Notion deals onto the seed, joining on the Notion Deal ID.
  *
@@ -268,10 +271,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   }
   const ambiguousSeedIds = new Set([...seedIdCounts].filter(([, n]) => n > 1).map(([id]) => id));
   for (const id of ambiguousSeedIds) {
+    // Count + opaque Deal ID only (refute round 6, G6): the seed names never reach a log sink.
     console.warn(
-      `[notion-deals] ${seedIdCounts.get(id)} seed rows claim Deal ID '${id}': ` +
-        seed.filter((s) => s.notionDealId === id).map((s) => `'${s.name}'`).join(', ') +
-        ' — none can claim the live row.',
+      `[notion-deals] ${seedIdCounts.get(id)} seed rows claim Deal ID '${id}' — none can claim the live row. ` +
+        `Find them by notionDealId in src/data/seed-deals.ts.`,
     );
     flags.push({
       entity: 'deals',
@@ -302,10 +305,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   }
   for (const id of collidingIds) {
     liveById.delete(id);
+    // Count + opaque Deal ID only (G6): these rows default confidential, so no name is logged.
     console.warn(
-      `[notion-deals] Deal ID collision on '${id}': ` +
-        notion.filter((d) => d.notionDealId === id).map((d) => `'${d.name}'`).join(', ') +
-        ' — all held out of the seed merge and defaulting confidential.',
+      `[notion-deals] Deal ID collision on '${id}': ${notion.filter((d) => d.notionDealId === id).length} live rows ` +
+        '— all held out of the seed merge and defaulting confidential.',
     );
     flags.push({
       entity: 'deals',
@@ -323,9 +326,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   if (idless.length > 0) {
     // ONE flag, not one per row: a deleted or renamed Deal ID property makes every row idless at
     // once, and twenty identical flags bury the cause. The count IS the diagnostic.
+    // Count only (G6): idless rows default confidential, so no name is logged.
     console.warn(
-      `[notion-deals] ${idless.length} live pipeline row(s) carry no Deal ID: ` +
-        idless.map((d) => `'${d.name}'`).join(', '),
+      `[notion-deals] ${idless.length} live pipeline row(s) carry no Deal ID — held out of the merge, defaulting ` +
+        `confidential. Filter the pipeline for an empty "${DEAL_ID_PROP}" to find them.`,
     );
     flags.push({
       entity: 'deals',
@@ -363,7 +367,8 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
 
     usedIds.add(s.notionDealId);
     if (!s.confidential && ACTIVE_STAGES.has(live.stage)) {
-      console.warn(`[notion-deals] seed staleness: ${s.id} is confidential:false but live stage is now '${live.stage}' — re-confirm the seed flag is still correct.`);
+      // The seed id is a slug of the deal name: a digest plus the opaque Deal ID instead (G6).
+      console.warn(`[notion-deals] seed staleness: seed (id digest ${keyDigest(s.id)}, Deal ID ${s.notionDealId}) is confidential:false but live stage is now '${live.stage}' — re-confirm the seed flag is still correct.`);
     }
     const pick = <T>(a: T, b: T): T => (a !== null && a !== undefined ? a : b);
     // A field named in the seed's estimatedFields stops being an estimate the moment a REAL live
@@ -484,10 +489,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     if (!key) continue;
     const matches = extras.filter((live) => dealJoinKey(live.name) === key);
     if (!matches.length) continue;
+    // Digest + opaque Deal IDs only (G6): the live side defaults confidential.
     console.warn(
-      `[notion-deals] MIGRATION GAP: seed '${s.name}' (Deal ID ${s.notionDealId ?? 'unset'}) looks like ` +
-        matches.map((m) => `'${m.name}' (${m.notionDealId ?? 'no id'})`).join(', ') +
-        ` — but they are not joined.`,
+      `[notion-deals] MIGRATION GAP: a seed (name digest ${keyDigest(key)}, Deal ID ${s.notionDealId ?? 'unset'}) looks like ` +
+        `${matches.length} live row(s) (${matches.map((m) => m.notionDealId ?? 'no id').join(', ')}) — but they are not joined.`,
     );
     flags.push({
       entity: 'deals',
@@ -499,8 +504,8 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
         `showing its own stale figures rather than the live ones. They were NOT merged: matching ` +
         `names are grounds to warn, never to merge. CONFIRM the rows are the same asset before ` +
         `acting — a bare street name repeats across metros, and copying an id for a false match ` +
-        `creates exactly the wrong merge this key exists to prevent. Both names are in the server ` +
-        `log, not here (these flags reach the public mirror). If they are the same asset, set ` +
+        `creates exactly the wrong merge this key exists to prevent. No name is logged or flagged ` +
+        `(these flags reach the public mirror); the live Deal IDs above locate the rows. If they are the same asset, set ` +
         `notionDealId on the matching row in src/data/seed-deals.ts (seed digest ${keyDigest(key)}).`,
       rawValue: matches[0]!.notionDealId ?? keyDigest(key),
       severity: 'warn',
@@ -520,8 +525,9 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   for (const s of seed) {
     if (!s.notionDealId || ambiguousSeedIds.has(s.notionDealId) || usedIds.has(s.notionDealId)) continue;
     const active = ACTIVE_STAGES.has(s.stage);
+    // Opaque Deal ID + stage only (G6): no seed name.
     console.warn(
-      `[notion-deals] DANGLING seed Deal ID ${s.notionDealId} on '${s.name}' (stage ${s.stage}) — ` +
+      `[notion-deals] DANGLING seed Deal ID ${s.notionDealId} (stage ${s.stage}) — ` +
         `no live pipeline row carries it.`,
     );
     flags.push({
@@ -564,9 +570,10 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   // independent duplicate-deal check at all. One function, two callers, so "same deal" is judged
   // identically in both and cannot drift the way the old joiner/detector split did.
   for (const { key, rows } of findDuplicateDealRows(published)) {
+    // Digest, count and opaque Deal IDs only (G6): never the names or the name-derived slug ids.
     console.warn(
-      `[notion-deals] DUPLICATE published rows for one name: ` +
-        rows.map((r) => `'${r.name}' (${r.notionDealId ?? 'no id'}, ${r.id})`).join(' | '),
+      `[notion-deals] DUPLICATE published rows for one name (digest ${keyDigest(key)}): ${rows.length} rows, ` +
+        `Deal IDs ${rows.map((r) => r.notionDealId ?? 'no id').join(', ')}.`,
     );
     flags.push({
       entity: 'deals',
@@ -579,8 +586,8 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
         `any seed record enriching from the ABANDONED row and publishing stale figures as if live. ` +
         `Fix the ids so the rows join; or, if these really are different assets sharing a bare ` +
         `street name, give each a "— City, ST" locality tail naming a DIFFERENT STATE in Notion — ` +
-        `same-state tails do not distinguish them here. Names are in the server log, not here ` +
-        `(these flags reach the public mirror).`,
+        `same-state tails do not distinguish them here. No name is logged or flagged (these flags ` +
+        `reach the public mirror); the Deal IDs above locate the rows.`,
       rawValue: keyDigest(key),
       severity: 'error',
     });
