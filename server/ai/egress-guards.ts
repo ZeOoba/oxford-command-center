@@ -12,9 +12,11 @@ import type { Deal } from '../../src/contracts/index';
 import type { OmExtractOptions } from '../warehouse/om-extract';
 import { rosterClaimsDeal, dealConfidentialForEgress, egressScan } from '../sources/deal-declassification';
 import { CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, type AgentOptions } from './agent';
+import { mentionsClaimedDeal } from './deal-name-gate';
 
-/** POST /api/ai. `dealClaimed` drives the per-tool-call tighten and the pre-request egress gate in
- *  runAgent; `confidentialScan` is the layer-2 text scan, placeholder-aware via egressScan. */
+/** POST /api/ai. `dealClaimed` drives runAgent's once-per-tool-turn tighten (taken after the turn's
+ *  awaited tools) and its pre-request deal-name gate; `confidentialScan` is the layer-2 text scan,
+ *  placeholder-aware via egressScan. */
 export function agentEgressGuards(): Pick<AgentOptions, 'dealClaimed' | 'confidentialScan'> {
   return {
     dealClaimed: rosterClaimsDeal,
@@ -45,19 +47,28 @@ export function resolveOmExtractEgress(
 ): { deal: Deal | undefined; guards: ReturnType<typeof omExtractEgressGuards> } {
   const hasDealId = typeof rawDealId === 'string' && rawDealId !== '';
   const deal = hasDealId ? snapshot?.deals.find((d) => d.id === rawDealId) : undefined;
-  return { deal, guards: omExtractEgressGuards(deal, hasDealId) };
+  return { deal, guards: omExtractEgressGuards(deal, hasDealId, snapshot) };
 }
 
 /** The guards for an already-resolved deal. `deal` is the row from the served snapshot (undefined for
- *  a blank-deal upload or an unresolved id); `hasDealId` says whether the client named one. */
+ *  a blank-deal upload or an unresolved id); `hasDealId` says whether the client named one;
+ *  `snapshot` is the served snapshot whose deals the OM text is checked against (#478 item 1). */
 export function omExtractEgressGuards(
   deal: Deal | undefined,
   hasDealId: boolean,
-): Pick<OmExtractOptions, 'dealConfidential' | 'dealLookupFailed' | 'confidentialScan'> {
+  snapshot: { deals: readonly Deal[] } | null | undefined,
+): Pick<OmExtractOptions, 'dealConfidential' | 'dealLookupFailed' | 'confidentialScan' | 'mentionsConfidentialDeal'> {
   return {
     // A live predicate, re-evaluated by extractOmFields right before its network call.
     dealConfidential: deal ? () => dealConfidentialForEgress(deal) === true : undefined,
     dealLookupFailed: hasDealId && !deal,
     confidentialScan: egressScan,
+    // The agent's deal-name rule over the OM body, against EVERY served deal: flagged ones, and ones
+    // the live roster claims (rosterClaimsDeal, asked at evaluation time — after the parse). With no
+    // snapshot the names cannot be checked, so it throws and extractOmFields refuses.
+    mentionsConfidentialDeal: (text) => {
+      if (!snapshot) throw new Error('brain snapshot unavailable — deal names cannot be checked');
+      return mentionsClaimedDeal(text, snapshot.deals, rosterClaimsDeal);
+    },
   };
 }

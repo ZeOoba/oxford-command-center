@@ -10,7 +10,8 @@
 // NEVER throws — always returns { narrative, degraded } in all failure paths.
 import { NarrativeBlock } from '../../src/contracts/briefing';
 import type { BriefingModel } from '../../src/contracts/briefing';
-import { assertNoConfidential, scanForConfidential } from '../briefing/confidential';
+import { scanForConfidential } from '../briefing/confidential';
+import { egressScan } from '../sources/deal-declassification';
 
 export const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -119,8 +120,12 @@ export async function composeNarrative(
     // just the subset: the model's text is a superset of the subset's, so this also catches a term
     // in a field the subset never forwards. Defense-in-depth — does not rely on the caller having
     // already run compose's assertNoConfidential (compose.ts) on the model.
+    //
+    // egressScan, not the raw scanner (#478): it also THROWS on the placeholder roster, so the
+    // CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER render-only concession never reaches an Anthropic send —
+    // the same rule /api/ai and OM extract follow. A hit or a throw degrades.
     try {
-      assertNoConfidential(model);
+      if (egressScan(model)) return DEGRADED;
     } catch {
       return DEGRADED;
     }
@@ -249,9 +254,10 @@ export async function composeLeaseNarrative(
       return DEGRADED;
     }
 
-    // Pre-send confidentiality guard — scan the full input object before any HTTP call.
+    // Pre-send confidentiality guard — scan the full input object before any HTTP call. egressScan
+    // (placeholder-aware) as in composeNarrative above; a hit or a throw degrades.
     try {
-      assertNoConfidential(data);
+      if (egressScan(data)) return DEGRADED;
     } catch {
       return DEGRADED;
     }
