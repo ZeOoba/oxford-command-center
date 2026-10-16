@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
 import { SEED_DEALS } from '../../src/data/seed-deals';
+import { keyDigest } from '../../server/sources/deal-name';
 
 // The join-key describes that used to live here — aliases, locality-suffix matching, collisions,
 // corroboration, and the four refute rounds' regressions — were retired with the name join on
@@ -161,7 +162,8 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
       [deal({ id: 'n1', name: 'Was Candidate', notionDealId: 'DEAL-31', stage: 'Due Diligence', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false); // flag unchanged
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('s1'));
+    // Refute round 6, G6: the seed id (a slug of the name) is logged as a digest, never verbatim.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(keyDigest('s1')));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Due Diligence'));
     warn.mockRestore();
   });

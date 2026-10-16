@@ -103,9 +103,11 @@ export interface AgentOptions {
    *
    * INJECTED, not imported, and that is load-bearing: server/briefing/confidential.ts reads the
    * roster off disk via node:fs/node:os, and this module must stay runtime-agnostic (it also runs in
-   * the Cloudflare Pages Function). Absent on the mirror → the tool-layer flag filter is the whole
-   * defense there, which is why that filter is keyed on the flag and not on the roster. Same
-   * injected-capability shape as docSearch / macroProvider.
+   * the Cloudflare Pages Function). When absent, this function scans NOTHING (neither the question
+   * and history nor tool results), so a caller that may egress must never pass it absent: the
+   * mirror (functions/api/ai.ts) refuses the request instead when it cannot build a scan (refute
+   * round 5, F2). The tool-layer flag filter is keyed on the flag, not the roster, for the same
+   * reason. Same injected-capability shape as docSearch / macroProvider.
    *
    * Signature matches scanForConfidential so the Node server can pass it straight through.
    *
