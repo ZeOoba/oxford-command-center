@@ -1,6 +1,7 @@
-import type { MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
-import { TOOL_DEFS, runTool, type EntityRefLite } from './tools';
+import type { Deal, MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
+import { TOOL_DEFS, runTool, type EntityRefLite, type ToolResult } from './tools';
 import { respond } from './respond';
+import { mentionsAnyTerm, scanTexts } from '../briefing/confidential-normalize';
 
 /**
  * Runtime-agnostic, streaming, tool-using agent over the company spine. One implementation
@@ -119,6 +120,189 @@ export interface AgentOptions {
    * behind a `context_requires_any` anchor in confidential-terms.json, not in `always`.
    */
   confidentialScan?: (value: unknown) => { dealLabel: string } | null;
+  /**
+   * Live per-deal roster verdict, evaluated before EVERY tool call (post-merge refute
+   * wf_e6ffdd97-245 on PR #470). `snapshot` is captured once per request, and its `confidential`
+   * flags only move when Brain's debounced roster recheck adopts a new snapshot object, which this
+   * run never sees. A deal this returns true for is handed to the tools as `confidential:true`, so
+   * every flag-keyed filter in tools.ts (confidentialScope, get_deals, search_entities, get_alerts)
+   * withholds it. A throw counts as claimed (fail closed). It is also re-asked immediately before
+   * EVERY request by the egress gate in the turn loop (mentionsClaimedDeal), which halts the run if
+   * the outbound payload names a claimed deal — the paths no flag filter covers.
+   *
+   * Injected for the same reason as confidentialScan: the roster lives on disk. Absent on the mirror,
+   * where the baked flag is the whole defense.
+   */
+  dealClaimed?: (deal: Deal) => boolean;
+}
+
+/** The snapshot a tool call sees: deals the live roster claims are tightened to confidential. Never
+ *  loosens a flag and never mutates the captured snapshot. */
+function tightenForToolCall(snapshot: PortfolioSnapshot, dealClaimed: AgentOptions['dealClaimed']): PortfolioSnapshot {
+  if (!dealClaimed) return snapshot;
+  const claimed = (d: Deal): boolean => {
+    try {
+      return dealClaimed(d);
+    } catch {
+      return true;
+    }
+  };
+  return { ...snapshot, deals: snapshot.deals.map((d) => (d.confidential || !claimed(d) ? d : { ...d, confidential: true })) };
+}
+
+/** True when the outbound payload names a deal that is confidential right now. Catches claims
+ *  anchored on fields the payload never carries, which a text scan of the payload cannot see.
+ *
+ *  - FULL name: every confidential deal, flagged or live-claimed (a throw counts as claimed).
+ *  - shortName: only deals the live roster claims but whose served flag is still false — the
+ *    stale-flag window this gate exists for. A FLAGGED deal's shortName is deliberately not checked:
+ *    the ratified tools.ts rule tolerates a shortName landing inside unrelated public data ("Easton"
+ *    inside "…, Easton MD"), and the flag-keyed tool filters already redact real residue. Gabriel,
+ *    2026-10-15, on refute wf_9509d62d-325.
+ *
+ *  A hit halts the whole run (like the layer-2 `always` terms). `payload` must be the egress view
+ *  (egressView), never the JSON-serialized messages: JSON.stringify turns a newline inside a name
+ *  into a literal backslash-n the normalizer cannot fold (wf_9509d62d-325, HIGH). */
+function mentionsClaimedDeal(payload: unknown, snapshot: PortfolioSnapshot, dealClaimed: NonNullable<AgentOptions['dealClaimed']>): boolean {
+  const live = tightenForToolCall(snapshot, dealClaimed).deals;
+  const names: string[] = [];
+  live.forEach((d, i) => {
+    if (!d.confidential) return;
+    if (d.name) names.push(d.name);
+    if (d.shortName && !snapshot.deals[i]!.confidential) names.push(d.shortName);
+  });
+  if (names.length === 0) return false;
+  // Both fold variants of every name, with and without the camelCase split, matched against both
+  // variants of the haystack: a split applied to only one side ("McKee" -> "mc kee" vs an all-caps
+  // or lowercase "MCKEE-RD") would otherwise miss (independent refute wf_63d61f49-653).
+  const folded = [...new Set(names.flatMap((n) => [foldSeparators(n, true), foldSeparators(n, false)]))].filter((n) => n.length > 0);
+  return scanTexts(payload).flatMap(withPercentDecoded).some((t) => {
+    if (mentionsAnyTerm(t, names)) return true;
+    // Separator-insensitive pass (wf_2e3ce239-ef6): mentionsAnyTerm folds only whitespace, so a name
+    // joined by '_' '-' '.' '/' — a deal-document path, ORA's own [DocType]_[Property]_[date] file
+    // names, a slug — or broken by a hyphenated line wrap slipped through. Local to this gate on
+    // purpose: the shared normalizer has a pinned Python twin.
+    return [foldSeparators(t, true), foldSeparators(t, false)].some((hay) => {
+      const hayCompact = hay.replace(/ /g, '');
+      return folded.some((n) => {
+        if (` ${hay} `.includes(` ${n} `)) return true;
+        const compact = n.replace(/ /g, '');
+        return compact.length >= FOLDED_COMPACT_MIN && hayCompact.includes(compact);
+      });
+    });
+  });
+}
+
+/** Shortest alnum-only name the compact (no-separator) pass may match; below this a bare substring
+ *  hit inside unrelated alphanumerics is too likely. */
+const FOLDED_COMPACT_MIN = 8;
+
+/** NFKD with combining marks stripped (accent-insensitive), optionally camelCase boundaries split
+ *  ("ElmPark" -> "Elm Park", for CamelCase file-name tokens), lowercase, then every run of
+ *  non-letter/non-digit characters folded to one space. Callers try BOTH split variants on names and
+ *  haystack. (wf_b777d74a-3c4, wf_63d61f49-653) */
+function foldSeparators(s: string, splitCamel: boolean): string {
+  const unmarked = s.normalize('NFKD').replace(/\p{M}/gu, '');
+  return (splitCamel ? unmarked.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2') : unmarked)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/** Max percent-decode passes: one per nesting level of URL-in-URL encoding (Outlook Safe Links wraps
+ *  a SharePoint link, so spaces arrive as %2520), bounded so a pathological input cannot loop. */
+const PERCENT_DECODE_PASSES = 3;
+
+/** Every form of the text the gate must check: the text itself, each successive percent-decoded form
+ *  (SharePoint/OneDrive links, %20 download names, Safe Links' %2520 — the hex digits otherwise
+ *  survive separator folding; wf_b777d74a-3c4, wf_0ac4e51b-97a), and for each, a de-hyphenated form
+ *  that rejoins a word split by a hyphenated line wrap ("Zor-\nvane"). */
+function withPercentDecoded(t: string): string[] {
+  const out = [t];
+  let cur = t;
+  for (let i = 0; i < PERCENT_DECODE_PASSES && /%[0-9A-Fa-f]{2}/.test(cur); i++) {
+    const next = cur.replace(/(?:%[0-9A-Fa-f]{2})+/g, decodeEscapeRun);
+    if (next === cur) break;
+    out.push(next);
+    cur = next;
+  }
+  for (const v of [...out]) {
+    const joined = v.replace(/(\p{L})-\s+(\p{L})/gu, '$1$2');
+    if (joined !== v) out.push(joined);
+  }
+  return out;
+}
+
+/** Decodes one run of %XX escapes. Valid UTF-8 sequences decode; a byte that cannot (a stray %FF)
+ *  becomes a space — a separator — so it can never glue itself onto a neighboring word and hide it. */
+function decodeEscapeRun(run: string): string {
+  try {
+    return decodeURIComponent(run);
+  } catch {
+    const esc = run.match(/%[0-9A-Fa-f]{2}/g) ?? [];
+    let s = '';
+    for (let i = 0; i < esc.length; ) {
+      let took = 0;
+      for (let n = Math.min(4, esc.length - i); n >= 1 && !took; n--) {
+        try {
+          s += decodeURIComponent(esc.slice(i, i + n).join(''));
+          took = n;
+        } catch {
+          /* try a shorter sequence */
+        }
+      }
+      if (!took) {
+        s += ' ';
+        took = 1;
+      }
+      i += took;
+    }
+    return s;
+  }
+}
+
+/** What the egress checks scan: `messages` with each tool_result's JSON `content` parsed back to the
+ *  value it serialized, so scans see real strings (real newlines, quotes) instead of JSON escapes.
+ *  Content that does not parse is kept as-is.
+ *
+ *  Opaque API tokens are dropped from the VIEW (wf_2e3ce239-ef6): a thinking `signature`, a
+ *  redacted_thinking `data` blob, tool_use `id` and tool_result `tool_use_id` are random base64/ids
+ *  the API minted, not content anyone wrote, and a case-insensitive scan can false-halt on them (on
+ *  the mirror too). Read-only: `messages` itself — tokens included — is what is sent. */
+function egressView(messages: ReadonlyArray<{ role: string; content: unknown }>): unknown {
+  return messages.map((m) => {
+    if (!Array.isArray(m.content)) return m;
+    return {
+      ...m,
+      content: (m.content as unknown[]).map((b) => {
+        const block = b as Record<string, unknown> | null;
+        if (!block || typeof block !== 'object') return b;
+        switch (block.type) {
+          case 'thinking': {
+            const { signature: _signature, ...rest } = block;
+            return rest;
+          }
+          case 'redacted_thinking':
+            return { type: 'redacted_thinking' };
+          case 'tool_use': {
+            const { id: _id, ...rest } = block;
+            return rest;
+          }
+          case 'tool_result': {
+            const { tool_use_id: _toolUseId, ...rest } = block;
+            if (typeof rest.content !== 'string') return rest;
+            try {
+              return { ...rest, content: JSON.parse(rest.content) as unknown };
+            } catch {
+              return rest;
+            }
+          }
+          default:
+            return b;
+        }
+      }),
+    };
+  });
 }
 
 /** Passages handed to the model per search_documents call. Was 5; with ~450 near-identical "option to renew"
@@ -308,6 +492,40 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
 
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
+      // EGRESS GATE (refute wf_fb398b02-494): checked HERE, immediately before every request, over the
+      // whole outbound payload — not only where a tool result is produced. A roster claim can land
+      // after a result was produced (during a same-turn await such as get_macro/search_documents), a
+      // result from before the claim is re-sent verbatim on every later turn, and search_documents
+      // passages / question / history never pass through the flag-keyed tool filters at all.
+      const view = egressView(messages);
+      if (opts.dealClaimed && mentionsClaimedDeal(view, snapshot, opts.dealClaimed)) {
+        await emit({
+          type: 'error',
+          message: 'Refusing to send: the conversation names a confidential deal. The request was stopped before reaching the API.',
+        });
+        return;
+      }
+      // Layer 2 again over everything accumulated, so a roster edit since a result was scanned is
+      // honored. Turn 0 is the question/history scan above. A throw propagates to the catch below,
+      // which passes CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE through (fails closed).
+      //
+      // The INPUTS only: user-role messages (question, tool results) plus ALL client-supplied history,
+      // whatever its role (wf_0ac4e51b-97a). Model-authored prose from this run (thinking, text,
+      // tool_use input) is derived from those inputs, and a substring scan over it false-halts clean
+      // runs on the mirror when a short flagged term sits inside an everyday word (wf_b777d74a-3c4).
+      // The deal-name gate above still reads the whole view.
+      if (turn > 0 && opts.confidentialScan) {
+        const inputs = messages.filter((m, i) => m.role === 'user' || i < history.length);
+        const hit = opts.confidentialScan(egressView(inputs));
+        if (hit) {
+          await emit({
+            type: 'error',
+            message: `Refusing to send: the conversation carries a confidential deal term (${hit.dealLabel}). The request was stopped before reaching the API.`,
+          });
+          return;
+        }
+      }
+
       const body = {
         model,
         stream: true, // SSE — callAnthropicStream parses `data:` frames; without this the API
@@ -337,28 +555,36 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
 
       if (stopReason !== 'tool_use') break;
 
-      // Execute every tool_use block; feed results back.
+      // Execute every tool_use block; feed results back (in the model's block order).
+      //
+      // TWO PHASES, so the outcome cannot depend on tool order (independent refute wf_63d61f49-653):
+      // the awaited tools (search_documents, get_macro) run FIRST; then every spine tool is computed
+      // from ONE tightened snapshot taken after the last await. Otherwise a spine result computed
+      // before a same-turn await reflects the pre-claim view and is sent anyway — and a result that
+      // identifies a deal without naming it (an orphaned counterparty) passes the name gate.
+      const toolUses = blocks.filter((b) => b && b.type === 'tool_use');
+      const awaited = new Map<(typeof toolUses)[number], ToolResult>();
+      for (const b of toolUses) {
+        if (b.name === 'search_documents' && opts.docSearch) {
+          // RAG: real document search on the server (injected); the spine tools don't have it.
+          const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
+          const passages = await opts.docSearch(q, DOC_SEARCH_PASSAGES);
+          awaited.set(b, { data: { count: passages.length, passages }, refs: [] });
+        } else if (b.name === 'get_macro' && opts.macroProvider) {
+          // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
+          // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
+          // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
+          // array. A hard failure (provider returns null) falls back to the stub message.
+          const macro = await opts.macroProvider().catch(() => null);
+          awaited.set(b, macro ? { data: summarizeMacro(macro), refs: [] } : runTool(b.name ?? '', snapshot, {}));
+        }
+      }
+      // No await from here to the next request: the live-roster view below is the one that egresses.
+      const live = tightenForToolCall(snapshot, opts.dealClaimed);
       const toolResults: unknown[] = [];
-      for (const b of blocks) {
-        if (b && b.type === 'tool_use') {
-          let result;
-          if (b.name === 'search_documents' && opts.docSearch) {
-            // RAG: real document search on the server (injected); the spine tools don't have it.
-            const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
-            const passages = await opts.docSearch(q, DOC_SEARCH_PASSAGES);
-            result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
-          } else if (b.name === 'get_macro' && opts.macroProvider) {
-            // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
-            // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
-            // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
-            // array. A hard failure (provider returns null) falls back to the stub message.
-            const macro = await opts.macroProvider().catch(() => null);
-            result = macro
-              ? { data: summarizeMacro(macro), refs: [] as EntityRefLite[] }
-              : runTool(b.name ?? '', snapshot, {});
-          } else {
-            result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
-          }
+      for (const b of toolUses) {
+        {
+          const result = awaited.get(b) ?? runTool(b.name ?? '', live, (b.input as Record<string, unknown>) ?? {});
           // Pre-send confidentiality guard (OI-225) — must fire BEFORE this result reaches
           // `messages`. Scans exactly what egresses (`result.data`); `refs` are rendered in our own
           // UI and never sent, so scanning them here would only produce false halts.
