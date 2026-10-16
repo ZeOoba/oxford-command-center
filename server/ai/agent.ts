@@ -1,7 +1,7 @@
 import type { Deal, MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
 import { TOOL_DEFS, runTool, type EntityRefLite, type ToolResult } from './tools';
 import { respond } from './respond';
-import { mentionsAnyTerm, scanTexts } from '../briefing/confidential-normalize';
+import { mentionsClaimedDeal, tightenDeals } from './deal-name-gate';
 
 /**
  * Runtime-agnostic, streaming, tool-using agent over the company spine. One implementation
@@ -121,14 +121,16 @@ export interface AgentOptions {
    */
   confidentialScan?: (value: unknown) => { dealLabel: string } | null;
   /**
-   * Live per-deal roster verdict, evaluated before EVERY tool call (post-merge refute
-   * wf_e6ffdd97-245 on PR #470). `snapshot` is captured once per request, and its `confidential`
-   * flags only move when Brain's debounced roster recheck adopts a new snapshot object, which this
-   * run never sees. A deal this returns true for is handed to the tools as `confidential:true`, so
-   * every flag-keyed filter in tools.ts (confidentialScope, get_deals, search_entities, get_alerts)
-   * withholds it. A throw counts as claimed (fail closed). It is also re-asked immediately before
-   * EVERY request by the egress gate in the turn loop (mentionsClaimedDeal), which halts the run if
-   * the outbound payload names a claimed deal — the paths no flag filter covers.
+   * Live per-deal roster verdict (post-merge refute wf_e6ffdd97-245 on PR #470). `snapshot` is
+   * captured once per request, and its `confidential` flags only move when Brain's debounced roster
+   * recheck adopts a new snapshot object, which this run never sees. Asked once per tool turn, after
+   * the turn's awaited tools (search_documents, get_macro) finish: every spine tool in that turn is
+   * computed from that ONE tightened snapshot, so a deal this returns true for reaches the tools as
+   * `confidential:true` and every flag-keyed filter in tools.ts (confidentialScope, get_deals,
+   * search_entities, get_alerts) withholds it, whatever the tool order (wf_63d61f49-653). A throw
+   * counts as claimed (fail closed). It is also re-asked immediately before EVERY request by the
+   * egress gate in the turn loop (mentionsClaimedDeal, server/ai/deal-name-gate.ts), which halts the
+   * run if the outbound payload names a claimed deal — the paths no flag filter covers.
    *
    * Injected for the same reason as confidentialScan: the roster lives on disk. Absent on the mirror,
    * where the baked flag is the whole defense.
@@ -136,129 +138,12 @@ export interface AgentOptions {
   dealClaimed?: (deal: Deal) => boolean;
 }
 
-/** The snapshot a tool call sees: deals the live roster claims are tightened to confidential. Never
+/** The snapshot the spine tools see: deals the live roster claims are tightened to confidential.
+ *  Taken once per tool turn, after the turn's last await (see the two-phase loop in runAgent). Never
  *  loosens a flag and never mutates the captured snapshot. */
 function tightenForToolCall(snapshot: PortfolioSnapshot, dealClaimed: AgentOptions['dealClaimed']): PortfolioSnapshot {
   if (!dealClaimed) return snapshot;
-  const claimed = (d: Deal): boolean => {
-    try {
-      return dealClaimed(d);
-    } catch {
-      return true;
-    }
-  };
-  return { ...snapshot, deals: snapshot.deals.map((d) => (d.confidential || !claimed(d) ? d : { ...d, confidential: true })) };
-}
-
-/** True when the outbound payload names a deal that is confidential right now. Catches claims
- *  anchored on fields the payload never carries, which a text scan of the payload cannot see.
- *
- *  - FULL name: every confidential deal, flagged or live-claimed (a throw counts as claimed).
- *  - shortName: only deals the live roster claims but whose served flag is still false — the
- *    stale-flag window this gate exists for. A FLAGGED deal's shortName is deliberately not checked:
- *    the ratified tools.ts rule tolerates a shortName landing inside unrelated public data ("Easton"
- *    inside "…, Easton MD"), and the flag-keyed tool filters already redact real residue. Gabriel,
- *    2026-10-15, on refute wf_9509d62d-325.
- *
- *  A hit halts the whole run (like the layer-2 `always` terms). `payload` must be the egress view
- *  (egressView), never the JSON-serialized messages: JSON.stringify turns a newline inside a name
- *  into a literal backslash-n the normalizer cannot fold (wf_9509d62d-325, HIGH). */
-function mentionsClaimedDeal(payload: unknown, snapshot: PortfolioSnapshot, dealClaimed: NonNullable<AgentOptions['dealClaimed']>): boolean {
-  const live = tightenForToolCall(snapshot, dealClaimed).deals;
-  const names: string[] = [];
-  live.forEach((d, i) => {
-    if (!d.confidential) return;
-    if (d.name) names.push(d.name);
-    if (d.shortName && !snapshot.deals[i]!.confidential) names.push(d.shortName);
-  });
-  if (names.length === 0) return false;
-  // Both fold variants of every name, with and without the camelCase split, matched against both
-  // variants of the haystack: a split applied to only one side ("McKee" -> "mc kee" vs an all-caps
-  // or lowercase "MCKEE-RD") would otherwise miss (independent refute wf_63d61f49-653).
-  const folded = [...new Set(names.flatMap((n) => [foldSeparators(n, true), foldSeparators(n, false)]))].filter((n) => n.length > 0);
-  return scanTexts(payload).flatMap(withPercentDecoded).some((t) => {
-    if (mentionsAnyTerm(t, names)) return true;
-    // Separator-insensitive pass (wf_2e3ce239-ef6): mentionsAnyTerm folds only whitespace, so a name
-    // joined by '_' '-' '.' '/' — a deal-document path, ORA's own [DocType]_[Property]_[date] file
-    // names, a slug — or broken by a hyphenated line wrap slipped through. Local to this gate on
-    // purpose: the shared normalizer has a pinned Python twin.
-    return [foldSeparators(t, true), foldSeparators(t, false)].some((hay) => {
-      const hayCompact = hay.replace(/ /g, '');
-      return folded.some((n) => {
-        if (` ${hay} `.includes(` ${n} `)) return true;
-        const compact = n.replace(/ /g, '');
-        return compact.length >= FOLDED_COMPACT_MIN && hayCompact.includes(compact);
-      });
-    });
-  });
-}
-
-/** Shortest alnum-only name the compact (no-separator) pass may match; below this a bare substring
- *  hit inside unrelated alphanumerics is too likely. */
-const FOLDED_COMPACT_MIN = 8;
-
-/** NFKD with combining marks stripped (accent-insensitive), optionally camelCase boundaries split
- *  ("ElmPark" -> "Elm Park", for CamelCase file-name tokens), lowercase, then every run of
- *  non-letter/non-digit characters folded to one space. Callers try BOTH split variants on names and
- *  haystack. (wf_b777d74a-3c4, wf_63d61f49-653) */
-function foldSeparators(s: string, splitCamel: boolean): string {
-  const unmarked = s.normalize('NFKD').replace(/\p{M}/gu, '');
-  return (splitCamel ? unmarked.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2') : unmarked)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
-}
-
-/** Max percent-decode passes: one per nesting level of URL-in-URL encoding (Outlook Safe Links wraps
- *  a SharePoint link, so spaces arrive as %2520), bounded so a pathological input cannot loop. */
-const PERCENT_DECODE_PASSES = 3;
-
-/** Every form of the text the gate must check: the text itself, each successive percent-decoded form
- *  (SharePoint/OneDrive links, %20 download names, Safe Links' %2520 — the hex digits otherwise
- *  survive separator folding; wf_b777d74a-3c4, wf_0ac4e51b-97a), and for each, a de-hyphenated form
- *  that rejoins a word split by a hyphenated line wrap ("Zor-\nvane"). */
-function withPercentDecoded(t: string): string[] {
-  const out = [t];
-  let cur = t;
-  for (let i = 0; i < PERCENT_DECODE_PASSES && /%[0-9A-Fa-f]{2}/.test(cur); i++) {
-    const next = cur.replace(/(?:%[0-9A-Fa-f]{2})+/g, decodeEscapeRun);
-    if (next === cur) break;
-    out.push(next);
-    cur = next;
-  }
-  for (const v of [...out]) {
-    const joined = v.replace(/(\p{L})-\s+(\p{L})/gu, '$1$2');
-    if (joined !== v) out.push(joined);
-  }
-  return out;
-}
-
-/** Decodes one run of %XX escapes. Valid UTF-8 sequences decode; a byte that cannot (a stray %FF)
- *  becomes a space — a separator — so it can never glue itself onto a neighboring word and hide it. */
-function decodeEscapeRun(run: string): string {
-  try {
-    return decodeURIComponent(run);
-  } catch {
-    const esc = run.match(/%[0-9A-Fa-f]{2}/g) ?? [];
-    let s = '';
-    for (let i = 0; i < esc.length; ) {
-      let took = 0;
-      for (let n = Math.min(4, esc.length - i); n >= 1 && !took; n--) {
-        try {
-          s += decodeURIComponent(esc.slice(i, i + n).join(''));
-          took = n;
-        } catch {
-          /* try a shorter sequence */
-        }
-      }
-      if (!took) {
-        s += ' ';
-        took = 1;
-      }
-      i += took;
-    }
-    return s;
-  }
+  return { ...snapshot, deals: tightenDeals(snapshot.deals, dealClaimed) };
 }
 
 /** What the egress checks scan: `messages` with each tool_result's JSON `content` parsed back to the
@@ -498,7 +383,7 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
       // result from before the claim is re-sent verbatim on every later turn, and search_documents
       // passages / question / history never pass through the flag-keyed tool filters at all.
       const view = egressView(messages);
-      if (opts.dealClaimed && mentionsClaimedDeal(view, snapshot, opts.dealClaimed)) {
+      if (opts.dealClaimed && mentionsClaimedDeal(view, snapshot.deals, opts.dealClaimed)) {
         await emit({
           type: 'error',
           message: 'Refusing to send: the conversation names a confidential deal. The request was stopped before reaching the API.',
@@ -583,29 +468,27 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
       const live = tightenForToolCall(snapshot, opts.dealClaimed);
       const toolResults: unknown[] = [];
       for (const b of toolUses) {
-        {
-          const result = awaited.get(b) ?? runTool(b.name ?? '', live, (b.input as Record<string, unknown>) ?? {});
-          // Pre-send confidentiality guard (OI-225) — must fire BEFORE this result reaches
-          // `messages`. Scans exactly what egresses (`result.data`); `refs` are rendered in our own
-          // UI and never sent, so scanning them here would only produce false halts.
-          //
-          // A hit means the tool-layer filter failed, so this HALTS the whole run rather than
-          // dropping the one result: `messages` accumulates and is re-sent in full on every
-          // subsequent turn, so continuing would ship the leak on the next request anyway.
-          const hit = opts.confidentialScan?.(result.data) ?? null;
-          if (hit) {
-            await emit({
-              type: 'error',
-              // Report the label only — never the matched term or the payload (don't widen the leak).
-              message:
-                `Refusing to send: a tool result carries a confidential deal term (${hit.dealLabel}). ` +
-                `The request was stopped before reaching the API.`,
-            });
-            return;
-          }
-          allRefs.push(...result.refs);
-          toolResults.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(result.data) });
+        const result = awaited.get(b) ?? runTool(b.name ?? '', live, (b.input as Record<string, unknown>) ?? {});
+        // Pre-send confidentiality guard (OI-225) — must fire BEFORE this result reaches
+        // `messages`. Scans exactly what egresses (`result.data`); `refs` are rendered in our own
+        // UI and never sent, so scanning them here would only produce false halts.
+        //
+        // A hit means the tool-layer filter failed, so this HALTS the whole run rather than
+        // dropping the one result: `messages` accumulates and is re-sent in full on every
+        // subsequent turn, so continuing would ship the leak on the next request anyway.
+        const hit = opts.confidentialScan?.(result.data) ?? null;
+        if (hit) {
+          await emit({
+            type: 'error',
+            // Report the label only — never the matched term or the payload (don't widen the leak).
+            message:
+              `Refusing to send: a tool result carries a confidential deal term (${hit.dealLabel}). ` +
+              `The request was stopped before reaching the API.`,
+          });
+          return;
         }
+        allRefs.push(...result.refs);
+        toolResults.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(result.data) });
       }
       if (toolResults.length === 0) break;
       messages.push({ role: 'user', content: toolResults });

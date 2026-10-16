@@ -473,3 +473,30 @@ describe('composeNarrative — confidentiality guards', () => {
     expect(result.narrative?.headline).toBe('Strong NOI Growth');
   });
 });
+
+// #478 (narrative placeholder carve-out): the pre-send check rides on egressScan, so the
+// CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER render-only concession never carries into an Anthropic send.
+describe('composeNarrative — placeholder roster fails closed before any request', () => {
+  it('degrades without calling fetch when the roster is the placeholder stand-in', async () => {
+    const priorPath = process.env.CONFIDENTIAL_TERMS_PATH;
+    const priorAllow = process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
+    process.env.CONFIDENTIAL_TERMS_PATH = join(mkdtempSync(join(tmpdir(), 'narr-placeholder-')), 'missing.json');
+    process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = '1';
+    try {
+      let called = false;
+      const trackingFetch: typeof fetch = async (...args) => {
+        called = true;
+        return mockFetch(VALID_AI_RESPONSE_TEXT)(...args);
+      };
+      const result = await composeNarrative(PROPERTY_MODEL, { apiKey: 'test-api-key', fetchImpl: trackingFetch });
+      expect(called).toBe(false);
+      expect(result.degraded).toBe(true);
+      expect(result.narrative).toBeNull();
+    } finally {
+      if (priorPath === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+      else process.env.CONFIDENTIAL_TERMS_PATH = priorPath;
+      if (priorAllow === undefined) delete process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
+      else process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = priorAllow;
+    }
+  });
+});
