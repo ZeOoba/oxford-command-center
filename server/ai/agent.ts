@@ -1,5 +1,5 @@
 import type { Deal, MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
-import { TOOL_DEFS, runTool, type EntityRefLite } from './tools';
+import { TOOL_DEFS, runTool, type EntityRefLite, type ToolResult } from './tools';
 import { respond } from './respond';
 import { mentionsAnyTerm, scanTexts } from '../briefing/confidential-normalize';
 
@@ -172,19 +172,23 @@ function mentionsClaimedDeal(payload: unknown, snapshot: PortfolioSnapshot, deal
     if (d.shortName && !snapshot.deals[i]!.confidential) names.push(d.shortName);
   });
   if (names.length === 0) return false;
-  const folded = names.map(foldSeparators).filter((n) => n.length > 0);
+  // Both fold variants of every name, with and without the camelCase split, matched against both
+  // variants of the haystack: a split applied to only one side ("McKee" -> "mc kee" vs an all-caps
+  // or lowercase "MCKEE-RD") would otherwise miss (independent refute wf_63d61f49-653).
+  const folded = [...new Set(names.flatMap((n) => [foldSeparators(n, true), foldSeparators(n, false)]))].filter((n) => n.length > 0);
   return scanTexts(payload).flatMap(withPercentDecoded).some((t) => {
     if (mentionsAnyTerm(t, names)) return true;
     // Separator-insensitive pass (wf_2e3ce239-ef6): mentionsAnyTerm folds only whitespace, so a name
     // joined by '_' '-' '.' '/' — a deal-document path, ORA's own [DocType]_[Property]_[date] file
     // names, a slug — or broken by a hyphenated line wrap slipped through. Local to this gate on
     // purpose: the shared normalizer has a pinned Python twin.
-    const hay = foldSeparators(t);
-    const hayCompact = hay.replace(/ /g, '');
-    return folded.some((n) => {
-      if (` ${hay} `.includes(` ${n} `)) return true;
-      const compact = n.replace(/ /g, '');
-      return compact.length >= FOLDED_COMPACT_MIN && hayCompact.includes(compact);
+    return [foldSeparators(t, true), foldSeparators(t, false)].some((hay) => {
+      const hayCompact = hay.replace(/ /g, '');
+      return folded.some((n) => {
+        if (` ${hay} `.includes(` ${n} `)) return true;
+        const compact = n.replace(/ /g, '');
+        return compact.length >= FOLDED_COMPACT_MIN && hayCompact.includes(compact);
+      });
     });
   });
 }
@@ -193,14 +197,13 @@ function mentionsClaimedDeal(payload: unknown, snapshot: PortfolioSnapshot, deal
  *  hit inside unrelated alphanumerics is too likely. */
 const FOLDED_COMPACT_MIN = 8;
 
-/** NFKD with combining marks stripped (accent-insensitive), camelCase boundaries split ("ElmPark" ->
- *  "Elm Park", for CamelCase file-name tokens), lowercase, then every run of non-letter/non-digit
- *  characters folded to one space. Applied identically to names and haystack. (wf_b777d74a-3c4) */
-function foldSeparators(s: string): string {
-  return s
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2')
+/** NFKD with combining marks stripped (accent-insensitive), optionally camelCase boundaries split
+ *  ("ElmPark" -> "Elm Park", for CamelCase file-name tokens), lowercase, then every run of
+ *  non-letter/non-digit characters folded to one space. Callers try BOTH split variants on names and
+ *  haystack. (wf_b777d74a-3c4, wf_63d61f49-653) */
+function foldSeparators(s: string, splitCamel: boolean): string {
+  const unmarked = s.normalize('NFKD').replace(/\p{M}/gu, '');
+  return (splitCamel ? unmarked.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2') : unmarked)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
@@ -552,29 +555,36 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
 
       if (stopReason !== 'tool_use') break;
 
-      // Execute every tool_use block; feed results back.
+      // Execute every tool_use block; feed results back (in the model's block order).
+      //
+      // TWO PHASES, so the outcome cannot depend on tool order (independent refute wf_63d61f49-653):
+      // the awaited tools (search_documents, get_macro) run FIRST; then every spine tool is computed
+      // from ONE tightened snapshot taken after the last await. Otherwise a spine result computed
+      // before a same-turn await reflects the pre-claim view and is sent anyway — and a result that
+      // identifies a deal without naming it (an orphaned counterparty) passes the name gate.
+      const toolUses = blocks.filter((b) => b && b.type === 'tool_use');
+      const awaited = new Map<(typeof toolUses)[number], ToolResult>();
+      for (const b of toolUses) {
+        if (b.name === 'search_documents' && opts.docSearch) {
+          // RAG: real document search on the server (injected); the spine tools don't have it.
+          const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
+          const passages = await opts.docSearch(q, DOC_SEARCH_PASSAGES);
+          awaited.set(b, { data: { count: passages.length, passages }, refs: [] });
+        } else if (b.name === 'get_macro' && opts.macroProvider) {
+          // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
+          // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
+          // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
+          // array. A hard failure (provider returns null) falls back to the stub message.
+          const macro = await opts.macroProvider().catch(() => null);
+          awaited.set(b, macro ? { data: summarizeMacro(macro), refs: [] } : runTool(b.name ?? '', snapshot, {}));
+        }
+      }
+      // No await from here to the next request: the live-roster view below is the one that egresses.
+      const live = tightenForToolCall(snapshot, opts.dealClaimed);
       const toolResults: unknown[] = [];
-      for (const b of blocks) {
-        if (b && b.type === 'tool_use') {
-          let result;
-          if (b.name === 'search_documents' && opts.docSearch) {
-            // RAG: real document search on the server (injected); the spine tools don't have it.
-            const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
-            const passages = await opts.docSearch(q, DOC_SEARCH_PASSAGES);
-            result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
-          } else if (b.name === 'get_macro' && opts.macroProvider) {
-            // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
-            // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
-            // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
-            // array. A hard failure (provider returns null) falls back to the stub message.
-            const macro = await opts.macroProvider().catch(() => null);
-            result = macro
-              ? { data: summarizeMacro(macro), refs: [] as EntityRefLite[] }
-              : runTool(b.name ?? '', snapshot, {});
-          } else {
-            // Re-ask the live roster for THIS call (dealClaimed above) — never the request-start flags.
-            result = runTool(b.name ?? '', tightenForToolCall(snapshot, opts.dealClaimed), (b.input as Record<string, unknown>) ?? {});
-          }
+      for (const b of toolUses) {
+        {
+          const result = awaited.get(b) ?? runTool(b.name ?? '', live, (b.input as Record<string, unknown>) ?? {});
           // Pre-send confidentiality guard (OI-225) — must fire BEFORE this result reaches
           // `messages`. Scans exactly what egresses (`result.data`); `refs` are rendered in our own
           // UI and never sent, so scanning them here would only produce false halts.
