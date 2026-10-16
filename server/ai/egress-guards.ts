@@ -10,7 +10,7 @@
 // flag alone, which lags a roster edit until Brain's debounced recheck runs (wf_e6ffdd97-245).
 import type { DataQualityFlag, Deal } from '../../src/contracts/index';
 import type { OmExtractOptions } from '../warehouse/om-extract';
-import { rosterClaimsDeal, dealConfidentialForEgress, egressScan } from '../sources/deal-declassification';
+import { rosterClaimChecker, syncPassRosterClaims, dealConfidentialForEgress, egressScan } from '../sources/deal-declassification';
 import { hasDealsPipelineFailure } from '../sources/notion-deals';
 import { CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, type AgentOptions } from './agent';
 import { mentionsClaimedDeal } from './deal-name-gate';
@@ -20,7 +20,8 @@ import { mentionsClaimedDeal } from './deal-name-gate';
  *  placeholder-aware via egressScan. */
 export function agentEgressGuards(): Pick<AgentOptions, 'dealClaimed' | 'confidentialScan'> {
   return {
-    dealClaimed: rosterClaimsDeal,
+    // One roster read per synchronous pass over the served deals, not one per deal (#478).
+    dealClaimed: syncPassRosterClaims(),
     // If the roster is absent/unreadable/placeholder the scan THROWS by design; runAgent's catch would
     // otherwise surface e.message, which embeds the roster's absolute path and the ALLOW_PLACEHOLDER
     // opt-out's name — fine on stderr, not in the browser's network tab. Log the detail server-side
@@ -69,7 +70,7 @@ export function omExtractEgressGuards(
     dealLookupFailed: hasDealId && !deal,
     confidentialScan: egressScan,
     // The agent's deal-name rule over the OM body, against EVERY served deal: flagged ones, and ones
-    // the live roster claims (rosterClaimsDeal, asked at evaluation time — after the parse). With no
+    // the live roster claims (rosterClaimChecker, asked at evaluation time — after the parse). With no
     // snapshot the names cannot be checked, so it throws and extractOmFields refuses. The same holds
     // for a snapshot whose deal list is known to be incomplete: during a Notion outage Brain serves
     // the seed-only pipeline with the deals/pipeline error flag, and a Notion-only confidential deal is
@@ -82,7 +83,7 @@ export function omExtractEgressGuards(
       if (hasDealsPipelineFailure(snapshot.dataQuality ?? [])) {
         throw new Error('Notion deals pipeline unavailable — the served deal list is incomplete, deal names cannot be checked');
       }
-      return mentionsClaimedDeal(text, snapshot.deals, rosterClaimsDeal);
+      return mentionsClaimedDeal(text, snapshot.deals, rosterClaimChecker()); // one roster read for every deal (#478)
     },
   };
 }
