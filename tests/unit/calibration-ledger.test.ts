@@ -15,8 +15,8 @@ import {
   includedInStats,
   latestObservation,
   median,
+  isPlaceholder,
   normalizeVendor,
-  pairKey,
   sameQuoteDocument,
   parseLedger,
   parsePending,
@@ -497,9 +497,8 @@ describe('committed seed data', () => {
   const read = (name: string) => JSON.parse(readFileSync(join(process.cwd(), 'data', 'calibration', name), 'utf-8')) as unknown;
   const ledger = parseLedger(read('observations.json'));
 
-  it('parses against the strict schema with unique obs_ids and no duplicate quote documents', () => {
+  it('parses against the strict schema with unique obs_ids (quote-document uniqueness: see the issue #474 block)', () => {
     expect(new Set(ledger.map((o) => o.obs_id)).size).toBe(ledger.length);
-    expect(new Set(ledger.map(pairKey)).size).toBe(ledger.length);
     expect(() => parsePending(read('calibration_pending.json'))).not.toThrow();
   });
 
@@ -611,8 +610,53 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     expect(() => promoteProposal(withRevision, [again], again.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*2026-05/);
   });
 
-  it('the committed ledger holds no two rows for one quote document (alias- and precision-aware)', () => {
-    for (const [i, a] of ledger.entries()) for (const b of ledger.slice(i + 1)) expect(sameQuoteDocument(a, b, keyOf), `${a.obs_id} vs ${b.obs_id}`).toBe(false);
+  it('the committed ledger + pending hold no two rows for one quote document (alias- and precision-aware) unless one supersedes the other', () => {
+    const rows = [...ledger, ...parsePending(read('calibration_pending.json'))];
+    for (const [i, a] of rows.entries()) {
+      for (const b of rows.slice(i + 1)) {
+        if (b.supersedes.includes(a.obs_id)) continue;
+        expect(sameQuoteDocument(a, b, keyOf), `${a.obs_id} vs ${b.obs_id}`).toBe(false);
+      }
+    }
+  });
+
+  describe('placeholder rows (unidentified vendor or year-only date) are guarded at promote', () => {
+    const low = ledger.find((o) => o.obs_id === 'banwick:roof_epdm:quote-low:2026')!;
+    const real = (vendor: string, date: string, id: string): CalibrationProposal => {
+      const { added_at: _a, ...base } = low;
+      return { ...base, obs_id: id, contractor_source: { ...base.contractor_source, vendor, doc_date: date, source_date: date }, proposed_at: '2026-10-15', proposed_from: 't' };
+    };
+
+    it('isPlaceholder recognises the committed Banwick range rows and nothing else', () => {
+      expect(ledger.filter(isPlaceholder).map((o) => o.obs_id).sort()).toEqual(['banwick:roof_epdm:quote-high:2026', 'banwick:roof_epdm:quote-low:2026']);
+    });
+
+    it('a real counted quote cannot be promoted next to its scope placeholders: roof_epdm never reaches USABLE by double counting', () => {
+      const acme = real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme:2026-06-01');
+      expect(() => promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder.*banwick:roof_epdm:quote-(high|low):2026/);
+      // Replacing the placeholders is the intended path; the count stays at 3 (2 placeholders out, 1 real quote in).
+      const done = promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', ['banwick:roof_epdm:quote-low:2026', 'banwick:roof_epdm:quote-high:2026'], { propertyKeyOf: keyOf });
+      expect(aggregateByComponent(done.ledger).find((a) => a.component === 'roof_epdm')).toMatchObject({ n: 2, tier: 'LIMITED' });
+      // An explicit override still exists for a genuinely separate scope.
+      expect(() => promoteProposal(ledger, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowDuplicateDocument: true })).not.toThrow();
+    });
+
+    it('a row that does not count (no qty) may be promoted beside a placeholder — it adds nothing to n', () => {
+      const noQty = { ...real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme-noqty:2026-06-01'), qty: null };
+      expect(() => promoteProposal(ledger, [noQty], noQty.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it('a placeholder pair (range low + high) can still be entered: a placeholder does not block another placeholder', () => {
+      const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === 'banwick:roof_epdm:quote-high:2026')!;
+      const without = ledger.filter((o) => o.obs_id !== 'banwick:roof_epdm:quote-high:2026');
+      const hi: CalibrationProposal = { ...base, proposed_at: '2026-10-15', proposed_from: 't' };
+      expect(() => promoteProposal(without, [hi], hi.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it('a placeholder on a different component does not block', () => {
+      const tpo = { ...real('Acme Roofing', '2026-06-01', 'banwick:roof_tpo:acme:2026-06-01'), component: 'roof_tpo' as const };
+      expect(() => promoteProposal(ledger, [tpo], tpo.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+    });
   });
 
   it('a different vendor at the same property and date is still proposed', () => {

@@ -21,6 +21,7 @@ import {
   supersededMap,
   CalibrationProposal,
   classifyComponent,
+  isPlaceholder,
   parseLedger,
   parsePending,
   sameQuoteDocument,
@@ -125,9 +126,9 @@ function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
 function placeholderNote(ledger: CalibrationObservation[], q: QuoteLine): string {
   const retired = supersededMap(ledger);
   const ids = ledger
-    .filter((o) => !retired.has(o.obs_id) && registerPropertyKey(o.property) === registerPropertyKey(q.propertyLabel) && o.component === q.component && (/^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date)))
+    .filter((o) => !retired.has(o.obs_id) && registerPropertyKey(o.property) === registerPropertyKey(q.propertyLabel) && o.component === q.component && isPlaceholder(o))
     .map((o) => o.obs_id);
-  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one and itself counts toward the stats, promote with --supersedes <obs_id> (repeat for each) so it is not counted twice.`;
+  return ids.length === 0 ? '' : ` Placeholder ledger rows exist for this scope (${ids.join(', ')}); if this quote replaces one, promote with --supersedes <obs_id> (repeat for each); promote refuses a counted row beside a live placeholder otherwise.`;
 }
 
 /** The register's alias rules ("3520 E. Fulton St", "E Fulton bldg") → one property key. */

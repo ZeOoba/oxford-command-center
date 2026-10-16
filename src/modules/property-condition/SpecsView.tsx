@@ -174,7 +174,7 @@ function RoofClockCard({ projections, labels }: { projections: RoofProjection[];
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-secondary)' }}>No roof install years in the current filter.</div>
       ) : (
-        <DataTable columns={ROOF_COLS} rows={rows} getRowId={(r) => `${r.propertyKey}|${r.reportId}|${r.scope ?? ''}`} initialSort={{ key: 'left', dir: 'asc' }} maxHeight={420} minWidth={720} />
+        <DataTable columns={ROOF_COLS} rows={rows} getRowId={(r) => roofProjectionKey(r.propertyKey, r.reportId, r.scope, r.installYear)} initialSort={{ key: 'left', dir: 'asc' }} maxHeight={420} minWidth={720} />
       )}
     </Card>
   );

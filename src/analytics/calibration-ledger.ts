@@ -298,6 +298,18 @@ export function promoteProposal(
     }
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
   }
+  // (A placeholder itself is exempt: a quote range is entered as a placeholder pair, low end and high end.)
+  if (!opts.allowDuplicateDocument && fields.supersedes.length === 0 && !isPlaceholder(fields) && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
+    // A placeholder stands in for an unidentified quote document on this scope; a real counted quote landing beside it
+    // would count that document twice (Banwick: n 3 -> 5, LIMITED -> USABLE). Replace it with --supersedes instead.
+    const stand = ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && o.component === fields.component && keyOf(o.property) === keyOf(fields.property));
+    if (stand.length > 0) {
+      throw new Error(
+        `calibration: "${obsId}" would count next to placeholder row(s) for the same scope (${stand.map((o) => o.obs_id).join(', ')}). ` +
+          'If it is the quote a placeholder stands in for, promote with --supersedes <placeholder obs_id> (repeat for each); if it is a separate document, pass --allow-duplicate-document',
+      );
+    }
+  }
   if (!opts.allowDuplicateDocument) {
     // Retired rows count too: a superseded document is history, and re-promoting it would count it next to its own revision.
     const twin = ledger.find((o) => !fields.supersedes.includes(o.obs_id) && sameQuoteDocument(o, fields, keyOf));
@@ -315,6 +327,10 @@ export function promoteProposal(
   }
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
 }
+
+/** A row standing in for an unidentified or undated quote (an "Unidentified roofer" range end, a year-only date). */
+export const isPlaceholder = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean =>
+  /^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date);
 
 // ── candidate-pair matching (pure; I/O lives in scripts/calibration-propose.ts) ──────────────
 
@@ -355,16 +371,11 @@ export function normalizeVendor(vendor: string): string {
 type QuoteDoc = Pick<CalibrationObservation, 'property' | 'contractor_source'>;
 
 /**
- * Identity of a priced quote document for de-duplication: property + vendor + document date. Neither component nor
- * unit price is part of the key — one quote document is one observation, however an auto-classifier labels its scope
- * and however its total divides out. Property and vendor are normalized (see `slugPropertyKey`, `normalizeVendor`).
- * Exact-date key only; `sameQuoteDocument` is the comparison that also matches a hand-written YYYY-MM / YYYY date.
+ * THE identity of a priced quote document for de-duplication: same property (by key), same normalized vendor, and dates
+ * that agree to the precision both state ("2026-05" matches "2026-05-07"). Neither component nor unit price is part of it —
+ * one quote document is one observation, however an auto-classifier labels its scope and however its total divides out.
+ * There is deliberately no string key: a precision-tolerant date match is not an equality, so callers compare pairwise.
  */
-export const pairKey = (o: QuoteDoc): string => documentKey(o, slugPropertyKey);
-export const documentKey = (o: QuoteDoc, propertyKeyOf: PropertyKeyOf): string =>
-  [propertyKeyOf(o.property), normalizeVendor(o.contractor_source.vendor), o.contractor_source.doc_date].join('|');
-
-/** Same property (by key), same normalized vendor, and dates that agree to the precision both state ("2026-05" matches "2026-05-07"). */
 export function sameQuoteDocument(a: QuoteDoc, b: QuoteDoc, propertyKeyOf: PropertyKeyOf = slugPropertyKey): boolean {
   const da = a.contractor_source.doc_date;
   const db = b.contractor_source.doc_date;
