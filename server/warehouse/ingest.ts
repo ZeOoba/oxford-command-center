@@ -4,7 +4,7 @@ import { detectFromFilename } from './detect';
 import type { WarehouseDb } from './db';
 import { resolveMapping, sectionSide } from './mapping';
 import { PARSER_VERSION, parseQbExcel } from './parse/qb-excel';
-import { registerImport } from './raw-store';
+import { newerCommittedImport, registerImport } from './raw-store';
 
 /** Thrown inside the ingest transaction to ROLL BACK a re-derive of a committed row that no longer
  *  qualifies for commit — preserving the prior committed data instead of emptying a served period. */
@@ -204,8 +204,16 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     }
     // An undecidable sign side fails closed: the 'sign-undecidable' DQ row says no flip was applied,
     // so committing would serve a possibly negative-booked side as-is. Route to review instead.
+    // An OLDER arrival must not commit over a NEWER committed one: the supersede below would replace newer data
+    // with older data (reachable when a stale pending-review import is re-derived). Keyed on the SAME property and
+    // period the supersede uses (the freshly detected ones), ordered by arrival. Hold it and say why.
+    const newerCommitted = newerCommittedImport(db, importId, { propertyId: det.propertyId, periodStart, periodEnd });
+    if (newerCommitted !== null) {
+      insIssue.run(importId, det.propertyId, 'stale-version',
+        `a newer version (v${newerCommitted.version}, import #${newerCommitted.id}) of this period is already committed; this older import cannot supersede it — reject it`, 'warn');
+    }
     const commit = insertedRows > 0 && det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0
-      && undecidableSides.length === 0;
+      && undecidableSides.length === 0 && newerCommitted === null;
     if (commit) {
       // supersede prior committed versions for the same logical period
       const priors = db.prepare(`
