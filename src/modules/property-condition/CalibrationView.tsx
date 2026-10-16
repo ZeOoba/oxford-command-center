@@ -189,7 +189,7 @@ export function CalibrationView({ ledger, pending }: { ledger: CalibrationObserv
         never blended into one benchmark and never used to overwrite one another. Tier is computed from n (THIN 1 · LIMITED
         2–4 · USABLE 5+); the mean appears only at n ≥ 5, and there is deliberately no portfolio-wide calibration factor.
         {pending.length > 0
-          ? ` ${pending.length} proposal${pending.length === 1 ? '' : 's'} await review in data/calibration/calibration_pending.json — promote with: npm run calibration:promote -- <obs_id>.`
+          ? ` ${pending.length} proposal${pending.length === 1 ? '' : 's'} await review in data/calibration/calibration_pending.json — promote with: npm run calibration:promote -- <obs_id> [--supersedes <obs_id>]... (a placeholder row it replaces must be superseded; see the script for the two override flags).`
           : ' No proposals are awaiting review (refresh with npm run calibration:propose).'}
       </p>
     </div>
