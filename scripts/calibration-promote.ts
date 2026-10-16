@@ -1,7 +1,7 @@
 // scripts/calibration-promote.ts
 //
 // The explicit human step that turns a reviewed proposal into a ledger observation:
-//   npm run calibration:promote -- <obs_id>
+//   npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>]... [--allow-duplicate-document] [--allow-beside-placeholder]
 // Append-only: the observation is added to data/calibration/observations.json and removed from
 // data/calibration/calibration_pending.json. Existing observations are never edited; a duplicate obs_id is refused, and so is
 // a second row for the same quote document (property / vendor / date) unless --allow-duplicate-document says it is a separate scope.

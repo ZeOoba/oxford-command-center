@@ -17,6 +17,8 @@ import {
   median,
   isPlaceholder,
   normalizeVendor,
+  placeholdersFor,
+  scopeFamily,
   sameQuoteDocument,
   parseLedger,
   parsePending,
@@ -677,6 +679,39 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
       const unknown = real('Unknown vendor', '2026-06-15', 'banwick:roof_epdm:unknown-vendor:2026-06-15');
       expect(() => promoteProposal(ledger, [unknown], unknown.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder.*quote-(low|high):2026/);
       expect(() => promoteProposal(ledger, [unknown], unknown.obs_id, '2026-10-15', ['banwick:roof_epdm:quote-low:2026', 'banwick:roof_epdm:quote-high:2026'], { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it('round 6: a range is a PAIR — a third same-date Unidentified row is refused beside the Banwick low/high', () => {
+      const third = real('Unidentified roofer (mid estimate)', '2026', 'banwick:roof_epdm:unidentified-mid:2026');
+      expect(() => promoteProposal(ledger, [third], third.obs_id, '2026-10-16', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder/);
+      const bare = real('Unidentified', '2026', 'banwick:roof_epdm:unidentified:2026');
+      expect(() => promoteProposal(ledger, [bare], bare.obs_id, '2026-10-16', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder/);
+    });
+
+    describe('round 6: scope families follow the classifier (seal_stripe is paving; a hand-entered "other" row meets every family)', () => {
+      const { added_at: _x, ...lowRest } = low;
+      const pavingPh = (vendor: string, id: string) =>
+        CalibrationObservation.parse({ ...lowRest, obs_id: id, property: '100 Main St', component: 'paving_overlay', unit: 'SF', contractor_source: { ...low.contractor_source, vendor, doc_date: '2026', source_date: '2026' }, added_at: '2026-10-01' });
+      const pavLedger = [pavingPh('Unidentified paver (low end)', 'main:paving_overlay:lo:2026'), pavingPh('Unidentified paver (high end)', 'main:paving_overlay:hi:2026')];
+      const realQuote = (component: 'seal_stripe' | 'other' | 'hvac', id: string): CalibrationProposal => ({ ...real('Able Paving', '2026-03-02', id), property: '100 Main St', component, unit: 'SF' });
+
+      it.each([['seal_stripe' as const], ['other' as const]])('a real %s quote is refused beside a paving_overlay placeholder range', (component) => {
+        const q = realQuote(component, `main:${component}:able-paving:2026-03-02`);
+        expect(() => promoteProposal(pavLedger, [q], q.obs_id, '2026-10-16', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder.*main:paving_overlay/);
+        expect(placeholdersFor(pavLedger, { property: '100 Main St', component }, keyOf).map((o) => o.obs_id).sort()).toEqual(['main:paving_overlay:hi:2026', 'main:paving_overlay:lo:2026']);
+      });
+
+      it('an unrelated family (hvac) at the same property is not blocked', () => {
+        const q = realQuote('hvac', 'main:hvac:able-paving:2026-03-02');
+        expect(() => promoteProposal(pavLedger, [q], q.obs_id, '2026-10-16', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+      });
+
+      it('scopeFamily is the one family function cost-seg also uses', () => {
+        expect(scopeFamily('seal_stripe')).toBe('paving');
+        expect(scopeFamily('paving_full_depth')).toBe('paving');
+        expect(scopeFamily('roof_other')).toBe('roof');
+        expect(scopeFamily('hvac')).toBe('hvac');
+      });
     });
 
     it("round 5: isPlaceholder trims both alternatives (' Unidentified roofer' is still a placeholder)", () => {

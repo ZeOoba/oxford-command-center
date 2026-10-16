@@ -312,7 +312,7 @@ const firstYear = (v: string | number | boolean): number | null => {
 const plainYears = (v: string | number | boolean): number | null => {
   if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : null;
   const m = /^\s*(\d{1,3})\s*(?:yrs?|years?)?\s*$/i.exec(String(v));
-  return m ? Number(m[1]) : null;
+  return m && Number(m[1]) > 0 ? Number(m[1]) : null; // '0' is not a stated life (same rule as the numeric branch)
 };
 
 export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProjection[] {

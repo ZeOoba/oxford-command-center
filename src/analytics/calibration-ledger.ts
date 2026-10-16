@@ -295,7 +295,7 @@ export function promoteProposal(
     if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${t}", which is not in the ledger`);
     // A mistyped target must not silently retire an unrelated observation, and a retired row is not retired twice.
     // A placeholder may be replaced across a classifier relabel inside one scope family (roof_other quote for roof_epdm range rows).
-    const sameScope = target.component === fields.component || (isPlaceholder(target) && scopeFamily(target.component) === scopeFamily(fields.component));
+    const sameScope = target.component === fields.component || (isPlaceholder(target) && placeholderScopeMatch(target.component, fields.component));
     if (!sameScope || target.unit !== fields.unit || keyOf(target.property) !== keyOf(fields.property)) {
       throw new Error(`calibration: "${t}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
     }
@@ -307,7 +307,7 @@ export function promoteProposal(
   // hand-entered range pair (isRangePartner); an 'Unknown vendor' register row is the very quote such a range stands in for.
   if (!opts.allowBesidePlaceholder && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
     const inScope = (o: CalibrationObservation): boolean =>
-      !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && scopeFamily(o.component) === scopeFamily(fields.component) && keyOf(o.property) === keyOf(fields.property);
+      !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && placeholderScopeMatch(o.component, fields.component) && keyOf(o.property) === keyOf(fields.property);
     // One predicate both ways (isPlaceholder), and only rows that count can conflict: a non-counting row adds nothing to n.
     const counts = (o: CalibrationObservation): boolean => exclusionFor(o, retired) === null;
     if (isPlaceholder(fields)) {
@@ -318,10 +318,15 @@ export function promoteProposal(
             'A placeholder stands in for a quote not yet on file; if it is a separate document, pass --allow-beside-placeholder',
         );
       }
-      const other = ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o) && !isRangePartner(o, fields));
+      // A range is a PAIR: a third same-date 'Unidentified' row beside two counting partners is one too many.
+      const partners = ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o) && isRangePartner(o, fields));
+      const other = [
+        ...ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o) && !isRangePartner(o, fields)),
+        ...(partners.length >= 2 ? partners : []),
+      ];
       if (other.length > 0) {
         throw new Error(
-          `calibration: placeholder "${obsId}" would count next to placeholder row(s) for the same scope (${other.map((o) => o.obs_id).join(', ')}) that are not its range partner. ` +
+          `calibration: placeholder "${obsId}" would count next to placeholder row(s) for the same scope (${other.map((o) => o.obs_id).join(', ')}) that are not its range partner (a range is one low/high pair). ` +
             'If it is the quote those rows stand in for, promote with --supersedes <placeholder obs_id> for EACH of them; if it is a separate document, pass --allow-beside-placeholder',
         );
       }
@@ -369,8 +374,16 @@ export const isRangePartner = (a: Pick<CalibrationObservation, 'contractor_sourc
   /^unidentified\b/i.test(a.contractor_source.vendor.trim()) && /^unidentified\b/i.test(b.contractor_source.vendor.trim()) &&
   a.contractor_source.doc_date === b.contractor_source.doc_date;
 
-/** Placeholder matching tolerates a classifier relabel: every roof_* is one family, every paving_* another. */
-export const scopeFamily = (c: CalibrationComponent): string => (c.startsWith('roof_') ? 'roof' : c.startsWith('paving_') ? 'paving' : c);
+/**
+ * Scope family, matching what classifyComponent can emit for one physical scope: every roof_* is 'roof'; paving_* and
+ * seal_stripe are 'paving'; anything else is its own family. THE family function — cost-seg's quantity bridge uses it too.
+ */
+export const scopeFamily = (c: CalibrationComponent): string =>
+  c.startsWith('roof_') ? 'roof' : c.startsWith('paving_') || c === 'seal_stripe' ? 'paving' : c;
+
+/** Placeholder matching: same family, or either side is the classifier's catch-all 'other' (it could be any scope). */
+export const placeholderScopeMatch = (a: CalibrationComponent, b: CalibrationComponent): boolean =>
+  a === 'other' || b === 'other' || scopeFamily(a) === scopeFamily(b);
 
 /** Live, counting placeholder rows standing in for a quote on this property + scope family (propose's note; the same rows promote's guard checks). */
 export function placeholdersFor(
@@ -380,7 +393,7 @@ export function placeholdersFor(
 ): CalibrationObservation[] {
   const retired = supersededMap(ledger);
   const key = propertyKeyOf(scope.property);
-  return ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && exclusionFor(o, retired) === null && scopeFamily(o.component) === scopeFamily(scope.component) && propertyKeyOf(o.property) === key);
+  return ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && exclusionFor(o, retired) === null && placeholderScopeMatch(o.component, scope.component) && propertyKeyOf(o.property) === key);
 }
 
 // ── candidate-pair matching (pure; I/O lives in scripts/calibration-propose.ts) ──────────────
