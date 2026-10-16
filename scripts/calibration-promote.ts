@@ -20,14 +20,16 @@ const write = (path: string, data: unknown): void => {
   renameSyncWithRetry(tmp, path);
 };
 
-/** `<obs_id> [--supersedes <id>]... [--allow-duplicate-document]` (also `--supersedes=<id>`). A missing value or an unknown flag is an error, never silently ignored. */
-export function parseArgs(argv: string[]): { obsId: string | undefined; supersedes: string[] | undefined; allowDuplicateDocument: boolean } | string {
+/** `<obs_id> [--supersedes <id>]... [--allow-duplicate-document] [--allow-beside-placeholder]` (also `--supersedes=<id>`). A missing value or an unknown flag is an error, never silently ignored. */
+export function parseArgs(argv: string[]): { obsId: string | undefined; supersedes: string[] | undefined; allowDuplicateDocument: boolean; allowBesidePlaceholder: boolean } | string {
   const supersedes: string[] = [];
   const positional: string[] = [];
   let allowDuplicateDocument = false;
+  let allowBesidePlaceholder = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
     if (a === '--allow-duplicate-document') allowDuplicateDocument = true;
+    else if (a === '--allow-beside-placeholder') allowBesidePlaceholder = true;
     else if (a === '--supersedes') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) return '--supersedes needs an obs_id';
@@ -40,7 +42,7 @@ export function parseArgs(argv: string[]): { obsId: string | undefined; supersed
     else positional.push(a);
   }
   if (positional.length > 1) return `unexpected extra argument "${positional[1]}"`;
-  return { obsId: positional[0], supersedes: supersedes.length > 0 ? supersedes : undefined, allowDuplicateDocument };
+  return { obsId: positional[0], supersedes: supersedes.length > 0 ? supersedes : undefined, allowDuplicateDocument, allowBesidePlaceholder };
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -49,16 +51,16 @@ async function main(argv: string[]): Promise<number> {
     console.error(`calibration-promote: ${parsed}`);
     return 1;
   }
-  const { obsId, supersedes, allowDuplicateDocument } = parsed;
+  const { obsId, supersedes, allowDuplicateDocument, allowBesidePlaceholder } = parsed;
   if (!obsId) {
-    console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>] [--allow-duplicate-document]   (see data/calibration/calibration_pending.json)');
+    console.error('usage: npm run calibration:promote -- <obs_id> [--supersedes <earlier_obs_id>] [--allow-duplicate-document] [--allow-beside-placeholder]   (see data/calibration/calibration_pending.json)');
     return 1;
   }
   try {
     // Lazy: the register's alias rules pull in exceljs, which the argument parser (and its test) never needs.
     const { registerPropertyKey } = await import('./calibration-propose');
     const today = new Date().toISOString().slice(0, 10);
-    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today, supersedes, { propertyKeyOf: registerPropertyKey, allowDuplicateDocument });
+    const result = promoteProposal(read(LEDGER_PATH, parseLedger), read(PENDING_PATH, parsePending), obsId, today, supersedes, { propertyKeyOf: registerPropertyKey, allowDuplicateDocument, allowBesidePlaceholder });
     write(LEDGER_PATH, result.ledger);
     write(PENDING_PATH, result.pending);
     console.log(`calibration-promote: ${obsId} appended to the ledger (${result.ledger.length} observations, ${result.pending.length} still pending).`);
