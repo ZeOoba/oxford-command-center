@@ -417,6 +417,15 @@ describe('review regressions', () => {
     expect(by('N')).toMatchObject({ eulAmbiguous: false, eulCandidates: [], eulMin: null, eulMax: null, yearsRemainingMax: null });
   });
 
+  it("round 6: an EUL of 0 (number or string '0') is not a stated life and never drives the projection", () => {
+    const f = stamp(CURRENT, [
+      rawFact({ scope: 'Z', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
+      rawFact({ scope: 'Z', attribute: 'eul', value: '0', as_of: '2025-10' }),
+      rawFact({ scope: 'Z', attribute: 'eul', value: 20, unit: 'years', as_of: '2025-10' }),
+    ]).facts;
+    expect(projectRoofs(f, 2026)[0]).toMatchObject({ eulCandidates: [20], eul: 20, eulAmbiguous: false, yearsRemaining: -5 });
+  });
+
   it('repeating the same report-wide EUL is not a conflict', () => {
     const f = stamp(CURRENT, [
       rawFact({ scope: 'Building A', attribute: 'install_year', value: 2001, as_of: '2025-10' }),
