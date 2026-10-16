@@ -13,7 +13,24 @@
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
 //   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
+//   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[]. See SCOPING below.
 // }})
+//
+// SCOPING A REVIEW OF A GUARD. When the change is a guard/gate on top of a mechanism with documented limits (a commit
+// gate over a sign detector; a supersede guard over restale-in-place re-derives), do NOT let the first round re-litigate
+// the mechanism. List its known limits in `outOfScope` and ask only "is the guard correct GIVEN these limits, and does it
+// make any of them newly reachable, newly silent, or worse?". Review the mechanism itself as its own change. Without
+// this, successive rounds each find the next layer of the same root cause (one supersede guard took three rounds).
+//
+// RECORDING THE RESULT. The result carries `clean` (every lens succeeded AND no real defect) and `lensCount`. A
+// `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true. A run with findings
+// you accept, or with failed lenses, must say so after the id (see ~/.claude/commands/ship.md, "Refute attestation").
+//
+// FINDING-SEVERITY LOOP RULE. Low findings: fix in the same pass. Medium or higher: stop and report to the owner before
+// another round, so the loop stays bounded and the owner decides whether to keep going, narrow the change, or split it.
+//
+// REVIEWER HYGIENE. Reviewers are told to remove any scratch worktree / node_modules junction they create (junction via
+// `cmd /c rmdir`, never a recursive delete through it) before finishing; check `git worktree list` after a run anyway.
 // There is deliberately ONE script: a forked "-opus" copy drifted (47 lines, two versions in circulation).
 // The result records which models ran (`models`, `modelFloorMet`) so a Refute-Reviewed attestation is auditable:
 // modelFloorMet is true for every accepted tier (both are at or above the Opus 5.5 floor); a lower model throws.
@@ -79,8 +96,21 @@ const effectiveFallback = fallbackModel || null
 
 phase('Refute')
 
+// Known limits of the mechanism under the change (optional). Injected into every lens prompt so reviewers judge the
+// change GIVEN them instead of re-reporting them. A wrong type throws rather than silently dropping the scoping.
+if (A.outOfScope !== undefined && A.outOfScope !== null && typeof A.outOfScope !== 'string' && !Array.isArray(A.outOfScope)) {
+  throw new Error('outOfScope must be a string or an array of strings (got ' + typeof A.outOfScope + ')')
+}
+const outOfScopeItems = [].concat(A.outOfScope ?? []).map((s) => String(s).trim()).filter(Boolean)
+const outOfScopeBlock = outOfScopeItems.length
+  ? '\n\nKNOWN LIMITS OF THE UNDERLYING MECHANISM (out of scope: do NOT report these as defects of this change). Judge whether THIS change is correct GIVEN these limits; report one only if this change makes it newly reachable, newly silent, or worse than before:\n' + outOfScopeItems.map((s) => '- ' + s).join('\n')
+  : ''
+// Clean-up duty (a reviewer once left a registered worktree and a node_modules junction behind). Deleting THROUGH a
+// junction deletes the real target, so the junction is removed with rmdir, never recursively.
+const hygiene = '\n\nCLEAN UP before you finish: if you created a scratch git worktree or a node_modules junction, remove the junction with `cmd /c rmdir <path>\\node_modules` (NEVER rm -rf or any recursive delete through it, which follows the link and deletes the real node_modules), then run `git worktree remove --force <path>`, and delete any probe files you wrote outside the repo. Leave the worktree you were pointed at exactly as you found it.'
+
 const base =
-  'You are a HOSTILE financial-systems reviewer for Oxford Realty Advisors (private family-office industrial real estate). BREAK the change below; do NOT bless it. This is NOI / capital-allocation / scoring code — a silent error mis-allocates real capital. Read the ACTUAL files at ' + repo + ' (use git diff for the uncommitted change). HARD CONSTRAINT (CLAUDE.md §9, applies in every checkout and worktree): NEVER open, query, or read the live warehouse or any other data/**/*.sqlite file (data/warehouse/finance.sqlite in particular) — not even read-only, not to "check the real data". To probe a trigger, build an in-memory database in a vitest/tsx script (better-sqlite3 :memory: + runMigrations) from source and migrations only. Set foundRealDefect=true ONLY for a CONCRETE, demonstrably-triggerable defect — not a style nit or a future wish; if you cannot construct a trigger, say so and lean false. ' + greenContext + '\n\nCHANGE SET:\n' + changeSet + '\n\nYOUR LENS: '
+  'You are a HOSTILE financial-systems reviewer for Oxford Realty Advisors (private family-office industrial real estate). BREAK the change below; do NOT bless it. This is NOI / capital-allocation / scoring code — a silent error mis-allocates real capital. Read the ACTUAL files at ' + repo + ' (use git diff for the uncommitted change). HARD CONSTRAINT (CLAUDE.md §9, applies in every checkout and worktree): NEVER open, query, or read the live warehouse or any other data/**/*.sqlite file (data/warehouse/finance.sqlite in particular) — not even read-only, not to "check the real data". To probe a trigger, build an in-memory database in a vitest/tsx script (better-sqlite3 :memory: + runMigrations) from source and migrations only. Set foundRealDefect=true ONLY for a CONCRETE, demonstrably-triggerable defect — not a style nit or a future wish; if you cannot construct a trigger, say so and lean false. ' + greenContext + hygiene + '\n\nCHANGE SET:\n' + changeSet + outOfScopeBlock + '\n\nYOUR LENS: '
 
 // 2026-10-05: governor/financial-code invariant floor is Opus 5.5 (CLAUDE.md Dispatch line; Fable
 // retired from dispatch). Opus is the canary-tested tier at the ~2-3-concurrent rate-limit ceiling
@@ -116,6 +146,7 @@ if (allFailed) {
 
 return {
   verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
+  lensCount: lenses.length, clean: succeeded.length === lenses.length && real.length === 0,
   models: { primary: primaryModel, fallback: effectiveFallback },
   modelFloorMet: TIERS.includes(primaryModel),
 }
