@@ -620,7 +620,7 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     }
   });
 
-  describe('placeholder rows (unidentified vendor or year-only date) are guarded at promote', () => {
+  describe('placeholder rows (no identified vendor) are guarded at promote', () => {
     const low = ledger.find((o) => o.obs_id === 'banwick:roof_epdm:quote-low:2026')!;
     const real = (vendor: string, date: string, id: string): CalibrationProposal => {
       const { added_at: _a, ...base } = low;
@@ -629,6 +629,68 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
 
     it('isPlaceholder recognises the committed Banwick range rows and nothing else', () => {
       expect(ledger.filter(isPlaceholder).map((o) => o.obs_id).sort()).toEqual(['banwick:roof_epdm:quote-high:2026', 'banwick:roof_epdm:quote-low:2026']);
+    });
+
+    it("round 4: one predicate — an unidentified vendor (incl. propose's own 'Unknown vendor' fallback) is a placeholder; a year-only date alone is not", () => {
+      const v = (vendor: string, doc_date = '2026-06-01') => ({ contractor_source: { ...low.contractor_source, vendor, doc_date } });
+      expect(isPlaceholder(v('Unidentified roofer (low end of quote range)'))).toBe(true);
+      expect(isPlaceholder(v('Unknown vendor'))).toBe(true);
+      expect(isPlaceholder(v('Acme Roofing', '2026'))).toBe(false);
+      expect(isPlaceholder(v('Unknown Roofing Co'))).toBe(false); // a real firm whose name starts with "Unknown"
+    });
+
+    it('round 4: no promote order ever leaves a counting placeholder beside a counting real quote for one scope', () => {
+      const LOWID = 'banwick:roof_epdm:quote-low:2026';
+      const HIGHID = 'banwick:roof_epdm:quote-high:2026';
+      const without = ledger.filter((o) => o.obs_id !== LOWID && o.obs_id !== HIGHID);
+      const asProposal = (o: (typeof ledger)[number]): CalibrationProposal => {
+        const { added_at: _a, ...rest } = o;
+        return { ...rest, proposed_at: '2026-10-15', proposed_from: 't' };
+      };
+      const items = [asProposal(ledger.find((o) => o.obs_id === LOWID)!), asProposal(ledger.find((o) => o.obs_id === HIGHID)!), real('Acme Roofing Co', '2026', 'banwick:roof_epdm:acme-roofing:2026')];
+      const perms = (xs: CalibrationProposal[]): CalibrationProposal[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r) => [x, ...r])));
+      const orders = perms(items);
+      expect(orders).toHaveLength(6);
+      for (const order of orders) {
+        let l = without;
+        for (const p of order) {
+          try { l = promoteProposal(l, [p], p.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf }).ledger; } catch { /* refused: the guard's job */ }
+        }
+        const retired = supersededMap(l);
+        const counted = l.filter((o) => o.property === '2800-2826 Banwick' && includedInStats(o, retired));
+        const label = order.map((p) => p.obs_id).join(' > ');
+        // Never a mix: either the placeholder range counts, or the real quote does — one quote document, one observation.
+        // Judged by the vendor itself, not by isPlaceholder (the predicate under test).
+        const unidentified = (o: { contractor_source: { vendor: string } }) => /^unidentified/i.test(o.contractor_source.vendor);
+        expect(counted.some(unidentified) && counted.some((o) => !unidentified(o)), label).toBe(false);
+        expect(counted.length, label).toBeGreaterThan(0);
+      }
+    });
+
+    it("round 4: a quote first proposed as 'Unknown vendor' blocks the same quote later promoted under its real vendor", () => {
+      const without = ledger.filter((o) => !o.obs_id.startsWith('banwick:'));
+      const unknown = real('Unknown vendor', '2026-06-01', 'banwick:roof_epdm:unknown-vendor:2026-06-01');
+      const l = promoteProposal(without, [unknown], unknown.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf }).ledger;
+      const named = real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme-roofing:2026-06-01');
+      expect(() => promoteProposal(l, [named], named.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/placeholder.*unknown-vendor/);
+      expect(() => promoteProposal(l, [named], named.obs_id, '2026-10-15', [unknown.obs_id], { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it('round 4: a non-counting placeholder does not block a real quote (it adds nothing to n)', () => {
+      const without = ledger.filter((o) => !o.obs_id.startsWith('banwick:'));
+      const { added_at: _a, ...lowRest } = low;
+      const noQtyPh = CalibrationObservation.parse({ ...lowRest, obs_id: 'banwick:roof_epdm:ph-noqty:2026', qty: null, added_at: '2026-10-01' });
+      const named = real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme-roofing:2026-06-01');
+      expect(() => promoteProposal([...without, noQtyPh], [named], named.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+    });
+
+    it('round 4: an identified year-only quote is a real quote, so a dated quote for another roof section is NOT steered into superseding it', () => {
+      const without = ledger.filter((o) => !o.obs_id.startsWith('banwick:'));
+      const acme = real('Acme Roofing', '2026', 'banwick:roof_epdm:acme-roofing:2026');
+      const l = promoteProposal(without, [acme], acme.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf }).ledger;
+      const beta = { ...real('Beta Roofing', '2026-04-02', 'banwick:roof_tpo:beta-roofing:2026-04-02'), component: 'roof_tpo' as const };
+      expect(() => promoteProposal(l, [beta], beta.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+      expect(() => promoteProposal(l, [beta], beta.obs_id, '2026-10-15', [acme.obs_id], { propertyKeyOf: keyOf })).toThrow(/different property \/ component/);
     });
 
     it('a real counted quote cannot be promoted next to its scope placeholders: roof_epdm never reaches USABLE by double counting', () => {

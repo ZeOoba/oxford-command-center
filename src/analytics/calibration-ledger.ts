@@ -307,8 +307,10 @@ export function promoteProposal(
   if (!opts.allowDuplicateDocument && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
     const inScope = (o: CalibrationObservation): boolean =>
       !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && scopeFamily(o.component) === scopeFamily(fields.component) && keyOf(o.property) === keyOf(fields.property);
-    if (isUnidentifiedVendor(fields)) {
-      const real = ledger.filter((o) => inScope(o) && !isPlaceholder(o) && exclusionFor(o, retired) === null);
+    // One predicate both ways (isPlaceholder), and only rows that count can conflict: a non-counting row adds nothing to n.
+    const counts = (o: CalibrationObservation): boolean => exclusionFor(o, retired) === null;
+    if (isPlaceholder(fields)) {
+      const real = ledger.filter((o) => inScope(o) && !isPlaceholder(o) && counts(o));
       if (real.length > 0) {
         throw new Error(
           `calibration: placeholder "${obsId}" would count next to real quote row(s) for the same scope (${real.map((o) => o.obs_id).join(', ')}). ` +
@@ -316,7 +318,7 @@ export function promoteProposal(
         );
       }
     } else {
-      const stand = ledger.filter((o) => inScope(o) && isPlaceholder(o));
+      const stand = ledger.filter((o) => inScope(o) && isPlaceholder(o) && counts(o));
       if (stand.length > 0) {
         throw new Error(
           `calibration: "${obsId}" would count next to placeholder row(s) for the same scope (${stand.map((o) => o.obs_id).join(', ')}). ` +
@@ -343,11 +345,14 @@ export function promoteProposal(
   return { ledger: [...ledger, promoted], pending: pending.filter((p) => p.obs_id !== obsId), promoted };
 }
 
-/** A row standing in for an unidentified or undated quote (an "Unidentified roofer" range end, a year-only date). */
+/**
+ * A row standing in for a quote whose vendor is not identified: a hand-entered "Unidentified roofer" range end, or the
+ * proposer's own "Unknown vendor" fallback for a register / Notion row with no Vendor. The ONE placeholder predicate, used in
+ * both directions of the promote guard, by the supersede exemption and by propose's note. A named vendor with a year-only
+ * date is a real quote (its imprecise date is handled by sameQuoteDocument's precision-tolerant match).
+ */
 export const isPlaceholder = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean =>
-  isUnidentifiedVendor(o) || /^\d{4}$/.test(o.contractor_source.doc_date);
-/** A row ENTERED as a placeholder (no identified vendor). An identified vendor with a year-only date is a real quote when promoted. */
-export const isUnidentifiedVendor = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean => /^unidentified/i.test(o.contractor_source.vendor);
+  /^unidentified\b/i.test(o.contractor_source.vendor) || /^unknown vendor$/i.test(o.contractor_source.vendor.trim());
 
 /** Placeholder matching tolerates a classifier relabel: every roof_* is one family, every paving_* another. */
 export const scopeFamily = (c: CalibrationComponent): string => (c.startsWith('roof_') ? 'roof' : c.startsWith('paving_') ? 'paving' : c);
