@@ -11,7 +11,8 @@
 //               before the network call (a claim can land during the PDF parse).
 //   AI agent:   tools saw a snapshot captured at request start, and the layer-2 text scan only sees
 //               emitted fields, so a claim anchored on an unemitted field (owner, lender) slipped
-//               through. Now: tools see a per-call tightened snapshot, AND a gate immediately before
+//               through. Now: each tool turn runs its awaited tools first, then computes every spine
+//               tool from ONE snapshot tightened after the last await, AND a gate immediately before
 //               EVERY request re-asks the roster and halts if the outbound payload names a claimed
 //               deal (search_documents passages, question/history, a claim landing during an await,
 //               an earlier tool result re-sent after the claim).
@@ -25,11 +26,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Deal, PortfolioSnapshot } from '../../src/contracts/index';
+import type { DataQualityFlag, Deal, PortfolioSnapshot } from '../../src/contracts/index';
 import { dealConfidentialForEgress, rosterClaimsDeal, egressScan } from '../../server/sources/deal-declassification';
 import { extractOmFields } from '../../server/warehouse/om-extract';
 import { runAgent, CONFIDENTIALITY_GUARD_UNAVAILABLE_MESSAGE, type AgentEvent } from '../../server/ai/agent';
-import { agentEgressGuards, omExtractEgressGuards, resolveOmExtractEgress } from '../../server/ai/egress-guards';
+import { agentEgressGuards, omExtractEgressGuards, resolveOmExtractEgress, type OmExtractSnapshot } from '../../server/ai/egress-guards';
 
 const TARGET_NAME = 'Quillfeather Flex Park';
 const TARGET_SHORT = 'Quillfeather';
@@ -126,7 +127,7 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
       apiKey: 'sk-test',
       fetchImpl: fetchImpl as unknown as typeof fetch,
       pdfParseFn: parse,
-      ...omExtractEgressGuards(d, hasDealId),
+      ...omExtractEgressGuards(d, hasDealId, { deals: d ? [d] : [] }),
     });
     return { p, fetchImpl };
   };
@@ -221,7 +222,7 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
     const r = await extractOmFields(Buffer.from('fake-pdf'), {
       apiKey: 'sk-test', fetchImpl: fetchImpl as unknown as typeof fetch,
       pdfParseFn: async () => ({ text: 'clean OM body' }),
-      ...omExtractEgressGuards(deal({ name: 'Public Sentinel Deal' }), true),
+      ...omExtractEgressGuards(deal({ name: 'Public Sentinel Deal' }), true, { deals: [deal({ name: 'Public Sentinel Deal' })] }),
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(r.ok).toBe(true);
@@ -242,6 +243,122 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.status).toBe(403);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  // ── #478 item 1: an OM naming a DIFFERENT confidential deal than the one the upload is tied to ──
+
+  describe('deal-name gate on the OM body (blank-deal / other-dealId uploads)', () => {
+    const okFetch = () => vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ content: [{ type: 'text', text: '{"price":"1000000"}' }] }),
+      text: async () => '',
+    }));
+    const target = (o: Partial<Deal> = {}) => deal({ id: 'd-target', name: TARGET_NAME, shortName: TARGET_SHORT, owner: TARGET_OWNER, ...o });
+    const pub = deal({ id: 'd-pub', name: 'Public Sentinel Deal' });
+    const extract = async (rawDealId: unknown, snap: OmExtractSnapshot | null, parse: () => Promise<{ text: string }>) => {
+      const fetchImpl = okFetch();
+      const { guards } = resolveOmExtractEgress(rawDealId, snap);
+      const r = await extractOmFields(Buffer.from('fake-pdf'), {
+        apiKey: 'sk-test', fetchImpl: fetchImpl as unknown as typeof fetch, pdfParseFn: parse, ...guards,
+      });
+      return { r, fetchImpl };
+    };
+    const refused = ({ r, fetchImpl }: Awaited<ReturnType<typeof extract>>) => {
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.status).toBe(403);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    };
+
+    it.each([
+      ['blank-deal upload', ''],
+      ['upload tied to a PUBLIC deal id', 'd-pub'],
+    ])('%s whose OM names a deal confidential by FLAG only (roster has no term for it) is refused', async (_l, id) => {
+      refused(await extract(id, { deals: [target({ confidential: true }), pub] }, async () => ({ text: `${TARGET_NAME} — 40,000 SF flex, asking $4.2M` })));
+    });
+
+    it('a blank-deal upload whose OM names a deal the roster claims only through an OWNER anchor the OM does not carry is refused', async () => {
+      writeRoster(CLAIMING_ROSTER);
+      refused(await extract('', { deals: [target(), pub] }, async () => ({ text: `Offering: ${TARGET_NAME}, 40,000 SF` })));
+    });
+
+    it('a live-claimed (flag still false) deal named only by its shortName is refused', async () => {
+      writeRoster(CLAIMING_ROSTER);
+      refused(await extract('d-pub', { deals: [target(), pub] }, async () => ({ text: `Comps: ${TARGET_SHORT} trades at a 7.9 cap` })));
+    });
+
+    it('the shared separator/percent folds apply to the OM body too', async () => {
+      refused(await extract('', { deals: [target({ confidential: true }), pub] }, async () => ({ text: 'See Acq/Quillfeather%20Flex%20Park/OM_Quillfeather-Flex-Park.pdf' })));
+    });
+
+    it('a claim that lands DURING the PDF parse is seen by the gate (evaluated right before the fetch)', async () => {
+      refused(await extract('', { deals: [target(), pub] }, async () => {
+        writeRoster(CLAIMING_ROSTER);
+        return { text: `Offering: ${TARGET_NAME}, 40,000 SF` };
+      }));
+    });
+
+    it('a blank-deal upload with the brain snapshot unavailable is refused (names cannot be checked)', async () => {
+      refused(await extract('', null, async () => ({ text: 'clean OM body' })));
+    });
+
+    // Independent refute wf_7e107bc5-f6c (MEDIUM): during a Notion outage Brain serves a seed-only
+    // snapshot carrying the deals/pipeline error flag, so a Notion-only confidential deal is simply
+    // absent from snapshot.deals and the name gate could not see it.
+    const PIPELINE_FAILURE: DataQualityFlag = { entity: 'deals', field: 'pipeline', issue: 'Notion deals pipeline unavailable (fetch-failed)', severity: 'error' };
+
+    it.each([
+      ['blank-deal upload', ''],
+      ['upload tied to a PUBLIC (seed) deal id', 'd-pub'],
+    ])('%s is refused while the snapshot carries the deals/pipeline failure flag (its deal list is incomplete)', async (_l, id) => {
+      refused(await extract(id, { deals: [pub], dataQuality: [PIPELINE_FAILURE] }, async () => ({ text: `Offering: ${TARGET_NAME}, 40,000 SF` })));
+    });
+
+    it('a warn-severity deals flag or an unrelated error flag does not refuse (no over-block)', async () => {
+      const snap: OmExtractSnapshot = {
+        deals: [target(), pub],
+        dataQuality: [
+          { ...PIPELINE_FAILURE, severity: 'warn' },
+          { entity: 'deals', field: 'stage', issue: 'stage drift', severity: 'warn' },
+          { entity: 'tasks', field: 'm365', issue: 'x', severity: 'error' },
+        ],
+      };
+      const { fetchImpl } = await extract('', snap, async () => ({ text: 'clean OM body' }));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('a clean OM with only public deals still reaches the network (no over-block), and a public deal named in it is fine', async () => {
+      const { r, fetchImpl } = await extract('', { deals: [target(), pub] }, async () => ({ text: 'Public Sentinel Deal, 40,000 SF flex' }));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(r.ok).toBe(true);
+    });
+
+    it('Easton rule holds for OM text too: a FLAGGED deal\'s shortName inside unrelated text does not refuse', async () => {
+      const { fetchImpl } = await extract('', { deals: [target({ confidential: true }), pub] }, async () => ({ text: `Suite 4, 12 ${TARGET_SHORT} Road, Dayton OH` }));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('a name gate that throws counts as a hit (403, no fetch)', async () => {
+      const fetchImpl = okFetch();
+      const r = await extractOmFields(Buffer.from('fake-pdf'), {
+        apiKey: 'sk-test', fetchImpl: fetchImpl as unknown as typeof fetch,
+        pdfParseFn: async () => ({ text: 'clean OM body' }), confidentialScan: () => null,
+        mentionsConfidentialDeal: () => { throw new Error('boom'); },
+      });
+      refused({ r, fetchImpl });
+    });
+
+    it('the gate is evaluated on exactly the text that egresses (the truncated body)', async () => {
+      const seen: string[] = [];
+      const long = 'x'.repeat(30_000) + TARGET_NAME;
+      await extractOmFields(Buffer.from('fake-pdf'), {
+        apiKey: 'sk-test', fetchImpl: okFetch() as unknown as typeof fetch,
+        pdfParseFn: async () => ({ text: long }), confidentialScan: () => null,
+        mentionsConfidentialDeal: (t) => { seen.push(t); return false; },
+      });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toContain('[truncated]');
+      expect(seen[0]).not.toContain(TARGET_NAME);
+    });
   });
 });
 
@@ -565,22 +682,61 @@ describe('runAgent with the REAL agentEgressGuards (live roster file, synthetic)
       docSearch: async () => { writeRoster(CLAIMING_ROSTER); return [{ doc: 'notes.pdf', snippet: 'nothing relevant' }]; },
       ...agentEgressGuards(),
     });
+    // Not vacuous (wf_02ab6da5-26c): the run must NOT halt early — the follow-up request goes out and
+    // carries the get_relationships result, present but without the withheld counterparty.
+    expect(bodies).toHaveLength(2);
+    const rel = toolResultFor(bodies[1]!, uses.find((u) => u[1] === 'get_relationships')![0]);
+    expect(rel.length).toBeGreaterThan(0);
+    expect(rel).not.toContain('Vantreese');
+    expect(rel).not.toContain('Marisol');
     const sentAfterClaim = bodies.slice(1).join('\n');
     expect(sentAfterClaim).not.toContain('Vantreese');
     expect(sentAfterClaim).not.toContain('Marisol');
+    expect(events.at(-1)).toMatchObject({ type: 'done' });
   });
 
+  it('tool results are sent in the model\'s block order even though awaited tools run first', async () => {
+    const { bodies } = scriptedModel([toolTurn(['toolu_1', 'get_deals'], ['toolu_2', 'get_macro'], ['toolu_3', 'search_documents', '{"query":"om"}'], ['toolu_4', 'get_portfolio_summary'])]);
+    await runAgent({
+      question: 'q', snapshot: makeSnap(), apiKey: 'k', emit: () => {},
+      macroProvider: async () => null,
+      docSearch: async () => [{ doc: 'notes.pdf', snippet: 'nothing relevant' }],
+      ...agentEgressGuards(),
+    });
+    const msgs = (JSON.parse(bodies[1]!) as { messages: Array<{ role: string; content: unknown }> }).messages;
+    const ids = (msgs.at(-1)!.content as Array<{ tool_use_id: string }>).map((b) => b.tool_use_id);
+    expect(ids).toEqual(['toolu_1', 'toolu_2', 'toolu_3', 'toolu_4']);
+  });
+
+  // Invented sentinel (not a real road): "McZob Rd" folds to 7 alnum chars, under the compact-pass
+  // minimum, so only the token-boundary pass with the right camel-split variant can match it.
   it.each([
-    ['all-caps hyphen path', 'summarize MCKEE-RD_OM.pdf'],
-    ['lowercase folder', 'see mckee_rd folder'],
-  ])('a camelCase name is matched with and without the camel split (%s)', async (_label, question) => {
+    ['all-caps hyphen path', 'summarize MCZOB-RD_OM.pdf', 'McZob Rd'],
+    ['lowercase folder', 'see mczob_rd folder', 'McZob Rd'],
+    // Pins the NAME-side split variant: only "mc zob rd" (split name) meets this haystack.
+    ['split haystack vs camel name', 'see Mc Zob-Rd folder', 'McZob Rd'],
+    // Pins the HAYSTACK no-split variant: a camel haystack against a name with no camel boundary.
+    ['camel haystack vs plain name', 'see McZob-Rd folder', 'Mczob Rd'],
+  ])('a camelCase name is matched with and without the camel split (%s)', async (_label, question, name) => {
     const { fetchMock } = scriptedModel([]);
     const events: AgentEvent[] = [];
     await runAgent({
-      question, snapshot: makeSnap({ confidential: true, name: 'McKee Rd', shortName: null }), apiKey: 'k', emit: (e) => void events.push(e),
+      question, snapshot: makeSnap({ confidential: true, name, shortName: null }), apiKey: 'k', emit: (e) => void events.push(e),
       ...agentEgressGuards(),
     });
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(firstError(events)).toBeDefined();
+  });
+
+  it('a Latin-1 / escape() single-byte escape (%E9) in a doc path does not evade the gate (#478)', async () => {
+    const { fetchMock } = scriptedModel([toolTurn(['toolu_1', 'search_documents', '{"query":"om"}'])]);
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question: 'q', snapshot: makeSnap({ confidential: true, name: 'Quillféather Flex Park', shortName: null }), apiKey: 'k', emit: (e) => void events.push(e),
+      docSearch: async () => [{ doc: 'Acq/Quillf%E9ather%20Flex%20Park/OM.pdf', snippet: 'offering memorandum' }],
+      ...agentEgressGuards(),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(firstError(events)).toBeDefined();
   });
 

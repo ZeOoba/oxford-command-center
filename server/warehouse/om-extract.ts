@@ -13,14 +13,15 @@ export interface OmExtractOptions {
   fetchImpl?: typeof fetch;
   // Injectable for tests — avoids needing to vi.mock the pdf-parse module
   pdfParseFn?: (buffer: Buffer) => Promise<{ text: string }>;
-  // Confidentiality egress guard input — the caller (route) resolves the Deal and passes its
-  // `confidential` flag down. Undefined (no dealId / blank-deal upload) means nothing to check
-  // against, so extraction proceeds. See the block below for why this stays a bare boolean rather
-  // than a full Deal import — mirrors server/ai/comps.ts's pre-network confidentiality guard.
+  // Confidentiality verdict for the deal the upload is tied to — a boolean, or (what the route
+  // passes, built in server/ai/egress-guards.ts) a LIVE predicate that asks the roster. Undefined
+  // (no dealId / blank-deal upload) means there is no tied deal to check; mentionsConfidentialDeal
+  // below still checks the OM text for every other one. This module takes a verdict rather than a
+  // Deal so it never reads the roster itself — mirrors server/ai/comps.ts's pre-network guard.
   //
-  // May also be a LIVE predicate (server/ai/egress-guards.ts passes one): it is evaluated at entry
-  // AND again immediately before the network call, because a roster claim can land during the PDF
-  // parse (refute wf_fb398b02-494). A predicate that throws counts as confidential.
+  // A predicate is evaluated at entry AND again immediately before the network call, because a
+  // roster claim can land during the PDF parse (refute wf_fb398b02-494). A throw counts as
+  // confidential.
   dealConfidential?: boolean | (() => boolean);
   // Set true by the caller when a dealId WAS supplied but the Deal record couldn't be resolved
   // (brain snapshot unavailable, or an unknown/stale id) — confidentiality can't be verified in
@@ -35,6 +36,13 @@ export interface OmExtractOptions {
   // scanForConfidential, which THROWS when the roster is unavailable; that fails CLOSED here.
   // Injectable so unit tests need no machine-local roster.
   confidentialScan?: (text: string) => { dealLabel: string } | null;
+  // Deal-name gate over the OM text, evaluated right before the network call (#478 item 1): true
+  // when the text names ANY deal that is confidential right now — flagged, or claimed by the live
+  // roster through a field the OM may not carry (owner/lender). Covers blank-deal uploads and
+  // uploads tied to a different (public) deal, which the two flags above never see. The route's
+  // version (server/ai/egress-guards.ts) throws when the deal list is unavailable; a throw counts as
+  // a hit (fail closed).
+  mentionsConfidentialDeal?: (text: string) => boolean;
 }
 
 // Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
@@ -176,6 +184,25 @@ export async function extractOmFields(
       error: 'OM extraction is disabled for confidential deals — sending this PDF to the Anthropic API would leak the deal identity externally.',
       status: 403,
     };
+  }
+
+  // Deal-name gate, also at the egress point (after the parse): the OM may name a DIFFERENT deal
+  // than the one the upload is tied to.
+  if (opts.mentionsConfidentialDeal) {
+    let named: boolean;
+    try {
+      named = opts.mentionsConfidentialDeal(body);
+    } catch (err) {
+      console.error(`[om-extract] deal-name gate unavailable, OM blocked: ${err instanceof Error ? err.message : String(err)}`);
+      named = true;
+    }
+    if (named) {
+      return {
+        ok: false,
+        error: 'OM extraction blocked — this document names a confidential deal (or the deal list could not be checked); sending it to the Anthropic API would leak the deal identity externally.',
+        status: 403,
+      };
+    }
   }
 
   const fieldManifest = EXTRACTABLE_FIELDS.map((f) => `- ${f.key}: ${f.desc}`).join('\n');
