@@ -653,9 +653,48 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
       expect(() => promoteProposal(without, [hi], hi.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
     });
 
-    it('a placeholder on a different component does not block', () => {
-      const tpo = { ...real('Acme Roofing', '2026-06-01', 'banwick:roof_tpo:acme:2026-06-01'), component: 'roof_tpo' as const };
-      expect(() => promoteProposal(ledger, [tpo], tpo.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
+    const LOW = 'banwick:roof_epdm:quote-low:2026';
+    const HIGH = 'banwick:roof_epdm:quote-high:2026';
+    const promote = (l: typeof ledger, p: CalibrationProposal, sup?: string[], allow = false) =>
+      promoteProposal(l, [p], p.obs_id, '2026-10-15', sup, { propertyKeyOf: keyOf, allowDuplicateDocument: allow });
+
+    it('round 3: superseding only ONE of the placeholder pair is refused (the other would keep counting)', () => {
+      const acme = real('Acme Roofing', '2026-06-01', 'banwick:roof_epdm:acme:2026-06-01');
+      expect(() => promote(ledger, acme, [LOW])).toThrow(/placeholder.*quote-high/);
+      expect(() => promote(ledger, acme, [HIGH])).toThrow(/placeholder.*quote-low/);
+      expect(() => promote(ledger, acme, [LOW, HIGH])).not.toThrow();
+    });
+
+    it('round 3: an identified vendor with a year-only date is not exempt — it is a real quote beside the placeholders', () => {
+      const yearOnly = real('Acme Roofing', '2026', 'banwick:roof_epdm:acme:2026');
+      expect(() => promote(ledger, yearOnly)).toThrow(/placeholder/);
+    });
+
+    it('round 3: the guard is symmetric — a counted placeholder cannot be promoted beside a counted real quote either', () => {
+      const without = ledger.filter((o) => o.obs_id !== LOW && o.obs_id !== HIGH);
+      const able = real('REDACTED-555', '2026-05-07', 'banwick:roof_epdm:able:2026-05-07');
+      const afterReal = promote(without, able).ledger;
+      const { added_at: _a, ...lowBase } = ledger.find((o) => o.obs_id === LOW)!;
+      const lowP: CalibrationProposal = { ...lowBase, proposed_at: '2026-10-15', proposed_from: 't' };
+      expect(() => promote(afterReal, lowP)).toThrow(/real quote.*banwick:roof_epdm:able:2026-05-07/);
+      expect(() => promote(afterReal, lowP, undefined, true)).not.toThrow();
+    });
+
+    it('round 3: a reclassified scope (roof_other vs roof_epdm) still meets the roof placeholders', () => {
+      const other = { ...real('Acme Roofing', '2026-06-01', 'banwick:roof_other:acme:2026-06-01'), component: 'roof_other' as const };
+      expect(() => promote(ledger, other)).toThrow(/placeholder/);
+    });
+
+    it('round 3: propose flags the same placeholders for a reclassified roof scope', () => {
+      const pcaOther: PcaLine = { ...pcaLine, propertyKey: 'banwick', component: 'roof_other' };
+      const q = fulton({ propertyKey: 'banwick', propertyLabel: '2800-2826 Banwick', component: 'roof_other', vendor: 'Acme Roofing', docDate: '2026-06-01' });
+      const [p] = proposePairs([pcaOther], [q], { ledger, pending: [] }, '2026-10-15', 't');
+      expect(p!.scope_note).toMatch(/quote-low:2026.*quote-high:2026|quote-high:2026.*quote-low:2026/);
+    });
+
+    it('a placeholder on a different scope family does not block', () => {
+      const paving = { ...real('Acme Paving', '2026-06-01', 'banwick:paving_overlay:acme:2026-06-01'), component: 'paving_overlay' as const };
+      expect(() => promoteProposal(ledger, [paving], paving.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).not.toThrow();
     });
   });
 

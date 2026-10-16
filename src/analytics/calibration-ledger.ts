@@ -293,21 +293,36 @@ export function promoteProposal(
     const target = ledger.find((o) => o.obs_id === t);
     if (!target) throw new Error(`calibration: obs_id "${obsId}" supersedes "${t}", which is not in the ledger`);
     // A mistyped target must not silently retire an unrelated observation, and a retired row is not retired twice.
-    if (target.component !== fields.component || target.unit !== fields.unit || keyOf(target.property) !== keyOf(fields.property)) {
+    // A placeholder may be replaced across a classifier relabel inside one scope family (roof_other quote for roof_epdm range rows).
+    const sameScope = target.component === fields.component || (isPlaceholder(target) && scopeFamily(target.component) === scopeFamily(fields.component));
+    if (!sameScope || target.unit !== fields.unit || keyOf(target.property) !== keyOf(fields.property)) {
       throw new Error(`calibration: "${t}" is a different property / component / unit than "${obsId}" - refusing to supersede it`);
     }
     if (retired.has(t)) throw new Error(`calibration: "${t}" is already superseded by "${retired.get(t)}"`);
   }
-  // (A placeholder itself is exempt: a quote range is entered as a placeholder pair, low end and high end.)
-  if (!opts.allowDuplicateDocument && fields.supersedes.length === 0 && !isPlaceholder(fields) && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
-    // A placeholder stands in for an unidentified quote document on this scope; a real counted quote landing beside it
-    // would count that document twice (Banwick: n 3 -> 5, LIMITED -> USABLE). Replace it with --supersedes instead.
-    const stand = ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && o.component === fields.component && keyOf(o.property) === keyOf(fields.property));
-    if (stand.length > 0) {
-      throw new Error(
-        `calibration: "${obsId}" would count next to placeholder row(s) for the same scope (${stand.map((o) => o.obs_id).join(', ')}). ` +
-          'If it is the quote a placeholder stands in for, promote with --supersedes <placeholder obs_id> (repeat for each); if it is a separate document, pass --allow-duplicate-document',
-      );
+  // A placeholder stands in for an unidentified quote document on this scope; a real counted quote beside it would count
+  // that document twice (Banwick: n 3 -> 5, LIMITED -> USABLE). Checked whatever --supersedes lists (a partial supersede
+  // leaves the other range row counting) and in both promote orders. Placeholder beside placeholder is allowed: a quote
+  // range is entered as a pair (low end, high end).
+  if (!opts.allowDuplicateDocument && exclusionFor(CalibrationObservation.parse({ ...fields, added_at: today })) === null) {
+    const inScope = (o: CalibrationObservation): boolean =>
+      !retired.has(o.obs_id) && !fields.supersedes.includes(o.obs_id) && scopeFamily(o.component) === scopeFamily(fields.component) && keyOf(o.property) === keyOf(fields.property);
+    if (isUnidentifiedVendor(fields)) {
+      const real = ledger.filter((o) => inScope(o) && !isPlaceholder(o) && exclusionFor(o, retired) === null);
+      if (real.length > 0) {
+        throw new Error(
+          `calibration: placeholder "${obsId}" would count next to real quote row(s) for the same scope (${real.map((o) => o.obs_id).join(', ')}). ` +
+            'A placeholder stands in for a quote not yet on file; if it is a separate document, pass --allow-duplicate-document',
+        );
+      }
+    } else {
+      const stand = ledger.filter((o) => inScope(o) && isPlaceholder(o));
+      if (stand.length > 0) {
+        throw new Error(
+          `calibration: "${obsId}" would count next to placeholder row(s) for the same scope (${stand.map((o) => o.obs_id).join(', ')}). ` +
+            'If it is the quote a placeholder stands in for, promote with --supersedes <placeholder obs_id> for EACH of them; if it is a separate document, pass --allow-duplicate-document',
+        );
+      }
     }
   }
   if (!opts.allowDuplicateDocument) {
@@ -330,7 +345,23 @@ export function promoteProposal(
 
 /** A row standing in for an unidentified or undated quote (an "Unidentified roofer" range end, a year-only date). */
 export const isPlaceholder = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean =>
-  /^unidentified/i.test(o.contractor_source.vendor) || /^\d{4}$/.test(o.contractor_source.doc_date);
+  isUnidentifiedVendor(o) || /^\d{4}$/.test(o.contractor_source.doc_date);
+/** A row ENTERED as a placeholder (no identified vendor). An identified vendor with a year-only date is a real quote when promoted. */
+export const isUnidentifiedVendor = (o: Pick<CalibrationObservation, 'contractor_source'>): boolean => /^unidentified/i.test(o.contractor_source.vendor);
+
+/** Placeholder matching tolerates a classifier relabel: every roof_* is one family, every paving_* another. */
+export const scopeFamily = (c: CalibrationComponent): string => (c.startsWith('roof_') ? 'roof' : c.startsWith('paving_') ? 'paving' : c);
+
+/** Live placeholder rows standing in for a quote on this property + scope family (shared by propose's note and promote's guard). */
+export function placeholdersFor(
+  ledger: readonly CalibrationObservation[],
+  scope: { property: string; component: CalibrationComponent },
+  propertyKeyOf: PropertyKeyOf = slugPropertyKey,
+): CalibrationObservation[] {
+  const retired = supersededMap(ledger);
+  const key = propertyKeyOf(scope.property);
+  return ledger.filter((o) => !retired.has(o.obs_id) && isPlaceholder(o) && scopeFamily(o.component) === scopeFamily(scope.component) && propertyKeyOf(o.property) === key);
+}
 
 // ── candidate-pair matching (pure; I/O lives in scripts/calibration-propose.ts) ──────────────
 
