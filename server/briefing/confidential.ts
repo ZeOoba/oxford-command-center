@@ -176,22 +176,9 @@ function validateEntry(val: unknown, position: number): DealTerms {
  * @throws If the file is absent/unreadable/empty and CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER is not set.
  */
 function loadTerms(): Record<string, DealTerms> {
+  const terms = readRoster();
+  if (terms) return terms;
   const path = termsPath();
-  try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-    const out: Record<string, DealTerms> = {};
-    let position = 0;
-    for (const [key, val] of Object.entries(raw)) {
-      if (key.startsWith('_')) continue;
-      position++;
-      out[key] = validateEntry(val, position);
-    }
-    if (Object.keys(out).length > 0) return out;
-  } catch (e) {
-    // A present-but-malformed roster fails closed outright (F3); only an absent / unreadable /
-    // unparseable file falls through to the closed-by-default handling below.
-    if (e instanceof RosterSchemaError) throw e;
-  }
   if (process.env['CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER'] === '1') {
     // Deliberate, explicit opt-in to reduced coverage -- always warn, regardless of NODE_ENV,
     // since choosing this mode should never be silent.
@@ -210,6 +197,50 @@ function loadTerms(): Record<string, DealTerms> {
       'coverage dev box, set CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 to acknowledge and proceed ' +
       'with placeholder-only scanning.',
   );
+}
+
+/** ONE read of the roster file. The validated roster, or null when it is absent, unreadable,
+ *  unparseable or has no entries. A present-but-malformed roster throws RosterSchemaError (F3). */
+function readRoster(): Record<string, DealTerms> | null {
+  try {
+    const raw = JSON.parse(readFileSync(termsPath(), 'utf8')) as Record<string, unknown>;
+    const out: Record<string, DealTerms> = {};
+    let position = 0;
+    for (const [key, val] of Object.entries(raw)) {
+      if (key.startsWith('_')) continue;
+      position++;
+      out[key] = validateEntry(val, position);
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  } catch (e) {
+    // A present-but-malformed roster fails closed outright (F3); only an absent / unreadable /
+    // unparseable file falls through to the caller's closed-by-default handling.
+    if (e instanceof RosterSchemaError) throw e;
+    return null;
+  }
+}
+
+/**
+ * The strict roster loader for every EXTERNAL egress and publication decision (#478 item 2). Reads
+ * the roster file exactly ONCE and returns those terms, so a caller that scans with the result scans
+ * the same roster it checked. THROWS when the roster is absent, unreadable or empty whatever
+ * CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER says: that opt-out is a reduced-coverage concession for a
+ * local render and never clears data for an external API or a public surface. It never returns
+ * FALLBACK_TERMS; the identity check below is a second guard should that ever change.
+ *
+ * It replaces a probe-then-scan pattern that read the roster twice: under the opt-out, a roster that
+ * became unreadable between the two reads passed the placeholder probe as real and was then scanned
+ * as the placeholder, which matches nothing (fail open).
+ */
+export function loadEgressTerms(): Record<string, DealTerms> {
+  const terms = readRoster();
+  if (!terms || isPlaceholderRoster(terms)) {
+    throw new Error(
+      'confidential roster is absent, unreadable or empty -- an external egress or publication ' +
+        'decision refuses it (the CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER placeholder never clears egress)',
+    );
+  }
+  return terms;
 }
 
 /** Read-only accessor for the live roster with loadTerms()' exact fail-closed semantics (throws when

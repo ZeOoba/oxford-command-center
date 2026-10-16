@@ -12,7 +12,7 @@
 // placeholder. Publication decisions that must also refuse the placeholder use
 // publicationRosterScan (server/sources/deal-declassification.ts), which builds on this.
 import {
-  scanForConfidential, loadConfidentialTerms, isPlaceholderRoster, type ConfidentialHit, type DealTerms,
+  scanForConfidential, loadConfidentialTerms, loadEgressTerms, type ConfidentialHit, type DealTerms,
 } from './confidential';
 import { matchRosterTerms } from './roster-core';
 
@@ -31,10 +31,6 @@ export function rosterMatch(value: unknown): ConfidentialHit | null {
   return rosterMatchWithTerms(value, loadConfidentialTerms());
 }
 
-/** The sentinel term of confidential.ts's FALLBACK_TERMS. No longer used to DETECT the placeholder
- *  (refute round 6, G7: isPlaceholderRoster checks identity); kept as the documented sentinel. */
-export const PLACEHOLDER_SENTINEL = '__ora_confidential_placeholder__';
-
 /**
  * Egress / publication matcher (refute round 3, U3): rosterMatch that ALSO refuses the placeholder
  * roster. The placeholder opt-out is a reduced-coverage concession for a local render; it must not
@@ -45,14 +41,12 @@ export function egressRosterMatch(value: unknown): ConfidentialHit | null {
   return egressRosterScanner()(value);
 }
 
-/** egressRosterMatch's roster load and placeholder refusal done ONCE (throws on an unreadable or
- *  placeholder roster), returning a scanner bound to that roster. For a caller that scans many
- *  records in one decision (scripts/bake-mirror.ts rosterScrubSnapshot, refute round 5 F1). */
+/** egressRosterMatch's roster load done ONCE, returning a scanner bound to that roster. For a caller
+ *  that scans many records in one decision (scripts/bake-mirror.ts rosterScrubSnapshot, refute round
+ *  5 F1). loadEgressTerms is a single read that throws on an unreadable, empty or placeholder roster
+ *  whatever the opt-out says, so the scan always runs against the roster that was checked (#478). */
 export function egressRosterScanner(): (value: unknown) => ConfidentialHit | null {
-  const terms = loadConfidentialTerms(); // throws on an unreadable roster
-  if (isPlaceholderRoster(terms)) {
-    throw new Error('confidential roster is the placeholder stand-in — cannot clear data for egress or publication');
-  }
+  const terms = loadEgressTerms();
   return (value: unknown) => rosterMatchWithTerms(value, terms);
 }
 

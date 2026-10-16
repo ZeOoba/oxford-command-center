@@ -12,7 +12,7 @@ import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { renameSyncWithRetry } from './lib/rename-retry';
 import { hasDealsPipelineFailure, applyRosterOverride, type DealsDegradation } from './sources/notion-deals';
-import { rosterClaimsDeal } from './sources/deal-declassification';
+import { rosterClaimChecker } from './sources/deal-declassification';
 import { termsPath as confidentialRosterPath } from './briefing/confidential';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
@@ -482,9 +482,10 @@ class Brain extends EventEmitter {
     // not enough — a newer parse can keep the same ids in the same order with different content, and the roster
     // scans the whole record (wf_6240b736-133). Any divergence (rows, order, count or content) => served only
     // (wf_b43ef00d-6d9).
+    const claims = rosterClaimChecker(); // one roster read for every served row (#478)
     const claimedNow = current.deals.map((d) => {
       try {
-        return rosterClaimsDeal(d);
+        return claims(d);
       } catch {
         return true; // fail closed: an unverifiable claim counts as a claim
       }
