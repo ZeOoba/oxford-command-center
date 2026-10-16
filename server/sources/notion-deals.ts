@@ -3,7 +3,7 @@ import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
 import { dealJoinKey, findDuplicateDealRows, keyDigest } from './deal-name';
 
-import { isDeclassified, rosterClaimsDeal } from './deal-declassification';
+import { isDeclassified, rosterClaimChecker } from './deal-declassification';
 import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
 
 /**
@@ -215,8 +215,9 @@ export function mapNotionPage(page: NotionPage): Deal | null {
  */
 export function applyRosterOverride(deals: readonly Deal[]): Deal[] {
   let forced = 0;
+  const claims = rosterClaimChecker(); // one roster read for the whole batch (#478)
   const out = deals.map((d) => {
-    if (d.confidential || !rosterClaimsDeal(d)) return d;
+    if (d.confidential || !claims(d)) return d;
     forced++;
     return { ...d, confidential: true };
   });
