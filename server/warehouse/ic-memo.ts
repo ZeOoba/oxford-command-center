@@ -18,7 +18,7 @@
 //   6. Methodology      — 5-way verdict system, IRR basis, advisory-only caveat
 //
 // Confidentiality: a PortfolioAllocation is an ownership-financial artifact and by
-// construction carries NO deal terms. The route layer runs assertNoConfidential as
+// construction carries NO deal terms. The route layer runs assertNoEgressRosterMatch as
 // defense-in-depth before streaming; this builder stays pure (no IO) so it remains
 // trivially testable and re-usable.
 import type { PortfolioAllocation, AllocationAction } from '../../src/contracts/capital';

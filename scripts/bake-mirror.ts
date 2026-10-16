@@ -12,6 +12,7 @@ import type { GovernorSet, PortfolioSnapshot } from '../src/contracts/index';
 // governors.ts is dependency-light (its ./db import is type-only); the sqlite driver itself is
 // still loaded ONLY via the existsSync-gated dynamic import below (cadence decoupling preserved).
 import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
+import { egressRosterScanner } from '../server/briefing/roster-match';
 
 /**
  * Writer policy for the PUBLIC mirror: never bake a degraded deals source. Returns the refusal
@@ -163,6 +164,95 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
 }
 
 /**
+ * Roster scrub of the REDACTED snapshot (refute round 5, F1). redactConfidential only knows the
+ * NAMES of flagged deals and matches them by raw lowercase substring, so a variant of a name (an
+ * NBSP, a hyphen, a zero-width split) and any roster ADDRESS term survived it into the public
+ * payload. This runs the normalised EGRESS roster match (server/briefing/roster-match.ts: raw +
+ * normalised + compact passes, object keys and split sibling leaves) over the snapshot, record by
+ * record, then over the whole result:
+ *  - free-text records are dropped when they hit: tasks, dataQuality flags, arBalances rows, and
+ *    every keyed record map (tenantNotes, dealComps, acquisitionInputs, renewalStages,
+ *    tenantArrears, marketRents, noiBudgets; the key is scanned with the value);
+ *  - deals: nextAction / status are nulled when they hit; a deal that STILL hits is dropped whole;
+ *  - counterparties: notes nulled when they hit; a counterparty that still hits is dropped whole;
+ *  - then the WHOLE scrubbed snapshot (every string leaf and key: properties, leases, loans,
+ *    insurance, cash, meta, assumptions, quickbooks, ...) is scanned once more, and ANY residual
+ *    hit refuses the bake: those fields have no record that can be dropped without publishing a
+ *    falsified portfolio.
+ * The roster is loaded once via egressRosterScanner: an unreadable, malformed OR placeholder
+ * roster throws, and that also refuses the bake. Every refusal message is label-free (no term, no
+ * deal label). Known, accepted consequence: an ACTIVE `always` term that collides with real public
+ * portfolio text refuses every bake until that roster term is moved behind a context anchor (fail
+ * closed, never a leak).
+ */
+export function rosterScrubSnapshot(
+  snapshot: PortfolioSnapshot,
+  makeScanner: () => (value: unknown) => { dealLabel: string } | null = egressRosterScanner,
+): { snapshot: PortfolioSnapshot; dropped: number } {
+  const refuse = (why: string) =>
+    new Error(
+      `✗ bake-mirror: refusing to bake — ${why}, and this payload is served publicly. ` +
+        `Leaving the last good public/snapshot.json in place.`,
+    );
+  let scan: (value: unknown) => { dealLabel: string } | null;
+  try {
+    scan = makeScanner();
+  } catch {
+    throw refuse('the confidential roster is unreadable, malformed or the placeholder stand-in, so the snapshot cannot be verified');
+  }
+  let dropped = 0;
+  const hits = (v: unknown): boolean => scan(v) !== null;
+  const keep = <T>(xs: readonly T[] | undefined): T[] =>
+    (xs ?? []).filter((x) => {
+      if (!hits(x)) return true;
+      dropped++;
+      return false;
+    });
+  const keepEntries = <V>(rec: Record<string, V> | undefined): Record<string, V> =>
+    Object.fromEntries(
+      Object.entries(rec ?? {}).filter(([k, v]) => {
+        if (!hits({ [k]: v })) return true;
+        dropped++;
+        return false;
+      }),
+    );
+  const nullIfHit = (s: string | null): string | null => {
+    if (s === null || !hits(s)) return s;
+    dropped++;
+    return null;
+  };
+
+  const deals = keep(
+    snapshot.deals.map((d) => ({ ...d, nextAction: nullIfHit(d.nextAction), status: nullIfHit(d.status) })),
+  );
+  const counterparties = keep(
+    (snapshot.counterparties ?? []).map((c) => ({ ...c, notes: nullIfHit(c.notes) })),
+  );
+  const out: PortfolioSnapshot = {
+    ...snapshot,
+    deals,
+    counterparties,
+    tasks: keep(snapshot.tasks),
+    dataQuality: keep(snapshot.dataQuality),
+    arBalances: keep(snapshot.arBalances),
+    tenantNotes: keepEntries(snapshot.tenantNotes),
+    dealComps: keepEntries(snapshot.dealComps),
+    acquisitionInputs: keepEntries(snapshot.acquisitionInputs),
+    renewalStages: keepEntries(snapshot.renewalStages),
+    tenantArrears: keepEntries(snapshot.tenantArrears),
+    marketRents: keepEntries(snapshot.marketRents),
+    noiBudgets: keepEntries(snapshot.noiBudgets),
+  };
+  if (hits(out)) {
+    throw refuse(
+      'a confidential roster term remains in a snapshot field with no droppable record (property, ' +
+        'lease, loan, insurance, cash or meta data) after redaction and the record scrub',
+    );
+  }
+  return { snapshot: out, dropped };
+}
+
+/**
  * Should this bake run also produce the HEAVY `public/warehouse.json` (Fat Mirror)?
  *
  * Two inputs, deliberately narrow:
@@ -184,7 +274,10 @@ export function shouldBakeWarehouse(
   return argv.includes('--warehouse') || env.BAKE_WAREHOUSE === '1';
 }
 
-async function main() {
+/** The bake entry point. Exported (refute round 6, G5) only so a test can run it end to end and pin
+ *  its confidentiality wiring (tests/unit/bake-mirror-main-wiring.test.ts); it runs on import only
+ *  when this file is the invoked entry point (see the guard at the bottom). */
+export async function main() {
   const includeConfidential = process.env.MIRROR_INCLUDE_CONFIDENTIAL === '1';
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });
@@ -271,9 +364,21 @@ async function main() {
     const r = await runBrief({ ...raw, governors }, { macroProvider: getMacro });
     console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
   }
-  const { snapshot, removed, removedCounterparties, removedTasks } = includeConfidential
+  const { snapshot: redacted, removed, removedCounterparties, removedTasks } = includeConfidential
     ? { snapshot: raw, removed: [], removedCounterparties: [], removedTasks: 0 }
     : redactConfidential(raw);
+  // Roster scrub (refute round 5, F1): REDACTED mode only (FULL mode deliberately carries the
+  // confidential deals, for Access-gated targets). A throw is a refusal: nothing is written.
+  let snapshot = redacted;
+  let rosterDropped = 0;
+  if (!includeConfidential) {
+    try {
+      ({ snapshot, dropped: rosterDropped } = rosterScrubSnapshot(redacted));
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : '✗ bake-mirror: refusing to bake — roster scrub failed.');
+      process.exit(1);
+    }
+  }
 
   writeFileSync(join(pub, 'snapshot.json'), JSON.stringify({ ...snapshot, governors }));
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
@@ -294,6 +399,7 @@ async function main() {
   if (removed.length) console.log(`  Redacted ${removed.length} confidential deal(s)`);
   if (removedCounterparties.length) console.log(`  Dropped ${removedCounterparties.length} orphaned counterpart${removedCounterparties.length === 1 ? 'y' : 'ies'} (I8)`);
   if (removedTasks) console.log(`  Dropped ${removedTasks} task(s) mentioning a confidential deal name`);
+  if (rosterDropped) console.log(`  Roster scrub dropped or nulled ${rosterDropped} record(s)/field(s) matching the confidential roster`);
   if (includeConfidential) console.warn('  ⚠ CONFIDENTIAL DATA INCLUDED — deploy ONLY to a Cloudflare Access-gated target.');
 
   // Fat Mirror (Phase 1b): the HEAVY warehouse bake is OPT-IN (--warehouse / BAKE_WAREHOUSE=1) so the
@@ -303,12 +409,15 @@ async function main() {
   // light hourly snapshot bake never pays for it (cadence decoupling). Dynamic import keeps the
   // warehouse deps (better-sqlite3, the api.ts router) out of the snapshot-only path entirely.
   if (shouldBakeWarehouse(process.argv, process.env)) {
-    const { bakeWarehouseJson } = await import('./bake-warehouse');
+    const { bakeWarehouseJson, describeOmittedRoutes } = await import('./bake-warehouse');
     // Fix round 1, item 1: public/warehouse.json lands in the SAME public/ directory as
     // snapshot.json, so it must respect the SAME includeConfidential boundary — otherwise a
     // "redacted" deploy would still ship full row-level lease-market (CoStar) data.
     const r = await bakeWarehouseJson({ includeConfidential });
     console.log(`✓ Baked public/warehouse.json (${r.count} endpoints, source: ${r.warehouseSource})`);
+    // A count plus route TEMPLATES only (refute round 7, H3): a raw path embeds a property id that
+    // can itself be a roster term, so it never reaches the log; neither does a term or deal label.
+    if (r.omitted.length) console.log(`  ${describeOmittedRoutes(r.omitted)}`);
   }
 }
 

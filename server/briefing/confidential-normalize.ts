@@ -7,6 +7,10 @@
 // aligned; both test suites pin the same table hash. The hook twin ships through ora-claude-config PRs and
 // still has to be deployed to the live ~/.claude checkout; until then the deployed hook may be the old
 // raw lowercase match, so read the live file before assuming parity.
+// The flatteners (collectText / collectTextLegacy) reuse the roster matcher's scan budget and boxed-
+// primitive unboxing from ./roster-core, which is itself runtime-agnostic (no node:* import).
+
+import { scanBudget, unboxPrimitive } from './roster-core';
 
 // --- Normalization (mirror of confidentiality-guard.py `_norm_variants` -- keep the two aligned) ---
 // A plain lowercase substring match is evaded by anything that changes the CHARACTERS without
@@ -227,81 +231,296 @@ export function mentionsAnyTerm(text: string | null | undefined, terms: readonly
 }
 
 /**
+ * One flattening step for the explicit-stack walk below. `v` is a value to flatten; `s` literal text
+ * (a separator, or a string the object handler already computed); `mark` / `extraEnd` bracket an
+ * object's EXTRA text (Date / URL / Error / Map / Set, a toJSON result) so a single ' ' is written
+ * between it and the object's own values only when the extra text was non-empty (the recursive
+ * form's `extra ? extra + ' ' + own : own`); `exit` takes an object off the ancestor chain.
+ * `ai` reads element `i` of array `a` only when popped and `own` reads Object.values(o) only when
+ * popped, reproducing the recursive form's EVALUATION ORDER (final refute, R2): `Array.prototype.map`
+ * reads each element after the previous one was fully flattened, and the extended form evaluated
+ * an object's own values only after building its Map / Set / Error text, so user code in a
+ * descendant (an iterator, a getter, a Proxy trap) that mutates a later sibling or the parent is
+ * seen exactly as main saw it. `errs` does the same for an Error's `errors` array (refute
+ * wf_fb340eb2, P1): main evaluated `Array.isArray(errors) ? errors.map(rec)` only after rec(cause),
+ * so its length is read only after the cause was walked.
+ */
+type FlatItem =
+  | { t: 'v'; v: unknown }
+  | { t: 'ai'; a: unknown[]; i: number }
+  | { t: 'own'; o: object }
+  | { t: 'errs'; e: unknown }
+  | { t: 's'; s: string }
+  | { t: 'mark' }
+  | { t: 'extraEnd' }
+  | { t: 'exit'; o: object };
+const SP: FlatItem = { t: 's', s: ' ' };
+const MARK: FlatItem = { t: 'mark' };
+const EXTRA_END: FlatItem = { t: 'extraEnd' };
+
+/** join()'s element conversion: null / undefined read as ''. */
+const joinStr = (x: unknown): string => (x === undefined || x === null ? '' : String(x));
+
+/** The URL text the recursive form wrote: href, href with each escape RUN decoded on its own (one
+ *  malformed escape does not stop the rest), and href with every ASCII escape decoded on its own
+ *  (%5A%65... decodes even if the run also holds an invalid byte). */
+function urlText(u: URL): string {
+  const decoded = u.href.replace(/(%[0-9a-f]{2})+/gi, (m) => {
+    try {
+      return decodeURIComponent(m);
+    } catch {
+      return m;
+    }
+  });
+  const ascii = u.href.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+  return u.href + ' ' + decoded + ' ' + ascii;
+}
+
+/** How flatten reads a value: `extended` adds the Date / URL / Error / Map / Set text; `hardened`
+ *  unboxes boxed primitives and (extended only) reads toJSON results. */
+interface FlattenMode { extended: boolean; hardened: boolean }
+type ScanBudget = ReturnType<typeof scanBudget>;
+
+/**
+ * The shared iterative walk behind collectText (`extended`) and collectTextLegacy.
+ *
+ * Reconciliation of origin/main's recursive flatteners (c04bf53b) with the audit-W1 branch's
+ * hardening (refute rounds 7-8, H2 / J1 / J3):
+ *  - ITERATIVE: an explicit stack replaces recursion, and no array or object is spread into an
+ *    argument list, so a 20k-deep value or a 200k-key object cannot overflow the call stack.
+ *  - CURRENT-ANCESTOR-CHAIN cycle cut: only an object already on the path being walked contributes
+ *    '' (a cycle); a shared, non-cyclic object is read again wherever it reappears, as the recursive
+ *    form did.
+ *  - BUDGETED (scanBudget from ./roster-core, shared with the roster matcher): every value visited
+ *    and every character written is counted, so a DAG that unfolds exponentially THROWS
+ *    ScanBudgetError (the gate fails closed) instead of hanging or exhausting memory.
+ *  - For any input the recursive form handled, the output is BYTE-IDENTICAL to it (same order, same
+ *    single-space separators, empty pieces still separated), except where the extended form now
+ *    reads MORE (below). Main's tests pin that order; do not change it.
+ * `hardened` additions (with hardened off, each form is origin/main's flattening byte for byte):
+ * a boxed Number / String / Boolean / BigInt reads as its value (unboxPrimitive from ./roster-core,
+ * as JSON.stringify writes it; a throwing valueOf propagates), and in the extended form an object
+ * with a callable toJSON (other than Date and URL, whose toJSON text the extended form already
+ * writes) has its toJSON('') result written BEFORE its usual text (a throwing toJSON propagates:
+ * fail closed). Because hardened text is NOT a superset of the original text (an unboxed value or a
+ * prepended toJSON result changes adjacency), scanTexts scans both (see scanTexts).
+ * `budget` is shared by every walk one scanTexts call makes.
+ */
+function flatten(value: unknown, mode: FlattenMode, budget: ScanBudget = scanBudget()): string {
+  const { extended, hardened } = mode;
+  // The current ancestor chain as a per-object COUNTER that is never deleted from (final refute,
+  // L3). A Set with add / delete on every enter / exit degraded to O(depth) per visit when a shared
+  // object recurs under a deep spine (the table churns through tombstones): 20k levels took ~1 s,
+  // 4x per doubling. A counter set back to 0 keeps every operation O(1); the Map holds at most one
+  // entry per distinct object, which is bounded by the visit budget.
+  const onPath = new Map<object, number>();
+  const out: string[] = [];
+  let len = 0;
+  const marks: number[] = [];
+  const emit = (s: string): void => {
+    if (!s) return;
+    budget.text(s.length);
+    out.push(s);
+    len += s.length;
+  };
+  // The current object's items in document order (reused per object, pushed reversed below).
+  const seq: FlatItem[] = [];
+  // Visits are counted when a child is QUEUED, so a huge (or sparse) array throws before it is
+  // fully materialised on the stack.
+  const pushVal = (x: unknown): void => {
+    budget.visit();
+    seq.push({ t: 'v', v: x });
+  };
+  /** Each value of an iterable as a 'v' item, one ' ' between neighbours (join(' ')). */
+  const pushJoined = (xs: Iterable<unknown>): void => {
+    let first = true;
+    for (const x of xs) {
+      if (!first) seq.push(SP);
+      pushVal(x);
+      first = false;
+    }
+  };
+  /** `a.map(flatten).join(' ')`: the length is read now, each element only when its turn comes
+   *  (a hole reads as ''), as Array.prototype.map does. */
+  const pushMapped = (a: unknown[]): void => {
+    const n = a.length;
+    for (let i = 0; i < n; i++) {
+      if (i > 0) seq.push(SP);
+      budget.visit();
+      seq.push({ t: 'ai', a, i });
+    }
+  };
+  budget.visit();
+  const stack: FlatItem[] = [{ t: 'v', v: value }];
+  while (stack.length > 0) {
+    const item = stack.pop()!;
+    if (item.t === 's') { emit(item.s); continue; }
+    if (item.t === 'exit') { onPath.set(item.o, 0); continue; }
+    if (item.t === 'mark') { marks.push(len); continue; }
+    if (item.t === 'extraEnd') {
+      if (len > (marks.pop() ?? len)) emit(' ');
+      continue;
+    }
+    if (item.t === 'own') {
+      // Deferred own values (R2): read only now, after the object's extra text was walked.
+      seq.length = 0;
+      pushJoined(Object.values(item.o));
+      for (let i = seq.length - 1; i >= 0; i--) stack.push(seq[i]!);
+      continue;
+    }
+    if (item.t === 'errs') {
+      // Deferred AggregateError.errors (P1): Array.isArray and the length are read only now, after
+      // the cause was walked, as main's `[..., rec(cause), Array.isArray(errors) ? ... ]` did.
+      seq.length = 0;
+      if (Array.isArray(item.e)) pushMapped(item.e);
+      for (let i = seq.length - 1; i >= 0; i--) stack.push(seq[i]!);
+      continue;
+    }
+    let raw: unknown;
+    if (item.t === 'ai') {
+      if (!(item.i in item.a)) continue; // a hole: map skips it, join writes ''
+      raw = item.a[item.i];
+    } else {
+      raw = item.v;
+    }
+    // An unhardened walk reads the value exactly as main did, with NO detection either (refute
+    // wf_fb340eb2, P1: `instanceof`, Object.prototype.toString and a toJSON read can each run a Proxy
+    // trap or a getter); the hardened walk unboxes a boxed primitive.
+    const v = hardened ? unboxPrimitive(raw) : raw;
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string') { emit(v); continue; }
+    if (typeof v === 'number' || typeof v === 'boolean') { emit(String(v)); continue; }
+    if (typeof v === 'bigint') { if (extended) emit(String(v)); continue; }
+    if (typeof v !== 'object' || (onPath.get(v) ?? 0) > 0) continue;
+    onPath.set(v, 1);
+    seq.length = 0;
+    if (!extended) {
+      // The original flattening: `value.map(rec)` for an array (a hole reads as ''), else
+      // Object.values (read eagerly, as `Object.values(value).map(rec)` did).
+      if (Array.isArray(v)) pushMapped(v);
+      else pushJoined(Object.values(v));
+    } else {
+      const o: object = v;
+      // toJSON is read in the HARDENED walk only (P1): main's extended view never read it, and a
+      // get trap / accessor on it is user code that could rewrite what the view reads next.
+      if (hardened) {
+        const toJSON = (o as { toJSON?: unknown }).toJSON;
+        if (typeof toJSON === 'function' && !(o instanceof Date) && !(o instanceof URL)) {
+          seq.push(MARK);
+          pushVal((toJSON as (this: object, key: string) => unknown).call(o, ''));
+          seq.push(EXTRA_END);
+        }
+      }
+      if (o instanceof Date) {
+        seq.push(MARK, { t: 's', s: Number.isNaN(o.getTime()) ? '' : o.toISOString() }, EXTRA_END);
+      } else if (o instanceof URL) {
+        seq.push(MARK, { t: 's', s: urlText(o) }, EXTRA_END);
+      } else if (o instanceof Error) {
+        // [name, message, flatten(cause), errors joined].join(' '), as the recursive form wrote it.
+        const errors = (o as { errors?: unknown }).errors;
+        seq.push(MARK, { t: 's', s: joinStr(o.name) }, SP, { t: 's', s: joinStr(o.message) }, SP);
+        pushVal((o as { cause?: unknown }).cause);
+        seq.push(SP, { t: 'errs', e: errors }, EXTRA_END);
+      } else if (o instanceof Map) {
+        seq.push(MARK);
+        let first = true;
+        // entries(), exactly as origin/main read a Map (second review, G1): a subclass whose default
+        // iterator differs from entries() is read as main read it. roster-core's walk reads the
+        // iterator view, so the OR at every gate covers both.
+        for (const [k, x] of (o as Map<unknown, unknown>).entries()) {
+          if (!first) seq.push(SP);
+          pushVal(k);
+          seq.push(SP);
+          pushVal(x);
+          first = false;
+        }
+        seq.push(EXTRA_END);
+      } else if (o instanceof Set) {
+        seq.push(MARK);
+        pushJoined(o);
+        seq.push(EXTRA_END);
+      }
+      // R2: the own values are read when this item pops, AFTER the extra children above.
+      seq.push({ t: 'own', o });
+    }
+    stack.push({ t: 'exit', o: v });
+    for (let i = seq.length - 1; i >= 0; i--) stack.push(seq[i]!);
+  }
+  return out.join('');
+}
+
+/**
  * Converts any value into a single flattened string for scanning. Pure, so the edge twin
  * (functions/api/ai.ts) uses the SAME flattening as the server scanner.
  *
  * Reads a SUPERSET of what the original scanner read (`Object.values` of every object, i.e. own
  * enumerable properties) and adds what that missed: Date (ISO), URL (href, raw and percent-decoded),
- * Error (name, message, cause, AggregateError.errors), Map (keys and values) and Set. BigInt is stringified.
- * `seen` tracks only the ACTIVE recursion path, so a cycle is cut but an object legitimately shared by
- * two fields is read both times.
+ * Error (name, message, cause, AggregateError.errors), Map (keys and values) and Set. BigInt is
+ * stringified, boxed primitives are unboxed and a toJSON result is read too (the hardened extended
+ * form, see flatten; scanTexts also scans the original, unhardened form). Iterative, budgeted and
+ * cycle-safe on the current ancestor chain only (see flatten).
  */
-export function collectText(value: unknown, seen: WeakSet<object> = new WeakSet()): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
-  if (typeof value !== 'object') return '';
-  if (seen.has(value)) return '';
-  seen.add(value);
-  try {
-    const rec = (v: unknown): string => collectText(v, seen);
-    let extra = '';
-    if (value instanceof Date) {
-      extra = Number.isNaN(value.getTime()) ? '' : value.toISOString();
-    } else if (value instanceof URL) {
-      // href is percent-encoded (`Zephyrine%20Holdings`); decode each escape run on its own so one
-      // malformed escape does not stop the rest.
-      const decoded = value.href.replace(/(%[0-9a-f]{2})+/gi, (m) => {
-        try {
-          return decodeURIComponent(m);
-        } catch {
-          return m;
-        }
-      });
-      // plus every ASCII escape on its own (%5A%65... decodes even if the run also holds an invalid byte)
-      const ascii = value.href.replace(/%([0-7][0-9a-f])/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
-      extra = value.href + ' ' + decoded + ' ' + ascii;
-    } else if (value instanceof Error) {
-      const errors = (value as { errors?: unknown }).errors;
-      extra = [value.name, value.message, rec((value as { cause?: unknown }).cause), Array.isArray(errors) ? errors.map(rec).join(' ') : ''].join(' ');
-    } else if (value instanceof Map) {
-      extra = [...value.entries()].map(([k, v]) => rec(k) + ' ' + rec(v)).join(' ');
-    } else if (value instanceof Set) {
-      extra = [...value].map(rec).join(' ');
-    }
-    const own = Object.values(value).map(rec).join(' ');
-    return extra ? extra + ' ' + own : own;
-  } finally {
-    seen.delete(value);
-  }
+export function collectText(value: unknown): string {
+  return flatten(value, { extended: true, hardened: true });
 }
 
 /**
  * The ORIGINAL flattening, byte for byte (arrays and plain objects only: no Date/URL/Error/Map/Set/BigInt
- * handling, values joined with ' '), plus an active-path visited set that only cuts cycles. The scanners
- * scan THIS text and the extended collectText text separately, so "reads a superset of what main read"
- * holds by construction, adjacency included: the extended text inserts extra text next to an object's
- * fields, which could split a term that spans a neighbour.
+ * handling, no unboxing or toJSON, values joined with ' '), with only the ancestor-chain cycle cut and the
+ * scan budget added (see flatten); scanTexts also scans its unboxed variant (the branch tip's raw
+ * flatten). The scanners scan THIS text and the extended collectText text
+ * separately, so "reads a superset of what main read" holds by construction, adjacency included: the
+ * extended text inserts extra text next to an object's fields, which could split a term that spans a
+ * neighbour.
  */
-export function collectTextLegacy(value: unknown, seen: WeakSet<object> = new WeakSet()): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (typeof value !== 'object') return '';
-  if (seen.has(value)) return '';
-  seen.add(value);
-  try {
-    const rec = (v: unknown): string => collectTextLegacy(v, seen);
-    if (Array.isArray(value)) return value.map(rec).join(' ');
-    return Object.values(value).map(rec).join(' ');
-  } finally {
-    seen.delete(value);
-  }
+export function collectTextLegacy(value: unknown): string {
+  return flatten(value, { extended: false, hardened: false });
 }
 
 /** The distinct, non-empty texts a scanner must check for `value` (legacy flatten and extended flatten). */
 export function scanTexts(value: unknown): string[] {
-  const legacy = collectTextLegacy(value);
-  const extended = collectText(value);
-  return [...new Set([legacy, extended])].filter((t) => t.length > 0);
+  // Merge review finding: the hardened extended text (unboxed, toJSON read) is not a superset of
+  // origin/main's ORIGINAL extended text, and the original legacy text is not what the branch tip's
+  // raw scan read (it unboxed). A term split across e.g. a Map entry and a toJSON object, or an
+  // Error and a boxed Number, regressed against both parents. So FOUR texts are scanned (fewer
+  // distinct ones when they coincide):
+  //   legacy (origin/main, byte for byte), extended original (origin/main's collectText),
+  //   legacy + unboxing (the branch tip's raw flatten), extended hardened (collectText), in that
+  //   order: every walk that runs unboxing or toJSON user code (valueOf, toString,
+  //   Symbol.toPrimitive, toJSON) runs after both walks that reproduce main's views.
+  // ACCEPTED LIMIT (refute wf_fb340eb2): main's views here run exactly main's own reads, in main's
+  // order, so a hostile object that mutates itself per OPERATION (a Proxy trap, an accessor) shows
+  // main's views what it showed main. What the later user-code walks (and roster-core's walk) read
+  // from such an object is only guaranteed to match a parent's order for non-hostile values; a
+  // per-operation-mutating Proxy is out of scope beyond main's own coverage.
+  // ACCEPTED LIMIT (final refute, R1 corollary): the branch tip read its unboxed view FIRST; here it
+  // is read after main's two views, whose getters / iterators / Proxy traps run first. A value whose
+  // getter mutates what only the unboxed view reads can therefore differ from the tip. No order
+  // serves every parent's first read; main's views (the deployed baseline) take precedence, and
+  // non-hostile values are identical either way (seeded fuzz in roster-union-boxed-tojson.test.ts).
+  // ACCEPTED LIMIT (second review, G3): a value's properties are read by up to four walks here
+  // (plus roster-core's walk) instead of main's two, so a getter whose result depends on how often
+  // it is read can show different text to each walk than it showed main. No scanner can make a
+  // read-count-dependent getter safe (the egress JSON.stringify reads it yet again); pinned in
+  // tests/unit/roster-union-boxed-tojson.test.ts.
+  // ONE budget is shared by every walk of this call, so the 5M-visit / 64M-char caps bound the
+  // call's TOTAL work (four walks cannot multiply them); a DAG still throws.
+  const budget = scanBudget();
+  // Second review (G2), final refute (R1) and refute wf_fb340eb2 (P1): BOTH walks that reproduce
+  // main's views run FIRST and run NO code main did not run before reading an object's own values:
+  // no unboxing, no toJSON read, and no detection either (`instanceof` fires a Proxy getPrototypeOf
+  // trap, Object.prototype.toString a Symbol.toStringTag getter, a toJSON read a get trap or
+  // accessor; the only internal-slot test that runs no user code, calling the built-in valueOf
+  // methods, throws on every ordinary object and costs ~2-10 us per object). So a side-effecting
+  // trap, getter, toJSON, valueOf, toString or Symbol.toPrimitive cannot change what main's views
+  // read. The two hardened walks, which do run that user code, always run after them, the unboxed
+  // legacy walk first (as before: a side-effecting toJSON, which only the hardened extended walk
+  // calls, cannot blank what the branch tip's unboxed view read). With nothing to detect, both
+  // always run; their texts are deduplicated below, so ordinary input is still normalised and
+  // matched only twice (the extra cost is two flattenings).
+  const legacy = flatten(value, { extended: false, hardened: false }, budget);
+  const original = flatten(value, { extended: true, hardened: false }, budget);
+  const unboxedLegacy = flatten(value, { extended: false, hardened: true }, budget);
+  const hardenedExt = flatten(value, { extended: true, hardened: true }, budget);
+  return [...new Set([legacy, original, unboxedLegacy, hardenedExt])].filter((t) => t.length > 0);
 }
