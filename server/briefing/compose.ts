@@ -11,7 +11,10 @@
 //
 // Confidentiality (Behavior contract #3): a BriefingModel is ownership-FINANCIAL (100%-basis figures
 // keyed by the property slug). The composer NEVER reads seed-deals.ts or any deal term. As a fail-loud
-// backstop it runs assertNoConfidential on the finished model before returning it.
+// backstop it runs the NORMALISED roster match (assertNoRosterMatch, refute round 5 F4: the raw
+// assertNoConfidential let an NBSP / hyphen variant of a roster term render) on the finished model
+// before returning it. This is the local-render gate, so it keeps the explicit placeholder
+// concession; the PDF route in server/warehouse/api.ts adds the egress match (placeholder refused).
 import { fmtUsd, fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import type { WarehouseDb } from '../warehouse/db';
 import { propertyPeriodMetrics } from '../warehouse/metrics';
@@ -33,7 +36,7 @@ import {
   rootCauseLine,
   recommendedAction,
 } from '../../src/modules/intel/property-intel';
-import { assertNoConfidential } from './confidential';
+import { assertNoRosterMatch } from './roster-match';
 import { managerSlug } from '../../src/contracts/briefing';
 import type {
   PropertyBriefingModel,
@@ -327,7 +330,7 @@ export function composePropertyBriefing(
     },
   };
 
-  assertNoConfidential(model); // fail-loud backstop (Behavior contract #3)
+  assertNoRosterMatch(model); // fail-loud backstop (Behavior contract #3), normalised (F4)
   return model;
 }
 
@@ -419,6 +422,6 @@ export function composeManagerBriefing(
     actionList,
   };
 
-  assertNoConfidential(model);
+  assertNoRosterMatch(model); // normalised (F4)
   return model;
 }

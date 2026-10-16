@@ -134,6 +134,16 @@ describe('fetchDealComps — roster scan on the outbound prompt (finding 3)', ()
     expect(calls).toHaveLength(0);
   });
 
+  it('blocks on the PLACEHOLDER stand-in roster too (external egress is a publication decision)', async () => {
+    process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'missing.json');
+    process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = '1';
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const { f, calls } = spy();
+    const r = await fetchDealComps(deal({ name: 'Clean', location: '1 Main St' }), { apiKey: 'sk-test', now: NOW, fetchImpl: f });
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
   it('uses an injected scan and lets a clean deal through to the network', async () => {
     const { f, calls } = spy();
     await fetchDealComps(deal({ name: 'Clean', location: '1 Main St' }), {
