@@ -468,8 +468,7 @@ describe('BUY gate — unevaluated IRR floor (refute round 2 T1)', () => {
   });
 });
 
-// ── Refute round 2 T2 (decision: keep buyable, make it visible): a WATCH capped for an unconfirmed
-// Stage-0 kill-gate input or unresolved DD-critical items still reaches BUY, but the buy verdict
+// ── Refute round 2 T2 (unknown-by-data items stay buyable, made visible; flood/zoning and other gate inputs are blocked — #483 below): a WATCH capped for unknown clear height / stories or unresolved roof/capex items still reaches BUY, but the buy verdict
 // and the pipeline item carry the cap reasons as open items instead of silence.
 describe('BUY with open items — cap reasons surfaced (refute round 2 T2)', () => {
   it('an unconfirmed Stage-0 gate input (multiStory null) stays BUY and says so', async () => {
@@ -506,6 +505,143 @@ describe('BUY with open items — cap reasons surfaced (refute round 2 T2)', () 
   });
 });
 
+// ── Issue #483, ratified by Gabriel 2026-10-17 (option 3, middle path): the engine's T2-WATCH caps for
+// unresolved flood/zoning DD and for an unconfirmed Stage-0 gate input (other than clear height /
+// stories, which are unknown-by-data) also hold a deal at WATCH in capital allocation — it never
+// reaches action `buy`. Items unknown-by-data only keep today's behavior (BUY with open items).
+describe('BUY gate — DD-critical / gate-indeterminate block (issue #483)', () => {
+  const blockedReasons = async (db: WarehouseDb, id: string) =>
+    (await buy(db)).result.pipeline.find((p) => p.candidateId === id)!;
+
+  it('precondition: flood+zoning unresolved is a real 80.6 T2 WATCH capped for DD-critical items', () => {
+    const s = scoreAcquisition(input({ ddKnown: { flood: false, zoning: false } }), RULESET, { rct: RCT });
+    expect(s.composite).toBe(80.6);
+    expect(s.verdict).toBe('WATCH');
+    expect(s.ddCriticalUnresolved).toEqual(expect.arrayContaining(['flood', 'zoning']));
+  });
+
+  it('flood + zoning unresolved (the issue fixture) is NOT buyable and says why', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-fz', { ddKnown: { flood: false, zoning: false } });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const item = result.pipeline.find((p) => p.candidateId === 'cand-fz')!;
+    expect(item.buyEligible).toBe(false);
+    expect(item.buyBlockedBy).toEqual(['DD-critical unresolved: flood, zoning — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)']);
+  });
+
+  it('flood alone, or zoning alone, unresolved blocks BUY', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-flood', { ddKnown: { flood: false, zoning: true, roof: true, 'deferred-maintenance-capex': true } });
+    await seedScored(db, 'cand-zoning', { ddKnown: { flood: true, zoning: false, roof: true, 'deferred-maintenance-capex': true } });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    expect((await blockedReasons(db, 'cand-flood')).buyBlockedBy?.[0]).toContain('flood');
+    expect((await blockedReasons(db, 'cand-zoning')).buyBlockedBy?.[0]).toContain('zoning');
+    expect(result.pipeline.every((p) => p.buyEligible === false)).toBe(true);
+  });
+
+  it('sfhaOnPad unconfirmed (null) blocks BUY', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-sfha', { sfhaOnPad: null });
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const item = await blockedReasons(db, 'cand-sfha');
+    expect(item.buyEligible).toBe(false);
+    expect(item.buyBlockedBy?.[0]).toMatch(/Stage-0 gate input unconfirmed: sfhaOnPad/);
+  });
+
+  it('unconfirmed ground-level access blocks BUY', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-access', { hasDock: null, hasDriveIn: null, dockCount: null, driveInCount: null });
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    expect((await blockedReasons(db, 'cand-access')).buyBlockedBy?.[0]).toMatch(/access/);
+  });
+
+  it('price unconfirmed (null) blocks BUY — only clearHeightFt / multiStory are exempt', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-price-null', { price: null });
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const item = await blockedReasons(db, 'cand-price-null');
+    expect(item.buyEligible).toBe(false);
+    if (item.buyBlockedBy !== undefined) expect(item.buyBlockedBy[0]).toMatch(/price/);
+  });
+
+  it('gate-capped row with unreadable stored inputs fails closed and says so', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-bad-inputs', { clearHeightFt: null });
+    db.prepare(`UPDATE acq_score_inputs SET input_json = '{not json' WHERE id = (SELECT score_input_id FROM acq_scores WHERE candidate_id = ? ORDER BY id DESC LIMIT 1)`).run('cand-bad-inputs');
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    expect((await blockedReasons(db, 'cand-bad-inputs')).buyBlockedBy?.[0]).toMatch(/unreadable/);
+  });
+
+  it('multiStory null AND sfhaOnPad null: the blocking input still blocks', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-mixed', { multiStory: null, sfhaOnPad: null });
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const reason = (await blockedReasons(db, 'cand-mixed')).buyBlockedBy?.[0] ?? '';
+    expect(reason).toMatch(/sfhaOnPad/);
+    expect(reason).not.toMatch(/multiStory/);
+  });
+
+  it('unknown-by-data only (clearHeightFt null) keeps BUY with open items', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-ch-null', { clearHeightFt: null });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-ch-null']);
+    const item = result.pipeline.find((p) => p.candidateId === 'cand-ch-null')!;
+    expect(item.buyEligible).toBe(true);
+    expect(item.buyBlockedBy ?? []).toEqual([]);
+    expect(buyVerdicts[0]!.reasons.some((r) => /^BUY with open items: /.test(r))).toBe(true);
+  });
+
+  it('multiStory null + clearHeightFt null together keep BUY with open items', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-unk-both', { multiStory: null, clearHeightFt: null });
+    expect((await buy(db)).buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-unk-both']);
+  });
+
+  it('roof / deferred-maintenance capex unresolved (not flood/zoning) keeps BUY with open items', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-roof', { ddKnown: { flood: true, zoning: true } });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-roof']);
+    expect(result.pipeline.find((p) => p.candidateId === 'cand-roof')!.buyBlockedBy ?? []).toEqual([]);
+  });
+
+  it('a blocked high-composite WATCH is skipped; the next eligible candidate is the BUY', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-blocked', { ddKnown: { flood: false, zoning: false } });  // 80.6
+    await seedScored(db, 'cand-ok', { clusterTier: 'entry' });                              // 74.6 WATCH, no cap
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-ok']);
+  });
+
+  it('a KILLED or PASS candidate with flood open is not labelled "held at WATCH" (refute wf_b5402308-51f)', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-killed', { productType: 'office-only', ddKnown: {} });
+    await seedScored(db, 'cand-pass', { clusterTier: 'entry', valueAddScore: 0, sellerMotivationScore: 0, clearHeightFt: 16, truckCourtFt: 50, dockCount: 1, driveInCount: 1, inPlaceRentPsf: 6, marketRentPsf: 6, waltYears: 6, ddKnown: {} });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    for (const id of ['cand-killed', 'cand-pass']) {
+      const item = result.pipeline.find((p) => p.candidateId === id)!;
+      expect(item.buyEligible).toBe(false);
+      expect(item.buyBlockedBy).toBeUndefined();
+    }
+  });
+
+  it('the blocked candidate is the ONLY one: no buy verdict is emitted at all', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-only-blocked', { ddKnown: { flood: false, zoning: false } });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    expect(result.actionCounts.buy).toBe(0);
+  });
+});
 
 // ── Refute round 2 T3: the buyGate note never claims "BUY suppressed" (a BUY may still be emitted),
 // counts only rows that would otherwise be T1/T2 PURSUE/WATCH, and names the EXISTING re-score

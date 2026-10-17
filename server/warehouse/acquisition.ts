@@ -218,6 +218,36 @@ function constructionPts(r: AcquisitionRuleset, ct: ConstructionType): number | 
   }
 }
 
+/** Ground-level access, resolved once for the gate and for gate-indeterminacy. Door counts are
+ *  authoritative when both are provided (0 docks AND 0 drive-ins ⇒ no access); else the presence flags. */
+function resolveGroundAccess(input: AcquisitionInput): { good: boolean; kill: boolean } {
+  const dc = input.dockCount;
+  const dic = input.driveInCount;
+  return {
+    good: (dc !== null && dic !== null) ? (dc > 0 || dic > 0) : (input.hasDock === true || input.hasDriveIn === true),
+    kill: (dc !== null && dic !== null) ? (dc === 0 && dic === 0) : (input.hasDock === false && input.hasDriveIn === false),
+  };
+}
+
+/**
+ * The Stage-0 gate inputs that are unknown, by name. gateIndeterminate (⇒ T2 cap) is exactly
+ * "this list is non-empty". Exported so capital allocation can tell the unknown-by-data inputs
+ * (clearHeightFt, multiStory) from the ones it holds out of BUY (issue #483) off ONE definition.
+ */
+export function unconfirmedGateInputs(input: AcquisitionInput): string[] {
+  const out: string[] = [];
+  if (input.productType === null) out.push('productType');
+  if (input.price === null) out.push('price');
+  if (input.maxBuildingSf === null) out.push('maxBuildingSf');
+  if (input.clusterTier === null) out.push('clusterTier');
+  if (input.clearHeightFt === null) out.push('clearHeightFt');
+  if (input.multiStory === null) out.push('multiStory');
+  const access = resolveGroundAccess(input);
+  if (!access.good && !access.kill) out.push('access');
+  if (input.sfhaOnPad === null) out.push('sfhaOnPad');
+  return out;
+}
+
 interface ScoreOpts { now?: string; rctVersion?: string; rct?: ReplacementCostTable; }
 
 /** Score one acquisition. Pure: deterministic in (input, ruleset) except the injectable scoredAt. */
@@ -247,8 +277,7 @@ export function scoreAcquisition(
       (dc !== null && dc > 0 && input.hasDock === false) || (dic !== null && dic > 0 && input.hasDriveIn === false)) {
     flag('doors', 'dock/drive-in counts contradict presence flags');
   }
-  const accessConfirmedGood = (dc !== null && dic !== null) ? (dc > 0 || dic > 0) : (input.hasDock === true || input.hasDriveIn === true);
-  const accessConfirmedKill = (dc !== null && dic !== null) ? (dc === 0 && dic === 0) : (input.hasDock === false && input.hasDriveIn === false);
+  const { kill: accessConfirmedKill } = resolveGroundAccess(input);
 
   // ── STAGE 0 — GATES ──
   const gates: GateResult[] = [];
@@ -329,13 +358,7 @@ export function scoreAcquisition(
   // Symmetric to floorIndeterminate (STAGE 1): missing hard-KILL knowledge must cap the verdict at T2 —
   // an unverified multi-story / no-access / sub-12' / oversized deal must never reach PURSUE just because
   // the disqualifying fact is unknown at screen time. (Adversarial refute finding, 2026-06-13.)
-  const gateIndeterminate =
-    input.productType === null ||
-    input.price === null || input.maxBuildingSf === null ||
-    input.clusterTier === null ||
-    input.clearHeightFt === null || input.multiStory === null ||
-    (!accessConfirmedGood && !accessConfirmedKill) ||
-    input.sfhaOnPad === null;
+  const gateIndeterminate = unconfirmedGateInputs(input).length > 0;
 
   // ── STAGE 1 — FLOORS ──
   const floors: FloorResult[] = [];
