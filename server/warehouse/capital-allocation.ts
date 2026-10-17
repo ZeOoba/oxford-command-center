@@ -58,7 +58,7 @@ import { isDistrusted } from './debt-trust';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
-import { loadRatifiedRct, loadRatifiedRuleset } from './acquisition';
+import { loadRatifiedRct, loadRatifiedRuleset, unconfirmedGateInputs } from './acquisition';
 import { classifyPersistedScore, CURRENT_SCORE_WITH_INPUTS_SQL, liveScoringRegime } from './acq-score-freshness';
 import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness';
 import { governorFingerprint } from './acq-governor-proxy';
@@ -195,8 +195,10 @@ function buildBuyVerdict(
 
   // A null basisDiscountPct can no longer reach a buy verdict (audit 2026-10-13 G2: indeterminate
   // basis is BUY-ineligible), so the former null-basis ambiguity warning is unreachable and removed.
-  // Refute round 2 T2: a WATCH capped for an unconfirmed Stage-0 gate input or unresolved
-  // DD-critical items stays buyable (policy pending Gabriel) — but its open items are disclosed.
+  // Ratified rule (Gabriel, 2026-10-17, #483): a WATCH capped for unresolved flood/zoning DD or an
+  // unconfirmed Stage-0 gate input other than clear height / stories never reaches here (see
+  // buyBlockers). What does: items unknown-by-data only (roof / deferred-maintenance capex, clear
+  // height, stories) — buyable, but their open items are disclosed (refute round 2 T2).
   const openItems = candidate.openItems ?? [];
   const dataQuality: AllocationVerdict['dataQuality'] = openItems.map((issue) => ({
     entity: candidate.candidateId,
@@ -674,7 +676,7 @@ interface AcqScoreRow {
   score_json: string | null;
 }
 
-import { ClusterTier, AcquisitionScore } from '../../src/contracts/acquisition';
+import { ClusterTier, AcquisitionScore, AcquisitionInput } from '../../src/contracts/acquisition';
 
 /** Parse a persisted score_json through the AcquisitionScore contract; null on malformed/foreign JSON. */
 function parseAcquisitionScore(json: string | null): AcquisitionScore | null {
@@ -701,6 +703,54 @@ export const OPEN_ITEM_DISPLAY: Readonly<Record<string, string>> = {
   'a Stage-0 gate input is unconfirmed — cannot clear the kill screen':
     'Stage-0 gate input unconfirmed — confirm before LOI',
 };
+
+/** DD-critical items that hold a deal out of BUY (#483). roof / deferred-maintenance-capex are
+ *  unknown-by-data (PCA-sourced) and stay buyable with open items. */
+const BUY_BLOCKING_DD: readonly string[] = ['flood', 'zoning'];
+/** Stage-0 gate inputs that are unknown-by-data only: a null here keeps today's behavior (BUY with
+ *  open items). Every OTHER unconfirmed gate input (sfhaOnPad, access, product, price, size, cluster
+ *  tier) blocks BUY. */
+const GATE_INPUTS_UNKNOWN_BY_DATA: readonly string[] = ['clearHeightFt', 'multiStory'];
+// Scope note: "Stage-0 gate input" here means exactly the engine's gateIndeterminate set
+// (unconfirmedGateInputs). The 'other-use' gate inputs (environmental remediation, ground lease,
+// use) are outside that set today, so an unknown there is not blocked by #483 (raised in review).
+
+/**
+ * Why a scored candidate is held at WATCH and out of BUY (#483; empty ⇒ rule does not apply).
+ * Reads the persisted score's ddCriticalUnresolved and the stored deal inputs through the engine's own
+ * unconfirmedGateInputs, so there is one definition of "gate input unconfirmed". Fails closed: a score
+ * whose engine capped for gate indeterminacy but whose stored inputs cannot be read is blocked.
+ */
+function buyBlockers(score: AcquisitionScore | null, inputJson: string | null): string[] {
+  // Only where the rule is what holds a live candidate out of BUY: a KILLED / PASS row is not "held
+  // at WATCH" (refute wf_b5402308-51f), it is already ineligible on its own verdict.
+  if (score === null) return [];
+  if (!((score.tier === 'T1' || score.tier === 'T2') && (score.verdict === 'PURSUE' || score.verdict === 'WATCH'))) return [];
+  const out: string[] = [];
+  const dd = score.ddCriticalUnresolved.filter((id) => BUY_BLOCKING_DD.includes(id));
+  if (dd.length > 0) {
+    out.push(`DD-critical unresolved: ${dd.join(', ')} — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)`);
+  }
+  // Decide from the stored inputs whenever they parse (no dependence on the cap-reason wording); the
+  // engine's cap reason only decides whether an UNREADABLE blob fails closed.
+  let names: string[] | null = null;
+  try {
+    const parsed = AcquisitionInput.safeParse(JSON.parse(inputJson ?? ''));
+    if (parsed.success) names = unconfirmedGateInputs(parsed.data);
+  } catch {
+    names = null;
+  }
+  if (names === null) {
+    const capped = capReasonsOf(score).includes(OPEN_ITEM_DISPLAY['a Stage-0 gate input is unconfirmed — cannot clear the kill screen']!);
+    if (capped) out.push('Stage-0 gate input unconfirmed: stored deal inputs unreadable — not BUY-eligible (#483)');
+  } else {
+    const blocking = names.filter((n) => !GATE_INPUTS_UNKNOWN_BY_DATA.includes(n));
+    if (blocking.length > 0) {
+      out.push(`Stage-0 gate input unconfirmed: ${blocking.join(', ')} — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)`);
+    }
+  }
+  return out;
+}
 
 function capReasonsOf(score: AcquisitionScore | null): string[] {
   if (score === null) return [];
@@ -870,6 +920,10 @@ function loadPipelineCandidates(db: WarehouseDb): {
     const governorDemotedPass =
       scoreRow?.verdict === 'PASS' &&
       (score?.reasons.some((r) => r.startsWith('Governor demotion:')) ?? false);
+    // #483: DD-critical flood/zoning or a blocking unconfirmed gate input holds the deal at WATCH. Held
+    // rows deliberately stay in the stale/unparseable disclosures below (over-disclosure is the safe
+    // direction; excluding them mis-counts rows whose inputs are unreadable or whose ruleset changed).
+    const blockedBy = buyBlockers(score, scoreRow?.input_json ?? null);
     const wouldContend =
       ((scoreRow?.verdict === 'PURSUE' || scoreRow?.verdict === 'WATCH') &&
         (scoreRow.tier === 'T1' || scoreRow.tier === 'T2')) ||
@@ -910,6 +964,8 @@ function loadPipelineCandidates(db: WarehouseDb): {
       buyIneligible.add(c.id);
     }
 
+    if (blockedBy.length > 0) buyIneligible.add(c.id);
+
     return {
       candidateId: c.id,
       address: c.address,
@@ -925,6 +981,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
       basisDiscountPct,
       verdict: verdictOf(scoreRow?.verdict ?? null),
       openItems: capReasonsOf(score),
+      ...(blockedBy.length > 0 ? { buyBlockedBy: blockedBy } : {}),
       // Final eligibility (refute H3): every BUY-gate condition, incl. tier + composite floor. The
       // portfolio buy verdict is chosen ONLY from buyEligible items.
       buyEligible:

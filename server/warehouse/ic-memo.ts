@@ -303,9 +303,12 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       // tier T1 next to a governor-demoted PASS; absent buyEligible reads as Not eligible.
       const verdict = p.verdict ? esc(p.verdict) : DASH;
       const open = p.openItems ?? [];
+      const blocked = p.buyBlockedBy ?? [];
       const eligible =
         p.buyEligible !== true
-          ? 'Not eligible'
+          ? blocked.length > 0
+            ? `Not eligible — held at WATCH: ${esc(blocked.join('; '))}` // #483 — say why
+            : 'Not eligible'
           : open.length > 0
             ? `BUY with open items: ${esc(open.join('; '))}` // refute round 2 T2 — never silent
             : 'Eligible';

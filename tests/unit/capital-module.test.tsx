@@ -500,6 +500,24 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     expect(screen.getByText('BUY with open items: Stage-0 gate input unconfirmed — confirm before LOI')).toBeTruthy();
   });
 
+  it('Buy Pipeline says why a flood/zoning-capped candidate is held at WATCH (#483)', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-held', address: '8 Held Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', buyEligible: false, openItems: ['DD-critical unresolved: flood, zoning'], buyBlockedBy: ['DD-critical unresolved: flood, zoning — capped at WATCH'] },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getByText('Held at WATCH: DD-critical unresolved: flood, zoning — capped at WATCH')).toBeTruthy();
+    expect(screen.getByText('not BUY-eligible')).toBeTruthy();
+    expect(screen.queryByText(/^BUY with open items/)).toBeNull();
+  });
+
   it('deep-links the Pipeline tab via ?tab=', () => {
     renderModule('/capital?tab=pipeline', clientWithPipeline());
     expect(screen.getByRole('tab', { name: 'Pipeline' }).getAttribute('aria-selected')).toBe('true');

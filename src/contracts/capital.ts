@@ -93,9 +93,15 @@ export const PortfolioAllocation = z.object({
     verdict: Verdict.nullable().optional(),
     buyEligible: z.boolean().optional(),
     /** Refute round 2 T2: the engine's downgrade-only cap reasons for this score (unconfirmed
-     *  Stage-0 gate input, unresolved DD-critical items, Q3 guard …). Policy (Gabriel, pending):
-     *  such a candidate stays BUY-eligible, but the open items must be visible, never silent. */
+     *  Stage-0 gate input, unresolved DD-critical items, Q3 guard …). Ratified rule (Gabriel,
+     *  2026-10-17, #483): items that are unknown-by-data only (roof / deferred-maintenance capex, clear
+     *  height, stories) leave the candidate BUY-eligible with the open items visible, never silent;
+     *  unresolved flood/zoning DD or another unconfirmed Stage-0 gate input holds it at WATCH
+     *  (see buyBlockedBy). */
     openItems: z.array(z.string()).optional(),
+    /** #483: why this candidate is held out of BUY by the DD-critical / gate-indeterminate rule
+     *  (empty or absent when the rule does not apply). Any entry ⇒ buyEligible is false. */
+    buyBlockedBy: z.array(z.string()).optional(),
   })),
   /** BUY-gate transparency (refute H2 / round 2 T3): how many active candidates whose latest score
    *  would otherwise be T1/T2 PURSUE/WATCH — or, per #463, a governor-demoted PASS (legacy T1/T2 shape,

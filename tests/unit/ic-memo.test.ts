@@ -424,4 +424,15 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
     const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
     expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
   });
+
+  it('a candidate held at WATCH for flood/zoning DD reads "Not eligible — held at WATCH: ..." (#483)', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-held', address: '4 Held Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: false, openItems: ['DD-critical unresolved: flood, zoning'], buyBlockedBy: ['DD-critical unresolved: flood, zoning — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)'] },
+      ],
+    }));
+    const row = html.slice(html.indexOf('4 Held Ln'), html.indexOf('</tr>', html.indexOf('4 Held Ln')));
+    expect(row).toContain('Not eligible — held at WATCH: DD-critical unresolved: flood, zoning');
+    expect(row).not.toContain('BUY with open items');
+  });
 });
