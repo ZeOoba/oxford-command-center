@@ -144,7 +144,9 @@ describe('monthsSince', () => {
   it('counts whole calendar months from a partial date to the as-of date, at runtime', () => {
     expect(monthsSince('2024-09-16', '2026-10-13')).toBe(25);
     expect(monthsSince('2024-10-07', '2026-10-13')).toBe(24);
-    expect(monthsSince('2026', '2026-10-13')).toBe(9); // bare year → January
+    expect(monthsSince('2024', '2026-10-13')).toBe(22); // bare year → December (age never overstated)
+    expect(monthsSince('2026', '2026-10-13')).toBe(0); // same-year bare year floors at 0, never negative
+    expect(monthsSince('2025-03', '2026-10-13')).toBe(19); // stated month is unchanged
     expect(monthsSince(null, '2026-10-13')).toBeNull();
   });
 });
