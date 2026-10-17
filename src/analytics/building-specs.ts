@@ -257,6 +257,9 @@ export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   }
   const out: EffectiveSpec[] = [];
   for (const g of groups.values()) {
+    // Same-date ties here go to the LOWEST report_id (ascending), deliberately unlike the capex current-report rule in
+    // server/warehouse/property-condition.ts newestFirst (greatest report_id, ruled 2026-10-17): this one picks a spec fact,
+    // not a reserve total, and its order is pinned by existing tests. Revisit only with a ruling.
     const ordered = [...g].sort(
       (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || byCode(b.as_of, a.as_of) || byCode(b.report_date, a.report_date) || byCode(a.report_id, b.report_id) || byCode(JSON.stringify(a), JSON.stringify(b)),
     );

@@ -300,6 +300,10 @@ export const PropertyConditionReport = z
     /** False when pca_reports is empty — the importer has not been run. */
     loaded: z.boolean(),
     properties: z.array(PcaPropertySummary),
+    /**
+     * Pre-overlay totals over non-STALE current reports (STALE = pre-2024, undated or flagged stale); propertiesTotal counts
+     * every property. The UI does not read these: it recomputes from applyPcaOverlay, which also applies curated corrections.
+     */
     totals: z
       .object({
         propertiesTotal: z.number().int().nonnegative(),

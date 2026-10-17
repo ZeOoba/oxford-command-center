@@ -390,8 +390,7 @@ describe('display sorts use code-unit compare, not localeCompare (#474)', () => 
   });
 
   it('the PCA display modules contain no localeCompare', () => {
-    // server/warehouse/property-condition.ts is excluded on purpose: its newestFirst picks the CURRENT report (a selection rule), left on the locale compare pending a ruling.
-    const files = ['src/analytics/pca-intelligence.ts', 'src/analytics/building-specs.ts', 'src/modules/property-condition/SpecsView.tsx'];
+    const files = ['src/analytics/pca-intelligence.ts', 'src/analytics/building-specs.ts', 'server/warehouse/property-condition.ts', 'src/modules/property-condition/SpecsView.tsx'];
     for (const f of files) expect(readFileSync(join(process.cwd(), f), 'utf-8'), f).not.toMatch(/localeCompare/);
   });
 });
