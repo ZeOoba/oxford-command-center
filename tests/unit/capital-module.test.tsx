@@ -358,6 +358,17 @@ describe('CapitalModule — Notion sync (folded in from CapitalAllocationModule)
     );
   });
 
+  it('the sync toast surfaces properties left stale in Notion (no allocation verdict; refute H5)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ synced: 1, skipped: 0, skippedNoVerdict: 2, errors: [], asOf: '2026-10-13' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )));
+    renderModule();
+    fireEvent.click(screen.getByRole('button', { name: 'Sync capital decisions to Notion' }));
+    await waitFor(() => expect(screen.getByText('Synced 1 to Notion')).toBeTruthy());
+    expect(screen.getByText(/2 left unchanged in Notion \(no allocation verdict — prior value stale\)/)).toBeTruthy();
+  });
+
   it('shows an error toast when the sync fails (e.g. NOTION_TOKEN not configured)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'NOTION_TOKEN not configured' }), {
       status: 400,
@@ -451,6 +462,42 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     expect(screen.getByText('500 Commerce Dr')).toBeTruthy();
     expect(screen.getByText('1 candidates')).toBeTruthy();
     expect(screen.queryByText('Market Cap-Rate Positioning')).toBeNull();
+  });
+
+  it('Buy Pipeline shows the verdict and BUY eligibility next to the tier (refute H3)', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-legacy', address: '9 Legacy Rd', market: null, composite: 92, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.7, verdict: 'PASS', buyEligible: false },
+        ],
+        buyGate: { staleScores: 1, unparseableScores: 0, regimeUnavailable: false, suppressedNote: 'BUY suppressed: 1 stale score excluded' },
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getByText('9 Legacy Rd')).toBeTruthy();
+    expect(screen.getByText('PASS')).toBeTruthy();
+    expect(screen.getByText('not BUY-eligible')).toBeTruthy();
+    expect(screen.getByText('BUY suppressed: 1 stale score excluded')).toBeTruthy();
+  });
+
+  it('Buy Pipeline shows "BUY with open items: ..." for an eligible capped candidate (refute round 2 T2)', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-open', address: '7 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', buyEligible: true, openItems: ['Stage-0 gate input unconfirmed — confirm before LOI'] },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getByText('BUY with open items: Stage-0 gate input unconfirmed — confirm before LOI')).toBeTruthy();
   });
 
   it('deep-links the Pipeline tab via ?tab=', () => {

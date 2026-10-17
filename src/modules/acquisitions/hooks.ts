@@ -10,26 +10,33 @@ import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 
 const ACQ_KEYS = {
-  intel:      (s?: string, m?: string, v?: string, l?: number) =>
-    ['warehouse', 'acq', 'intel', s ?? '', m ?? '', v ?? '', l ?? 0] as const,
+  intel:      (s?: string, m?: string, v?: string, l?: number, k?: boolean) =>
+    ['warehouse', 'acq', 'intel', s ?? '', m ?? '', v ?? '', l ?? 0, k === true] as const,
   candidates: (s?: string) =>
     ['warehouse', 'acq', 'candidates', s ?? ''] as const,
 };
 
+/**
+ * GET /acq/intel. The server ranks by verdict (PURSUE, WATCH, PASS, KILLED) and HIDES KILLED by
+ * default (audit 2026-10-13 G4); pass includeKilled=true for views that render KILLED candidates
+ * (the OM Grader tier board's Killed column, the deal drawer's score lookup).
+ */
 export function useAcqIntel(
   status?: string,
   market?: string,
   verdict?: string,
   limit?: number,
+  includeKilled?: boolean,
 ) {
   return useQuery({
-    queryKey: ACQ_KEYS.intel(status, market, verdict, limit),
+    queryKey: ACQ_KEYS.intel(status, market, verdict, limit, includeKilled),
     queryFn: () => {
       const qs = new URLSearchParams();
       if (status)  qs.set('status',  status);
       if (market)  qs.set('market',  market);
       if (verdict) qs.set('verdict', verdict);
       if (limit)   qs.set('limit',   String(limit));
+      if (includeKilled) qs.set('includeKilled', '1');
       const q = qs.toString();
       return fetchParsedOrMirror(
         `/api/warehouse/acq/intel${q ? `?${q}` : ''}`,

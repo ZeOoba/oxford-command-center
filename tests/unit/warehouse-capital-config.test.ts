@@ -10,6 +10,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import { GOVERNOR_FALLBACK, RATIFIED_GOVERNORS } from '@contracts/index';
 import {
   CAPITAL_CONFIG,
+  CapitalConfigMissingError,
   appendCalibrationLog,
   loadCapitalConfig,
   writeCapitalConfig,
@@ -290,5 +291,25 @@ describe('writeCapitalConfig — governed mutation (hard-invariant enforcement +
     const db = freshDb();
     expect(() => writeCapitalConfig(db, { refiTriggerBps: 1_000_000, effectiveFrom: '2026-12-01' }, {})).toThrow(/ceiling|fat-finger/i);
     expect(loadCapitalConfig(db).version).toBe(1);
+  });
+});
+
+
+// Audit 2026-10-13 G6 — owner decision: an EMPTY capital_config table FAILS CLOSED. It must never
+// silently fall back to the compile-time defaults (the old comment even called that path
+// "fail-closed" while describing hurdle fields as 'proposed, 0.08' that are in fact 'ratified').
+describe('loadCapitalConfig — empty capital_config table fails closed (audit 2026-10-13 G6)', () => {
+  it('throws CapitalConfigMissingError instead of returning compile-time defaults', () => {
+    const db = freshDb();
+    db.prepare('DELETE FROM capital_config').run();
+    expect(() => loadCapitalConfig(db)).toThrow(CapitalConfigMissingError);
+    expect(() => loadCapitalConfig(db)).toThrow(/capital_config is empty/);
+  });
+
+  it('writeCapitalConfig refuses to mint a version on an empty table (no row written)', () => {
+    const db = freshDb();
+    db.prepare('DELETE FROM capital_config').run();
+    expect(() => writeCapitalConfig(db, { dscrFloor: 1.30, effectiveFrom: '2026-10-13' }, {})).toThrow(CapitalConfigMissingError);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM capital_config').get() as { n: number }).n).toBe(0);
   });
 });

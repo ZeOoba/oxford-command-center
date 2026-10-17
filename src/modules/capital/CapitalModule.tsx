@@ -278,7 +278,12 @@ export function CapitalModule() {
       toast({
         tone: errCount > 0 ? 'info' : 'success',
         title: `Synced ${r.synced} to Notion`,
-        description: `${r.skipped} skipped${errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''}`,
+        // Refute H5: properties with no allocation verdict are NOT written, so their Notion rows keep
+        // a prior (stale) value — say so instead of folding them into "skipped".
+        description:
+          `${r.skipped} skipped` +
+          (r.skippedNoVerdict > 0 ? ` · ${r.skippedNoVerdict} left unchanged in Notion (no allocation verdict — prior value stale)` : '') +
+          (errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''),
       });
     },
     onError: (e) =>
@@ -444,6 +449,11 @@ export function CapitalModule() {
       ) : (
         <Card>
           <CardHeader title="Buy Pipeline" trailing={<Badge tone="neutral">{portfolio.pipeline.length} candidates</Badge>} />
+          {portfolio.buyGate?.suppressedNote && (
+            <div style={{ padding: '6px 14px', fontSize: 12, color: 'var(--text-warn)' }}>
+              {portfolio.buyGate.suppressedNote}
+            </div>
+          )}
           <div style={{ padding: '8px 0' }}>
             {portfolio.pipeline.map(c => (
               <div key={c.candidateId} style={{
@@ -455,6 +465,18 @@ export function CapitalModule() {
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{c.market ?? '—'}</div>
                 </div>
                 {c.tier && <Badge tone={c.tier === 'T1' ? 'green' : 'neutral'}>{c.tier}</Badge>}
+                {/* Refute H3: persisted verdict + BUY eligibility next to the tier (a legacy row can
+                    read T1 beside a governor-demoted PASS). Absent buyEligible = not eligible. */}
+                {c.verdict && <Badge tone="neutral">{c.verdict}</Badge>}
+                <span style={{ fontSize: 11, color: c.buyEligible === true ? 'var(--text-pos)' : 'var(--text-secondary)' }}>
+                  {c.buyEligible === true ? 'BUY-eligible' : 'not BUY-eligible'}
+                </span>
+                {/* Refute round 2 T2: capped-but-buyable candidates disclose their open items. */}
+                {c.buyEligible === true && (c.openItems?.length ?? 0) > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-warn)' }}>
+                    {`BUY with open items: ${(c.openItems ?? []).join('; ')}`}
+                  </span>
+                )}
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                   IRR {fmtPct(c.leveredIrr)}
                 </span>
