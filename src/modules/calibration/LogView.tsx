@@ -15,7 +15,10 @@ export function LogView({ rows }: { rows: CalibrationLogRow[] }) {
     { key: 'predictedBand', header: 'Predicted', render: (r) => r.predictedBand ?? (r.predictedValue !== null ? r.predictedValue.toFixed(0) : '—'), sortValue: (r) => r.predictedBand ?? '' },
     { key: 'asOfPeriod', header: 'As-of', align: 'right', render: (r) => <span className="num">{r.asOfPeriod}</span>, sortValue: (r) => r.asOfPeriod },
     { key: 'horizonPeriods', header: 'Horizon', align: 'right', render: (r) => <span className="num">{r.horizonPeriods === null ? '—' : `${r.horizonPeriods}y`}</span>, sortValue: (r) => r.horizonPeriods ?? -1 },
-    { key: 'status', header: 'Status', render: (r) => <Badge tone={r.resolved ? hitTone(r.hit, true) : 'neutral'}>{r.resolved ? fmtHit(r.hit) : 'open'}</Badge>, sortValue: (r) => (r.resolved ? 1 : 0) },
+    // A deal verdict covered by a sibling's blessed outcome (one outcome per deal) is resolved, not open.
+    { key: 'status', header: 'Status', render: (r) => (r.resolvedByVerdictId != null
+      ? <Badge tone="neutral">{`covered by #${r.resolvedByVerdictId}`}</Badge>
+      : <Badge tone={r.resolved ? hitTone(r.hit, true) : 'neutral'}>{r.resolved ? fmtHit(r.hit) : 'open'}</Badge>), sortValue: (r) => (r.resolved ? 1 : 0) },
     { key: 'outcomePeriod', header: 'Outcome', align: 'right', render: (r) => <span className="num">{r.outcomePeriod ?? '—'}</span>, sortValue: (r) => r.outcomePeriod ?? '' },
     { key: 'emittedBy', header: 'Source', render: (r) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{r.emittedBy}</span>, sortValue: (r) => r.emittedBy },
   ];

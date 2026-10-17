@@ -447,6 +447,11 @@ export const CalibrationLogRowSchema = z.object({
   outcomePeriod: z.string().nullable(),
   hit: z.union([z.literal(0), z.literal(1)]).nullable(),
   resolvedBy: z.string().nullable(),
+  /** Deal acquisition-score verdicts only (one blessed outcome per DEAL): the id of the sibling
+   *  verdict whose blessed outcome resolves this deal, when this verdict has none of its own. Such a
+   *  row reads resolved:true with null realized/hit fields (the outcome is the covering verdict's).
+   *  null = resolved by itself, or open. Optional for backward compatibility. */
+  resolvedByVerdictId: z.number().int().nullable().optional(),
 });
 export type CalibrationLogRow = z.infer<typeof CalibrationLogRowSchema>;
 
