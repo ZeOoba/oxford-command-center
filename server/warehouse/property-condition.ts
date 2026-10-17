@@ -25,6 +25,7 @@ import {
   type PcaScheduleRow,
   type PcaWarrantyStatus,
 } from '../../src/contracts/property-condition';
+import { byCode, reportStatus } from '../../src/analytics/pca-intelligence';
 import type { WarehouseDb } from './db';
 
 interface ReportRow {
@@ -75,6 +76,8 @@ function brief(r: ReportRow): PcaReportBrief {
 function newestFirst(a: ReportRow, b: ReportRow): number {
   if (a.report_date === null && b.report_date !== null) return 1;
   if (a.report_date !== null && b.report_date === null) return -1;
+  // Deliberately unchanged (still the locale compare): this picks each property's CURRENT report, so it is a selection
+  // rule, not a display sort. Changing its tie order is a ruling for Gabriel, not part of the display-sort cleanup.
   const byDate = (b.report_date ?? '').localeCompare(a.report_date ?? '');
   return byDate !== 0 ? byDate : b.report_id.localeCompare(a.report_id);
 }
@@ -139,13 +142,16 @@ export function buildPropertyConditionReport(db: WarehouseDb, asOf: string): Pro
   properties.sort((a, b) => {
     const ea = (a.current.immediateUsd ?? 0) + (a.current.shortTermUsd ?? 0);
     const eb = (b.current.immediateUsd ?? 0) + (b.current.shortTermUsd ?? 0);
-    return eb - ea || a.propertyLabel.localeCompare(b.propertyLabel);
+    return eb - ea || byCode(a.propertyLabel, b.propertyLabel) || byCode(a.propertyKey, b.propertyKey);
   });
 
-  const currents = properties.map((p) => p.current);
+  // STALE (pre-2024 / undated / flagged-stale) current reports are history: they never feed dollar totals or the
+  // figures count (same single vintage rule as the client overlay, src/analytics/pca-intelligence.ts reportStatus).
+  const live = properties.filter((p) => reportStatus(p.current) !== 'STALE');
+  const currents = live.map((p) => p.current);
   const totals = {
     propertiesTotal: properties.length,
-    propertiesWithFigures: properties.filter((p) => p.hasDollarFigures).length,
+    propertiesWithFigures: live.filter((p) => p.hasDollarFigures).length,
     immediateUsd: sum(currents.map((c) => c.immediateUsd)),
     shortTermUsd: sum(currents.map((c) => c.shortTermUsd)),
     reservesUninflUsd: sum(currents.map((c) => c.reservesUninflUsd)),
@@ -172,7 +178,7 @@ export function buildPropertyConditionReport(db: WarehouseDb, asOf: string): Pro
   }));
   // Warranty problems first (expired, this year, expiring), then by property.
   const warrantyRank: Record<PcaWarrantyStatus, number> = { expired: 0, 'ends-this-year': 1, expiring: 2, active: 3, unknown: 4 };
-  schedule.sort((a, b) => warrantyRank[a.warrantyStatus] - warrantyRank[b.warrantyStatus] || a.propertyLabel.localeCompare(b.propertyLabel));
+  schedule.sort((a, b) => warrantyRank[a.warrantyStatus] - warrantyRank[b.warrantyStatus] || byCode(a.propertyLabel, b.propertyLabel));
 
   // ── lifecycle: consultant-estimated lines from each property's CURRENT report only ──
   const compRows = db
@@ -225,7 +231,7 @@ export function buildPropertyConditionReport(db: WarehouseDb, asOf: string): Pro
     if (a.dueYear !== null && b.dueYear === null) return -1;
     return (a.dueYear ?? 0) - (b.dueYear ?? 0) || (b.totalUsd ?? 0) - (a.totalUsd ?? 0);
   });
-  priceBook.sort((a, b) => a.system.localeCompare(b.system) || (b.reportYear ?? 0) - (a.reportYear ?? 0));
+  priceBook.sort((a, b) => byCode(a.system, b.system) || (b.reportYear ?? 0) - (a.reportYear ?? 0));
 
   // ── calibration: curated estimate-vs-executed pairs; delta computed here ──
   const pairRows = db.prepare('SELECT * FROM capex_calibration_pairs ORDER BY row_seq').all() as Array<{

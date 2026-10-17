@@ -56,6 +56,9 @@ export interface PcaOverlay {
 
 // ── status / age ────────────────────────────────────────────────────────────────────────────
 
+/** Code-unit string compare. Display sorts use this instead of the locale-aware compare, so order does not depend on the host locale/ICU. */
+export const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /** Reports dated before this year feed install-date / EUL history only — never totals or forecasts. */
 export const STALE_BEFORE_YEAR = 2024;
 export const AGE_ALERT_MONTHS = 24;
@@ -196,7 +199,7 @@ export function applyPcaOverlay(report: PropertyConditionReport, overlay: PcaOve
     corrections,
     totals: {
       propertiesTotal: properties.length,
-      propertiesWithFigures: properties.filter((p) => p.hasDollarFigures).length,
+      propertiesWithFigures: properties.filter((p) => p.status !== 'STALE' && p.hasDollarFigures).length,
       immediateUsd: sumOf(currents.map((c) => c.immediateUsd)),
       shortTermUsd: sumOf(currents.map((c) => c.shortTermUsd)),
       reservesUninflUsd: sumOf(currents.map((c) => c.reservesUninflUsd)),
@@ -241,7 +244,7 @@ export function nearTermRollup(properties: Array<PcaPropertySummary & { status?:
     if (totalUsd <= 0) continue;
     base.push({ propertyKey: p.propertyKey, propertyLabel: p.propertyLabel, immediateUsd, shortTermUsd, totalUsd, status });
   }
-  base.sort((a, b) => b.totalUsd - a.totalUsd || a.propertyLabel.localeCompare(b.propertyLabel));
+  base.sort((a, b) => b.totalUsd - a.totalUsd || byCode(a.propertyLabel, b.propertyLabel) || byCode(a.propertyKey, b.propertyKey));
   const totalUsd = base.reduce((a, r) => a + r.totalUsd, 0);
   const rows = base.map((r) => ({ ...r, share: totalUsd > 0 ? r.totalUsd / totalUsd : 0 }));
   return { rows, totalUsd, topShare: rows[0]?.share ?? 0, excludedStale };
