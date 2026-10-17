@@ -10,7 +10,7 @@
   },
   "capital-483-dd-block": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed 2026-10-17 (issue #483 ruling, option 3)",
-    "phase": "Capital BUY gate: unresolved flood/zoning DD and blocking unconfirmed Stage-0 gate inputs hold a candidate at WATCH (not BUY); clearHeightFt/multiStory unknowns stay buyable with open items. Touches server/warehouse/capital-allocation.ts, acquisition.ts (unconfirmedGateInputs helper), ic-memo.ts, CapitalModule.tsx and ARCHITECT-OWNED src/contracts/capital.ts (additive optional pipeline.buyBlockedBy).",
+    "phase": "Capital BUY gate: unresolved DD-critical items (flood, zoning, roof, deferred-maintenance capex) and blocking unconfirmed Stage-0 gate inputs hold a candidate at WATCH (not BUY); clearHeightFt/multiStory unknowns stay buyable with open items. Touches server/warehouse/capital-allocation.ts, acquisition.ts (unconfirmedGateInputs helper), ic-memo.ts, CapitalModule.tsx and ARCHITECT-OWNED src/contracts/capital.ts (additive optional pipeline.buyBlockedBy).",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,

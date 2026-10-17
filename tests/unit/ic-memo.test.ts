@@ -418,11 +418,11 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
   it('an eligible row with open items reads "BUY with open items: ..." (refute round 2 T2)', () => {
     const html = buildIcMemoHtml(portfolio({
       pipeline: [
-        { candidateId: 'c-open', address: '3 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: true, openItems: ['DD-critical unresolved: roof'] },
+        { candidateId: 'c-open', address: '3 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: true, openItems: ['Stage-0 gate input unconfirmed — confirm before LOI'] },
       ],
     }));
     const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
-    expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
+    expect(row).toContain('BUY with open items: Stage-0 gate input unconfirmed — confirm before LOI');
   });
 
   it('a candidate held at WATCH for flood/zoning DD reads "Not eligible — held at WATCH: ..." (#483)', () => {

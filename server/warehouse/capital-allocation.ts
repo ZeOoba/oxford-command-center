@@ -195,10 +195,10 @@ function buildBuyVerdict(
 
   // A null basisDiscountPct can no longer reach a buy verdict (audit 2026-10-13 G2: indeterminate
   // basis is BUY-ineligible), so the former null-basis ambiguity warning is unreachable and removed.
-  // Ratified rule (Gabriel, 2026-10-17, #483): a WATCH capped for unresolved flood/zoning DD or an
+  // Ratified rule (Gabriel, 2026-10-17, #483): a WATCH capped for any unresolved DD-critical item (flood, zoning, roof, capex) or an
   // unconfirmed Stage-0 gate input other than clear height / stories never reaches here (see
-  // buyBlockers). What does: items unknown-by-data only (roof / deferred-maintenance capex, clear
-  // height, stories) — buyable, but their open items are disclosed (refute round 2 T2).
+  // buyBlockers). What does: items unknown-by-data only (clear height, stories) — buyable, but their
+  // open items are disclosed (refute round 2 T2).
   const openItems = candidate.openItems ?? [];
   const dataQuality: AllocationVerdict['dataQuality'] = openItems.map((issue) => ({
     entity: candidate.candidateId,
@@ -704,9 +704,9 @@ export const OPEN_ITEM_DISPLAY: Readonly<Record<string, string>> = {
     'Stage-0 gate input unconfirmed — confirm before LOI',
 };
 
-/** DD-critical items that hold a deal out of BUY (#483). roof / deferred-maintenance-capex are
- *  unknown-by-data (PCA-sourced) and stay buyable with open items. */
-const BUY_BLOCKING_DD: readonly string[] = ['flood', 'zoning'];
+/** DD-critical items that hold a deal out of BUY (#483, Gabriel 2026-10-17: roof and
+ *  deferred-maintenance-capex block too, not only flood/zoning). Mirrors the ruleset's ddCritical list. */
+const BUY_BLOCKING_DD: readonly string[] = ['flood', 'zoning', 'roof', 'deferred-maintenance-capex'];
 /** Stage-0 gate inputs that are unknown-by-data only: a null here keeps today's behavior (BUY with
  *  open items). Every OTHER unconfirmed gate input (sfhaOnPad, access, product, price, size, cluster
  *  tier) blocks BUY. */
@@ -920,7 +920,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
     const governorDemotedPass =
       scoreRow?.verdict === 'PASS' &&
       (score?.reasons.some((r) => r.startsWith('Governor demotion:')) ?? false);
-    // #483: DD-critical flood/zoning or a blocking unconfirmed gate input holds the deal at WATCH. Held
+    // #483: any unresolved DD-critical item (flood, zoning, roof, capex) or a blocking unconfirmed gate input holds the deal at WATCH. Held
     // rows deliberately stay in the stale/unparseable disclosures below (over-disclosure is the safe
     // direction; excluding them mis-counts rows whose inputs are unreadable or whose ruleset changed).
     const blockedBy = buyBlockers(score, scoreRow?.input_json ?? null);
@@ -1110,7 +1110,7 @@ export async function buildPortfolioAllocation(
   }
   if (buyable.length > 0) {
     // Selection order (refute round 3 V2) — NOT composite alone, which let a capped WATCH with open
-    // DD-critical items outrank a clean PURSUE: verdict (PURSUE before WATCH), then candidates with
+    // items (unknown clear height / stories; DD-critical items now block BUY outright, #483) outrank a clean PURSUE: verdict (PURSUE before WATCH), then candidates with
     // no open items, then composite DESC, then candidateId (deterministic). Eligibility unchanged.
     const verdictRank = (v: string | null | undefined): number => (v === 'PURSUE' ? 0 : v === 'WATCH' ? 1 : 2);
     const top = [...buyable].sort((a, b) => {

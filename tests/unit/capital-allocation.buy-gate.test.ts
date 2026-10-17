@@ -468,7 +468,7 @@ describe('BUY gate — unevaluated IRR floor (refute round 2 T1)', () => {
   });
 });
 
-// ── Refute round 2 T2 (unknown-by-data items stay buyable, made visible; flood/zoning and other gate inputs are blocked — #483 below): a WATCH capped for unknown clear height / stories or unresolved roof/capex items still reaches BUY, but the buy verdict
+// ── Refute round 2 T2 (unknown-by-data items stay buyable, made visible; unresolved DD-critical items and other gate inputs are blocked — #483 below): a WATCH capped for unknown clear height / stories still reaches BUY, but the buy verdict
 // and the pipeline item carry the cap reasons as open items instead of silence.
 describe('BUY with open items — cap reasons surfaced (refute round 2 T2)', () => {
   it('an unconfirmed Stage-0 gate input (multiStory null) stays BUY and says so', async () => {
@@ -486,13 +486,15 @@ describe('BUY with open items — cap reasons surfaced (refute round 2 T2)', () 
     expect(JSON.stringify(v)).not.toContain('cannot clear the kill screen');
   });
 
-  it('unresolved DD-critical items (roof, deferred-maintenance capex) stay BUY and are listed', async () => {
+  it('unresolved roof / deferred-maintenance capex now hold the deal at WATCH, not BUY (Gabriel 2026-10-17)', async () => {
     const db = freshDb();
     await seedScored(db, 'cand-dd-open', { ddKnown: { flood: true, zoning: true } });
     const { result, buyVerdicts } = await buy(db);
-    expect(buyVerdicts).toHaveLength(1);
-    expect(buyVerdicts[0]!.reasons.some((r) => /^BUY with open items: .*DD-critical unresolved: roof, deferred-maintenance-capex/.test(r))).toBe(true);
-    expect(result.pipeline.find((p) => p.candidateId === 'cand-dd-open')!.openItems).toEqual(['DD-critical unresolved: roof, deferred-maintenance-capex']);
+    expect(buyVerdicts).toHaveLength(0);
+    const item = result.pipeline.find((p) => p.candidateId === 'cand-dd-open')!;
+    expect(item.buyEligible).toBe(false);
+    expect(item.openItems).toEqual(['DD-critical unresolved: roof, deferred-maintenance-capex']);
+    expect(item.buyBlockedBy?.[0]).toMatch(/^DD-critical unresolved: roof, deferred-maintenance-capex — capped at WATCH/);
   });
 
   it('a clean deal has no open items and no open-items reason', async () => {
@@ -506,7 +508,7 @@ describe('BUY with open items — cap reasons surfaced (refute round 2 T2)', () 
 });
 
 // ── Issue #483, ratified by Gabriel 2026-10-17 (option 3, middle path): the engine's T2-WATCH caps for
-// unresolved flood/zoning DD and for an unconfirmed Stage-0 gate input (other than clear height /
+// unresolved DD-critical items (flood, zoning, roof, capex; Gabriel widened it the same day) and for an unconfirmed Stage-0 gate input (other than clear height /
 // stories, which are unknown-by-data) also hold a deal at WATCH in capital allocation — it never
 // reaches action `buy`. Items unknown-by-data only keep today's behavior (BUY with open items).
 describe('BUY gate — DD-critical / gate-indeterminate block (issue #483)', () => {
@@ -527,7 +529,7 @@ describe('BUY gate — DD-critical / gate-indeterminate block (issue #483)', () 
     expect(buyVerdicts).toHaveLength(0);
     const item = result.pipeline.find((p) => p.candidateId === 'cand-fz')!;
     expect(item.buyEligible).toBe(false);
-    expect(item.buyBlockedBy).toEqual(['DD-critical unresolved: flood, zoning — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)']);
+    expect(item.buyBlockedBy).toEqual(['DD-critical unresolved: flood, zoning, roof, deferred-maintenance-capex — capped at WATCH, not BUY-eligible (Gabriel ruling 2026-10-17, #483)']);
   });
 
   it('flood alone, or zoning alone, unresolved blocks BUY', async () => {
@@ -605,12 +607,14 @@ describe('BUY gate — DD-critical / gate-indeterminate block (issue #483)', () 
     expect((await buy(db)).buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-unk-both']);
   });
 
-  it('roof / deferred-maintenance capex unresolved (not flood/zoning) keeps BUY with open items', async () => {
+  it('roof alone, or capex alone, unresolved blocks BUY', async () => {
     const db = freshDb();
-    await seedScored(db, 'cand-roof', { ddKnown: { flood: true, zoning: true } });
-    const { result, buyVerdicts } = await buy(db);
-    expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-roof']);
-    expect(result.pipeline.find((p) => p.candidateId === 'cand-roof')!.buyBlockedBy ?? []).toEqual([]);
+    await seedScored(db, 'cand-roof', { ddKnown: { flood: true, zoning: true, 'deferred-maintenance-capex': true } });
+    await seedScored(db, 'cand-capex', { ddKnown: { flood: true, zoning: true, roof: true } });
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    expect((await blockedReasons(db, 'cand-roof')).buyBlockedBy?.[0]).toContain('roof');
+    expect((await blockedReasons(db, 'cand-capex')).buyBlockedBy?.[0]).toContain('deferred-maintenance-capex');
   });
 
   it('a blocked high-composite WATCH is skipped; the next eligible candidate is the BUY', async () => {
@@ -699,10 +703,10 @@ describe('BUY gate — engine-output freshness (refute round 3 V1)', () => {
 // candidates without open items, then composite DESC, then candidateId — never composite alone, so a
 // capped WATCH with open DD-critical items cannot outrank a clean PURSUE. Eligibility is unchanged.
 describe('portfolio BUY selection order (refute round 3 V2)', () => {
-  it('a clean PURSUE beats a higher-composite capped WATCH with open DD items', async () => {
+  it('a clean PURSUE beats a higher-composite capped WATCH with open items', async () => {
     const db = freshDb();
     await seedScored(db, 'cand-clean-pursue', { clusterTier: 'established' });               // 77.6 T1 PURSUE
-    await seedScored(db, 'cand-capped-watch', { ddKnown: { flood: true, zoning: true } });   // 80.6 T2 WATCH, open items
+    await seedScored(db, 'cand-capped-watch', { multiStory: null });   // T2 WATCH, open items (unknown-by-data)
     const { result, buyVerdicts } = await buy(db);
     expect(result.pipeline.find((p) => p.candidateId === 'cand-capped-watch')!.buyEligible).toBe(true);
     expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-clean-pursue']);
@@ -711,7 +715,7 @@ describe('portfolio BUY selection order (refute round 3 V2)', () => {
   it('among WATCHes, one without open items beats a higher-composite one with open items', async () => {
     const db = freshDb();
     await seedScored(db, 'cand-watch-clean', { clusterTier: 'entry' });                     // 74.6 T2 WATCH, no cap
-    await seedScored(db, 'cand-watch-open', { ddKnown: { flood: true, zoning: true } });    // 80.6 WATCH, open items
+    await seedScored(db, 'cand-watch-open', { multiStory: null });    // WATCH, open items (unknown-by-data)
     const { result, buyVerdicts } = await buy(db);
     expect(result.pipeline.find((p) => p.candidateId === 'cand-watch-clean')!.openItems).toEqual([]);
     expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-watch-clean']);
@@ -719,7 +723,7 @@ describe('portfolio BUY selection order (refute round 3 V2)', () => {
 
   it('with only the capped WATCH it is still BUY, with open items', async () => {
     const db = freshDb();
-    await seedScored(db, 'cand-only-capped', { ddKnown: { flood: true, zoning: true } });
+    await seedScored(db, 'cand-only-capped', { multiStory: null });
     const { buyVerdicts } = await buy(db);
     expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-only-capped']);
     expect(buyVerdicts[0]!.reasons.some((r) => /^BUY with open items: /.test(r))).toBe(true);

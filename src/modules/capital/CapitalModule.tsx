@@ -471,7 +471,7 @@ export function CapitalModule() {
                 <span style={{ fontSize: 11, color: c.buyEligible === true ? 'var(--text-pos)' : 'var(--text-secondary)' }}>
                   {c.buyEligible === true ? 'BUY-eligible' : 'not BUY-eligible'}
                 </span>
-                {/* #483: held at WATCH (flood/zoning DD or a blocking unconfirmed gate input) — say why. */}
+                {/* #483: held at WATCH (unresolved DD-critical item or a blocking unconfirmed gate input) — say why. */}
                 {(c.buyBlockedBy?.length ?? 0) > 0 && (
                   <span style={{ fontSize: 11, color: 'var(--text-warn)' }}>
                     {`Held at WATCH: ${(c.buyBlockedBy ?? []).join('; ')}`}
