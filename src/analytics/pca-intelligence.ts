@@ -63,21 +63,28 @@ export const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 
 export const STALE_BEFORE_YEAR = 2024;
 export const AGE_ALERT_MONTHS = 24;
 
-function ymOf(partial: string): { y: number; m: number } | null {
+function ymOf(partial: string): { y: number; m: number; monthStated: boolean } | null {
   const [ys, ms] = partial.split('-');
   const y = Number(ys);
   if (!Number.isInteger(y)) return null;
-  const m = ms === undefined ? 1 : Number(ms);
-  return { y, m: Number.isInteger(m) && m >= 1 && m <= 12 ? m : 1 };
+  const m = ms === undefined ? NaN : Number(ms);
+  const monthStated = Number.isInteger(m) && m >= 1 && m <= 12;
+  return { y, m: monthStated ? m : 1, monthStated };
 }
 
-/** Whole calendar months from a YYYY / YYYY-MM / YYYY-MM-DD date to `asOf` (YYYY-MM-DD). Day is ignored. */
+/**
+ * Whole calendar months from a YYYY / YYYY-MM / YYYY-MM-DD date to `asOf` (YYYY-MM-DD). Day is ignored. A year-only date
+ * is read as December of that year (Gabriel, 2026-10-17): the age is a lower bound and is never overstated, so an age alert
+ * can fire late but not early. Floored at 0 so a year-only date in the as-of year is not negative.
+ */
 export function monthsSince(partial: string | null, asOf: string): number | null {
   if (partial === null) return null;
   const a = ymOf(partial);
   const b = ymOf(asOf);
   if (!a || !b) return null;
-  return b.y * 12 + b.m - (a.y * 12 + a.m);
+  const aMonth = a.monthStated ? a.m : 12;
+  const months = b.y * 12 + b.m - (a.y * 12 + aMonth);
+  return a.monthStated ? months : Math.max(0, months);
 }
 
 /**
