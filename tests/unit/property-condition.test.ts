@@ -95,6 +95,24 @@ describe('buildPropertyConditionReport — properties', () => {
     }
   });
 
+  it('a STALE current report (pre-2024) with dollar figures is excluded from totals and the figures count (#474)', () => {
+    const db = freshDb();
+    try {
+      writeRegister(db, parsed({
+        reports: [
+          report({ reportId: 'S1', propertyKey: 's', propertyLabel: 'S old', reportDate: '2019-06-01', immediateUsd: 7000, shortTermUsd: 3000, reservesUninflUsd: 50000 }),
+          report({ reportId: 'C1', propertyKey: 'c', propertyLabel: 'C new', reportDate: '2025-06-01', immediateUsd: 100, shortTermUsd: 50, reservesUninflUsd: 900 }),
+          report({ reportId: 'U1', propertyKey: 'u', propertyLabel: 'U undated', reportDate: null, immediateUsd: 5000, shortTermUsd: 1, reservesUninflUsd: 20000 }),
+          report({ reportId: 'F1', propertyKey: 'f', propertyLabel: 'F flagged', reportDate: '2025-03-01', usabilityClass: 'stale', immediateUsd: 4000, shortTermUsd: 2, reservesUninflUsd: 10000 }),
+        ],
+      }));
+      const r = buildPropertyConditionReport(db, AS_OF);
+      expect(r.totals).toEqual({ propertiesTotal: 4, propertiesWithFigures: 1, immediateUsd: 100, shortTermUsd: 50, reservesUninflUsd: 900 });
+    } finally {
+      db.close();
+    }
+  });
+
   it('derives reservesPsfYr = reserves ÷ SF ÷ term and orders by near-term exposure', () => {
     const db = freshDb();
     try {
