@@ -184,8 +184,8 @@ function NearTermRollupCard({ rollup }: { rollup: NearTermRollup }) {
         </li>
       </ul>
       <p className="num px-4 py-2 text-2xs" style={muted}>
-        PCA consultant estimates. Excludes {rollup.excludedStale} STALE report{rollup.excludedStale === 1 ? '' : 's'} (pre-2024:
-        install-date history only); the KPI strip above applies the same exclusion.
+        PCA consultant estimates. Excludes {rollup.excludedStale} STALE report{rollup.excludedStale === 1 ? '' : 's'} (pre-2024, undated or flagged
+        stale: install-date history only); the KPI strip above applies the same exclusion.
       </p>
     </Card>
   );
@@ -233,7 +233,7 @@ function ReserveIntensityCard({ properties }: { properties: AdjustedProperty[] }
       <p className="num px-4 py-2 text-2xs" style={muted}>
         Consultant estimates on each report's own term — comparable across properties only with the flags in view.
         Roof lines are the least reliable (see Estimate vs actual).
-        {stale.length > 0 ? ` ${stale.length} stale (pre-2024) report${stale.length === 1 ? '' : 's'} left out — history only; see Building specs.` : ''}
+        {stale.length > 0 ? ` ${stale.length} stale (pre-2024, undated or flagged) report${stale.length === 1 ? '' : 's'} left out — history only; see Building specs.` : ''}
       </p>
     </Card>
   );
@@ -260,8 +260,8 @@ export function CapexOutlookView({ properties, rollup }: { properties: AdjustedP
       <NearTermRollupCard rollup={rollup} />
       <ReserveIntensityCard properties={properties} />
       <p className="num px-1 text-2xs" style={muted}>
-        Each row is the most recent report we have for that property. A pre-2024 report still appears (badged STALE)
-        but is history only — it is left out of the KPI totals, the rollup and reserve intensity. Reserves are
+        Each row is the most recent report we have for that property. A STALE report (pre-2024, undated or flagged
+        stale) still appears (badged STALE) but is history only — it is left out of the KPI totals, the rollup and reserve intensity. Reserves are
         uninflated and span each report's own term; $/SF/yr = reserves ÷ SF ÷ term, computed here and tagged
         "derived" unless the report's printed figure reconciles. Where no uninflated reserve exists the figure is
         n/a, never imputed. Older reports are counted, never summed. Narrative-only reports carry no dollar

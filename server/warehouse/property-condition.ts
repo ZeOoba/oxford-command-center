@@ -76,10 +76,11 @@ function brief(r: ReportRow): PcaReportBrief {
 function newestFirst(a: ReportRow, b: ReportRow): number {
   if (a.report_date === null && b.report_date !== null) return 1;
   if (a.report_date !== null && b.report_date === null) return -1;
-  // Deliberately unchanged (still the locale compare): this picks each property's CURRENT report, so it is a selection
-  // rule, not a display sort. Changing its tie order is a ruling for Gabriel, not part of the display-sort cleanup.
-  const byDate = (b.report_date ?? '').localeCompare(a.report_date ?? '');
-  return byDate !== 0 ? byDate : b.report_id.localeCompare(a.report_id);
+  // This picks each property's CURRENT report, so it is a selection rule, not a display sort. Ruled 2026-10-17 (Gabriel):
+  // a same-date tie goes to the code-unit-greatest report_id, so the choice never depends on host locale or ICU.
+  // Dates compare as raw strings, so a year-only '2025' ranks below '2025-03-01' (monthsSince reads year-only as December;
+  // the two never disagree on the register today, which has no same-property mixed-precision pair in one year).
+  return byCode(b.report_date ?? '', a.report_date ?? '') || byCode(b.report_id, a.report_id);
 }
 
 export function warrantyStatus(endYear: number | null, asOfYear: number): PcaWarrantyStatus {

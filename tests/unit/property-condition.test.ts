@@ -113,6 +113,24 @@ describe('buildPropertyConditionReport — properties', () => {
     }
   });
 
+  it('a same-date tie picks the code-unit-greatest report_id as current, whatever the insert order (ruled 2026-10-17)', () => {
+    const rows = [
+      report({ reportId: 'R09', propertyKey: 't', propertyLabel: 'T', reportDate: '2025-06-01', immediateUsd: 10000 }),
+      report({ reportId: 'r08', propertyKey: 't', propertyLabel: 'T', reportDate: '2025-06-01', immediateUsd: 90000 }),
+    ];
+    for (const order of [rows, [...rows].reverse()]) {
+      const db = freshDb();
+      try {
+        writeRegister(db, parsed({ reports: order }));
+        const r = buildPropertyConditionReport(db, AS_OF);
+        expect(r.properties[0]?.current.reportId).toBe('r08'); // 'r' (0x72) > 'R' (0x52); the locale compare said R09
+        expect(r.totals.immediateUsd).toBe(90000);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
   it('derives reservesPsfYr = reserves ÷ SF ÷ term and orders by near-term exposure', () => {
     const db = freshDb();
     try {
