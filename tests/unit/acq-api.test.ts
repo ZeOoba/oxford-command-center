@@ -425,3 +425,164 @@ describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
     expect(body.candidates.find((c) => c.id === 'hubspot:123')?.source).toBe('hubspot-pipeline');
   });
 });
+
+// ── Audit 2026-10-13 G3: explicit score freshness on GET /acq/intel ─────────────────────────
+import { readFileSync as readFileSyncG3 } from 'node:fs';
+import { resolve as resolveG3 } from 'node:path';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
+import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { AcquisitionInput } from '@contracts/acquisition';
+
+describe('GET /acq/intel — score freshness state (audit 2026-10-13 G3)', () => {
+  const RULESET = parseRuleset(JSON.parse(readFileSyncG3(resolveG3(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const RCT = loadRatifiedRct();
+  const STRONG = AcquisitionInput.parse({
+    dealId: 'intel-fresh',
+    price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
+    productType: 'shallow-bay-multi', officePct: 0.1,
+    clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6,
+    multiStory: false, truckCourtFt: 120,
+    constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
+    allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5,
+    clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
+    isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
+    ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
+  });
+
+  async function seedScored(db: WarehouseDb, id: string) {
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES (?, 'manual', 'active')`).run(id);
+    await persistAndLogScore(db, id, { ...STRONG, dealId: id }, RULESET, RCT);
+  }
+  async function intel(db: WarehouseDb) {
+    const res = await makeApp(db).request('/acq/intel');
+    expect(res.status).toBe(200);
+    return AcqIntelResponse.parse(await res.json());
+  }
+  const row = (b: AcqIntelResponse, id: string) => b.rankedCandidates.find((c) => c.candidate.id === id)!;
+
+  it('a score persisted under the live regime is current; an unscored candidate is unscored', async () => {
+    const db = freshDb();
+    await seedScored(db, 'c-fresh');
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES ('c-none', 'manual', 'active')`).run();
+    const b = await intel(db);
+    expect(row(b, 'c-fresh').scoreState).toBe('current');
+    expect(row(b, 'c-fresh').latestScore?.verdict).toBe('PURSUE');
+    expect(row(b, 'c-none').scoreState).toBe('unscored');
+  });
+
+  it('a governor regime bump flags the old score stale (still readable, with a reason)', async () => {
+    const db = freshDb();
+    await seedScored(db, 'c-stale');
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (2, '2026-10-13', 1.30, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: governor bump')`,
+    ).run();
+    const r = row(await intel(db), 'c-stale');
+    expect(r.scoreState).toBe('stale');
+    expect(r.staleReasons!.join(' ')).toMatch(/governor/i);
+    expect(r.latestScore).not.toBeNull();
+  });
+
+  // Option A merge with #463: /acq/intel and the capital BUY gate share classifyPersistedScore, so a
+  // row BUY withholds for governor-regime staleness can never read 'current' here.
+  it('an UNRELATED-field capital_config write (BUY withheld by the #463 stamp) reads stale here too, then current after re-score', async () => {
+    const db = freshDb();
+    await seedScored(db, 'c-unrelated');
+    const { writeCapitalConfig } = await import('../../server/warehouse/capital-config');
+    writeCapitalConfig(db, { dispositionCapRate: 0.06, effectiveFrom: '2026-10-13' }, { rationale: 'test: unrelated field' });
+    const r = row(await intel(db), 'c-unrelated');
+    expect(r.scoreState).toBe('stale');
+    expect(r.staleReasons!.join(' ')).toMatch(/governorRegime stamp 1:1\.25:0\.4:0\.085 does not match the live governor regime 2:/);
+    // (The matching BUY withholding is asserted in capital-allocation.buy-gate.test.ts, refute H2 + #463.)
+    await persistAndLogScore(db, 'c-unrelated', { ...STRONG, dealId: 'c-unrelated' }, RULESET, RCT);
+    expect(row(await intel(db), 'c-unrelated').scoreState).toBe('current');
+  });
+
+  it('a score_json that no longer parses is an explicit unparseable state, not a silent null', async () => {
+    const db = freshDb();
+    await seedScored(db, 'c-bad');
+    db.prepare(`UPDATE acq_scores SET score_json = '{"verdict":"PURSUE"}' WHERE candidate_id = 'c-bad'`).run();
+    const r = row(await intel(db), 'c-bad');
+    expect(r.latestScore).toBeNull();
+    expect(r.scoreState).toBe('unparseable');
+    expect(r.staleReasons!.length).toBeGreaterThan(0);
+  });
+
+  it('a pre-bump score under an old ruleset version is stale', async () => {
+    const db = freshDb();
+    await seedScored(db, 'c-old');
+    db.prepare(`UPDATE acq_score_inputs SET ruleset_version = '1.0.0' WHERE candidate_id = 'c-old'`).run();
+    expect(row(await intel(db), 'c-old').scoreState).toBe('stale');
+  });
+});
+
+// ── Audit 2026-10-13 G4: verdict-rank ordering; KILLED excluded from the default view ─────────
+describe('GET /acq/intel — verdict-rank ordering (audit 2026-10-13 G4)', () => {
+  /** Synthetic latest-score row with a chosen verdict + composite (ordering only — not a BUY path). */
+  function seedRow(db: WarehouseDb, id: string, verdict: string, tier: string, composite: number) {
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES (?, 'manual', 'active')`).run(id);
+    db.prepare(`INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json) VALUES (?, ?, '{}')`).run(id, `iv-${id}`);
+    const sid = (db.prepare('SELECT id FROM acq_score_inputs WHERE candidate_id = ?').get(id) as { id: number }).id;
+    db.prepare(`
+      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, 1, 0, '{}')
+    `).run(id, sid, `iv-${id}`, composite, tier, verdict);
+  }
+  function seedAll(db: WarehouseDb) {
+    seedRow(db, 'k-killed', 'KILLED', 'KILLED', 99);  // highest composite — must NOT outrank PURSUE
+    seedRow(db, 'p-pass', 'PASS', 'PASS', 90);
+    seedRow(db, 'w-watch', 'WATCH', 'T2', 85);
+    seedRow(db, 'u-pursue', 'PURSUE', 'T1', 76);
+    seedRow(db, 'u-pursue-hi', 'PURSUE', 'T1', 88);
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES ('z-unscored', 'manual', 'active')`).run();
+  }
+  const ids = async (db: WarehouseDb, q = '') => {
+    const res = await makeApp(db).request(`/acq/intel${q}`);
+    expect(res.status).toBe(200);
+    return AcqIntelResponse.parse(await res.json()).rankedCandidates.map((c) => c.candidate.id);
+  };
+
+  it('orders PURSUE, WATCH, PASS (then unscored) — composite only breaks ties within a verdict; KILLED hidden by default', async () => {
+    const db = freshDb();
+    seedAll(db);
+    expect(await ids(db)).toEqual(['u-pursue-hi', 'u-pursue', 'w-watch', 'p-pass', 'z-unscored']);
+  });
+
+  it('includeKilled=1 adds KILLED ranked after PASS despite the highest composite', async () => {
+    const db = freshDb();
+    seedAll(db);
+    expect(await ids(db, '?includeKilled=1')).toEqual(['u-pursue-hi', 'u-pursue', 'w-watch', 'p-pass', 'k-killed', 'z-unscored']);
+  });
+
+  it('an explicit verdict=KILLED filter still returns KILLED rows', async () => {
+    const db = freshDb();
+    seedAll(db);
+    expect(await ids(db, '?verdict=KILLED')).toEqual(['k-killed']);
+  });
+});
+
+// ── Refute H4: an empty capital_config must not 500 the whole ranked list — every scored row is
+// flagged stale ('live scoring regime unavailable') instead.
+describe('GET /acq/intel — empty capital_config (refute H4)', () => {
+  it('returns 200 with every scored row stale, reason "live scoring regime unavailable"', async () => {
+    const db = freshDb();
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES ('c-h4', 'manual', 'active')`).run();
+    db.prepare(`INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json) VALUES ('c-h4', 'iv-h4', '{}')`).run();
+    const sid = (db.prepare(`SELECT id FROM acq_score_inputs WHERE candidate_id = 'c-h4'`).get() as { id: number }).id;
+    db.prepare(`
+      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json)
+      VALUES ('c-h4', ?, 'iv-h4', 80, 'T1', 'PURSUE', 0, 0, 1, 1, 0, '{}')
+    `).run(sid);
+    db.prepare('DELETE FROM capital_config').run();
+    const res = await makeApp(db).request('/acq/intel');
+    expect(res.status).toBe(200);
+    const body = AcqIntelResponse.parse(await res.json());
+    const r = body.rankedCandidates.find((c) => c.candidate.id === 'c-h4')!;
+    expect(r.scoreState).toBe('stale');
+    expect(r.staleReasons!.join(' ')).toMatch(/live scoring regime unavailable/);
+  });
+});

@@ -114,6 +114,25 @@ describe('capitalAllocationApi', () => {
     expect(res.status).toBe(503);
   });
 
+  it('R-G6: empty capital_config → explicit 503 governors-unavailable error (fail closed, audit 2026-10-13 G6)', async () => {
+    const { capitalAllocationApi } = await import('../../server/warehouse/capital-allocation-api');
+    const db = freshDb();
+    db.prepare('DELETE FROM capital_config').run();
+    const res = await capitalAllocationApi(() => db).fetch(new Request('http://localhost/allocate'));
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/capital governors unavailable/);
+  });
+
+  it('R-H2: /allocate carries the buyGate transparency block through the response contract', async () => {
+    const { capitalAllocationApi } = await import('../../server/warehouse/capital-allocation-api');
+    const db = freshDb();
+    const res = await capitalAllocationApi(() => db).fetch(new Request('http://localhost/allocate'));
+    expect(res.status).toBe(200);
+    const body = CapitalAllocationResponse.parse(await res.json());
+    expect(body.portfolio.buyGate).toEqual({ staleScores: 0, unparseableScores: 0, regimeUnavailable: false, suppressedNote: null });
+  });
+
   it('R-4: ratified hurdle config → advisoryOnly=false', async () => {
     const { capitalAllocationApi } = await import('../../server/warehouse/capital-allocation-api');
     const db = freshDb();

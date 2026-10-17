@@ -19,11 +19,13 @@ import {
   VerdictKind,
 } from '../../src/contracts/warehouse';
 import { AcquisitionInput, AcqCandidateRow, ParcelScreenImportRequest } from '../../src/contracts/acquisition';
-import { AcquisitionScore } from '../../src/contracts/acquisition';
+import type { AcquisitionScore } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
 import { persistAndLogScore, logAcqOutcome } from './acq-engine';
-import { applyGovernorProxy } from './acq-governor-proxy';
+import { applyGovernorProxyToScore } from './acq-governor-proxy';
 import { GOVERNOR_DEFAULTS } from './governors';
+import { classifyPersistedScore, liveScoringRegime } from './acq-score-freshness';
+import type { LiveScoringRegime } from './acq-score-freshness';
 import { ingestParcelScreenBatch } from './acq-ingest';
 import { syncNotionPipeline } from './acq-notion-sync';
 import { syncHubSpotPipeline } from './acq-hubspot-sync';
@@ -33,7 +35,7 @@ import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '.
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
 import { benchmarkMetric, pmScorecards, rankProperties } from './benchmarks';
-import { calibrationLog, calibrationPending, calibrationReport, resolveManualOutcome } from './calibration';
+import { acquisitionDealCounts, calibrationLog, calibrationPending, calibrationReport, resolveManualOutcome } from './calibration';
 import { decomposeNoiChange, noiImpactByCategory } from './drivers';
 import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
@@ -63,7 +65,7 @@ import { buildCapitalAllocationReport, buildPortfolioAllocation } from './capita
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
 import { assertNoEgressRosterMatch } from '../briefing/roster-match';
-import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
+import { buildCapitalWritebackEntries, syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
 import { referenceDate } from '../config';
@@ -614,10 +616,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     // Apply the SHARED governor proxy (acq-governor-proxy.ts) so this ad-hoc score matches the ranked
     // path AND the edge Function. Uses the ratified default governors (DB overrides — stricter-only —
     // apply in the persistence path). LTV is indeterminate at screen time; see the module header.
-    const score = scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct });
-    const { verdict, governorDscrCleared, governorLtvCleared } =
-      applyGovernorProxy(score, parsed.data, GOVERNOR_DEFAULTS);
-    return c.json({ score: { ...score, verdict }, governorDscrCleared, governorLtvCleared });
+    // Score-level wrapper (audit 2026-10-13 G1): tier moves with a demoted verdict, so this ad-hoc
+    // result is the same {tier, verdict} pair the persistence path stores.
+    const raw = scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct });
+    const { score, governorDscrCleared, governorLtvCleared } =
+      applyGovernorProxyToScore(raw, parsed.data, GOVERNOR_DEFAULTS);
+    return c.json({ score, governorDscrCleared, governorLtvCleared });
   });
 
   // ── Acquisition Intelligence Engine (Phase 4) ─────────────────────────────────────────────
@@ -631,12 +635,18 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // GET /acq/intel — ranked candidates with latest scores + calibration summary.
   // Query params: ?status=active|archived|acquired|passed &market=<ClusterTier>
-  //               &verdict=PURSUE|WATCH|PASS|KILLED &limit=<n>
+  //               &verdict=PURSUE|WATCH|PASS|KILLED &includeKilled=1 &limit=<n>
+  // Ranking (audit 2026-10-13 G4): verdict rank FIRST (PURSUE, WATCH, PASS, KILLED, then unscored),
+  // composite DESC only within a verdict — a KILLED deal (hard gate/floor rejection) can carry a
+  // high composite and must never outrank a live PURSUE. The default view EXCLUDES KILLED;
+  // includeKilled=1 (or an explicit verdict=KILLED filter) brings them back.
   app.get('/acq/intel', (c) =>
     withDb((db) => {
       const statusParam = c.req.query('status') ?? 'active';
       const marketParam = c.req.query('market') ?? null;
       const verdictParam = c.req.query('verdict') ?? null;
+      const includeKilledParam = c.req.query('includeKilled');
+      const includeKilled = includeKilledParam === '1' || includeKilledParam === 'true';
       const limitParam = parseLimitParam(c.req.query('limit'), 100, 500);
 
       // Build candidate query with optional filters.
@@ -648,6 +658,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       if (verdictParam && VALID_VERDICTS.has(verdictParam)) {
         where.push('s.verdict = ?');
         params.push(verdictParam);
+      } else if (!includeKilled) {
+        // Default view: hide KILLED. Unscored candidates (no score row ⇒ s.verdict NULL) stay visible.
+        where.push("(s.verdict IS NULL OR s.verdict <> 'KILLED')");
       }
 
       // Fetch candidates + latest score per candidate in one query.
@@ -659,13 +672,36 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
           s.composite, s.tier, s.verdict, s.advisory_only, s.capped_at_t2,
           s.gates_passed, s.floors_passed, s.floor_indeterminate,
           s.governor_dscr_cleared, s.governor_ltv_cleared,
-          s.score_json, COALESCE(c.current_scored_at, s.scored_at) AS scored_at, s.calibration_verdict_id
+          s.score_json, COALESCE(c.current_scored_at, s.scored_at) AS scored_at, s.calibration_verdict_id,
+          s.id AS score_id, s.inputs_version, i.ruleset_version, i.rct_version, i.input_json
         FROM acq_candidates c
+        -- Current score = the #464 pointer, the same row the capital BUY gate, brain-report and
+        -- logAcqOutcome read (acq-score-freshness CURRENT_SCORE_WITH_INPUTS_SQL). scoredAt is
+        -- "last re-asserted" (current_scored_at, #464 / migration 037), falling back to the row stamp.
         LEFT JOIN acq_scores s ON s.id = c.current_score_id
+        LEFT JOIN acq_score_inputs i ON i.id = s.score_input_id
         WHERE ${where.join(' AND ')}
-        ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
+        ORDER BY CASE s.verdict
+                   WHEN 'PURSUE' THEN 0 WHEN 'WATCH' THEN 1 WHEN 'PASS' THEN 2 WHEN 'KILLED' THEN 3
+                   ELSE 4 END,
+                 s.composite DESC NULLS LAST, c.created_at DESC,
+                 c.id ASC  -- total order before LIMIT (created_at has 1-second resolution)
         LIMIT ?
       `).all(...params, limitParam) as Array<Record<string, unknown>>;
+
+      // Live scoring regime for the freshness check (audit 2026-10-13 G3). Unavailable config ⇒ null ⇒
+      // every scored row is flagged stale (freshness unverifiable), never silently 'current'.
+      // Guarded like capital-allocation.ts (refute H4): liveScoringRegime loads the governors, which
+      // THROW on an empty capital_config (fail closed). That must flag rows, not 500 the whole list.
+      const liveCfg = acqConfig();
+      let live: LiveScoringRegime | null = null;
+      if (liveCfg.ok) {
+        try {
+          live = liveScoringRegime(db, liveCfg.ruleset, liveCfg.rct);
+        } catch (e) {
+          console.warn(`[acq-intel] live scoring regime unavailable — every scored row flagged stale: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
 
       // Build RankedCandidate list.
       const rankedCandidates = rows.map((row) => {
@@ -687,15 +723,31 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
           updatedAt: row['updated_at'],
         });
 
-        let latestScore: AcquisitionScore | null = null;
-        if (row['score_json'] !== null && row['score_json'] !== undefined) {
-          try {
-            const parsed = AcquisitionScore.safeParse(JSON.parse(row['score_json'] as string));
-            latestScore = parsed.success ? parsed.data : null;
-          } catch {
-            latestScore = null;
-          }
-        }
+        // Explicit freshness state (audit 2026-10-13 G3) — a parse failure is 'unparseable' with a
+        // reason, and a superseded regime is 'stale', instead of a silent latestScore = null.
+        const freshness = classifyPersistedScore(
+          row['score_id'] === null || row['score_id'] === undefined
+            ? undefined
+            : {
+                inputs_version: (row['inputs_version'] as string | null) ?? null,
+                score_json: (row['score_json'] as string | null) ?? null,
+                ruleset_version: (row['ruleset_version'] as string | null) ?? null,
+                rct_version: (row['rct_version'] as string | null) ?? null,
+                input_json: (row['input_json'] as string | null) ?? null,
+                tier: (row['tier'] as string | null) ?? null,
+                verdict: (row['verdict'] as string | null) ?? null,
+                composite: (row['composite'] as number | null) ?? null,
+                advisory_only: (row['advisory_only'] as number | null) ?? null,
+                capped_at_t2: (row['capped_at_t2'] as number | null) ?? null,
+                floor_indeterminate: (row['floor_indeterminate'] as number | null) ?? null,
+                governor_dscr_cleared: (row['governor_dscr_cleared'] as number | null) ?? null,
+                governor_ltv_cleared: (row['governor_ltv_cleared'] as number | null) ?? null,
+                gates_passed: (row['gates_passed'] as number | null) ?? null,
+                floors_passed: (row['floors_passed'] as number | null) ?? null,
+              },
+          live,
+        );
+        const latestScore: AcquisitionScore | null = freshness.score;
 
         return {
           candidate,
@@ -710,6 +762,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
               : row['governor_ltv_cleared'] === 1,
           calibrationHitRate: null, // per-candidate hit-rate deferred to Phase 5
           scoredAt: row['scored_at'] ? String(row['scored_at']) : null,
+          scoreState: freshness.state,
+          staleReasons: freshness.staleReasons,
         };
       });
 
@@ -729,6 +783,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         calibrationSummary: {
           totalVerdicts: calReport.totalVerdicts,
           resolvedVerdicts: calReport.resolvedVerdicts,
+          ...acquisitionDealCounts(db), // deal-level beside the verdict-level counts (refute round 6 #2)
           overallHitRate: acqKind?.hitRate ?? null,
           wilsonLow: acqKind?.wilsonLow ?? null,
           wilsonHigh: acqKind?.wilsonHigh ?? null,
@@ -802,7 +857,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   );
 
   // POST /acq/score/:candidateId — run persistAndLogScore on a candidate.
-  // Body: AcquisitionInput. Returns AcquisitionScore.
+  // Body: AcquisitionInput. Returns { score, calibrationVerdictId, persisted } — persisted is
+  // 'inserted' | 'unchanged' | 'superseded' | 'reinstated' (acq-engine.ts PersistOutcome, audit X1).
   // FAIL-CLOSED, same as /acquisition/score: 503 when the RATIFIED ruleset + RCT cannot load. There is
   // no fallback to a proposed ruleset — a persisted score feeds the ranked pipeline, the capital BUY
   // verdict and the calibration record, so it must only ever be produced from ratified math
@@ -828,7 +884,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
       try {
         const result = await persistAndLogScore(db, candidateId, inputParsed.data, cfg.ruleset, cfg.rct);
-        return c.json({ score: result.score, calibrationVerdictId: result.calibrationVerdictId });
+        return c.json({ score: result.score, calibrationVerdictId: result.calibrationVerdictId, persisted: result.persisted });
       } catch (e) {
         console.error(`[acq/score] scoring failed for ${candidateId}: ${e instanceof Error ? e.message : String(e)}`);
         return c.json({ error: 'scoring failed' }, 500);
@@ -966,8 +1022,10 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // ── POST /capital-allocation/sync-notion (Direction 1 — Notion Writeback) ─────────────────
   //
-  // Recomputes the Capital Allocation Report, then writes each property's capitalAction +
-  // priorityScore back to the Notion 🏢 Property Register (the operational per-property DB).
+  // Recomputes the 5-way allocation verdicts (buildPortfolioAllocation — the SAME engine the Capital
+  // page and IC memo render; audit 2026-10-13 G5) plus the Capital Allocation Report (priorityScore),
+  // then writes each property's allocation action + priorityScore back to the Notion 🏢 Property
+  // Register (the operational per-property DB). Both builders share one asOf (IC-memo pattern).
   // Requires NOTION_TOKEN (never committed). Localhost-only via the existing CORS guard.
   //
   // FAIL-OPEN: the writeback never throws on per-property mismatch or a single page failure —
@@ -981,13 +1039,11 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const { brain } = await import('../brain');
         const snapshot = await brain.getSnapshot();
         if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
-        const report = await buildCapitalAllocationReport(db, snapshot);
+        const asOf = referenceDate();
+        const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot);
+        const report = await buildCapitalAllocationReport(db, snapshot, asOf);
         const result = await syncCapitalActionsToNotion(
-          report.entries.map((e) => ({
-            propertyName: e.propertyName,
-            capitalAction: e.capitalAction,
-            priorityScore: e.priorityScore,
-          })),
+          buildCapitalWritebackEntries(portfolio, report.entries),
           token,
           { asOf: report.asOf },
         );

@@ -19,8 +19,8 @@
 //   hold       → default (monitor, governor-block, no-debt)
 //
 // buy (C-3): portfolio-level, not per-asset — emitted only when the acq pipeline has a
-// T1/T2 candidate clearing the composite + basis-discount floors (§3.5); never on an
-// empty buyable list.
+// T1/T2 candidate clearing the composite floor whose persisted, governor-surviving score passed
+// the RATIFIED ruleset's basis floor (§3.5; audit 2026-10-13 G1/G2); never on an empty buyable list.
 //
 // advisoryOnly = true until hurdle rate is ratified (Phase 5 default).
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
@@ -58,6 +58,9 @@ import { isDistrusted } from './debt-trust';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
+import { loadRatifiedRct, loadRatifiedRuleset } from './acquisition';
+import { classifyPersistedScore, CURRENT_SCORE_WITH_INPUTS_SQL, liveScoringRegime } from './acq-score-freshness';
+import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness';
 import { governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
@@ -152,7 +155,12 @@ function confidenceTierFrom(c01: number): Confidence {
 // than extend the schema, with an explicit reasons[] note that these fields are
 // not applicable to a pipeline acquisition candidate.
 const BUY_COMPOSITE_FLOOR = 70;
-const BASIS_DISCOUNT_FLOOR = 0.05; // [RATIFY] 5% all-in basis discount vs replacement cost
+// The basis-discount floor is NOT a constant here (audit 2026-10-13 G2): the former unratified
+// BASIS_DISCOUNT_FLOOR = 0.05 [RATIFY] is removed. The RATIFIED ruleset's vintage-ramped basis floor
+// (floors.basisDiscountMin{Pre,Post}Millennium = 0.65 / 0.60) is what governs; a candidate is only
+// BUY-eligible when that floor was evaluated and passed (loadPipelineCandidates). Because every
+// ratified vintage floor exceeds 0.05, removing the constant changes no outcome for a computable
+// basis; the only behaviour change is that an indeterminate (null) basis is no longer buyable.
 
 /** Disclosure for BUY candidates withheld because their score predates the current governor regime. */
 function staleGovernorFlag(entity: string, ids: readonly string[]): DataQualityFlag {
@@ -185,21 +193,18 @@ function buildBuyVerdict(
   if (forecastInputs === undefined) confidence01 = Math.min(confidence01, 0.65);
   confidence01 = Math.max(0.1, confidence01);
 
-  // A null basisDiscountPct passes the buyable gate (spec §3.5), but null is indistinguishable
-  // between "genuinely not applicable" and "the acquisition score never computed it" — surface
-  // that ambiguity rather than letting it silently disappear once the gate has passed.
-  const dataQuality: AllocationVerdict['dataQuality'] =
-    candidate.basisDiscountPct === null
-      ? [
-          {
-            entity: candidate.candidateId,
-            field: 'basisDiscountPct',
-            issue:
-              'basisDiscountPct is null for the top-ranked buyable candidate — the buyable gate treats null as passing, but null cannot distinguish "genuinely no discount data expected" from an acquisition score that never computed this field.',
-            severity: 'warn' as const,
-          },
-        ]
-      : [];
+  // A null basisDiscountPct can no longer reach a buy verdict (audit 2026-10-13 G2: indeterminate
+  // basis is BUY-ineligible), so the former null-basis ambiguity warning is unreachable and removed.
+  // Refute round 2 T2: a WATCH capped for an unconfirmed Stage-0 gate input or unresolved
+  // DD-critical items stays buyable (policy pending Gabriel) — but its open items are disclosed.
+  const openItems = candidate.openItems ?? [];
+  const dataQuality: AllocationVerdict['dataQuality'] = openItems.map((issue) => ({
+    entity: candidate.candidateId,
+    field: 'openItems',
+    issue: `BUY with open item: ${issue}`,
+    severity: 'warn' as const,
+  }));
+
   return {
     propertyId: `pipeline:${candidate.candidateId}`,
     propertyName: candidate.address,
@@ -216,6 +221,7 @@ function buildBuyVerdict(
     reasons: [
       `Portfolio buy signal: pipeline candidate ${candidate.candidateId} (tier ${candidate.tier ?? 'unknown'}, composite ${candidate.composite ?? 'unknown'})`,
       'inputs fields (healthBand/attentionBand/capitalAction/debtSignal/debtScoreBand/dscr/ltv/noiPerSf) are not applicable to a pipeline acquisition candidate — neutral placeholder values, not measured data',
+      ...(openItems.length > 0 ? [`BUY with open items: ${openItems.join('; ')}`] : []),
     ],
     inputs: {
       healthBand: 'good',
@@ -662,23 +668,94 @@ interface AcqScoreRow {
   composite: number;
   tier: string;
   verdict: string | null;
+  advisory_only: number | null;
   governor_dscr_cleared: number | null;
   governor_ltv_cleared: number | null;
   score_json: string | null;
 }
 
-import { ClusterTier } from '../../src/contracts/acquisition';
+import { ClusterTier, AcquisitionScore } from '../../src/contracts/acquisition';
+
+/** Parse a persisted score_json through the AcquisitionScore contract; null on malformed/foreign JSON. */
+function parseAcquisitionScore(json: string | null): AcquisitionScore | null {
+  if (json === null) return null;
+  try {
+    const parsed = AcquisitionScore.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * A candidate is BUY-eligible only if its PERSISTED verdict survived the acquisition governors:
- * acq-engine demotes verdict to PASS on a DSCR/LTV proxy failure (and on the fail-closed
- * invalid-governor path) but leaves `tier` as scored, so tier alone would still read T1/T2.
- * governor_*_cleared = 0 means failed; NULL means not evaluated (not a failure).
+ * The engine's cap reasons for a score (refute round 2 T2). acquisition.ts emits them as ONE
+ * deterministic reason string — "Capped T1 → T2: a; b." when the cap demoted a T1, or "Notes: a; b."
+ * when the deal was already T2 — built from its fixed capReasons list (DD-critical unresolved,
+ * floor indeterminate, incomplete ruleset, unconfirmed Stage-0 gate input, Q3 guard). Returned as
+ * the individual items, without the trailing period.
+ */
+/** Display wording for engine cap reasons that read wrong on a BUY verdict (refute round 3 V3).
+ *  Keyed on the EXACT engine string (acquisition.ts is not edited); unknown reasons pass through.
+ *  Exported for the X3 pin test: an engine wording change that orphans a key fails CI. */
+export const OPEN_ITEM_DISPLAY: Readonly<Record<string, string>> = {
+  'a Stage-0 gate input is unconfirmed — cannot clear the kill screen':
+    'Stage-0 gate input unconfirmed — confirm before LOI',
+};
+
+function capReasonsOf(score: AcquisitionScore | null): string[] {
+  if (score === null) return [];
+  for (const r of score.reasons) {
+    const m = /^(?:Capped T1 → T2|Notes): (.*?)\.?$/.exec(r);
+    if (m && m[1]) {
+      return m[1]
+        .split('; ')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => OPEN_ITEM_DISPLAY[s] ?? s);
+    }
+  }
+  return [];
+}
+
+function verdictOf(v: string | null): 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED' | null {
+  return v === 'PURSUE' || v === 'WATCH' || v === 'PASS' || v === 'KILLED' ? v : null;
+}
+
+function finiteOrNull(v: number | null | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** DSCR governor: BUY requires it EVALUATED and cleared — exactly 1 (refute H1). NULL means the
+ *  proxy never ran (no stabilizedYoc): the engine only caps such a deal at T2 WATCH, while the same
+ *  deal with a known low YoC is KILLED, so admitting NULL rewarded missing data. 0 = failed; any
+ *  other value is out of the column's domain — all fail closed. */
+function dscrFlagAdmitsBuy(flag: number | null): boolean {
+  return flag === 1;
+}
+
+/** LTV governor: 1 or NULL. NULL is admitted ONLY here because the screen-time LTV proxy is
+ *  indeterminate BY CONSTRUCTION for a pipeline candidate (no loan amount — acq-governor-proxy.ts),
+ *  so requiring 1 would block every candidate. 0 or any out-of-domain value fails closed. */
+function ltvFlagAdmitsBuy(flag: number | null): boolean {
+  return flag === null || flag === 1;
+}
+
+/**
+ * A candidate is BUY-eligible only if its PERSISTED verdict survived the acquisition governors
+ * (audit 2026-10-13 G1). Tier alone is not trusted: rows persisted before the tier/verdict alignment
+ * fix carry tier T1/T2 next to a governor-demoted PASS verdict (including the fail-closed
+ * invalid-governor path). Requires ALL of:
+ *   - verdict IN ('PURSUE','WATCH')
+ *   - governor_dscr_cleared exactly 1 (NULL = not evaluated ⇒ not buyable; refute H1)
+ *   - governor_ltv_cleared 1 or NULL (NULL by construction at screen time; 0 or unknown ⇒ not buyable)
+ *   - advisory_only = 0 (an advisory score is never a capital-allocation verdict; NULL/unknown ⇒ not buyable)
+ * There is NO per-deal LTV term here: a pipeline candidate has no loan amount (see acq-governor-proxy.ts).
  */
 function isBuyEligible(row: AcqScoreRow | undefined): boolean {
   if (!row) return false;
   if (row.verdict !== 'PURSUE' && row.verdict !== 'WATCH') return false;
-  return row.governor_dscr_cleared !== 0 && row.governor_ltv_cleared !== 0;
+  if (row.advisory_only !== 0) return false;
+  return dscrFlagAdmitsBuy(row.governor_dscr_cleared) && ltvFlagAdmitsBuy(row.governor_ltv_cleared);
 }
 
 /**
@@ -703,6 +780,7 @@ function isCurrentGovernorRegime(row: AcqScoreRow, currentRegime: string): boole
 function loadPipelineCandidates(db: WarehouseDb): {
   pipeline: PortfolioAllocation['pipeline'];
   buyIneligible: ReadonlySet<string>;
+  buyGate: NonNullable<PortfolioAllocation['buyGate']>;
   staleGovernorIds: readonly string[];
 } {
   const currentRegime = governorFingerprint(loadGovernors(db));
@@ -710,18 +788,36 @@ function loadPipelineCandidates(db: WarehouseDb): {
     .prepare(`SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`)
     .all() as AcqCandRow[];
 
-  // Hoist prepared statement outside the map loop (Fix A-2)
+  // Live scoring regime (audit 2026-10-13 G3). A score is BUY-eligible only if it was persisted under
+  // the live ruleset version, live RCT version and live governor regime. If the ratified config cannot
+  // be loaded, freshness is unverifiable and EVERY candidate is BUY-ineligible (fail closed).
+  let live: LiveScoringRegime | null = null;
+  try {
+    live = liveScoringRegime(db, loadRatifiedRuleset(), loadRatifiedRct());
+  } catch (e) {
+    console.warn(`[capital-allocation] live acquisition regime unavailable — no BUY verdict: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Hoist prepared statement outside the map loop (Fix A-2). Joined to the input snapshot so the
+  // regime check (ruleset / RCT / governor-fingerprinted inputs_version) can run per row.
   const latestScoreStmt = db.prepare(
-    `SELECT s.candidate_id, s.composite, s.tier, s.verdict, s.governor_dscr_cleared, s.governor_ltv_cleared, s.score_json
-     FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id
-     WHERE c.id = ?`,
+    // ONE definition of the current score (#464 pointer acq_candidates.current_score_id), shared with
+    // classifyLatestScore and the re-score sweep; /acq/intel, brain-report and logAcqOutcome join the
+    // same pointer. The BUY gate therefore decides on exactly the row every other surface serves.
+    CURRENT_SCORE_WITH_INPUTS_SQL,
   );
 
   const buyIneligible = new Set<string>();
+  let staleScores = 0;
+  let unparseableScores = 0;
   const staleGovernorIds: string[] = [];
   const pipeline = candidates.map((c) => {
-    // Use acq_scores (Phase 4 table) — current score = acq_candidates.current_score_id (history-independent)
-    const scoreRow = latestScoreStmt.get(c.id) as AcqScoreRow | undefined;
+    // Use acq_scores (Phase 4 table) — current score = acq_candidates.current_score_id (history-independent, #464)
+    const scoreRow = latestScoreStmt.get(c.id) as (AcqScoreRow & PersistedScoreRow) | undefined;
+    // Scoring-regime freshness (audit G3) — since the #463 merge this ALSO requires the exact live
+    // governorRegime stamp (acq-score-freshness classifyPersistedScore), so 'current' here, on
+    // /acq/intel and in the re-score sweep all mean the same thing.
+    const freshness = classifyPersistedScore(scoreRow, live);
 
     // Validate tier against known values before casting (Fix A-1)
     const tierRaw = scoreRow?.tier ?? null;
@@ -730,34 +826,88 @@ function loadPipelineCandidates(db: WarehouseDb): {
         ? tierRaw
         : null;
 
-    const eligibleOnItsFace = isBuyEligible(scoreRow);
-    if (!eligibleOnItsFace) buyIneligible.add(c.id);
-    if (scoreRow && !isCurrentGovernorRegime(scoreRow, currentRegime)) {
-      buyIneligible.add(c.id);
-      // Disclose rows a re-score could plausibly promote: stale and not hard-KILLED. A governor-demoted
-      // PASS (tier still T1/T2) belongs to the superseded regime, so it is included; the caller then
-      // applies tier / composite / basis-floor.
-      if (eligibleOnItsFace || scoreRow.verdict === 'PASS') staleGovernorIds.push(c.id);
-    }
+    // score_json is the authoritative AcquisitionScore (007 migration). Parse it with the contract
+    // schema (audit 2026-10-13 G2) — never by poking at keys the type does not have. The basis
+    // discount and levered IRR are the `actual` of its floors[] entries ('basis' / 'irr').
+    const score = parseAcquisitionScore(scoreRow?.score_json ?? null);
+    const basisFloor = score?.floors.find((f) => f.id === 'basis') ?? null;
+    const irrFloor = score?.floors.find((f) => f.id === 'irr') ?? null;
+    const yieldFloor = score?.floors.find((f) => f.id === 'yield') ?? null;
+    const basisDiscountPct = finiteOrNull(basisFloor?.actual);
+    const leveredIrr = finiteOrNull(irrFloor?.actual);
 
-    // score_json is a stringified AcquisitionScore: the basis discount and levered IRR are the
-    // `actual` of its floors[] entries (ids 'basis' / 'irr'), NOT top-level keys — reading
-    // parsed['leveredIrr'] / parsed['basisDiscountPct'] always yielded null.
-    let leveredIrr: number | null = null;
-    let basisDiscountPct: number | null = null;
-    if (scoreRow?.score_json) {
-      try {
-        const parsed = JSON.parse(scoreRow.score_json) as { floors?: unknown };
-        if (Array.isArray(parsed.floors)) {
-          for (const f of parsed.floors as Array<{ id?: unknown; actual?: unknown }>) {
-            if (typeof f?.actual !== 'number' || !Number.isFinite(f.actual)) continue;
-            if (f.id === 'irr') leveredIrr = f.actual;
-            else if (f.id === 'basis') basisDiscountPct = f.actual;
-          }
-        }
-      } catch {
-        // score_json malformed — silently skip (non-fatal)
-      }
+    // #463 governor-regime stamp — kept as its OWN BUY condition (Option A, strictest wins): a
+    // latest score whose score_json.governorRegime is missing, malformed or differs from the CURRENT
+    // regime is BUY-ineligible until re-scored. (classifyPersistedScore applies the same stamp rule,
+    // so freshness.state is also 'stale' here; this check does not depend on that.)
+    const eligibleOnItsFace = isBuyEligible(scoreRow);
+    const regimeStale = scoreRow !== undefined && !isCurrentGovernorRegime(scoreRow, currentRegime);
+    if (regimeStale) buyIneligible.add(c.id);
+
+    // Stale disclosures (Option A merge; merge review C7). Two predicates, one nested in the other,
+    // evaluated on the same row in the same pass, so the two disclosures cannot disagree:
+    //   wouldContend (branch, refute round 2 T3 — the buyGate COUNT and note): the row would
+    //     otherwise be T1/T2 PURSUE/WATCH. Deliberately broad: a stale WATCH at composite 60-69.9,
+    //     a null basis or an advisory row may come back buyable after a re-score, so it must never be
+    //     held out of BUY silently (refute H2/T3).
+    //   Both also admit a governor-demoted PASS whatever its tier (governorDemotedPass, below).
+    //   wouldCompeteForBuy (#463's dataQuality governorRegime flag, as main defines it, with the
+    //     RATIFIED basis floor (G2) in place of the removed 5% constant): T1/T2 (or a governor-demoted
+    //     PASS), composite ≥ the floor,
+    //     persisted verdict eligible on its face OR a governor-demoted PASS (belongs to the superseded
+    //     regime), and not already failing the basis floor. An unparseable blob cannot show its basis,
+    //     so it is not excluded on that ground.
+    // buyGate counts on (wouldContend || wouldCompeteForBuy), the flag on wouldCompeteForBuy alone, so
+    // every candidate the flag names is also counted in buyGate (staleScores, or unparseableScores when
+    // its blob does not parse — classifyPersistedScore keeps that state).
+    // A governor-DEMOTED PASS (squash review C2). Since G1, applyGovernorProxyToScore moves tier to
+    // PASS together with the demoted verdict, so the engine's own demotions no longer carry T1/T2;
+    // they are recognised by the reason it appends ("Governor demotion: …"). Legacy pre-G1 rows
+    // (tier T1/T2 next to a PASS) are still covered by the tier path below. A NATIVELY scored PASS
+    // has no such reason and stays excluded — a re-score under looser governors cannot promote it.
+    // Reason-based rather than "governor flag = 0": a native PASS can also carry a failed DSCR flag
+    // (the proxy runs on every scored deal), and counting it would be disclosure noise.
+    const governorDemotedPass =
+      scoreRow?.verdict === 'PASS' &&
+      (score?.reasons.some((r) => r.startsWith('Governor demotion:')) ?? false);
+    const wouldContend =
+      ((scoreRow?.verdict === 'PURSUE' || scoreRow?.verdict === 'WATCH') &&
+        (scoreRow.tier === 'T1' || scoreRow.tier === 'T2')) ||
+      governorDemotedPass;
+    const wouldCompeteForBuy =
+      scoreRow !== undefined &&
+      (tier === 'T1' || tier === 'T2' || governorDemotedPass) &&
+      scoreRow.composite >= BUY_COMPOSITE_FLOOR &&
+      (eligibleOnItsFace || scoreRow.verdict === 'PASS') &&
+      (score === null || (basisFloor?.passed === true && basisDiscountPct !== null));
+    if (wouldContend || wouldCompeteForBuy) {
+      if (freshness.state === 'stale') staleScores++;
+      else if (freshness.state === 'unparseable') unparseableScores++;
+      else if (regimeStale) staleScores++; // defensive: the two stamp checks agree by construction
+    }
+    if (wouldCompeteForBuy && regimeStale) staleGovernorIds.push(c.id);
+
+    // BUY additionally requires a parseable score whose RATIFIED basis floor (the vintage-ramped
+    // discount floor in config/acquisition-ruleset.v1.json) was actually evaluated and passed. An
+    // unparseable/foreign blob or an INDETERMINATE basis (null discount) is NOT buyable — the more
+    // conservative of the two options (the engine already routes indeterminate basis to WATCH, and
+    // WATCH is otherwise BUY-eligible, so routing to WATCH would have changed nothing).
+    if (
+      !isBuyEligible(scoreRow) ||
+      freshness.state !== 'current' ||
+      score === null ||
+      basisFloor?.passed !== true ||
+      basisDiscountPct === null ||
+      // Yield floor must be EVALUATED and passed too (refute H1): an unknown stabilized YoC caps at
+      // WATCH in the engine but must never reach BUY.
+      yieldFloor?.passed !== true ||
+      finiteOrNull(yieldFloor.actual) === null ||
+      // Same rule for the levered-IRR floor (refute round 2 T1): an unknown IRR caps at WATCH in
+      // the engine while a known failing IRR is KILLED, so null must not reach BUY.
+      irrFloor?.passed !== true ||
+      leveredIrr === null
+    ) {
+      buyIneligible.add(c.id);
     }
 
     return {
@@ -773,9 +923,34 @@ function loadPipelineCandidates(db: WarehouseDb): {
       tier,
       leveredIrr,
       basisDiscountPct,
+      verdict: verdictOf(scoreRow?.verdict ?? null),
+      openItems: capReasonsOf(score),
+      // Final eligibility (refute H3): every BUY-gate condition, incl. tier + composite floor. The
+      // portfolio buy verdict is chosen ONLY from buyEligible items.
+      buyEligible:
+        !buyIneligible.has(c.id) &&
+        (tier === 'T1' || tier === 'T2') &&
+        scoreRow !== undefined &&
+        scoreRow.composite >= BUY_COMPOSITE_FLOOR,
     };
   });
-  return { pipeline, buyIneligible, staleGovernorIds };
+  const excluded = staleScores + unparseableScores;
+  // Wording (refute round 2 T3): never "BUY suppressed" — a BUY may still be emitted from the
+  // current rows. Names the EXISTING per-candidate re-score route (no sweep route in this wave).
+  const suppressedNote =
+    live === null
+      ? 'Live acquisition scoring regime unavailable (ratified ruleset/RCT could not be loaded) — no candidate can pass the BUY gate'
+      : excluded > 0
+        ? `${excluded} stale/unparseable score${excluded === 1 ? '' : 's'} excluded from the BUY gate ` +
+          `(${staleScores} stale, ${unparseableScores} unparseable) — a re-score is required: ` +
+          'POST /api/warehouse/acq/score/:candidateId'
+        : null;
+  return {
+    pipeline,
+    buyIneligible,
+    buyGate: { staleScores, unparseableScores, regimeUnavailable: live === null, suppressedNote },
+    staleGovernorIds,
+  };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -860,41 +1035,34 @@ export async function buildPortfolioAllocation(
   });
 
   // Pipeline candidates (active status only)
-  const { pipeline, buyIneligible, staleGovernorIds } = loadPipelineCandidates(db);
+  const { pipeline, buyIneligible, buyGate, staleGovernorIds } = loadPipelineCandidates(db);
 
-  // C-3: portfolio-level buy verdict (spec §3.5) — emitted ONLY when a T1/T2 candidate
-  // clears the composite floor and the basis-discount floor (or basis discount is unknown).
-  // NEVER emit buy on an empty buyable list (refute lens #4, spec test A-4-neg).
-  const buyable = pipeline.filter(
-    (c) =>
-      (c.tier === 'T1' || c.tier === 'T2') &&
-      c.composite !== null &&
-      c.composite >= BUY_COMPOSITE_FLOOR &&
-      !buyIneligible.has(c.candidateId) &&
-      (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
-  );
-  // Disclose only stale candidates that would otherwise have competed for BUY (T1/T2, above the
-  // composite floor) — listing every stale PASS-tier row would be noise.
-  const staleSet = new Set(staleGovernorIds);
-  const staleWouldBeBuyable = pipeline
-    .filter(
-      (c) =>
-        staleSet.has(c.candidateId) &&
-        (c.tier === 'T1' || c.tier === 'T2') &&
-        c.composite !== null &&
-        c.composite >= BUY_COMPOSITE_FLOOR &&
-        (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
-    )
-    .map((c) => c.candidateId);
+  // C-3: portfolio-level buy verdict (spec §3.5) — emitted ONLY when a T1/T2 candidate clears
+  // the composite floor AND loadPipelineCandidates found it eligible: governor-surviving
+  // PURSUE/WATCH verdict, non-advisory, parseable AcquisitionScore whose ratified basis floor was
+  // evaluated and passed (audit 2026-10-13 G1/G2), current under the live scoring regime AND
+  // carrying the live governorRegime stamp (#463). NEVER emit buy on an empty buyable list
+  // (refute lens #4, spec test A-4-neg).
+  const buyable = pipeline.filter((c) => c.buyEligible === true && !buyIneligible.has(c.candidateId));
+  // #463 portfolio-level disclosure. staleGovernorIds is already restricted (in loadPipelineCandidates,
+  // by the same predicate that drives buyGate.staleScores) to stale candidates that would otherwise
+  // have competed for BUY — listing every stale PASS-tier row would be noise.
   const allocationDataQuality: PortfolioAllocation['dataQuality'] = [];
-  if (staleWouldBeBuyable.length > 0) {
-    allocationDataQuality.push(staleGovernorFlag('portfolio', staleWouldBeBuyable));
+  if (staleGovernorIds.length > 0) {
+    allocationDataQuality.push(staleGovernorFlag('portfolio', staleGovernorIds));
   }
   if (buyable.length > 0) {
-    // Top-ranked = highest composite; tie-break by candidateId for determinism.
+    // Selection order (refute round 3 V2) — NOT composite alone, which let a capped WATCH with open
+    // DD-critical items outrank a clean PURSUE: verdict (PURSUE before WATCH), then candidates with
+    // no open items, then composite DESC, then candidateId (deterministic). Eligibility unchanged.
+    const verdictRank = (v: string | null | undefined): number => (v === 'PURSUE' ? 0 : v === 'WATCH' ? 1 : 2);
     const top = [...buyable].sort((a, b) => {
-      const diff = (b.composite ?? 0) - (a.composite ?? 0);
-      return diff !== 0 ? diff : a.candidateId.localeCompare(b.candidateId);
+      const byVerdict = verdictRank(a.verdict) - verdictRank(b.verdict);
+      if (byVerdict !== 0) return byVerdict;
+      const byOpen = ((a.openItems?.length ?? 0) > 0 ? 1 : 0) - ((b.openItems?.length ?? 0) > 0 ? 1 : 0);
+      if (byOpen !== 0) return byOpen;
+      const byComposite = (b.composite ?? 0) - (a.composite ?? 0);
+      return byComposite !== 0 ? byComposite : a.candidateId.localeCompare(b.candidateId);
     })[0]!;
     verdicts.push(buildBuyVerdict(top, asOf, hurdleRatePct, advisoryOnly, forecastInputs));
   }
@@ -916,6 +1084,7 @@ export async function buildPortfolioAllocation(
     verdicts,
     actionCounts,
     pipeline,
+    buyGate,
     dataQuality: allocationDataQuality,
   };
 }

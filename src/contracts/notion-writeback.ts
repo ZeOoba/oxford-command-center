@@ -10,6 +10,8 @@
 //
 //   synced  — properties matched to a Notion page AND written successfully
 //   skipped — properties with no matching Notion page (logged, not an error)
+//   skippedNoVerdict — matched a Notion page but the 5-way allocation engine had no verdict, so the
+//             page was NOT written and keeps its prior (stale) Capital Action / Priority Score
 //   errors  — per-page write failures (Notion API non-2xx, timeout, etc.); strings only
 //   asOf    — the snapshot asOf the synced decisions were computed from
 import { z } from 'zod';
@@ -17,6 +19,7 @@ import { z } from 'zod';
 export const NotionSyncResult = z.object({
   synced: z.number().int().min(0),
   skipped: z.number().int().min(0),
+  skippedNoVerdict: z.number().int().min(0).default(0),
   errors: z.array(z.string()),
   asOf: z.string(),
 });

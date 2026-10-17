@@ -417,6 +417,12 @@ export const RankedCandidate = z.object({
   governorLtvCleared: z.boolean().nullable(),
   calibrationHitRate: z.number().nullable(),  // from calibration_report for this subject_id; null until outcomes
   scoredAt: z.string().nullable(),
+  /** Audit 2026-10-13 G3: freshness of latestScore against the LIVE ruleset / RCT / governor regime.
+   *  'stale' = scored under a superseded regime (may still be readable); 'unparseable' = the stored
+   *  blob no longer parses under the live contract (latestScore is null, but explicitly so).
+   *  Optional so older producers (mirror bakes, fixtures) still parse. */
+  scoreState: z.enum(['current', 'stale', 'unparseable', 'unscored']).optional(),
+  staleReasons: z.array(z.string()).optional(),
 });
 export type RankedCandidate = z.infer<typeof RankedCandidate>;
 
@@ -426,6 +432,11 @@ export const AcqIntelResponse = z.object({
   calibrationSummary: z.object({            // kind='acquisition-score' slice of calibrationReport
     totalVerdicts: z.number(),
     resolvedVerdicts: z.number(),
+    // Deal-level counts (refute round 6): a re-keyed deal carries several verdicts but at most one
+    // blessed outcome, so verdicts-vs-resolved reads "1 of 2" forever. Added beside the unchanged
+    // verdict fields (published numbers kept); optional for backward compatibility.
+    totalDeals: z.number().int().optional(),     // DISTINCT deals with an acquisition-score verdict
+    resolvedDeals: z.number().int().optional(),  // of those, deals with a blessed outcome
     overallHitRate: z.number().nullable(),
     wilsonLow: z.number().nullable(),
     wilsonHigh: z.number().nullable(),

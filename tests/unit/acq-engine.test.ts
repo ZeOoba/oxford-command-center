@@ -200,6 +200,48 @@ describe('persistAndLogScore — DSCR governor demotion', () => {
   });
 });
 
+describe('persistAndLogScore — persisted tier follows the governor-demoted verdict (audit 2026-10-13 G1)', () => {
+  it('an INVALID live governor set (ltv_ceiling 0) persists tier=PASS with verdict=PASS, never T1 next to PASS', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-invalid-gov-tier';
+    seedCandidate(db, candidateId);
+    // The DB CHECK (ltv_ceiling <= 0.40) admits 0; applyGovernorProxy fails closed on it.
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (2, '2026-07-16', 1.25, 0, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: invalid governor set')`,
+    ).run();
+    const input = strongInput();
+    const raw = scoreAcquisition(input, RATIFIED_RULESET, { rct: RCT });
+    expect(raw.tier).toBe('T1'); // precondition: would be T1 PURSUE without the governor
+
+    const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+    const row = db.prepare('SELECT tier, verdict, composite, score_json FROM acq_scores WHERE candidate_id = ?')
+      .get(candidateId) as { tier: string; verdict: string; composite: number; score_json: string };
+
+    expect(score.verdict).toBe('PASS');
+    expect(score.tier).toBe('PASS');
+    expect(row.verdict).toBe('PASS');
+    expect(row.tier).toBe('PASS');
+    expect((JSON.parse(row.score_json) as { tier: string }).tier).toBe('PASS');
+    expect(row.composite).toBe(raw.composite); // composite preserved — no scoring-value change
+  });
+
+  it('cleared governors persist the engine tier unchanged', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-cleared-gov-tier';
+    seedCandidate(db, candidateId);
+    const input = strongInput();
+    const raw = scoreAcquisition(input, RATIFIED_RULESET, { rct: RCT });
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+    const row = db.prepare('SELECT tier, verdict FROM acq_scores WHERE candidate_id = ?')
+      .get(candidateId) as { tier: string; verdict: string };
+    expect(row.tier).toBe(raw.tier);
+    expect(row.verdict).toBe(raw.verdict);
+  });
+});
+
 describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
   it('returns the scoreAcquisition verdict when both governors pass + ratified ruleset', async () => {
     const db = freshDb();
