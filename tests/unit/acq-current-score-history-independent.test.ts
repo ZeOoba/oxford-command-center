@@ -79,9 +79,18 @@ describe('current acq score is history-independent', () => {
     const verdicts: string[] = [];
     for (const i of [A, B, A]) verdicts.push((await persistAndLogScore(db, 'c1', i, RULESET, RCT)).score.verdict);
     expect(verdicts[0]).not.toBe(verdicts[1]); // A and B must differ or this proves nothing
-    const res = await warehouseRoutes(() => db).request('/acq/intel?status=active');
+    // Wave 2a G4 (audit 2026-10-13): the DEFAULT /acq/intel view hides KILLED rows, and A scores KILLED
+    // (yield floor), so the explicit includeKilled=1 view is the one that shows c1. Adjusted in the
+    // Wave 2a / #464 rebuild; the original assertion is unchanged.
+    const res = await warehouseRoutes(() => db).request('/acq/intel?status=active&includeKilled=1');
     const body = (await res.json()) as { rankedCandidates: Array<{ latestScore: { verdict: string } | null }> };
     expect(body.rankedCandidates[0]!.latestScore!.verdict).toBe(verdicts[2]);
+    // ...and the default view filters on the CURRENT row's verdict too: had it followed B (PURSUE),
+    // c1 would be listed here.
+    const def = await warehouseRoutes(() => db).request('/acq/intel?status=active');
+    const defBody = (await def.json()) as { rankedCandidates: unknown[] };
+    expect(verdicts[2]).toBe('KILLED');
+    expect(defBody.rankedCandidates).toHaveLength(0);
   });
 
   it('brain-report floor-indeterminate follows the pointer, not the newest row', () => {
@@ -221,7 +230,8 @@ describe('current acq score is history-independent', () => {
     expect(stamp()! > '2000-01-01 00:00:00').toBe(true);
     const firstScored = (db.prepare('SELECT MIN(scored_at) AS t FROM acq_scores').get() as { t: string }).t;
     db.prepare("UPDATE acq_candidates SET current_scored_at = '2099-01-01 00:00:00' WHERE id = 'c1'").run();
-    const res = await warehouseRoutes(() => db).request('/acq/intel?status=active');
+    // includeKilled=1: A is KILLED and the default view hides KILLED (Wave 2a G4; rebuild adjustment).
+    const res = await warehouseRoutes(() => db).request('/acq/intel?status=active&includeKilled=1');
     const body = (await res.json()) as { rankedCandidates: Array<{ scoredAt: string | null }> };
     expect(body.rankedCandidates[0]!.scoredAt).toBe('2099-01-01 00:00:00'); // not acq_scores.scored_at
     expect(firstScored).not.toBe('2099-01-01 00:00:00');

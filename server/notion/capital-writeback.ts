@@ -2,9 +2,20 @@
 //
 // Direction 1 — Notion Writeback for the Capital Allocation engine.
 //
-// Pushes per-property capital decisions (capitalAction + priorityScore) from the
-// CapitalAllocationReport back to the Notion 🏢 Property Register so they surface in the
-// operational workflow. Read-from-Notion (query pages) + write-to-Notion (PATCH pages) only —
+// Pushes per-property capital decisions (allocation action + priorityScore) back to the Notion
+// 🏢 Property Register so they surface in the operational workflow.
+//
+// VOCABULARY (audit 2026-10-13 G5): the action written is the 5-way allocation-engine verdict
+// (buildPortfolioAllocation → AllocationVerdict.action: buy | hold | sell | refinance | improve) —
+// the SAME source the Capital page and the IC memo render. It previously wrote the legacy 4-way
+// scores.ts capitalAction (invest | hold | monitor | disposition-candidate), so Notion could say
+// "invest" while the IC memo said "hold". priorityScore still comes from the CapitalAllocationReport.
+// The "Capital Action" select keeps the legacy option names declared alongside the 5-way ones, so
+// existing rows holding a legacy value are not invalidated. A row is overwritten ONLY when its
+// property gets an allocation verdict on a sync. A matched property with NO allocation verdict is
+// not written (no guessed value), so its Notion page KEEPS its prior — possibly legacy, now stale —
+// Capital Action and Priority Score; the sync result counts those in `skippedNoVerdict` (refute H5)
+// so the caller can see how many Notion rows are stale rather than assuming every row was refreshed. Read-from-Notion (query pages) + write-to-Notion (PATCH pages) only —
 // it NEVER touches the warehouse or any Spine. Mirrors the patterns in acq-notion-sync.ts.
 //
 // TARGET: 🏢 Property Register (DB 24d6a531-f4b7-4c38-87fb-3b1be4a4f1f3, the per-property DB
@@ -28,6 +39,9 @@
 //
 // NOTION_TOKEN must never be committed; callers source it from process.env.
 
+import type { AllocationAction, PortfolioAllocation } from '../../src/contracts/capital';
+import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
+
 /** Full UUID for the 🏢 Property Register Notion database (short id 24d6a531). */
 export const PROPERTY_REGISTER_DB_ID = '24d6a531-f4b7-4c38-87fb-3b1be4a4f1f3';
 
@@ -41,16 +55,60 @@ const NOTION_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
 const NOTION_TIMEOUT_MS = 10_000;
 
-/** The capital-allocation fields this writeback needs — a structural subset of CapitalAllocationEntry. */
+/** One property's writeback row: the 5-way allocation action + the report's priorityScore.
+ *  allocationAction is null when the allocation engine produced no verdict for the property —
+ *  such an entry is SKIPPED (never written with a guessed or legacy value). */
 export interface CapitalActionInput {
   propertyName: string | null;
-  capitalAction: 'invest' | 'hold' | 'monitor' | 'disposition-candidate';
+  allocationAction: AllocationAction | null;
   priorityScore: number;
+}
+
+/** 5-way allocation vocabulary (src/contracts/capital.ts AllocationAction) — what this writeback writes. */
+const ALLOCATION_OPTIONS: ReadonlyArray<{ name: AllocationAction; color: string }> = [
+  { name: 'buy', color: 'blue' },
+  { name: 'hold', color: 'default' },
+  { name: 'sell', color: 'red' },
+  { name: 'refinance', color: 'purple' },
+  { name: 'improve', color: 'green' },
+];
+/** Legacy 4-way values ('hold' is shared) — still DECLARED so existing rows keep a valid option until
+ *  their next sync overwrites them. Never written by this module any more. */
+const LEGACY_OPTIONS: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'invest', color: 'green' },
+  { name: 'monitor', color: 'yellow' },
+  { name: 'disposition-candidate', color: 'red' },
+];
+
+/**
+ * Build the writeback rows from the 5-way allocation engine (single source of the action) joined by
+ * propertyId to the CapitalAllocationReport (property name + priorityScore). The portfolio-level
+ * pipeline buy verdict (propertyId 'pipeline:<candidateId>') is not an owned property and never
+ * matches a report entry. A report entry with no allocation verdict gets allocationAction = null.
+ */
+export function buildCapitalWritebackEntries(
+  portfolio: Pick<PortfolioAllocation, 'verdicts'>,
+  entries: ReadonlyArray<Pick<CapitalAllocationEntry, 'propertyId' | 'propertyName' | 'priorityScore'>>,
+): CapitalActionInput[] {
+  const actionByProperty = new Map<string, AllocationAction>();
+  for (const v of portfolio.verdicts) {
+    if (v.propertyId.startsWith('pipeline:')) continue;
+    actionByProperty.set(v.propertyId, v.action);
+  }
+  return entries.map((e) => ({
+    propertyName: e.propertyName,
+    allocationAction: actionByProperty.get(e.propertyId) ?? null,
+    priorityScore: e.priorityScore,
+  }));
 }
 
 export interface SyncResult {
   synced: number;
+  /** No matching Notion page (or a blank property name) — nothing in Notion for this property. */
   skipped: number;
+  /** Matched a Notion page but the allocation engine had no verdict: NOT written, so that page's
+   *  prior Capital Action / Priority Score remain in Notion and are stale (refute H5). */
+  skippedNoVerdict: number;
   errors: string[];
   asOf: string;
 }
@@ -128,12 +186,8 @@ async function ensureProperties(
         properties: {
           [ACTION_PROP]: {
             select: {
-              options: [
-                { name: 'invest', color: 'green' },
-                { name: 'hold', color: 'default' },
-                { name: 'monitor', color: 'yellow' },
-                { name: 'disposition-candidate', color: 'red' },
-              ],
+              // 5-way values first, then the legacy ones retained (see module header).
+              options: [...ALLOCATION_OPTIONS, ...LEGACY_OPTIONS],
             },
           },
           [PRIORITY_PROP]: { number: { format: 'number' } },
@@ -185,14 +239,14 @@ async function writePage(
   fetchImpl: FetchLike,
   token: string,
   pageId: string,
-  entry: CapitalActionInput,
+  entry: CapitalActionInput & { allocationAction: AllocationAction },
 ): Promise<void> {
   const res = await notionFetch(fetchImpl, `${NOTION_BASE}/pages/${pageId}`, {
     method: 'PATCH',
     headers: notionHeaders(token),
     body: JSON.stringify({
       properties: {
-        [ACTION_PROP]: { select: { name: entry.capitalAction } },
+        [ACTION_PROP]: { select: { name: entry.allocationAction } },
         [PRIORITY_PROP]: { number: Math.round(entry.priorityScore) },
       },
     }),
@@ -207,7 +261,7 @@ async function writePage(
 /**
  * Sync per-property capital decisions to the Notion Property Register.
  *
- * @param entries  per-property capitalAction + priorityScore (subset of CapitalAllocationEntry)
+ * @param entries  per-property 5-way allocationAction + priorityScore (see buildCapitalWritebackEntries)
  * @param notionToken  Notion integration token (process.env.NOTION_TOKEN); empty → throws
  * @param opts.asOf  snapshot asOf the decisions were computed from (echoed in the result)
  * @param opts.databaseId  override the target DB (tests); defaults to the Property Register
@@ -223,7 +277,7 @@ export async function syncCapitalActionsToNotion(
   const dbId = opts.databaseId ?? PROPERTY_REGISTER_DB_ID;
   const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as FetchLike);
 
-  const result: SyncResult = { synced: 0, skipped: 0, errors: [], asOf: opts.asOf };
+  const result: SyncResult = { synced: 0, skipped: 0, skippedNoVerdict: 0, errors: [], asOf: opts.asOf };
 
   // 1. Ensure the writeback properties exist (idempotent). A failure here is recorded but
   //    non-fatal — subsequent page writes would fail too and be tallied.
@@ -256,8 +310,14 @@ export async function syncCapitalActionsToNotion(
       result.skipped += 1; // no Notion page with this title — fail-open, not an error
       continue;
     }
+    const allocationAction = entry.allocationAction;
+    if (allocationAction === null) {
+      // Never write a guessed value — but the page's prior values are now stale; count it apart.
+      result.skippedNoVerdict += 1;
+      continue;
+    }
     try {
-      await writePage(fetchImpl, notionToken, pageId, entry);
+      await writePage(fetchImpl, notionToken, pageId, { ...entry, allocationAction });
       result.synced += 1;
     } catch (e) {
       const label = entry.propertyName ?? pageId;

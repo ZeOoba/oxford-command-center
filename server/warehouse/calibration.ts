@@ -34,6 +34,7 @@ import {
 } from '../../src/contracts/warehouse';
 import { clamp } from './clamp';
 import { stableStringify } from './stable-stringify';
+import { closeAcqOutcomeSkips } from './acq-outcome-dq';
 
 function sha16(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -748,7 +749,9 @@ function isStrictlyLater(asOf: string, outcome: string): boolean {
  *   4. IDEMPOTENT: if the current blessed (is_resolution=1) row is byte-identical to this submission,
  *      it is a no-op (duplicate:true) — a double-submit never writes twice or supersedes itself.
  *   5. SUPERSEDE: any differing blessed row flips is_resolution=0 (preserved — append-only), then the
- *      new is_resolution=1 row is inserted.
+ *      new is_resolution=1 row is inserted. For a deal acquisition-score verdict the blessed row of any
+ *      OTHER verdict of the same deal is demoted too — one blessed outcome per deal (refute round 5),
+ *      matching acq-engine.ts logAcqOutcome's per-deal rule; a manual resolution is the override.
  * The verdict row itself is NEVER read-modified-written — only calibration_outcome is touched.
  */
 export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveManualResult {
@@ -760,8 +763,10 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
 
   try {
     const verdict = db
-      .prepare('SELECT id, as_of_period FROM calibration_verdict WHERE id = ?')
-      .get(input.calibrationId) as { id: number; as_of_period: string } | undefined;
+      .prepare('SELECT id, as_of_period, subject_kind, subject_id, verdict_kind FROM calibration_verdict WHERE id = ?')
+      .get(input.calibrationId) as
+      | { id: number; as_of_period: string; subject_kind: string; subject_id: string; verdict_kind: string }
+      | undefined;
     if (!verdict) {
       return { ok: false, error: `verdict ${input.calibrationId} not found` };
     }
@@ -828,6 +833,20 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
           }
         | undefined;
 
+      // PER-DEAL (refute round 5 #1): a deal acquisition-score verdict is one of possibly several for
+      // the same deal (re-keyed inputs, later years). Exactly one blessed outcome per DEAL: any other
+      // verdict's blessed row is demoted (is_resolution=0, preserved — the same supersede mechanism)
+      // in THIS transaction, so the end state does not depend on auto/manual call order.
+      const isDeal = verdict.subject_kind === 'deal' && verdict.verdict_kind === 'acquisition-score';
+      const siblings = isDeal
+        ? (db.prepare(
+          `SELECT o.id FROM calibration_outcome o JOIN calibration_verdict v ON v.id = o.calibration_id
+           WHERE o.is_resolution = 1 AND o.calibration_id <> ?
+             AND v.subject_kind = 'deal' AND v.verdict_kind = 'acquisition-score' AND v.subject_id = ?`,
+        ).all(input.calibrationId, verdict.subject_id) as Array<{ id: number }>)
+        : [];
+      for (const s of siblings) db.prepare('UPDATE calibration_outcome SET is_resolution = 0 WHERE id = ?').run(s.id);
+
       // IDEMPOTENT: a byte-identical re-submit is a no-op (no duplicate row, no self-supersede).
       if (
         current
@@ -842,14 +861,14 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
         && current.resolved_by === input.resolvedBy
         && current.resolution_basis === input.resolutionBasis
       ) {
-        return { outcomeId: current.id, superseded: false, duplicate: true };
+        return { outcomeId: current.id, superseded: siblings.length > 0, duplicate: true };
       }
 
       // SUPERSEDE: demote the prior blessed row (preserved — append-only) BEFORE inserting the new one,
       // so the partial unique index never sees two is_resolution=1 rows at once.
-      const superseded = current !== undefined;
-      if (superseded) {
-        db.prepare('UPDATE calibration_outcome SET is_resolution = 0 WHERE id = ?').run(current!.id);
+      const superseded = current !== undefined || siblings.length > 0;
+      if (current !== undefined) {
+        db.prepare('UPDATE calibration_outcome SET is_resolution = 0 WHERE id = ?').run(current.id);
       }
       const info = db
         .prepare(
@@ -868,6 +887,10 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
     });
 
     const r = tx();
+    // The deal is resolved: close its open "outcome not recorded" skip rows (round 5 #2).
+    if (verdict.subject_kind === 'deal' && verdict.verdict_kind === 'acquisition-score') {
+      closeAcqOutcomeSkips(db, verdict.subject_id);
+    }
     return { ok: true, ...r };
   } catch (e) {
     // Manual writes FAIL CLOSED (unlike the observational auto path): report failure to the UI. The
@@ -875,6 +898,23 @@ export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveMan
     console.error('[calibration] manual outcome write failed:', e);
     return { ok: false, error: 'could not record the outcome (internal error)' };
   }
+}
+
+/**
+ * Deal-level acquisition-score counts (refute round 6 #2): DISTINCT deals with an acquisition-score
+ * verdict, and of those the deals with a blessed outcome on ANY of their verdicts. Beside — not
+ * instead of — calibrationReport's verdict-level totalVerdicts / resolvedVerdicts, which stay as
+ * published (ReportView, brain-report and the /acq/intel summary all read them).
+ */
+export function acquisitionDealCounts(db: WarehouseDb): { totalDeals: number; resolvedDeals: number } {
+  const r = db.prepare(`
+    SELECT COUNT(DISTINCT v.subject_id) AS totalDeals,
+           COUNT(DISTINCT CASE WHEN o.id IS NOT NULL THEN v.subject_id END) AS resolvedDeals
+    FROM calibration_verdict v
+    LEFT JOIN calibration_outcome o ON o.calibration_id = v.id AND o.is_resolution = 1
+    WHERE v.subject_kind = 'deal' AND v.verdict_kind = 'acquisition-score'
+  `).get() as { totalDeals: number; resolvedDeals: number };
+  return { totalDeals: r.totalDeals, resolvedDeals: r.resolvedDeals };
 }
 
 // ── §4 the report ───────────────────────────────────────────────────────────────────────────
@@ -1110,13 +1150,18 @@ interface LogJoinRow {
   outcome_period: string | null;
   hit: number | null;
   resolved_by: string | null;
+  covered_by: number | null;
 }
 
 const LOG_LIMIT_DEFAULT = 500;
 const LOG_LIMIT_MAX = 2000;
 
 function toLogRow(r: LogJoinRow): CalibrationLogRow {
-  const resolved = r.outcome_period !== null; // the LEFT JOIN only attached an is_resolution=1 outcome
+  // The LEFT JOIN only attached this verdict's own is_resolution=1 outcome; a deal sibling is resolved
+  // by DEAL when another verdict of the same deal carries the blessed outcome (refute round 6 #1).
+  const own = r.outcome_period !== null;
+  const coveredBy = own ? null : r.covered_by;
+  const resolved = own || coveredBy !== null;
   return {
     id: r.id,
     subjectKind: r.subject_kind as CalibrationLogRow['subjectKind'],
@@ -1140,6 +1185,7 @@ function toLogRow(r: LogJoinRow): CalibrationLogRow {
     outcomePeriod: r.outcome_period,
     hit: r.hit === 0 || r.hit === 1 ? r.hit : null,
     resolvedBy: r.resolved_by,
+    resolvedByVerdictId: coveredBy,
   };
 }
 
@@ -1153,18 +1199,35 @@ export function calibrationLog(db: WarehouseDb, filter: CalibrationLogFilter = {
   const params: Array<string | number> = [];
   if (filter.subject) { where.push('v.subject_id = ?'); params.push(filter.subject); }
   if (filter.kind) { where.push('v.verdict_kind = ?'); params.push(filter.kind); }
-  if (filter.status === 'resolved') where.push('o.id IS NOT NULL');
-  else if (filter.status === 'open') where.push('o.id IS NULL');
+  // (The filters below run on the derived row, aliased `v`, so v.* and outcome_id / covered_by resolve.)
+  // Per-deal resolution (refute rounds 5 + 6): a deal acquisition-score verdict is resolved when ANY
+  // verdict of the same deal carries the blessed outcome. covered_by names that sibling, and the row's
+  // resolved state, the open filter and the resolved filter all use the same rule, so
+  // open + resolved = all. Other subjects are per-verdict as before (covered_by is always NULL).
+  const resolvedSql = '(outcome_id IS NOT NULL OR covered_by IS NOT NULL)';
+  if (filter.status === 'resolved') where.push(resolvedSql);
+  else if (filter.status === 'open') where.push(`NOT ${resolvedSql}`);
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(1, filter.limit ?? LOG_LIMIT_DEFAULT), LOG_LIMIT_MAX);
 
   const rows = db.prepare(`
-    SELECT v.id, v.subject_kind, v.subject_id, v.verdict_kind, v.verdict_subkind, v.verdict_engine,
-           v.predicted_band, v.predicted_value, v.predicted_unit, v.confidence, v.direction,
-           v.as_of_period, v.horizon_periods, v.inputs_version, v.emitted_by, v.emitted_at,
-           o.realized_band, o.realized_value, o.outcome_period, o.hit, o.resolved_by
-    FROM calibration_verdict v
-    LEFT JOIN calibration_outcome o ON o.calibration_id = v.id AND o.is_resolution = 1
+    SELECT * FROM (
+      SELECT v.id, v.subject_kind, v.subject_id, v.verdict_kind, v.verdict_subkind, v.verdict_engine,
+             v.predicted_band, v.predicted_value, v.predicted_unit, v.confidence, v.direction,
+             v.as_of_period, v.horizon_periods, v.inputs_version, v.emitted_by, v.emitted_at,
+             o.id AS outcome_id,
+             o.realized_band, o.realized_value, o.outcome_period, o.hit, o.resolved_by,
+             CASE WHEN v.subject_kind = 'deal' AND v.verdict_kind = 'acquisition-score' THEN (
+               SELECT o2.calibration_id FROM calibration_outcome o2
+               JOIN calibration_verdict v2 ON v2.id = o2.calibration_id
+               WHERE o2.is_resolution = 1 AND o2.calibration_id <> v.id
+                 AND v2.subject_kind = 'deal' AND v2.verdict_kind = 'acquisition-score'
+                 AND v2.subject_id = v.subject_id
+               ORDER BY o2.id DESC LIMIT 1
+             ) END AS covered_by
+      FROM calibration_verdict v
+      LEFT JOIN calibration_outcome o ON o.calibration_id = v.id AND o.is_resolution = 1
+    ) AS v
     ${whereSql}
     ORDER BY v.id DESC
     LIMIT ?

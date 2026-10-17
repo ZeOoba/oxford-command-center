@@ -299,10 +299,22 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       const tier = p.tier ? esc(p.tier) : DASH;
       const irr = p.leveredIrr !== null ? pct1(p.leveredIrr * 100) : DASH;
       const disc = p.basisDiscountPct !== null ? pct1(p.basisDiscountPct * 100) : DASH;
+      // Refute H3: persisted verdict + BUY eligibility beside the tier — a legacy row can carry
+      // tier T1 next to a governor-demoted PASS; absent buyEligible reads as Not eligible.
+      const verdict = p.verdict ? esc(p.verdict) : DASH;
+      const open = p.openItems ?? [];
+      const eligible =
+        p.buyEligible !== true
+          ? 'Not eligible'
+          : open.length > 0
+            ? `BUY with open items: ${esc(open.join('; '))}` // refute round 2 T2 — never silent
+            : 'Eligible';
       return `        <tr class="ic-row">
           <td class="ic-name">${addr}</td>
           <td>${mkt}</td>
           <td class="ic-r">${tier}</td>
+          <td class="ic-r">${verdict}</td>
+          <td class="ic-r">${eligible}</td>
           <td class="ic-r">${comp}</td>
           <td class="ic-r">${irr}</td>
           <td class="ic-r">${disc}</td>
@@ -317,6 +329,7 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       <thead>
         <tr>
           <th>Address</th><th>Market</th><th class="ic-r">Tier</th>
+          <th class="ic-r">Verdict</th><th class="ic-r">BUY</th>
           <th class="ic-r">Composite</th><th class="ic-r">Levered IRR</th><th class="ic-r">Basis Discount</th>
         </tr>
       </thead>

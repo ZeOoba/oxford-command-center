@@ -45,7 +45,8 @@ function toTierItem(ranked: RankedCandidate, onOpenDeal: (dealId: string) => voi
 }
 
 export function PipelineTierBoard() {
-  const { data } = useAcqIntel();
+  // includeKilled: this board has a Killed column; /acq/intel hides KILLED by default (audit G4).
+  const { data } = useAcqIntel(undefined, undefined, undefined, undefined, true);
   const ui = useUi();
   const candidates = data?.rankedCandidates ?? [];
   const onOpenDeal = (dealId: string) => ui.openEntity({ type: 'deal', id: dealId });
