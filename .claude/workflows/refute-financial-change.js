@@ -14,6 +14,7 @@
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
 //   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
 //   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[]. See SCOPING below.
+//   effort: 'low',           // optional reasoning effort per lens call: low | medium | high | xhigh | max (default: inherit the session)
 // }})
 //
 // SCOPING A REVIEW OF A GUARD. When the change is a guard/gate on top of a mechanism with documented limits (a commit
@@ -27,6 +28,8 @@
 // is true. A run with findings you accept, or with failed lenses, must say so after the id. This rule lives HERE:
 // `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
 // procedure docs that show the trailer (architecture/coding-standards.md) predate it and still show the bare form.
+// A run with a non-null `effort` result field was a reduced-effort pass: it is a weaker claim, so say so after the id
+// (e.g. `wf_<id> (effort=low)`). `effort` records the REQUESTED level, not a confirmed applied one.
 //
 // FINDING-SEVERITY LOOP RULE. Low findings: fix in the same pass. Medium or higher: stop and report to the owner before
 // another round, so the loop stays bounded and the owner decides whether to keep going, narrow the change, or split it.
@@ -96,6 +99,13 @@ if (fallbackModel !== null && !TIERS.includes(fallbackModel)) throw new Error('f
 // let one transient API failure silently drop a lens from a gate attestation (2026-10-05 review, C1).
 const effectiveFallback = fallbackModel || null
 
+// Optional reasoning effort applied to every lens call (agent() supports opts.effort). Omitted = inherit the
+// session effort, i.e. today's behaviour; a low-effort pass is a cheaper second opinion, not a replacement
+// for the default-effort attestation run.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+if (A.effort !== undefined && !EFFORTS.includes(A.effort)) throw new Error('effort must be one of ' + EFFORTS.join(' | ') + ' (got ' + JSON.stringify(A.effort) + ')')
+const effortOpt = A.effort === undefined ? {} : { effort: A.effort }
+
 phase('Refute')
 
 // Known limits of the mechanism under the change (optional). Injected into every lens prompt so reviewers judge the
@@ -124,10 +134,10 @@ const base =
 // so that lens is retried on opus rather than silently dropped.
 const verdicts = await parallel(
   lenses.map((l) => async () => {
-    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT })
+    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT, ...effortOpt })
     if (v === null && effectiveFallback) {
       log(`${primaryModel} call failed for lens "${l.label}" — ${effectiveFallback === primaryModel ? 'retrying once on' : 'falling back to'} ${effectiveFallback}.`)
-      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT })
+      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT, ...effortOpt })
     }
     return v
   }),
@@ -162,5 +172,6 @@ return {
   verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
   lensCount: lenses.length, clean: succeeded.length === lenses.length && real.length === 0 && worst < order.medium,
   models: { primary: primaryModel, fallback: effectiveFallback },
+  effort: A.effort ?? null,
   modelFloorMet: TIERS.includes(primaryModel),
 }
