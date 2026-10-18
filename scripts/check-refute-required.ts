@@ -310,9 +310,17 @@ const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/
 // default-deny roots, so it was editable with no trailer. Checked FIRST, ahead of every exemption, so a later
 // NON_FINANCIAL_ROOT_PATHS / DELIVERY_ONLY_PATHS entry cannot switch the gate off. File-level, not the directory:
 // other workflows are not financial-decision source.
+// GATE WIRING (2026-10-18, PR #490, Gabriel: protect both). .github/workflows/ci.yml runs this check (job
+// refute-required) and package.json defines the `check:refute` script it calls; either edit can switch the gate off
+// without touching the two files above. The gate classifies commits by PATH only (git show --name-only, never diff
+// content), so it cannot tell a `check:refute` edit from a dependency bump: package.json is protected WHOLE, and every
+// package.json edit needs a Refute-Reviewed / Refute-Skip trailer. Only the root package.json; package-lock.json and
+// nested package.json files stay out.
 export const REFUTE_GATE_PATHS: ReadonlySet<string> = new Set([
   '.claude/workflows/refute-financial-change.js',
   'scripts/check-refute-required.ts',
+  '.github/workflows/ci.yml',
+  'package.json',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */

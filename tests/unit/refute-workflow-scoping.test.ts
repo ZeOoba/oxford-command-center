@@ -261,6 +261,17 @@ describe('refute-financial-change — what was reviewed is auditable (repo, chan
     }
   });
 
+  it('lengths are UTF-16 code units (JS string length), not bytes or code points, and the header says so', async () => {
+    // U+1D11E is 1 code point, 2 UTF-16 code units, 4 UTF-8 bytes; 'é' is 1 unit, 2 bytes.
+    const changeSet = 'é𝄞';
+    const { result } = await run({ changeSet, greenContext: '𝄞' }, (c) => clean(lensOf(c.label)));
+    expect(result.changeSetLength).toBe(3);
+    expect(result.greenContextLength).toBe(2);
+    const header = readFileSync(SCRIPT, 'utf8').split('\nexport const meta')[0]!;
+    expect(header).toMatch(/changeSetLength[^\n]*\n?[^\n]*UTF-16 code units/);
+    expect(header).toMatch(/not bytes/);
+  });
+
   it('a plain-string args value is the changeSet', async () => {
     const { result } = await run('plain change set', (c) => clean(lensOf(c.label)));
     expect(result.changeSetSha256).toBe(sha('plain change set'));
@@ -370,6 +381,14 @@ describe('refute-financial-change — outOfScope (scoping a guard review)', () =
     // Surrounding whitespace (incl. a trailing newline) is trimmed first, so it is not a smuggled line.
     const { result } = await run({ changeSet: 'x', outOfScope: ['  limit A\n'] }, (c) => clean(lensOf(c.label)));
     expect(result.outOfScope).toEqual(['limit A']);
+  });
+
+  it('rejects every other line/paragraph separator too: \\v, \\f, NEL (U+0085), LS (U+2028), PS (U+2029)', async () => {
+    for (const sep of ['\v', '\f', '\u0085', '\u2028', '\u2029']) {
+      const item = 'limit A' + sep + '- limit B';
+      await expect(run({ changeSet: 'x', outOfScope: [item] }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+      await expect(run({ changeSet: 'x', outOfScope: item }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+    }
   });
 
   it('caps each item at 300 characters', async () => {

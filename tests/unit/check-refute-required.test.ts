@@ -23,6 +23,7 @@ import {
   NON_FINANCIAL_CONFIG_PATHS,
   DEFAULT_DENY_ROOTS,
   NON_FINANCIAL_ROOT_PATHS,
+  REFUTE_GATE_PATHS,
 } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
@@ -49,8 +50,21 @@ describe('check-refute-required — financial-source classification', () => {
     // Only the named file, not the whole directory.
     expect(isFinancialSourcePath('.claude/workflows/some-other-workflow.js')).toBe(false);
   });
+  it('flags the gate WIRING: ci.yml (runs check:refute) and package.json (defines the check:refute script)', () => {
+    expect(isFinancialSourcePath('.github/workflows/ci.yml')).toBe(true);
+    expect(isFinancialSourcePath('.github\\workflows\\ci.yml')).toBe(true);
+    // Path-level only (the gate reads --name-only, never diff content): EVERY package.json edit needs a trailer.
+    expect(isFinancialSourcePath('package.json')).toBe(true);
+    // Exact files only: other workflows, nested package.json files and the lockfile stay out.
+    expect(isFinancialSourcePath('.github/workflows/other.yml')).toBe(false);
+    expect(isFinancialSourcePath('functions/package.json')).toBe(false);
+    expect(isFinancialSourcePath('package-lock.json')).toBe(false);
+    expect([...REFUTE_GATE_PATHS].sort()).toEqual(
+      ['.claude/workflows/refute-financial-change.js', '.github/workflows/ci.yml', 'package.json', 'scripts/check-refute-required.ts'].sort(),
+    );
+  });
   it('gate paths are checked FIRST: listing them in an exemption set does not switch the gate off', () => {
-    const gate = ['.claude/workflows/refute-financial-change.js', 'scripts/check-refute-required.ts'];
+    const gate = ['.claude/workflows/refute-financial-change.js', 'scripts/check-refute-required.ts', '.github/workflows/ci.yml', 'package.json'];
     const exemptions = [NON_FINANCIAL_ROOT_PATHS, DELIVERY_ONLY_PATHS] as unknown as Set<string>[];
     const added: Array<[Set<string>, string]> = [];
     try {
@@ -1014,7 +1028,13 @@ describe('check-refute-required — per-commit attestation', () => {
   });
 
   it('evaluate: a change to the refute workflow itself needs a trailer (the gate cannot be weakened unattested)', () => {
-    for (const file of ['.claude/workflows/refute-financial-change.js', '.claude\\workflows\\refute-financial-change.js', 'scripts/check-refute-required.ts']) {
+    for (const file of [
+      '.claude/workflows/refute-financial-change.js',
+      '.claude\\workflows\\refute-financial-change.js',
+      'scripts/check-refute-required.ts',
+      '.github/workflows/ci.yml',
+      'package.json',
+    ]) {
       const bare: CommitRecord = { sha: 'w0f1', message: 'chore(refute): tweak the gate\n', files: [file] };
       const r = evaluate('origin/main', healthy([bare]));
       expect(r.outcome).toBe('violation');
