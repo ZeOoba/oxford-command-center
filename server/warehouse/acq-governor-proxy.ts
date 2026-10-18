@@ -24,8 +24,13 @@
 //               without code changes. Tests pin this module's contract in isolation.
 //   LTV proxy:  INDETERMINATE at acquisition-screen time → always null, never demotes.
 //               Rationale: AcquisitionInput carries no loan amount, so a true loan-to-value is not
-//               computable here. The ≤ ltvCeiling (40%) governor is a FINANCING-stage decision,
-//               enforced at capital allocation (capital_config DB CHECK), not at OM-screen time.
+//               computable here. The ≤ ltvCeiling (40%) governor is a FINANCING-stage decision.
+//               HONEST STATUS (audit 2026-10-13 G1): NO code path enforces a per-deal LTV for a
+//               pipeline candidate today — the capital-allocation BUY gate has no loan amount
+//               either, and the capital_config CHECK (ltv_ceiling <= 0.40) only bounds the governor
+//               VALUE, not any deal's leverage. The BUY gate fails closed on governor_ltv_cleared = 0
+//               or an out-of-domain value, which is inert while this proxy always returns null.
+//               The real LTV test happens at financing (debt-scoring.ts on owned positions).
 //               This replaces the prior `allInBasis / price ≤ ltvCeiling` formula, which demoted
 //               EVERY fully-specified deal to PASS (all-in basis ≥ price ⇒ ratio ≈ 1.0 > 0.40) —
 //               a live defect that made the ranked pipeline mis-demote underwritten candidates and
@@ -34,7 +39,7 @@
 //
 // Either proxy FAILING (=== false) hard-demotes the verdict to 'PASS' — but NEVER upgrades KILLED
 // (a hard gate/floor rejection) to PASS, so verdict-filtered ranked lists stay correct.
-import type { AcquisitionInput, AcquisitionScore, Verdict } from '../../src/contracts/acquisition';
+import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
 
 /** 8.5% annual debt-service constant (7.25% rate proxy, 30-yr amortizing @ 40% LTV).
  *  Gabriel G3 — RATIFIED 2026-06-20. Screening heuristic, NOT a capital_config governor constant. */
@@ -99,9 +104,9 @@ export function applyGovernorProxy(
     governorDscrCleared = dscrProxy >= governors.dscrFloor;
   }
 
-  // LTV proxy — indeterminate at screen time (no loan amount in the inputs). Enforced downstream
-  // at the financing/capital-allocation stage. Kept in the outcome (null) for a consistent contract
-  // and as the slot where a real LTV gate would plug in.
+  // LTV proxy — indeterminate at screen time (no loan amount in the inputs). NOT enforced anywhere
+  // downstream for a pipeline candidate (see the module header); kept in the outcome (null) for a
+  // consistent contract and as the slot where a real LTV gate would plug in.
   const governorLtvCleared: boolean | null = null;
 
   // Demotion: a FAILED governor hard-demotes to PASS, but never upgrades KILLED.
@@ -114,4 +119,47 @@ export function applyGovernorProxy(
   }
 
   return { verdict, governorDscrCleared, governorLtvCleared };
+}
+
+export interface GovernorProxyScoreOutcome<S> {
+  /** The score with verdict AND tier reflecting the governor demotion (identical object values when none). */
+  score: S;
+  governorDscrCleared: boolean | null;
+  governorLtvCleared: boolean | null;
+}
+
+/**
+ * Score-level wrapper around applyGovernorProxy — what EVERY surface (persistence, ad-hoc route,
+ * edge Function) applies, so the emitted/persisted tier can never disagree with the verdict.
+ *
+ * applyGovernorProxy demotes only `verdict`; spreading `{ ...score, verdict }` left tier = T1/T2 next
+ * to a demoted PASS (audit 2026-10-13 G1), and a tier-keyed reader (the capital BUY gate) then read a
+ * governor-failed deal as buyable. On a demotion this sets tier = 'PASS' (the tier that pairs with a
+ * PASS verdict) and appends a reason. Composite, floors, sub-scores and every other scored value are
+ * left untouched — this changes no scoring value, only the governor-stage label pair.
+ */
+export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verdict' | 'tier' | 'reasons'>>(
+  score: S,
+  input: Pick<AcquisitionInput, 'stabilizedYoc'>,
+  governors: GovernorProxyGovernors,
+): GovernorProxyScoreOutcome<S> {
+  const outcome = applyGovernorProxy(score, input, governors);
+  if (outcome.verdict === score.verdict) {
+    return { score, governorDscrCleared: outcome.governorDscrCleared, governorLtvCleared: outcome.governorLtvCleared };
+  }
+  const tier: Tier = 'PASS';
+  return {
+    score: {
+      ...score,
+      verdict: outcome.verdict,
+      tier,
+      reasons: [
+        ...score.reasons,
+        `Governor demotion: ${score.verdict} → ${outcome.verdict} (tier ${score.tier} → ${tier}) — ` +
+          `${outcome.governorLtvCleared === false ? 'LTV proxy failed' : 'DSCR proxy failed or the live governor set is invalid'}.`,
+      ],
+    },
+    governorDscrCleared: outcome.governorDscrCleared,
+    governorLtvCleared: outcome.governorLtvCleared,
+  };
 }

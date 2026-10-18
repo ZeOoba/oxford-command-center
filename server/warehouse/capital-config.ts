@@ -57,7 +57,21 @@ export const CAPITAL_CONFIG = {
 
 export type CapitalConfig = typeof CAPITAL_CONFIG;
 
-/** Load the latest ratified config from the DB (falls back to compile-time constant if DB is empty). */
+/**
+ * Thrown when capital_config has no row. Owner decision (audit 2026-10-13 G6): an empty governor
+ * table FAILS CLOSED — every consumer (capital BUY verdict, acquisition scoring, debt scoring, the
+ * governed write path) stops with an explicit error rather than running on compile-time defaults.
+ * Migration 003 seeds version 1, so this only fires on a damaged/hand-edited warehouse.
+ */
+export class CapitalConfigMissingError extends Error {
+  constructor() {
+    super('capital_config is empty — the ratified governor set is unavailable; refusing to fall back to compile-time defaults (fail closed)');
+    this.name = 'CapitalConfigMissingError';
+  }
+}
+
+/** Load the latest ratified config from the DB. Throws CapitalConfigMissingError when the table is
+ *  empty — it NEVER silently returns the compile-time CAPITAL_CONFIG (audit 2026-10-13 G6). */
 export function loadCapitalConfig(db: WarehouseDb): CapitalConfigRow {
   const row = db
     .prepare(
@@ -83,10 +97,11 @@ export function loadCapitalConfig(db: WarehouseDb): CapitalConfigRow {
     .get() as CapitalConfigRow | undefined;
 
   if (!row) {
-    // DB empty (cold environment before migration ran) — return compile-time fallback.
-    // CAPITAL_CONFIG already carries the hurdle-rate fields (proposed, 0.08); spread
-    // picks them up automatically so the cold-start path is always fail-closed.
-    return { ...CAPITAL_CONFIG, notes: null };
+    // FAIL CLOSED (audit 2026-10-13 G6, owner decision). This path used to return the compile-time
+    // CAPITAL_CONFIG and its comment called that "fail-closed" because the hurdle fields were
+    // 'proposed' — but HURDLE_RATE is now 'ratified' (intel-config.ts), so the fallback silently
+    // produced a fully live, non-advisory governor set (and BUY verdicts) on an empty table.
+    throw new CapitalConfigMissingError();
   }
   return row;
 }

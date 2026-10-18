@@ -181,7 +181,7 @@ describe('mergeDeals — the migration tripwire: names are evidence for DETECTIO
 });
 
 describe('mergeDeals — flags reach the PUBLIC mirror, so they must not carry deal names', () => {
-  it('names no deal in any flag text or rawValue, while logging the names LOCALLY', () => {
+  it('names no deal in any flag text or rawValue, nor in the local log', () => {
     // Hard Invariant 3. snapshot.dataQuality is published by scripts/bake-mirror.ts and
     // redactConfidential does not sweep it. (PR #271 refute pass — the CRITICAL.)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -202,8 +202,12 @@ describe('mergeDeals — flags reach the PUBLIC mirror, so they must not carry d
     expect(published).not.toContain('Zephyr');
     expect(published.toLowerCase()).not.toContain('zephyr');
     expect(flags.length).toBeGreaterThan(0);
-    // …and the operator can still resolve every flag, because the names went to the local log.
-    expect(warn.mock.calls.flat().join(' ')).toContain('Zephyr');
+    // Refute round 6, G6: the local log is a sink too. It carries counts, digests and the opaque
+    // Deal IDs (which locate every row), never a name.
+    const log = warn.mock.calls.flat().join(' ');
+    expect(log.toLowerCase()).not.toContain('zephyr');
+    expect(log).toContain('DEAL-1');
+    expect(log).toContain('DEAL-2');
   });
 });
 

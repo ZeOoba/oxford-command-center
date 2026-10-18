@@ -1,7 +1,6 @@
 import type { Deal } from '../../src/contracts/index';
 import { CompSet, RECORD_COMPS_TOOL } from '../../src/contracts/index';
-import { scanForConfidential } from '../briefing/confidential';
-import { rosterClaimsDeal } from '../sources/deal-declassification';
+import { publicationRosterScan, rosterClaimsDeal } from '../sources/deal-declassification';
 
 export type FetchCompsResult = { ok: true; comps: CompSet } | { ok: false; error: string };
 
@@ -9,7 +8,8 @@ export interface FetchCompsOptions {
   apiKey?: string;
   model?: string;
   now: string; // ISO — injected for deterministic sourcedAt
-  /** Roster scan over the outbound prompt; injectable for tests. Defaults to the live roster. */
+  /** Roster scan over the outbound prompt; injectable for tests. Defaults to publicationRosterScan
+   *  (throws on an unreadable OR placeholder roster). */
   confidentialScan?: (value: unknown) => { dealLabel: string } | null;
   fetchImpl?: typeof fetch;
 }
@@ -50,13 +50,15 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
     `If solid data is thin, record what you can and note the gaps in summary. End by calling record_comps.`;
 
   // Roster guard on the EXACT outbound text (Hard Invariant 3). The deal.confidential flag above is
-  // only a flag; the roster is the source of record, so scan the prompt itself and fail closed
-  // (an unreadable roster throws, which also blocks the call).
+  // only a flag; the roster is the source of record, so scan the prompt itself and fail closed.
+  // publicationRosterScan throws on an unreadable roster AND on the CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER
+  // stand-in: sending a deal identity to external web search is an egress decision, not a local
+  // render, so the reduced-coverage opt-out must not clear it.
   try {
     // Whole-record, placeholder-aware check FIRST (a prompt-only scan misses roster terms held in
     // owner/lender/nextAction anchors, raw numeric terms, and fails OPEN on the placeholder roster),
     // then the exact outbound text.
-    const hit = rosterClaimsDeal(deal) ? { dealLabel: 'roster' } : (opts.confidentialScan ?? scanForConfidential)(prompt);
+    const hit = rosterClaimsDeal(deal) ? { dealLabel: 'roster' } : (opts.confidentialScan ?? publicationRosterScan)(prompt);
     if (hit) {
       return { ok: false, error: 'Market comps blocked — the request matches an active confidential deal on the roster.' };
     }

@@ -41,8 +41,7 @@ import type { DebtScore } from '../../src/contracts/debt';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { _projectUnleveredReturn, PROJECTION_ASSUMPTIONS } from '../../server/warehouse/capital-allocation';
-import { governorFingerprint, persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { loadGovernors } from '../../server/warehouse/governors';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
 import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { readFileSync } from 'node:fs';
@@ -56,59 +55,6 @@ const mockPropertyPeriodMetrics = vi.mocked(propertyPeriodMetrics);
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'cap-alloc-test-'));
   return openWarehouse(join(dir, 'test.sqlite'));
-}
-
-/** Seed a full active acq_candidates + acq_score_inputs + acq_scores chain for C-3 pipeline tests. */
-function seedCandidate(
-  db: WarehouseDb,
-  opts: {
-    id: string;
-    market?: 'owned-submarket' | 'established' | 'entry' | 'satellite' | 'none';
-    composite: number;
-    tier: 'T1' | 'T2' | 'PASS' | 'KILLED';
-    leveredIrr?: number | null;
-    basisDiscountPct?: number | null;
-    /** Persisted verdict; defaults to PURSUE. A governor demotion persists PASS with the tier untouched. */
-    verdict?: 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED';
-    governorDscrCleared?: 0 | 1 | null;
-    governorLtvCleared?: 0 | 1 | null;
-    /** score_json.governorRegime stamp; defaults to the CURRENT regime. `null` = legacy row (no stamp). */
-    governorRegime?: string | null;
-  },
-): void {
-  const now = '2026-06-21T00:00:00Z';
-  db.prepare(`INSERT INTO acq_candidates (id, source, market, status, created_at, updated_at)
-    VALUES (?, 'manual', ?, 'active', ?, ?)`).run(opts.id, opts.market ?? 'established', now, now);
-  const inputsVersion = `iv-${opts.id}`;
-  db.prepare(`
-    INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
-    VALUES (?, ?, '{}', '1.0.0', 'replacement-cost.v1')
-  `).run(opts.id, inputsVersion);
-  const scoreInputId = (
-    db.prepare('SELECT id FROM acq_score_inputs WHERE candidate_id = ? AND inputs_version = ?')
-      .get(opts.id, inputsVersion) as { id: number }
-  ).id;
-  // score_json is a stringified AcquisitionScore: basis discount and levered IRR live in floors[].actual.
-  const regime = opts.governorRegime === undefined ? governorFingerprint(loadGovernors(db)) : opts.governorRegime;
-  const scoreJson = JSON.stringify({
-    ...(regime === null ? {} : { governorRegime: regime }),
-    floors: [
-      { id: 'basis', passed: true, actual: opts.basisDiscountPct ?? null, required: 0.25, detail: '' },
-      { id: 'yield', passed: true, actual: null, required: 0.08, detail: '' },
-      { id: 'irr', passed: true, actual: opts.leveredIrr ?? null, required: 0.15, detail: '' },
-    ],
-  });
-  db.prepare(`
-    INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
-      advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate,
-      governor_dscr_cleared, governor_ltv_cleared, score_json)
-    VALUES (?, ?, ?, ?, ?, ?, 1, 0, 1, 1, 0, ?, ?, ?)
-  `).run(
-    opts.id, scoreInputId, inputsVersion, opts.composite, opts.tier, opts.verdict ?? 'PURSUE',
-    opts.governorDscrCleared ?? null, opts.governorLtvCleared ?? null, scoreJson,
-  );
-  // Direct fixture insert bypasses persistAndLogScore, so set the current-score pointer it would set.
-  db.prepare(`UPDATE acq_candidates SET current_score_id = (SELECT id FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1) WHERE id = ?`).run(opts.id, opts.id);
 }
 
 function makeMacro(dgs5: number | null) {
@@ -527,159 +473,8 @@ describe('buildPortfolioAllocation', () => {
     expect(result.verdicts[0]!.action).not.toBe('refinance');
   });
 
-  it('C3-buy: a single buyable T1 candidate (composite≥70, basis discount clears floor) emits a buy verdict', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-buy-1', composite: 80, tier: 'T1', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(1);
-    const buyVerdicts = result.verdicts.filter((v) => v.action === 'buy');
-    expect(buyVerdicts).toHaveLength(1);
-    expect(buyVerdicts[0]!.propertyId).toBe('pipeline:cand-buy-1');
-  });
-
-  it('C3-buy-basisdiscount-null-ok: null basisDiscountPct does not block a buy verdict', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-buy-null-basis', composite: 75, tier: 'T2', basisDiscountPct: null });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(1);
-  });
-
-  it('C3-basisdiscount-null-flagged: null basisDiscountPct passing the gate is surfaced as a dataQuality warning', async () => {
-    // basisDiscountPct===null is indistinguishable between "genuinely N/A" and "score never
-    // computed it" (score_json may simply lack the key). Since null passes the buyable gate
-    // (per spec), that ambiguity must be visible downstream, not silently invisible.
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-null-basis-flag', composite: 75, tier: 'T2', basisDiscountPct: null });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
-    expect(buyVerdict.dataQuality.some((f) => f.field === 'basisDiscountPct' && f.severity === 'warn')).toBe(true);
-  });
-
-  it('C3-basisdiscount-known-not-flagged: a known basisDiscountPct raises no ambiguity warning', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-known-basis', composite: 75, tier: 'T2', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
-    expect(buyVerdict.dataQuality.some((f) => f.field === 'basisDiscountPct')).toBe(false);
-  });
-
-  it('C3-buy-topranked: buy verdict references the highest-composite buyable candidate', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-lower', composite: 75, tier: 'T1', basisDiscountPct: 0.10 });
-    seedCandidate(db, { id: 'cand-higher', composite: 90, tier: 'T2', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(1);
-    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
-    expect(buyVerdict.propertyId).toBe('pipeline:cand-higher');
-  });
-
-  it('C3-floor-neg: composite below 70 → NOT buyable, no buy verdict', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-low-composite', composite: 65, tier: 'T1', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(0);
-    expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
-  });
-
-  it('C3-basisdiscount-neg: basis discount below the 5% floor → NOT buyable, no buy verdict', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-thin-basis', composite: 85, tier: 'T1', basisDiscountPct: 0.02 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(0);
-  });
-
-  it('C3-governor-demoted: T1 tier with a persisted PASS verdict (governor demotion) is NOT buyable', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    // acq-engine demotes verdict to PASS on a DSCR proxy failure but leaves tier = T1.
-    seedCandidate(db, { id: 'cand-demoted', composite: 92, tier: 'T1', basisDiscountPct: 0.30, verdict: 'PASS', governorDscrCleared: 0 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(0);
-  });
-
-  it('C3-governor-failed-flag: governor_dscr_cleared=0 or governor_ltv_cleared=0 blocks buy even if verdict reads PURSUE', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-dscr-fail', composite: 90, tier: 'T1', basisDiscountPct: 0.30, governorDscrCleared: 0 });
-    seedCandidate(db, { id: 'cand-ltv-fail', composite: 91, tier: 'T1', basisDiscountPct: 0.30, governorLtvCleared: 0 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(0);
-  });
-
-  it('C3-governor-cleared: cleared governors and a WATCH verdict remain buyable; the demoted top-ranked candidate is skipped for the next', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-top-demoted', composite: 95, tier: 'T1', basisDiscountPct: 0.30, verdict: 'PASS', governorDscrCleared: 0 });
-    seedCandidate(db, { id: 'cand-clean', composite: 80, tier: 'T2', basisDiscountPct: 0.30, verdict: 'WATCH', governorDscrCleared: 1, governorLtvCleared: 1 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(1);
-    expect(result.verdicts.find((v) => v.action === 'buy')!.propertyId).toBe('pipeline:cand-clean');
-  });
-
-  it('C3-floors-populate: basisDiscountPct and leveredIrr are read from score_json floors[].actual', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-floors', composite: 82, tier: 'T1', basisDiscountPct: 0.31, leveredIrr: 0.17 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    const c = result.pipeline.find((p) => p.candidateId === 'cand-floors')!;
-    expect(c.basisDiscountPct).toBe(0.31);
-    expect(c.leveredIrr).toBe(0.17);
-  });
-
-  it('C3-tier-neg: PASS/KILLED tier never buyable regardless of composite', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-passed', composite: 95, tier: 'PASS', basisDiscountPct: 0.10 });
-    seedCandidate(db, { id: 'cand-killed', composite: 95, tier: 'KILLED', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(result.actionCounts.buy).toBe(0);
-  });
-
-  it('C3-inputs-placeholder: buy verdict.inputs uses documented neutral placeholders, not fabricated real data', async () => {
-    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
-    const db = freshDb();
-    seedCandidate(db, { id: 'cand-inputs-check', composite: 80, tier: 'T1', basisDiscountPct: 0.10 });
-    mockScoreProperties.mockReturnValue([]);
-    mockScoreDebt.mockReturnValue([]);
-    const result = await buildPortfolioAllocation(db, '2026-06-21');
-    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
-    expect(buyVerdict.inputs.dscr).toBeNull();
-    expect(buyVerdict.inputs.ltv).toBeNull();
-    expect(buyVerdict.inputs.noiPerSf).toBeNull();
-    expect(buyVerdict.expectedReturnPct).toBeNull(); // C-4 deferred
-    expect(buyVerdict.reasons.some((r) => /not applicable/i.test(r))).toBe(true);
-  });
+  // C3-* portfolio BUY-gate tests moved to capital-allocation.buy-gate.test.ts (audit 2026-10-13
+  // G2): they now seed REAL persistAndLogScore output instead of hand-written score_json.
 });
 
 describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202-de8)', () => {
@@ -709,6 +504,42 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
   async function scoreReal(db: WarehouseDb, id: string): Promise<void> {
     db.prepare(`INSERT OR IGNORE INTO acq_candidates (id, source, market, status) VALUES (?, 'manual', 'owned-submarket', 'active')`).run(id);
     await persistAndLogScore(db, id, STRONG, RULESET, RCT);
+  }
+
+  /** An older governor regime stamp (capital_config version 0 never exists in a fresh warehouse). */
+  const OLD_REGIME = '0:1.25:0.4:0.085';
+
+  /**
+   * Rewrite a candidate's latest REAL acq_scores row (written by persistAndLogScore) into a legacy /
+   * corrupt shape — the same pattern as capital-allocation.buy-gate.test.ts mutateLatest. Replaces the
+   * former hand-written seedCandidate fixture (advisory_only=1, null yield actual, input_json '{}',
+   * DSCR NULL), which the audit 2026-10-13 G1/G2 BUY gate can never admit.
+   *   regime: null removes score_json.governorRegime; a string overwrites it.
+   */
+  function mutateLatestScore(
+    db: WarehouseDb,
+    id: string,
+    o: {
+      regime?: string | null;
+      verdict?: 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED';
+      dscr?: 0 | 1 | null;
+      composite?: number;
+      basis?: { passed: boolean; actual: number };
+    },
+  ): void {
+    const row = db
+      .prepare('SELECT id, score_json FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1')
+      .get(id) as { id: number; score_json: string };
+    const blob = JSON.parse(row.score_json) as Record<string, unknown> & { floors: Array<Record<string, unknown>> };
+    if (o.regime === null) delete blob['governorRegime'];
+    else if (o.regime !== undefined) blob['governorRegime'] = o.regime;
+    if (o.verdict !== undefined) blob['verdict'] = o.verdict;
+    if (o.composite !== undefined) blob['composite'] = o.composite;
+    if (o.basis !== undefined) blob.floors = blob.floors.map((f) => (f['id'] === 'basis' ? { ...f, ...o.basis } : f));
+    db.prepare('UPDATE acq_scores SET score_json = ? WHERE id = ?').run(JSON.stringify(blob), row.id);
+    if (o.verdict !== undefined) db.prepare('UPDATE acq_scores SET verdict = ? WHERE id = ?').run(o.verdict, row.id);
+    if (o.composite !== undefined) db.prepare('UPDATE acq_scores SET composite = ? WHERE id = ?').run(o.composite, row.id);
+    if (o.dscr !== undefined) db.prepare('UPDATE acq_scores SET governor_dscr_cleared = ? WHERE id = ?').run(o.dscr, row.id);
   }
 
   beforeEach(() => {
@@ -753,10 +584,12 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
     expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
   });
 
-  it('legacy row with no governorRegime stamp is BUY-ineligible until re-scored', async () => {
+  it('legacy row with no governorRegime stamp is BUY-ineligible until re-scored (real score, stamp removed)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedCandidate(db, { id: 'cand-legacy', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorRegime: null });
+    await scoreReal(db, 'cand-legacy');
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(1); // control: buyable as scored
+    mutateLatestScore(db, 'cand-legacy', { regime: null });
     expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
   });
 
@@ -780,29 +613,41 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
     expect(row.r).toBe('0:old');
   });
 
-  it('backfill refuses to stamp a drifted row (stored composite != freshly computed) — BUY stays withheld', async () => {
+  // Option A merge: #463's backfill guard still refuses to certify a drifted output, but on this
+  // branch a drifted same-key row is SUPERSEDED by the live engine output (audit W2a X1) instead of
+  // being left in place. The drifted composite is therefore never stamped; the row ends up carrying
+  // the FRESH output with the FRESH stamp. Formerly asserted stamp null + BUY withheld (no supersede).
+  it('backfill never stamps a drifted row: the drifted output is superseded by the live output + fresh stamp', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
     await scoreReal(db, 'cand-drift');
+    const original = db.prepare(`SELECT composite, json_extract(score_json, '$.governorRegime') AS r FROM acq_scores WHERE candidate_id = ?`).get('cand-drift') as { composite: number; r: string };
     db.prepare(`UPDATE acq_scores SET composite = composite + 5, score_json = json_remove(score_json, '$.governorRegime') WHERE candidate_id = ?`).run('cand-drift');
-    await scoreReal(db, 'cand-drift');
-    const row = db.prepare(`SELECT json_extract(score_json, '$.governorRegime') AS r FROM acq_scores WHERE candidate_id = ?`).get('cand-drift') as { r: string | null };
-    expect(row.r).toBeNull();
-    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0);
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(0); // drifted + unstamped: withheld
+    const res = await persistAndLogScore(db, 'cand-drift', STRONG, RULESET, RCT);
+    expect(res.persisted).toBe('superseded');
+    const row = db.prepare(`SELECT composite, json_extract(score_json, '$.governorRegime') AS r FROM acq_scores WHERE candidate_id = ?`).get('cand-drift') as { composite: number; r: string | null };
+    expect(row.composite).toBe(original.composite); // the drifted +5 was not kept, let alone stamped
+    expect(row.r).toBe(original.r);                 // fresh stamp = the live regime
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).actionCounts.buy).toBe(1);
   });
 
-  it('stale disclosure includes a governor-demoted PASS (old regime) with T1 tier', async () => {
+  it('stale disclosure includes a governor-demoted PASS (old regime) with T1 tier (real score, legacy pre-alignment shape)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedCandidate(db, { id: 'cand-old-demoted', composite: 85, tier: 'T1', basisDiscountPct: 0.3, verdict: 'PASS', governorDscrCleared: 0, governorRegime: '0:1.25:0.4:0.085' });
+    await scoreReal(db, 'cand-old-demoted');
+    // Pre-tier-alignment legacy shape: tier T1 next to a governor-demoted PASS, under an older regime.
+    mutateLatestScore(db, 'cand-old-demoted', { regime: OLD_REGIME, verdict: 'PASS', dscr: 0 });
     const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.actionCounts.buy).toBe(0);
     expect(result.dataQuality.find((f) => f.field === 'governorRegime')?.issue).toMatch(/cand-old-demoted/);
   });
 
-  it('all would-be-buyable candidates stale => no BUY but portfolio-level dataQuality warn names them', async () => {
+  it('all would-be-buyable candidates stale => no BUY but portfolio-level dataQuality warn names them (real score, older stamp)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedCandidate(db, { id: 'cand-all-stale', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorRegime: '0:1.25:0.4:0.085' });
+    await scoreReal(db, 'cand-all-stale');
+    mutateLatestScore(db, 'cand-all-stale', { regime: OLD_REGIME });
     const result = await buildPortfolioAllocation(db, '2026-10-13');
     expect(result.actionCounts.buy).toBe(0);
     const flag = result.dataQuality.find((f) => f.field === 'governorRegime');
@@ -810,29 +655,37 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
     expect(flag?.issue).toMatch(/cand-all-stale/);
   });
 
-  it('stale disclosure excludes candidates that fail BUY anyway (basis floor, governor already failed, below composite floor)', async () => {
+  it('stale disclosure excludes candidates that fail BUY anyway (basis floor, governor already failed, below composite floor) (real scores)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    const old = '0:1.25:0.4:0.085';
-    seedCandidate(db, { id: 'cand-thin', composite: 90, tier: 'T1', basisDiscountPct: 0.02, governorRegime: old });
-    seedCandidate(db, { id: 'cand-govfail', composite: 90, tier: 'T1', basisDiscountPct: 0.3, governorDscrCleared: 0, governorRegime: old });
-    seedCandidate(db, { id: 'cand-lowcomp', composite: 50, tier: 'T1', basisDiscountPct: 0.3, governorRegime: old });
+    await scoreReal(db, 'cand-thin');
+    mutateLatestScore(db, 'cand-thin', { regime: OLD_REGIME, basis: { passed: false, actual: 0.02 } });
+    await scoreReal(db, 'cand-govfail');
+    mutateLatestScore(db, 'cand-govfail', { regime: OLD_REGIME, dscr: 0 });
+    await scoreReal(db, 'cand-lowcomp');
+    mutateLatestScore(db, 'cand-lowcomp', { regime: OLD_REGIME, composite: 50 });
     const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.actionCounts.buy).toBe(0);
     expect(result.dataQuality).toEqual([]);
   });
 
-  it('a stale top-ranked candidate is skipped for the next fresh one, and the portfolio dataQuality discloses the exclusion', async () => {
+  it('a stale top-ranked candidate is skipped for the next fresh one, and the portfolio dataQuality discloses the exclusion (real scores)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedCandidate(db, { id: 'cand-top-stale', composite: 95, tier: 'T1', basisDiscountPct: 0.3, governorRegime: '0:1.25:0.4:0.085' });
-    seedCandidate(db, { id: 'cand-next-fresh', composite: 80, tier: 'T2', basisDiscountPct: 0.3 });
+    // Identical real scores: absent staleness the candidateId tie-break would pick cand-a-top-stale.
+    await scoreReal(db, 'cand-a-top-stale');
+    await scoreReal(db, 'cand-b-next-fresh');
+    expect((await buildPortfolioAllocation(db, '2026-10-13')).verdicts.find((v) => v.action === 'buy')?.propertyId)
+      .toBe('pipeline:cand-a-top-stale'); // control
+    mutateLatestScore(db, 'cand-a-top-stale', { regime: OLD_REGIME });
     const result = await buildPortfolioAllocation(db, '2026-10-13');
     const buy = result.verdicts.find((v) => v.action === 'buy')!;
-    expect(buy.propertyId).toBe('pipeline:cand-next-fresh');
+    expect(buy.propertyId).toBe('pipeline:cand-b-next-fresh');
     expect(buy.dataQuality.find((f) => f.field === 'governorRegime')).toBeUndefined(); // single home: portfolio-level
     const flag = result.dataQuality.find((f) => f.field === 'governorRegime');
     expect(flag?.severity).toBe('warn');
-    expect(flag?.issue).toMatch(/cand-top-stale/);
+    expect(flag?.issue).toMatch(/cand-a-top-stale/);
+    expect(flag?.issue).not.toMatch(/cand-b-next-fresh/);
   });
 });
 

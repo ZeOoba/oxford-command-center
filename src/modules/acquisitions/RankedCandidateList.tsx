@@ -102,10 +102,22 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled, edgeEn
       key: 'tier',
       header: 'Tier',
       render: (item) => (
-        <TierBadge
-          tier={item.latestScore?.tier ?? null}
-          verdict={item.latestScore?.verdict ?? null}
-        />
+        <>
+          <TierBadge
+            tier={item.latestScore?.tier ?? null}
+            verdict={item.latestScore?.verdict ?? null}
+          />
+          {/* Audit 2026-10-13 G3: a score made under a superseded regime, or one that no longer
+              parses, is flagged — it is excluded from the capital BUY verdict until re-scored. */}
+          {(item.scoreState === 'stale' || item.scoreState === 'unparseable') && (
+            <span
+              title={(item.staleReasons ?? []).join('; ')}
+              style={{ marginLeft: '0.375rem', color: 'var(--text-warn)', fontSize: '0.6875rem' }}
+            >
+              {item.scoreState}
+            </span>
+          )}
+        </>
       ),
       sortValue: (item) => item.latestScore?.tier ?? item.latestScore?.verdict ?? 'PASS',
     },

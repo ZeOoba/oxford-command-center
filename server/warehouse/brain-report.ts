@@ -261,7 +261,7 @@ function buildDataQualityQuestions(db: WarehouseDb): OpenQuestion[] {
     SELECT kind, detail, property_id AS propertyId
     FROM data_quality_issues
     WHERE status = 'open'
-    ORDER BY created_at DESC
+    ORDER BY created_at DESC, id DESC  -- total order before LIMIT (created_at has 1-second resolution)
     LIMIT ?
   `).all(OPEN_QUESTION_GROUP_CAP) as DqIssueRow[];
 
@@ -296,7 +296,16 @@ interface FloorIndeterminateRow {
 
 /** acq_scores rows whose floor evaluation could not be completed (floor_indeterminate=1), newest
  *  first, capped. wouldClose is the fixed, literal reason per the spec — the underwriting inputs
- *  gap, not a per-row derivation. */
+ *  gap, not a per-row derivation.
+ *
+ *  DELIBERATELY FRESHNESS-AGNOSTIC (refute pass on b989339, item c): this is an open question about
+ *  missing underwriting INPUTS, which a ruleset / RCT / governor regime change does not supply, so a
+ *  'stale' latest row still poses it. It must also not depend on loading the ratified ruleset + RCT
+ *  (classifyPersistedScore's live regime) — the brain report has to render when that config is
+ *  unavailable. Freshness gates the BUY verdict and the ranked list, not this question. Pinned by
+ *  tests/unit/acq-score-supersede.test.ts. The row read is the candidate's CURRENT score
+ *  (acq_candidates.current_score_id, #464) — the same row every other reader serves (acq-score-freshness
+ *  CURRENT_SCORE_WITH_INPUTS_SQL; pinned by tests/unit/acq-current-score-one-definition.test.ts). */
 function buildFloorIndeterminateQuestions(db: WarehouseDb): OpenQuestion[] {
   // Dedup to the candidate's CURRENT score (acq_candidates.current_score_id; refute finding): the I1 governor-fingerprint fix mints
   // a new acq_scores row per governor regime, so a re-scored candidate can leave an older

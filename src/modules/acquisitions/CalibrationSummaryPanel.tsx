@@ -14,10 +14,13 @@ export function CalibrationSummaryPanel({ summary }: Props) {
     <Card as="section" className="mb-4">
       <CardHeader title="Calibration" />
       <div className="p-3">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '0.5rem' }}>
           {[
+            // Deals vs resolved deals (one blessed outcome per deal); verdicts kept for reference.
+            // An older server without the deal fields falls back to the verdict-level resolved count.
+            { label: 'Deals', value: summary.totalDeals !== undefined ? String(summary.totalDeals) : '—' },
+            { label: 'Resolved', value: String(summary.resolvedDeals ?? summary.resolvedVerdicts) },
             { label: 'Verdicts', value: String(summary.totalVerdicts) },
-            { label: 'Resolved', value: String(summary.resolvedVerdicts) },
             { label: 'Hit rate', value: pct(summary.overallHitRate) },
             { label: 'Wilson CI', value: summary.wilsonLow !== null && summary.wilsonHigh !== null ? `${pct(summary.wilsonLow)}–${pct(summary.wilsonHigh)}` : '—' },
           ].map(({ label, value }) => (

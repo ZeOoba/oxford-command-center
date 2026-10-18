@@ -1,6 +1,6 @@
 // tests/unit/warehouse-actions.test.ts
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -512,6 +512,131 @@ describe('warehouse actions', () => {
     expect(refusal.ok).toBe(false);
     if (!refusal.ok) expect(refusal.error).toContain('no ledger rows');
     expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ status: 'pending-review' });
+  });
+
+  describe('older-version supersede guard', () => {
+    // v1 is held in review (high auto-commit threshold), a corrected export v2 of the SAME period then commits
+    // on its own. Approving v1 would supersede v2 and serve older data.
+    async function v1PendingV2Committed(): Promise<{ db: WarehouseDb; v1: number; v2: number }> {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-sup-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      const fileA = join(dir, 'a');
+      const fileB = join(dir, 'b');
+      mkdirSync(fileA);
+      mkdirSync(fileB);
+      const pathA = join(fileA, 'P&L 2025 -- 1100 Rarig.xlsx');
+      const pathB = join(fileB, 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(pathA);
+      await writeFixture(pathB);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(pathB);
+      wb.worksheets[0]!.getCell('D6').value = 110000; // corrected Rent => different bytes, same period
+      await wb.xlsx.writeFile(pathB);
+      const r1 = await ingestFile(db, pathA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+      expect(r1.status).toBe('pending-review');
+      const r2 = await ingestFile(db, pathB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+      expect(r2.status).toBe('committed');
+      expect(r2.version).toBe(2);
+      return { db, v1: r1.importId!, v2: r2.importId! };
+    }
+    const activeFor = (db: WarehouseDb, id: number) =>
+      (db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE import_id=? AND is_active=1').get(id) as { c: number }).c;
+
+    it('(s) approving an OLDER pending version is refused while a newer version is committed: v2 keeps serving, v1 stays pending', async () => {
+      const { db, v1, v2 } = await v1PendingV2Committed();
+      const refusal = approveImport(db, v1);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('newer-version-committed');
+        expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toContain('v2');
+      }
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2)).toMatchObject({ status: 'committed' });
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v1)).toMatchObject({ status: 'pending-review' });
+      expect(activeFor(db, v2)).toBe(3);
+      expect(activeFor(db, v1)).toBe(0);
+    });
+
+    it('(t) the stale older version can still be rejected', async () => {
+      const { db, v1 } = await v1PendingV2Committed();
+      expect(rejectImport(db, v1).ok).toBe(true);
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v1)).toMatchObject({ status: 'rejected' });
+    });
+
+    it('(v) versions of a DIFFERENT period never interfere: a committed 2024 v2 does not block approving a pending 2025 v1', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-sup3-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      const make = async (sub: string, year: string, rent?: number) => {
+        mkdirSync(join(dir, sub));
+        const path = join(dir, sub, `P&L ${year} -- 1100 Rarig.xlsx`);
+        await writeFixture(path);
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.readFile(path);
+        wb.worksheets[0]!.getCell('A3').value = `01/01/${year.slice(2)} - 12/31/${year.slice(2)}  (cash basis)`;
+        if (rent !== undefined) wb.worksheets[0]!.getCell('D6').value = rent;
+        await wb.xlsx.writeFile(path);
+        return path;
+      };
+      const p24a = await make('y24a', '2024');
+      const p24b = await make('y24b', '2024', 90000);
+      const p25 = await make('y25', '2025');
+      const a = await ingestFile(db, p24a, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+      const b = await ingestFile(db, p24b, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+      expect([a.status, b.status]).toEqual(['committed', 'committed']);
+      expect(b.version).toBe(2); // 2024 now has a committed v2
+      const c = await ingestFile(db, p25, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T02:00:00Z', autoCommitThreshold: 0.99 });
+      expect(c.status).toBe('pending-review');
+      expect(c.version).toBe(1); // 2025 v1, held
+      expect(approveImport(db, c.importId!).ok).toBe(true); // 2024's v2 is irrelevant to 2025
+    });
+
+    it('(w) a committed import with the same start but a DIFFERENT end (half-year vs full-year) is a different period and never blocks', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-sup4-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      mkdirSync(join(dir, 'full'));
+      mkdirSync(join(dir, 'half'));
+      const full = join(dir, 'full', 'P&L 2025 -- 1100 Rarig.xlsx');
+      const half = join(dir, 'half', 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(full);
+      await writeFixture(half);
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(half);
+      wb.worksheets[0]!.getCell('A3').value = '01/01/25 - 06/30/25  (cash basis)'; // same start, different end
+      await wb.xlsx.writeFile(half);
+      const f = await ingestFile(db, full, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+      const h = await ingestFile(db, half, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+      expect([f.status, h.status]).toEqual(['pending-review', 'committed']);
+      expect(db.prepare('SELECT period_start, period_end FROM import_batches WHERE id=?').get(h.importId))
+        .toEqual({ period_start: '2025-01-01', period_end: '2025-06-30' });
+      expect(approveImport(db, f.importId!).ok).toBe(true); // the half-year import is a different period
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(h.importId)).toMatchObject({ status: 'committed' });
+    });
+
+    it('(u) an older pending version CAN be approved while the newer one is still pending; approving the newer then supersedes it', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-sup2-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      const pathA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(pathA);
+      const r1 = await ingestFile(db, pathA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99 });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(pathA);
+      wb.worksheets[0]!.getCell('D6').value = 110000;
+      await wb.xlsx.writeFile(pathA);
+      const r2 = await ingestFile(db, pathA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z', autoCommitThreshold: 0.99 });
+      expect([r1.status, r2.status]).toEqual(['pending-review', 'pending-review']);
+      expect(approveImport(db, r1.importId!).ok).toBe(true); // nothing newer is committed yet
+      expect(approveImport(db, r2.importId!).ok).toBe(true); // newest wins
+      expect(db.prepare('SELECT status, superseded_by FROM import_batches WHERE id=?').get(r1.importId)).toEqual({ status: 'superseded', superseded_by: r2.importId });
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r2.importId)).toMatchObject({ status: 'committed' });
+    });
   });
 
   describe('sign-undecidable approve gate', () => {

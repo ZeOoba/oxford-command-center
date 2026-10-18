@@ -36,7 +36,7 @@ import { AcquisitionInput, ReplacementCostTable } from '../../../../src/contract
 import type { AcquisitionRuleset } from '../../../../src/contracts/acquisition';
 // Shared governor proxy + ratified default governors — pure/edge-portable (types-only + a const),
 // so the edge applies the SAME demotion as the Brain Server route and the ranked path.
-import { applyGovernorProxy } from '../../../../server/warehouse/acq-governor-proxy';
+import { applyGovernorProxyToScore } from '../../../../server/warehouse/acq-governor-proxy';
 import { GOVERNOR_DEFAULTS } from '../../../../server/warehouse/governors';
 
 export interface EdgeAcquisitionConfig {
@@ -91,8 +91,10 @@ export async function onRequestPost(context: { request: Request }): Promise<Resp
   // Apply the SHARED governor proxy — identical demotion to the Brain Server's /acquisition/score
   // route and the ranked path. Ratified default governors (the edge has no DB; DB overrides are
   // stricter-only and apply server-side). LTV is indeterminate at screen time (see module header).
-  const score = scoreAcquisition(parsed.data, CFG.ruleset, { rct: CFG.rct });
-  const { verdict, governorDscrCleared, governorLtvCleared } =
-    applyGovernorProxy(score, parsed.data, GOVERNOR_DEFAULTS);
-  return json({ score: { ...score, verdict }, governorDscrCleared, governorLtvCleared });
+  // Score-level wrapper (audit 2026-10-13 G1): tier moves with a demoted verdict (same pair as the
+  // Brain Server route and the persistence path).
+  const raw = scoreAcquisition(parsed.data, CFG.ruleset, { rct: CFG.rct });
+  const { score, governorDscrCleared, governorLtvCleared } =
+    applyGovernorProxyToScore(raw, parsed.data, GOVERNOR_DEFAULTS);
+  return json({ score, governorDscrCleared, governorLtvCleared });
 }
