@@ -24,6 +24,7 @@ interface WorkflowResult {
   succeeded: number;
   allFailed: boolean;
   lensCount: number;
+  worstSeverityRank: number;
   clean: boolean;
 }
 
