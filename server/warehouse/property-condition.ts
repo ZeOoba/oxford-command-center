@@ -189,7 +189,8 @@ export function buildPropertyConditionReport(db: WarehouseDb, asOf: string): Pro
     rul_raw: string | null; total_usd: number | null; timing: string | null; unit_cost: number | null; uom: string | null;
   }>;
   const reportById = new Map(reportRows.map((r) => [r.report_id, r]));
-  const currentIds = new Set([...currentByKey.values()].map((r) => r.report_id));
+  // Lifecycle lines come from live current reports only: a STALE current report (pre-2024, undated, flagged) is history, same rule as the totals.
+  const currentIds = new Set(live.map((p) => p.current.reportId));
   const lifecycle: PcaLifecycleRow[] = [];
   const priceBook: PcaPriceBookRow[] = [];
   for (const c of compRows) {
