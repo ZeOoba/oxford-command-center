@@ -110,7 +110,7 @@ describe('PropertyConditionModule', () => {
     renderModule();
     expect(screen.getByText('Immediate Repairs')).toBeTruthy();
     expect(screen.getByText('Capex Reserves')).toBeTruthy();
-    expect(screen.getByText('2 / 2')).toBeTruthy();
+    expect(screen.getByText('1 / 2')).toBeTruthy();
     expect(screen.getByText('Capex outlook by property')).toBeTruthy();
     expect(screen.getAllByText('3520 E Fulton St').length).toBeGreaterThan(0);
     // An old report still appears (current = newest we have) with its age as a caveat badge.

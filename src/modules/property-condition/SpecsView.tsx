@@ -14,6 +14,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtUsd } from '@analytics/index';
+import { byCode } from '@/analytics/pca-intelligence';
 import {
   SPEC_COMPONENTS,
   buildFindingsLedger,
@@ -417,7 +418,7 @@ export function SpecsView({ model, todayYear }: { model: BuildingSpecsModel; tod
   const properties = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of model.metas) m.set(r.property_key, r.property_label);
-    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    return [...m.entries()].sort((a, b) => byCode(a[1], b[1]));
   }, [model.metas]);
   const labels = useMemo(() => new Map(properties), [properties]);
 
