@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { AttentionBand, HealthBand } from './warehouse';
-import { ClusterTier, Ratification } from './acquisition';
+import { ClusterTier, Ratification, Verdict } from './acquisition';
 import { DebtBookTrust } from './debt';
 
 export const AllocationAction = z.enum(['buy', 'hold', 'sell', 'refinance', 'improve']);
@@ -87,7 +87,31 @@ export const PortfolioAllocation = z.object({
     tier: z.enum(['T1', 'T2', 'PASS', 'KILLED']).nullable(),
     leveredIrr: z.number().nullable(),
     basisDiscountPct: z.number().nullable(),
+    /** Refute H3: the PERSISTED verdict (tier alone can read T1 next to a governor-demoted PASS on
+     *  pre-fix rows) and whether this candidate passed every BUY-gate condition. Optional so older
+     *  producers still parse; consumers treat absent buyEligible as NOT eligible. */
+    verdict: Verdict.nullable().optional(),
+    buyEligible: z.boolean().optional(),
+    /** Refute round 2 T2: the engine's downgrade-only cap reasons for this score (unconfirmed
+     *  Stage-0 gate input, unresolved DD-critical items, Q3 guard …). Policy (Gabriel, pending):
+     *  such a candidate stays BUY-eligible, but the open items must be visible, never silent. */
+    openItems: z.array(z.string()).optional(),
   })),
+  /** BUY-gate transparency (refute H2 / round 2 T3): how many active candidates whose latest score
+   *  would otherwise be T1/T2 PURSUE/WATCH — or, per #463, a governor-demoted PASS (legacy T1/T2 shape,
+   *  or tier PASS with the engine's "Governor demotion:" reason) — were excluded as stale/unparseable under the live scoring regime, and
+   *  an explicit note when > 0 (or when the live regime could not be loaded). The note does not claim
+   *  BUY was suppressed — a BUY may still come from current rows. Optional.
+   *  staleScores counts BOTH stale kinds (scoring-regime freshness AND an older/missing
+   *  governorRegime stamp, #463). Every candidate named by the dataQuality governorRegime flag (a
+   *  narrower predicate: composite ≥ floor, eligible on its face or demoted PASS, basis floor passed)
+   *  is also counted here. */
+  buyGate: z.object({
+    staleScores: z.number().int().nonnegative(),
+    unparseableScores: z.number().int().nonnegative(),
+    regimeUnavailable: z.boolean(),
+    suppressedNote: z.string().nullable(),
+  }).optional(),
   /** Portfolio-level data-quality disclosures not tied to one verdict (e.g. BUY candidates withheld
    *  because their score predates the current governor regime). Additive; defaults to []. */
   dataQuality: z.array(DataQualityFlag).default([]),

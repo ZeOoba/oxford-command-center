@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildPortfolioAllocation } from './capital-allocation';
 import { buildMarketIntel } from './market-intel';
-import { loadCapitalConfig } from './capital-config';
+import { CapitalConfigMissingError, loadCapitalConfig } from './capital-config';
 import { getMacro } from '../macro/getMacro';
 import {
   CapitalAllocationResponse,
@@ -125,6 +125,10 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
       return c.json(response);
     } catch (err) {
       console.error('[capital-api] /allocate error:', err instanceof Error ? err.message : String(err));
+      // Explicit error state for the fail-closed empty-governor path (audit 2026-10-13 G6).
+      if (err instanceof CapitalConfigMissingError) {
+        return c.json({ error: 'capital governors unavailable (capital_config is empty) — no allocation or BUY verdict produced' }, 503);
+      }
       return c.json({ error: 'capital allocation failed' }, 500);
     }
   }));

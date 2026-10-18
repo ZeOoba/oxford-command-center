@@ -1,5 +1,5 @@
 // server/warehouse/om-extract.ts
-import { scanForConfidential } from '../briefing/confidential';
+import { egressRosterMatch } from '../briefing/roster-match';
 import { pdfToText } from '../lib/pdf-text';
 import fieldsConfig from './om-extract-fields.json';
 
@@ -13,11 +13,16 @@ export interface OmExtractOptions {
   fetchImpl?: typeof fetch;
   // Injectable for tests — avoids needing to vi.mock the pdf-parse module
   pdfParseFn?: (buffer: Buffer) => Promise<{ text: string }>;
-  // Confidentiality egress guard input — the caller (route) resolves the Deal and passes its
-  // `confidential` flag down. Undefined (no dealId / blank-deal upload) means nothing to check
-  // against, so extraction proceeds. See the block below for why this stays a bare boolean rather
-  // than a full Deal import — mirrors server/ai/comps.ts's pre-network confidentiality guard.
-  dealConfidential?: boolean;
+  // Confidentiality verdict for the deal the upload is tied to — a boolean, or (what the route
+  // passes, built in server/ai/egress-guards.ts) a LIVE predicate that asks the roster. Undefined
+  // (no dealId / blank-deal upload) means there is no tied deal to check; mentionsConfidentialDeal
+  // below still checks the OM text for every other one. This module takes a verdict rather than a
+  // Deal so it never reads the roster itself — mirrors server/ai/comps.ts's pre-network guard.
+  //
+  // A predicate is evaluated at entry AND again immediately before the network call, because a
+  // roster claim can land during the PDF parse (refute wf_fb398b02-494). A throw counts as
+  // confidential.
+  dealConfidential?: boolean | (() => boolean);
   // Set true by the caller when a dealId WAS supplied but the Deal record couldn't be resolved
   // (brain snapshot unavailable, or an unknown/stale id) — confidentiality can't be verified in
   // that case. This must fail CLOSED rather than silently proceeding as non-confidential, mirroring
@@ -27,10 +32,17 @@ export interface OmExtractOptions {
   // Roster scan of the extracted OM text BEFORE it is sent to Anthropic (cc-audit-army
   // 2026-09-28, om-extract-flag-only-guard): the flags above only cover an upload tied to a known
   // Deal, so a blank-deal upload of a confidential OM skipped every check. Returns a hit (deal
-  // label only, never the matched term) or null. Defaults to server/briefing/confidential.ts's
-  // scanForConfidential, which THROWS when the roster is unavailable; that fails CLOSED here.
+  // label only, never the matched term) or null. Defaults to
+  // egressRosterMatch (server/briefing/roster-match.ts: normalised matching), which THROWS when the roster is unavailable OR is the placeholder stand-in (refute U3); that fails CLOSED here.
   // Injectable so unit tests need no machine-local roster.
   confidentialScan?: (text: string) => { dealLabel: string } | null;
+  // Deal-name gate over the OM text, evaluated right before the network call (#478 item 1): true
+  // when the text names ANY deal that is confidential right now — flagged, or claimed by the live
+  // roster through a field the OM may not carry (owner/lender). Covers blank-deal uploads and
+  // uploads tied to a different (public) deal, which the two flags above never see. The route's
+  // version (server/ai/egress-guards.ts) throws when the deal list is unavailable; a throw counts as
+  // a hit (fail closed).
+  mentionsConfidentialDeal?: (text: string) => boolean;
 }
 
 // Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
@@ -91,6 +103,16 @@ const SYSTEM =
   `- constructionType: output exactly one of the listed values, or null if not stated.\n` +
   `- If a field is absent or ambiguous, use null.`;
 
+/** A boolean is taken as given; a live predicate is evaluated now, and a throw counts as confidential. */
+function isDealConfidential(v: OmExtractOptions['dealConfidential']): boolean {
+  if (typeof v !== 'function') return !!v;
+  try {
+    return v();
+  } catch {
+    return true;
+  }
+}
+
 export async function extractOmFields(
   pdfBuffer: Buffer,
   opts: OmExtractOptions,
@@ -98,7 +120,7 @@ export async function extractOmFields(
   // Confidentiality egress guard (mirrors server/ai/comps.ts): a confidential deal's OM text must
   // never reach the Anthropic API. Block before any PDF parse or network call, regardless of
   // API-key state — the caller resolves the Deal and passes `confidential` down BEFORE this call.
-  if (opts.dealConfidential) {
+  if (isDealConfidential(opts.dealConfidential)) {
     return {
       ok: false,
       error: 'OM extraction is disabled for confidential deals — sending this PDF to the Anthropic API would leak the deal identity externally.',
@@ -137,7 +159,7 @@ export async function extractOmFields(
   // Egress roster scan: exactly the text that will leave the machine. Fail closed on any error
   // (missing/unparseable roster) — an unverifiable OM is not sent (Invariant 3).
   try {
-    const hit = (opts.confidentialScan ?? scanForConfidential)(body);
+    const hit = (opts.confidentialScan ?? egressRosterMatch)(body);
     if (hit) {
       return {
         ok: false,
@@ -152,6 +174,35 @@ export async function extractOmFields(
       error: 'Could not verify this OM against the confidential-deal roster (roster unavailable or unreadable) — refusing to send OM text externally until this can be confirmed.',
       status: 403,
     };
+  }
+
+  // Re-take the deal verdict at the egress point: the PDF parse above can take seconds, and the
+  // text scan cannot see a claim anchored on a deal-record field the OM text does not carry.
+  if (typeof opts.dealConfidential === 'function' && isDealConfidential(opts.dealConfidential)) {
+    return {
+      ok: false,
+      error: 'OM extraction is disabled for confidential deals — sending this PDF to the Anthropic API would leak the deal identity externally.',
+      status: 403,
+    };
+  }
+
+  // Deal-name gate, also at the egress point (after the parse): the OM may name a DIFFERENT deal
+  // than the one the upload is tied to.
+  if (opts.mentionsConfidentialDeal) {
+    let named: boolean;
+    try {
+      named = opts.mentionsConfidentialDeal(body);
+    } catch (err) {
+      console.error(`[om-extract] deal-name gate unavailable, OM blocked: ${err instanceof Error ? err.message : String(err)}`);
+      named = true;
+    }
+    if (named) {
+      return {
+        ok: false,
+        error: 'OM extraction blocked — this document names a confidential deal (or the deal list could not be checked); sending it to the Anthropic API would leak the deal identity externally.',
+        status: 403,
+      };
+    }
   }
 
   const fieldManifest = EXTRACTABLE_FIELDS.map((f) => `- ${f.key}: ${f.desc}`).join('\n');

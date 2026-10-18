@@ -24,6 +24,7 @@ import Database from 'better-sqlite3';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { serverPort } from '../server/config';
 import { NumericMetricKey } from '../src/contracts/warehouse';
+import { egressRosterScanner } from '../server/briefing/roster-match';
 import {
   WAREHOUSE_MIRROR_SCHEMA_VERSION,
   type WarehouseMirrorEnvelope,
@@ -191,6 +192,122 @@ export interface BuildOpts {
    * planned as usual (unchanged from Task 14).
    */
   includeLeaseMarket?: boolean;
+  /**
+   * Audit 2026-10-13 F1 (Hard Invariant 3). `true` = the private, Access-gated bake: every planned
+   * route bakes verbatim. `false` OR OMITTED = the redacted/public-safe bake (fail-closed default):
+   * the acquisition-adjacent routes in ACQ_REDACTED_ROUTES are post-filtered by
+   * redactAcquisitionPayload — deal-kind calibration subjects (`parcel:<…:apn>`,
+   * `pipeline:<candidateId>`), floor-indeterminate open questions (their titles embed
+   * acq_candidates.address, which the HubSpot sync fills with the raw dealname) and trackRecord
+   * entries for anything but a known non-deal subject are removed. Refute round 6, G4: EVERY planned
+   * endpoint (not just those four) is then roster-scanned; a hit drops that endpoint and records it,
+   * and an unreadable or placeholder roster, or a scanner throw, REFUSES the whole bake.
+   */
+  includeConfidential?: boolean;
+  /** Roster scan used by the redacted bake; injectable for tests. Must THROW when the roster cannot
+   *  be verified (a throw refuses the bake). Defaults to a scanner bound once via
+   *  egressRosterScanner (unreadable or placeholder roster ⇒ throws ⇒ the bake is refused). */
+  confidentialScan?: (value: unknown) => { dealLabel: string } | null;
+}
+
+/** Routes that carry acquisition-pipeline identifiers and are post-filtered in redacted mode. */
+export const ACQ_REDACTED_ROUTES: ReadonlySet<string> = new Set([
+  '/brain/report', '/calibration/log', '/calibration/pending', '/calibration/report',
+]);
+
+/** subjectId prefixes minted for acquisition candidates (007_acq_candidates.sql id scheme and the
+ *  capital-allocation `pipeline:${candidateId}` buy token). Belt-and-braces beside subjectKind. */
+const DEAL_SUBJECT_PREFIXES = ['pipeline:', 'parcel:', 'deal:'];
+
+interface CalLogRowLike { subjectKind?: unknown; subjectId?: unknown }
+
+function isDealSubject(row: CalLogRowLike): boolean {
+  const id = typeof row.subjectId === 'string' ? row.subjectId : '';
+  return row.subjectKind === 'deal' || DEAL_SUBJECT_PREFIXES.some((p) => id.startsWith(p));
+}
+
+export interface AcqRedactionContext {
+  /** Subjects known NOT to be acquisition candidates (portfolio property ids + non-deal calibration
+   *  subjects). trackRecord carries no subjectKind, so it is filtered by this ALLOWLIST — an unknown
+   *  subject is dropped (fail closed). */
+  nonDealSubjects: ReadonlySet<string>;
+  scan: (value: unknown) => { dealLabel: string } | null;
+}
+
+/**
+ * Redacted-mode post-filter for one ACQ_REDACTED_ROUTES payload. Returns the filtered payload, or
+ * `null` to drop the route entirely (roster hit, or the roster could not be verified). Pure apart
+ * from the injected scan.
+ */
+export function redactAcquisitionPayload(routerPath: string, json: unknown, ctx: AcqRedactionContext): unknown {
+  let out: unknown = json;
+  const obj = json as Record<string, unknown> | null;
+  if (obj && typeof obj === 'object') {
+    if (routerPath === '/calibration/log' && Array.isArray(obj.log)) {
+      out = { ...obj, log: (obj.log as CalLogRowLike[]).filter((r) => !isDealSubject(r)) };
+    } else if (routerPath === '/calibration/pending' && Array.isArray(obj.pending)) {
+      out = { ...obj, pending: (obj.pending as CalLogRowLike[]).filter((r) => !isDealSubject(r)) };
+    } else if (routerPath === '/brain/report') {
+      const oq = Array.isArray(obj.openQuestions) ? (obj.openQuestions as Array<{ kind?: unknown }>) : [];
+      const tr = Array.isArray(obj.trackRecord) ? (obj.trackRecord as Array<{ subject?: unknown }>) : [];
+      out = {
+        ...obj,
+        openQuestions: oq.filter((q) => q.kind !== 'floor-indeterminate'),
+        trackRecord: tr.filter((t) => typeof t.subject === 'string' && ctx.nonDealSubjects.has(t.subject)),
+      };
+    }
+  }
+  try {
+    const hit = ctx.scan(out);
+    if (hit) {
+      console.warn(`[bake-warehouse] redacted bake: ${routeTemplate(routerPath)} matches an active confidential deal — route omitted.`);
+      return null;
+    }
+  } catch {
+    // A FIXED string, never the scanner's error message (refute round 8, J4): a scanner error can
+    // quote its input or a roster term, and logs are a sink.
+    console.warn(
+      `[bake-warehouse] redacted bake: confidential roster could not be verified ` +
+        `(roster scan error) — ${routeTemplate(routerPath)} omitted (fail closed).`,
+    );
+    return null;
+  }
+  return out;
+}
+
+const FIXED_ROUTE_SET = new Set<string>(FIXED_ROUTES);
+
+/** A router path as a LOG-SAFE template (refute round 7, H3): a parameterised route embeds a
+ *  property id, and an id can itself be a roster term, so every segment past the route family (the
+ *  first two) becomes ':id' and any query string '?…'. A FIXED_ROUTES path is static and kept. */
+export function routeTemplate(routerPath: string): string {
+  const q = routerPath.indexOf('?');
+  const path = q === -1 ? routerPath : routerPath.slice(0, q);
+  const base = FIXED_ROUTE_SET.has(path)
+    ? path
+    : path.split('/').map((seg, i) => (i <= 2 ? seg : ':id')).join('/');
+  return q === -1 ? base : `${base}?…`;
+}
+
+/** The log line for the endpoints a redacted bake omitted: a COUNT plus each route template with
+ *  its own count, never a raw path (H3). '' when nothing was omitted. */
+export function describeOmittedRoutes(omitted: string[]): string {
+  if (omitted.length === 0) return '';
+  const byTemplate = new Map<string, number>();
+  for (const p of omitted) {
+    const t = routeTemplate(p);
+    byTemplate.set(t, (byTemplate.get(t) ?? 0) + 1);
+  }
+  const parts = [...byTemplate].map(([t, n]) => `${t} x${n}`);
+  return `${omitted.length} warehouse endpoint(s) omitted by the roster scan: ${parts.join(', ')}`;
+}
+
+/** The redacted bake's refusal: the roster could not be verified, so nothing may be published. */
+function bakeRefusal(why: string): Error {
+  return new Error(
+    `warehouse bake failed: refusing to bake a redacted public/warehouse.json — ${why}. ` +
+      `Leaving the last good public/warehouse.json in place.`,
+  );
 }
 
 /**
@@ -202,6 +319,32 @@ export async function buildWarehouseEnvelope(
   resolver: RouteResolver,
   opts: BuildOpts,
 ): Promise<WarehouseMirrorEnvelope> {
+  return (await buildWarehouseBake(resolver, opts)).envelope;
+}
+
+/**
+ * buildWarehouseEnvelope plus the router paths the redacted bake OMITTED on a roster hit (refute
+ * round 6, G4). Redacted mode (the default): the roster scanner is bound ONCE up front, and an
+ * unreadable / placeholder roster refuses the bake before anything is resolved; every planned
+ * endpoint payload (after the acquisition post-filter for ACQ_REDACTED_ROUTES) is scanned with the
+ * normalised egress matcher; a hit omits that endpoint; a scanner throw refuses the bake.
+ */
+export async function buildWarehouseBake(
+  resolver: RouteResolver,
+  opts: BuildOpts,
+): Promise<{ envelope: WarehouseMirrorEnvelope; omitted: string[] }> {
+  const redactedMode = opts.includeConfidential !== true;
+  let scan: ((value: unknown) => { dealLabel: string } | null) | null = null;
+  if (redactedMode) {
+    if (opts.confidentialScan) scan = opts.confidentialScan;
+    else {
+      try {
+        scan = egressRosterScanner();
+      } catch {
+        throw bakeRefusal('the confidential roster is unreadable, malformed or the placeholder stand-in');
+      }
+    }
+  }
   // Enumeration inputs come from the routes themselves (one source of truth). Fail LOUD if a read the
   // whole plan depends on did not return 200 JSON — never bake a partial/empty mirror silently.
   const metricsRes = await resolver('/analytics/metrics');
@@ -225,11 +368,67 @@ export async function buildWarehouseEnvelope(
     (routerPath) => opts.includeLeaseMarket !== false || !routerPath.startsWith('/lease-market/'),
   );
   const required = REQUIRED_ROUTES;
+
+  // Redacted mode (the fail-closed default): build the trackRecord allowlist from data that is
+  // itself non-deal — portfolio property ids from the metrics read above plus every non-deal
+  // subject in the calibration log — resolved here so it does not depend on plan order.
+  let redaction: AcqRedactionContext | null = null;
+  let scanError: unknown = null;
+  if (redactedMode) {
+    const nonDealSubjects = new Set<string>(metrics.map((m) => m.propertyId));
+    const logRes = await resolver('/calibration/log');
+    const logRows = (logRes.json as { log?: unknown } | null)?.log;
+    if (logRes.status === 200 && Array.isArray(logRows)) {
+      for (const r of logRows as CalLogRowLike[]) {
+        if (!isDealSubject(r) && typeof r.subjectId === 'string') nonDealSubjects.add(r.subjectId);
+      }
+    }
+    // The acquisition post-filter's own scan: a throw is recorded and refuses the bake below
+    // (redactAcquisitionPayload itself only drops the route on a throw).
+    redaction = {
+      nonDealSubjects,
+      scan: (v) => {
+        try {
+          return scan!(v);
+        } catch (e) {
+          scanError = e;
+          throw e;
+        }
+      },
+    };
+  }
+
   const endpoints: Record<string, unknown> = {};
+  const omitted: string[] = [];
   for (const routerPath of plan) {
     const { status, json } = await resolver(routerPath);
     if (status === 200 && json !== null) {
-      endpoints[`/api/warehouse${routerPath}`] = json;
+      let payload: unknown = json;
+      if (redaction && ACQ_REDACTED_ROUTES.has(routerPath)) {
+        payload = redactAcquisitionPayload(routerPath, json, redaction);
+        if (scanError !== null) throw bakeRefusal(`the roster scan failed on ${routeTemplate(routerPath)}`);
+        // A dropped route is deliberately NOT a required-route failure: in redacted mode
+        // confidentiality outranks completeness (the view reads offline on the public mirror).
+        if (payload === null) {
+          omitted.push(routerPath);
+          continue;
+        }
+      } else if (scan) {
+        let hit: { dealLabel: string } | null;
+        try {
+          hit = scan(payload);
+        } catch {
+          throw bakeRefusal(`the roster scan failed on ${routeTemplate(routerPath)}`);
+        }
+        if (hit) {
+          // Route TEMPLATE only (refute round 7, H3): never the raw path (a parameterised route
+          // embeds an id that can itself be a roster term), the term or the deal label.
+          console.warn(`[bake-warehouse] redacted bake: a ${routeTemplate(routerPath)} endpoint matches an active confidential deal — endpoint omitted.`);
+          omitted.push(routerPath);
+          continue;
+        }
+      }
+      endpoints[`/api/warehouse${routerPath}`] = payload;
     } else if (required.has(routerPath)) {
       // A parameterized slice may legitimately 404 (skip it); a REQUIRED route must not — fail loud.
       throw new Error(`warehouse bake failed: required endpoint ${routerPath} returned ${status}`);
@@ -237,10 +436,13 @@ export async function buildWarehouseEnvelope(
   }
 
   return {
-    schemaVersion: WAREHOUSE_MIRROR_SCHEMA_VERSION,
-    bakedAt: new Date(opts.now).toISOString(),
-    warehouseSource: opts.warehouseSource,
-    endpoints,
+    envelope: {
+      schemaVersion: WAREHOUSE_MIRROR_SCHEMA_VERSION,
+      bakedAt: new Date(opts.now).toISOString(),
+      warehouseSource: opts.warehouseSource,
+      endpoints,
+    },
+    omitted,
   };
 }
 
@@ -258,7 +460,7 @@ async function brainServerUp(baseUrl: string): Promise<boolean> {
   }
 }
 
-export interface BakeResult { path: string; warehouseSource: WarehouseSource; count: number }
+export interface BakeResult { path: string; warehouseSource: WarehouseSource; count: number; omitted: string[] }
 
 /**
  * Orchestrate the bake: prefer a running Brain Server; else checkpoint + read the local DB. Writes
@@ -362,12 +564,12 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
   }
 
   try {
-    const env = await buildWarehouseEnvelope(resolver, { now, warehouseSource, includeLeaseMarket });
+    const { envelope: env, omitted } = await buildWarehouseBake(resolver, { now, warehouseSource, includeLeaseMarket, includeConfidential });
     const pub = join(process.cwd(), 'public');
     mkdirSync(pub, { recursive: true });
     const outPath = join(pub, 'warehouse.json');
     writeFileSync(outPath, JSON.stringify(env));
-    return { path: outPath, warehouseSource, count: Object.keys(env.endpoints).length };
+    return { path: outPath, warehouseSource, count: Object.keys(env.endpoints).length, omitted };
   } finally {
     db?.close();
   }

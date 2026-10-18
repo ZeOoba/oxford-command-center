@@ -149,9 +149,30 @@ describe('POST /acq/score/:candidateId', () => {
     const db = freshDb();
     const id = seedCandidate(db);
     const app = await loadApp(db, 'real');
-    expect((await postScore(app, id, VALID_INPUT)).status).toBe(200);
-    expect((await postScore(app, id, VALID_INPUT)).status).toBe(200);
+    const first = await postScore(app, id, VALID_INPUT);
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { persisted: string }).persisted).toBe('inserted');
+    const second = await postScore(app, id, VALID_INPUT);
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { persisted: string }).persisted).toBe('unchanged');
     expect(count(db, 'acq_scores')).toBe(1);
+  });
+
+  // Audit 2026-10-13 X1: a stored output the live engine no longer reproduces (same key) is
+  // superseded in place, and the response says so instead of silently returning a no-op.
+  it("reports persisted='superseded' and rewrites the row when the stored output is stale on the same key", async () => {
+    const db = freshDb();
+    const id = seedCandidate(db);
+    const app = await loadApp(db, 'real');
+    const first = (await (await postScore(app, id, VALID_INPUT)).json()) as { score: { composite: number } };
+    db.prepare(`UPDATE acq_scores SET composite = composite + 2.5, score_json = json_set(score_json, '$.composite', json_extract(score_json, '$.composite') + 2.5)`).run();
+    const res = await postScore(app, id, VALID_INPUT);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { persisted: string; score: { composite: number } };
+    expect(body.persisted).toBe('superseded');
+    expect(body.score.composite).toBe(first.score.composite);
+    expect(count(db, 'acq_scores')).toBe(1);
+    expect((db.prepare('SELECT composite FROM acq_scores').get() as { composite: number }).composite).toBe(first.score.composite);
   });
 
   it('503s and persists NOTHING when the ratified config cannot load and no fallback file exists', async () => {

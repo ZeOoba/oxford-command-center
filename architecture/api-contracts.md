@@ -114,7 +114,7 @@ The warehouse router is mounted at `/api/warehouse`. The `getDb()` getter is inj
 | GET | `/api/warehouse/imports/:id` | — | Import detail + ledger entries |
 | POST | `/api/warehouse/imports/:id/action` | `{ action: 'approve' \| 'reject' }` | Approve or reject pending import |
 
-`approve` responses: `200 {ok:true}`; `409 {ok:false, unmapped:[...]}` while accounts are unmapped; `409 {ok:false, unmapped:[], reason:'sign-undecidable', error}` while the import has an open `sign-undecidable` issue (resolve it via `POST /api/warehouse/issues/:id/resolve` after verifying the sign, or reject); `404` for not-found / not-pending / empty import.
+`approve` responses: `200 {ok:true}`; `409 {ok:false, unmapped:[...]}` while accounts are unmapped; `409 {ok:false, unmapped:[], reason:'sign-undecidable', error}` while the import has an open `sign-undecidable` issue (resolve it via `POST /api/warehouse/issues/:id/resolve` after verifying the sign, or reject); `409 {ok:false, unmapped:[], reason:'newer-version-committed', error}` when a later-arriving import for the same property and period is already committed (reject the stale import); `404` for not-found / not-pending / empty import.
 
 ### Mapping Management
 

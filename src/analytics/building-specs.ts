@@ -283,10 +283,23 @@ export interface RoofProjection {
   installYear: number;
   /** The year of the REPORT that stated this fact (shown first, as "as reported in <year>") — not the fact's own as_of. */
   asReportedYear: number;
+  /** The single EUL the report states for this roof. Null when it states none OR states conflicting values (see eulCandidates). */
   eul: number | null;
+  /** Every distinct EUL the report states for this roof, ascending. Empty = none stated; more than one = conflicting. */
+  eulCandidates: number[];
+  eulMin: number | null;
+  eulMax: number | null;
+  /** True when the report states two or more different EULs for this roof (e.g. one per roof type in a report-wide table). */
+  eulAmbiguous: boolean;
   ageToday: number;
-  /** install + EUL − today; negative = past EUL. Null when the report states no EUL — nothing is assumed. */
+  /**
+   * install + EUL − today, from the SHORTEST stated EUL (the conservative, soonest-replacement reading); negative = past EUL.
+   * Null only when the report states no EUL at all — nothing is assumed.
+   */
   yearsRemaining: number | null;
+  /** The same projection from the LONGEST stated EUL; equals yearsRemaining unless the EULs conflict. */
+  yearsRemainingMax: number | null;
+  /** True when past EUL under every stated EUL, false when under none, null when no EUL is stated or the stated EULs disagree on it. */
   pastEul: boolean | null;
   forecast: true;
   label: '[FORECAST]';
@@ -299,13 +312,13 @@ const firstYear = (v: string | number | boolean): number | null => {
 const plainYears = (v: string | number | boolean): number | null => {
   if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : null;
   const m = /^\s*(\d{1,3})\s*(?:yrs?|years?)?\s*$/i.exec(String(v));
-  return m ? Number(m[1]) : null;
+  return m && Number(m[1]) > 0 ? Number(m[1]) : null; // '0' is not a stated life (same rule as the numeric branch)
 };
 
 export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProjection[] {
   const byKey = new Map<string, SpecFactT[]>();
   // An EUL stated once for the whole report (no scope) applies to every roof in that report that states none of its own.
-  // Conflicting values (an EUL per roof type, say) are ambiguous: no figure is assumed rather than the last one read.
+  // Conflicting values (an EUL per roof type, say) are ambiguous: all of them are kept, never the last one read.
   const reportEulValues = new Map<string, Set<number>>();
   for (const f of facts) {
     if (f.component === 'roof' && f.scope === null && canonicalAttribute('roof', f.attribute) === 'eul') {
@@ -315,7 +328,6 @@ export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProject
       reportEulValues.set(k, (reportEulValues.get(k) ?? new Set<number>()).add(n));
     }
   }
-  const soleValue = (s: Set<number> | undefined): number | null => (s !== undefined && s.size === 1 ? ([...s][0] as number) : null);
   for (const f of facts) {
     if (f.component !== 'roof') continue;
     const k = [f.property, f.report_id, f.scope ?? ''].join('|');
@@ -333,20 +345,55 @@ export function projectRoofs(facts: SpecFactT[], todayYear: number): RoofProject
       const n = plainYears(f.value);
       if (n !== null) ownEuls.add(n);
     }
-    // Own EUL(s) win; conflicting own values stay null (no fallback); only a group with none inherits the report-wide one.
-    const eul = ownEuls.size > 0 ? soleValue(ownEuls) : soleValue(reportEulValues.get(`${first.property}|${first.report_id}`));
+    // Own EUL(s) win, conflicting or not (no fallback); only a group with none inherits the report-wide one(s).
+    const stated = ownEuls.size > 0 ? ownEuls : (reportEulValues.get(`${first.property}|${first.report_id}`) ?? new Set<number>());
+    const eulCandidates = [...stated].sort((a, b) => a - b);
+    const eulMin = eulCandidates[0] ?? null;
+    const eulMax = eulCandidates[eulCandidates.length - 1] ?? null;
     for (const inst of g.filter((f) => canonicalAttribute('roof', f.attribute) === 'install_year')) {
       const installYear = firstYear(inst.value);
       if (installYear === null) continue;
-      const yearsRemaining = eul === null ? null : installYear + eul - todayYear;
+      const yearsRemaining = eulMin === null ? null : installYear + eulMin - todayYear;
+      const yearsRemainingMax = eulMax === null ? null : installYear + eulMax - todayYear;
       rows.push({
         propertyKey: inst.property, reportId: inst.report_id, vintage: inst.report_vintage, scope: inst.scope, installYear,
-        asReportedYear: yearOf(inst.report_date), eul, ageToday: todayYear - installYear, yearsRemaining,
-        pastEul: yearsRemaining === null ? null : yearsRemaining < 0, forecast: true, label: '[FORECAST]',
+        asReportedYear: yearOf(inst.report_date), eul: eulCandidates.length === 1 ? eulMin : null, eulCandidates: [...eulCandidates], eulMin, eulMax,
+        eulAmbiguous: eulCandidates.length > 1, ageToday: todayYear - installYear, yearsRemaining, yearsRemainingMax,
+        pastEul: yearsRemaining === null || yearsRemainingMax === null ? null : yearsRemainingMax < 0 ? true : yearsRemaining >= 0 ? false : null,
+        forecast: true, label: '[FORECAST]',
       });
     }
   }
+  // Conservative order: by the shortest-life projection, so an ambiguous roof sorts with its soonest replacement, not last.
   return rows.sort((a, b) => (a.yearsRemaining ?? 1e9) - (b.yearsRemaining ?? 1e9));
+}
+
+/**
+ * Lookup key for one roof projection: property + report + scope + install year. A scope-less section can state several
+ * roofs, so the install year is part of the key (pass the projection's installYear, or an install_year fact's raw value).
+ */
+export function roofProjectionKey(property: string, reportId: string, scope: string | null, installYear: string | number | boolean): string {
+  return [property, reportId, scope ?? '', firstYear(installYear) ?? ''].join('|');
+}
+
+const yrsText = (n: number): string => `${n} yr${n === 1 ? '' : 's'}`;
+
+/** EUL cell: "20 yrs", "conflicting EULs 15/20 yrs" (the report stated both), or "not stated". */
+export function roofEulText(p: RoofProjection): string {
+  if (p.eulCandidates.length === 0) return 'not stated';
+  if (p.eulAmbiguous) return `conflicting EULs ${p.eulCandidates.join('/')} yrs`;
+  return yrsText(p.eulCandidates[0] as number);
+}
+
+/** [FORECAST] status: years left / past EUL, as a range across conflicting EULs. Never claims "past" unless every stated EUL is. */
+export function roofForecastText(p: RoofProjection): string {
+  const lo = p.yearsRemaining;
+  const hi = p.yearsRemainingMax;
+  if (lo === null || hi === null) return 'n/a — no EUL stated';
+  if (!p.eulAmbiguous) return lo < 0 ? `${yrsText(-lo)} past EUL` : `${yrsText(lo)} left`;
+  if (hi < 0) return `${-hi}–${yrsText(-lo)} past EUL (conflicting EULs)`;
+  if (lo >= 0) return `${lo}–${yrsText(hi)} left (conflicting EULs)`;
+  return `${yrsText(-lo)} past to ${yrsText(hi)} left (conflicting EULs)`;
 }
 
 // ── findings ledger ─────────────────────────────────────────────────────────────────────────

@@ -393,3 +393,35 @@ describe('buildIcMemoHtml — debt-book trust disclosure', () => {
     expect(html).toContain('unknown');
   });
 });
+
+// Refute H3: the pipeline table shows the persisted verdict and BUY eligibility next to the tier,
+// so a legacy T1-tier row whose verdict was governor-demoted to PASS never reads as a buy.
+describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', () => {
+  it('renders verdict and eligibility columns; a T1 row with verdict PASS reads Not eligible', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-ok', address: '1 Good Way', market: null, composite: 80.6, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'PURSUE', buyEligible: true },
+        { candidateId: 'c-legacy', address: '2 Legacy Rd', market: null, composite: 92, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false },
+      ],
+    }));
+    expect(html).toContain('<th class="ic-r">Verdict</th>');
+    expect(html).toContain('<th class="ic-r">BUY</th>');
+    const legacyRow = html.slice(html.indexOf('2 Legacy Rd'), html.indexOf('</tr>', html.indexOf('2 Legacy Rd')));
+    expect(legacyRow).toContain('PASS');
+    expect(legacyRow).toContain('Not eligible');
+    const okRow = html.slice(html.indexOf('1 Good Way'), html.indexOf('</tr>', html.indexOf('1 Good Way')));
+    expect(okRow).toContain('PURSUE');
+    expect(okRow).toContain('Eligible');
+    expect(okRow).not.toContain('Not eligible');
+  });
+
+  it('an eligible row with open items reads "BUY with open items: ..." (refute round 2 T2)', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-open', address: '3 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: true, openItems: ['DD-critical unresolved: roof'] },
+      ],
+    }));
+    const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
+    expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
+  });
+});

@@ -56,7 +56,8 @@ export function DealDrawer({
   const deal = snapshot.deals.find((d) => d.id === dealId) ?? null;
   const comps: CompSet | undefined = snapshot.dealComps[dealId];
   const acqInput: AcquisitionInput | null = snapshot.acquisitionInputs[dealId] ?? null;
-  const { data: acqIntel } = useAcqIntel();
+  // includeKilled: a KILLED deal's score must still resolve here (/acq/intel hides KILLED by default).
+  const { data: acqIntel } = useAcqIntel(undefined, undefined, undefined, undefined, true);
   const rankedCandidate = findRankedCandidateForDeal(acqIntel?.rankedCandidates ?? [], dealId);
   const refresh = useMutation({
     mutationFn: () => refreshDealComps(dealId),

@@ -14,9 +14,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   syncCapitalActionsToNotion,
+  buildCapitalWritebackEntries,
   type CapitalActionInput,
   type FetchLike,
 } from '../../server/notion/capital-writeback';
+import type { AllocationVerdict, PortfolioAllocation } from '../../src/contracts/capital';
+import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -24,7 +27,7 @@ import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 function entry(overrides: Partial<CapitalActionInput> = {}): CapitalActionInput {
   return {
     propertyName: overrides.propertyName ?? '123 Main St',
-    capitalAction: overrides.capitalAction ?? 'invest',
+    allocationAction: overrides.allocationAction === undefined ? 'improve' : overrides.allocationAction,
     priorityScore: overrides.priorityScore ?? 72,
   };
 }
@@ -105,7 +108,7 @@ describe('syncCapitalActionsToNotion — match + write', () => {
     const pagePatch = calls.find((c) => c.method === 'PATCH' && /\/pages\//.test(c.url));
     expect(pagePatch).toBeDefined();
     const props = (pagePatch!.body as { properties: Record<string, unknown> }).properties;
-    expect(props['Capital Action']).toEqual({ select: { name: 'invest' } });
+    expect(props['Capital Action']).toEqual({ select: { name: 'improve' } });
     expect(props['Priority Score']).toEqual({ number: 72 });
   });
 
@@ -151,7 +154,7 @@ describe('syncCapitalActionsToNotion — no-match path', () => {
   it('skips an entry whose propertyName is null', async () => {
     const pages = [notionPage('page-1', '123 Main St')];
     const result = await syncCapitalActionsToNotion(
-      [{ propertyName: null, capitalAction: 'hold', priorityScore: 10 }],
+      [{ propertyName: null, allocationAction: 'hold', priorityScore: 10 }],
       'tok',
       { databaseId: DB, asOf: '2026-06-22', fetchImpl: mockNotion(pages) },
     );
@@ -283,3 +286,83 @@ describe('syncCapitalActionsToNotion — contract + guards', () => {
 
 // Keep vi referenced (avoids unused-import lint if helpers change).
 void vi;
+
+
+// ── Audit 2026-10-13 G5: the 5-way allocation engine is the single writeback vocabulary ────────
+describe('syncCapitalActionsToNotion — 5-way allocation vocabulary (audit 2026-10-13 G5)', () => {
+  it('writes the 5-way AllocationAction value to the Capital Action select', async () => {
+    const calls: RecordedCall[] = [];
+    await syncCapitalActionsToNotion([entry({ allocationAction: 'refinance' })], 'tok', {
+      databaseId: DB, asOf: '2026-10-13', fetchImpl: mockNotion([notionPage('page-1', '123 Main St')], { calls }),
+    });
+    const pagePatch = calls.find((c) => c.method === 'PATCH' && /\/pages\//.test(c.url))!;
+    const props = (pagePatch.body as { properties: Record<string, unknown> }).properties;
+    expect(props['Capital Action']).toEqual({ select: { name: 'refinance' } });
+  });
+
+  it('declares every 5-way option AND keeps the legacy options so existing rows are not broken', async () => {
+    const calls: RecordedCall[] = [];
+    await syncCapitalActionsToNotion([entry()], 'tok', {
+      databaseId: DB, asOf: '2026-10-13', fetchImpl: mockNotion([notionPage('page-1', '123 Main St')], { calls }),
+    });
+    const dbPatch = calls.find((c) => c.method === 'PATCH' && /\/databases\/[^/]+$/.test(c.url))!;
+    const action = (dbPatch.body as { properties: Record<string, { select: { options: Array<{ name: string }> } }> })
+      .properties['Capital Action']!;
+    const names = action.select.options.map((o) => o.name);
+    for (const n of ['buy', 'hold', 'sell', 'refinance', 'improve']) expect(names).toContain(n);
+    for (const n of ['invest', 'monitor', 'disposition-candidate']) expect(names).toContain(n);
+    expect(new Set(names).size).toBe(names.length); // no duplicate option names
+  });
+
+  it('a property with no allocation verdict (null action) is skipped — never written with a guessed value', async () => {
+    const calls: RecordedCall[] = [];
+    const result = await syncCapitalActionsToNotion([entry({ allocationAction: null })], 'tok', {
+      databaseId: DB, asOf: '2026-10-13', fetchImpl: mockNotion([notionPage('page-1', '123 Main St')], { calls }),
+    });
+    // Refute H5: counted SEPARATELY — the matched Notion page keeps its prior (now stale) Capital
+    // Action / Priority Score, which the sync result must surface rather than fold into 'skipped'.
+    expect(result.skippedNoVerdict).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.synced).toBe(0);
+    expect(calls.some((c) => c.method === 'PATCH' && /\/pages\//.test(c.url))).toBe(false);
+    expect(() => NotionSyncResult.parse(result)).not.toThrow();
+    expect(NotionSyncResult.parse(result).skippedNoVerdict).toBe(1);
+  });
+
+  it('a no-verdict property with no matching Notion page is a plain skip (nothing stale in Notion)', async () => {
+    const result = await syncCapitalActionsToNotion([entry({ propertyName: 'Nowhere', allocationAction: null })], 'tok', {
+      databaseId: DB, asOf: '2026-10-13', fetchImpl: mockNotion([notionPage('page-1', '123 Main St')]),
+    });
+    expect(result.skipped).toBe(1);
+    expect(result.skippedNoVerdict).toBe(0);
+  });
+});
+
+describe('buildCapitalWritebackEntries — joins the 5-way verdict to the report (audit 2026-10-13 G5)', () => {
+  const verdict = (propertyId: string, action: AllocationVerdict['action']) =>
+    ({ propertyId, propertyName: propertyId, action } as unknown as AllocationVerdict);
+  const reportEntry = (propertyId: string, capitalAction: CapitalAllocationEntry['capitalAction'], priorityScore: number) =>
+    ({ propertyId, propertyName: `Name ${propertyId}`, capitalAction, priorityScore } as unknown as CapitalAllocationEntry);
+
+  it('uses the allocation engine action (not the legacy 4-way capitalAction) and the report priorityScore', () => {
+    const portfolio = {
+      verdicts: [verdict('p1', 'hold'), verdict('p2', 'sell'), verdict('pipeline:cand-1', 'buy')],
+    } as unknown as PortfolioAllocation;
+    const out = buildCapitalWritebackEntries(portfolio, [
+      reportEntry('p1', 'invest', 71.4),                 // legacy says invest — engine says hold
+      reportEntry('p2', 'disposition-candidate', 40),
+      reportEntry('p3', 'monitor', 12),                  // no allocation verdict
+    ]);
+    expect(out).toEqual([
+      { propertyName: 'Name p1', allocationAction: 'hold', priorityScore: 71.4 },
+      { propertyName: 'Name p2', allocationAction: 'sell', priorityScore: 40 },
+      { propertyName: 'Name p3', allocationAction: null, priorityScore: 12 },
+    ]);
+  });
+
+  it('never writes the portfolio-level pipeline buy verdict onto an owned property', () => {
+    const portfolio = { verdicts: [verdict('pipeline:p1', 'buy')] } as unknown as PortfolioAllocation;
+    const out = buildCapitalWritebackEntries(portfolio, [reportEntry('p1', 'hold', 50)]);
+    expect(out[0]!.allocationAction).toBeNull();
+  });
+});

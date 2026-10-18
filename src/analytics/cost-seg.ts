@@ -9,7 +9,7 @@
 // calibration schemas reject. Quantities may be offered as a candidate `qty` on a *pending* calibration proposal
 // (bridgeCostSegQuantities); only an explicit human promotion turns that into an observation.
 import { z } from 'zod';
-import { CalibrationProposal } from './calibration-ledger';
+import { CalibrationProposal, scopeFamily } from './calibration-ledger';
 import { canonicalAttribute, type SpecFactT } from './building-specs';
 
 export const COST_SEG_BASIS = 'COST_SEG_MODELED_RSMEANS_M&S' as const;
@@ -340,7 +340,8 @@ export function sameProperty(a: string, b: string): boolean {
 export function bridgeCostSegQuantities(pending: CalibrationProposal[], facts: CostSegFactT[]): CalibrationProposal[] {
   return pending.map((p) => {
     if (p.qty !== null) return p;
-    const kind = p.component.startsWith('roof_') ? 'roof' : p.component.startsWith('paving_') || p.component === 'seal_stripe' ? 'paving' : null;
+    const family = scopeFamily(p.component);
+    const kind = family === 'roof' || family === 'paving' ? family : null;
     if (kind === null) return p;
     const candidates = facts.filter(
       (f) =>
