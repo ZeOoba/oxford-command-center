@@ -63,7 +63,8 @@
 // (wired into CI for PRs; also usable from /ship). Fails OPEN only when the range cannot be verified
 // at all: the base does not resolve, --base is empty, the default HEAD does not resolve (no
 // commits), the clone is shallow, git < 2.41, or git itself is unusable. Everything after both ends
-// resolve fails CLOSED: an explicit --head that does not resolve, a range that cannot be listed, a
+// resolve fails CLOSED: git that cannot be resolved to an absolute path OUTSIDE the checkout (see
+// resolveGitExecutable: a committed repo-root git.exe must never be what the gate runs), an explicit --head that does not resolve, a range that cannot be listed, a
 // commit that cannot be read (see collectCommits: no trailer clears it).
 //
 // Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>] [--head=<ref>]
@@ -73,8 +74,9 @@
 // unit-test without the process.exit side effects — the bottom-of-file guard runs main() only when
 // executed directly (mirrors governance-check.ts).
 import { execFileSync } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, posix, resolve, win32 } from 'node:path';
 
 // Pure route-plumbing / dispatch files in server/warehouse/ that contain no financial math —
 // subtracted from the broad prefix. Fail-CLOSED elsewhere: any warehouse file NOT listed here
@@ -313,31 +315,61 @@ const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/
 //
 // GATE WIRING (2026-10-18, PR #490, Gabriel). Everything the CI gate step runs THROUGH is protected too, because any of
 // it can switch the gate off without touching the two files above:
-//  - package.json defines the `check:refute` script CI calls. The gate classifies commits by PATH only (git show
-//    --name-only, never diff content), so it cannot tell a `check:refute` edit from a dependency bump: the root
-//    package.json is protected WHOLE, and EVERY root package.json edit (dependency bumps included) needs a trailer.
-//  - .npmrc (root): npm exports its `node-options` key as NODE_OPTIONS to every `npm run` script, so
-//    `node-options=--require ./x.cjs` with a preload that forces exit 0 makes `npm run check:refute` pass without
-//    running the check (refute run wf_19fea163-b81, reproduced).
-//  - .github/workflows/ (whole directory, by PREFIX, see REFUTE_GATE_PATH_PREFIXES): ci.yml runs the check (job
-//    refute-required), and ANY workflow file, including a new one, can publish a check with the required check's name.
+//  - package.json defines the `check:refute` script. The gate classifies commits by PATH only (git show --name-only,
+//    never diff content), so it cannot tell a `check:refute` edit from a dependency bump: the root package.json is
+//    protected WHOLE, and EVERY root package.json edit (dependency bumps included) needs a trailer.
+//  - .npmrc (root): npm exports its `node-options` key as NODE_OPTIONS to every `npm run` script, so a preload there
+//    can force `npm run check:refute` to exit 0 without running the check (refute run wf_19fea163-b81, reproduced).
+//  - .github/workflows/ (whole directory, by PREFIX): ci.yml runs the check (job refute-required), and ANY workflow
+//    file, including a new one, can publish a check with the required check's name.
+//  - scripts/package.json: the package.json NEAREST this script, which node/tsx read for its module format and
+//    `#`-subpath imports. It does not exist today; protecting it costs nothing and closes that lookup.
+//  - REPO-ROOT executables (refute run wf_aaa0696c-23d, reproduced): on the Windows self-hosted runner cmd.exe searches
+//    the cwd (the repo root) before PATH unless NoDefaultCurrentDirectoryInExePath is set, so a committed root
+//    tsx.cmd / node.cmd / git.exe runs instead of the real tool. Any root file (no slash) with a Windows-executable
+//    extension (cmd bat com exe ps1) is a gate path, and so is a root file named after a command the gate step runs
+//    (git node npm npx tsx) with a Windows script-host extension (js jse vbs vbe wsf wsh msc), which cmd.exe also tries.
+//    CI additionally sets NoDefaultCurrentDirectoryInExePath and runs tsx's entry point directly (ci.yml), and this
+//    script resolves git outside the checkout (resolveGitExecutable).
+// Every comparison is CASE-INSENSITIVE (the Windows runner checks out case-insensitively: PACKAGE.JSON is package.json).
 // NOT protected, by decision: package-lock.json (a trailer on every dependency bump; a lockfile that resolves a
-// tampered tsx / dependency is a known, harder variant of the same attack, left open), and nested package.json /
-// .npmrc files (CI runs the gate from the repo root, where npm does not read them).
+// tampered tsx / dependency is a known, harder variant of the same attack, left open); tsconfig.json (tsx reads it, but
+// this script imports only node: builtins, so `paths`/`baseUrl` cannot redirect anything); and nested package.json /
+// .npmrc files other than scripts/package.json. Those are inert for the gate ONLY because this script imports nothing
+// but node: builtins and uses no `#`-subpath imports, NOT because "CI runs from the root": node and tsx read the
+// package.json nearest the SCRIPT. If this script ever imports a local module, re-check this list.
 export const REFUTE_GATE_PATHS: ReadonlySet<string> = new Set([
   '.claude/workflows/refute-financial-change.js',
   'scripts/check-refute-required.ts',
   'package.json',
   '.npmrc',
+  'scripts/package.json',
 ]);
-/** Directory prefixes (repo-root anchored, ending in '/') protected as a whole; checked with REFUTE_GATE_PATHS. */
+/** Directory prefixes (repo-root anchored, lower-case, ending in '/') protected as a whole; checked with REFUTE_GATE_PATHS. */
 export const REFUTE_GATE_PATH_PREFIXES: readonly string[] = ['.github/workflows/'];
+const REFUTE_GATE_PATHS_LOWER: ReadonlySet<string> = new Set([...REFUTE_GATE_PATHS].map((p) => p.toLowerCase()));
+/** A repo-root file (no slash) that Windows will execute when named on a command line. */
+const ROOT_EXECUTABLE = /^[^/]+\.(?:cmd|bat|com|exe|ps1)$/i;
+/** A repo-root file shadowing a command the gate step runs, with a Windows script-host extension cmd.exe also tries. */
+const ROOT_SHADOWED_COMMAND = /^(?:git|node|npm|npx|tsx)\.(?:js|jse|vbs|vbe|wsf|wsh|msc)$/i;
+
+/** True when a changed path can switch the refute gate itself off (see REFUTE_GATE_PATHS). Case-insensitive. */
+export function isRefuteGatePath(p: string): boolean {
+  const path = p.replace(/\\/g, '/');
+  const lower = path.toLowerCase();
+  return (
+    REFUTE_GATE_PATHS_LOWER.has(lower) ||
+    REFUTE_GATE_PATH_PREFIXES.some((pre) => lower.startsWith(pre)) ||
+    ROOT_EXECUTABLE.test(path) ||
+    ROOT_SHADOWED_COMMAND.test(path)
+  );
+}
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
   // Gate paths FIRST, ahead of every exemption set (see REFUTE_GATE_PATHS).
-  if (REFUTE_GATE_PATHS.has(path) || REFUTE_GATE_PATH_PREFIXES.some((pre) => path.startsWith(pre))) return true;
+  if (isRefuteGatePath(path)) return true;
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
     return true;
   }
@@ -613,11 +645,88 @@ export type GitRunner = (args: string[]) => string;
  * hide a commit from the range.
  */
 export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts') };
+  // NoDefaultCurrentDirectoryInExePath: defense in depth so nothing git itself spawns searches the cwd on Windows.
+  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts'), NoDefaultCurrentDirectoryInExePath: '1' };
 }
 
+export interface GitResolveOptions {
+  /** The PATH value to walk (process.env.PATH in production). */
+  pathEnv: string | undefined;
+  platform: NodeJS.Platform;
+  /** Directories git must NOT come from: the checkout root(s) and the cwd. Matched case-insensitively on win32. */
+  untrusted: readonly string[];
+  /** Injectable for tests; default: an existing regular file (and, off Windows, executable). */
+  isFile?: (p: string) => boolean;
+}
+
+/**
+ * Absolute path of the git the gate runs, or throws. execFileSync('git') is NOT safe here: on Windows the executable
+ * search tries the CURRENT DIRECTORY first, so a committed repo-root git.exe would be the gate's git and could report
+ * an empty range (refute run wf_aaa0696c-23d). Walk PATH ourselves and accept the first git that is OUTSIDE every
+ * untrusted directory. Relative and empty PATH entries resolve against the cwd, so they are skipped. On win32 only
+ * git.exe is accepted: execFile cannot run a .cmd/.bat without a shell. The caller fails CLOSED on a throw.
+ */
+export function resolveGitExecutable(o: GitResolveOptions): string {
+  const win = o.platform === 'win32';
+  const P = win ? win32 : posix;
+  const sepChar = win ? '\\' : '/';
+  const norm = (d: string): string => {
+    const r = P.resolve(d);
+    const t = r.length > 1 && (r.endsWith('/') || r.endsWith('\\')) && !/^[A-Za-z]:\\$/.test(r) ? r.slice(0, -1) : r;
+    return win ? t.toLowerCase() : t;
+  };
+  const bad = o.untrusted.filter((d) => d !== '' && P.isAbsolute(d)).map(norm);
+  const inside = (d: string): boolean => {
+    const n = norm(d);
+    return bad.some((b) => n === b || n.startsWith(b.endsWith(sepChar) ? b : b + sepChar));
+  };
+  const isFile = o.isFile ?? ((p: string) => defaultIsExecutableFile(p, win));
+  const name = win ? 'git.exe' : 'git';
+  const skipped: string[] = [];
+  for (const raw of (o.pathEnv ?? '').split(win ? ';' : ':')) {
+    const entry = raw.trim().replace(/^"(.*)"$/, '$1');
+    if (entry === '' || !P.isAbsolute(entry)) continue;
+    if (inside(entry)) {
+      skipped.push(entry);
+      continue;
+    }
+    const candidate = P.join(entry, name);
+    if (isFile(candidate)) return candidate;
+  }
+  throw new Error(
+    `could not resolve ${name} on PATH to an absolute path outside the repository (${bad.join(', ') || 'none given'}); ` +
+      `refusing to run a git from the checkout or the cwd` +
+      (skipped.length ? ` (skipped PATH entries inside it: ${skipped.join(', ')})` : ''),
+  );
+}
+
+function defaultIsExecutableFile(p: string, win: boolean): boolean {
+  try {
+    const st = statSync(p);
+    return st.isFile() && (win || (st.mode & 0o111) !== 0);
+  } catch {
+    return false;
+  }
+}
+
+/** A GitRunner bound to ONE absolute git path (from resolveGitExecutable). */
+export function gitRunnerFor(gitPath: string): GitRunner {
+  return (args) => execFileSync(gitPath, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+}
+
+/** The checkout root (this script's parent directory) and the cwd: git must come from neither. */
+export function defaultUntrustedDirs(): string[] {
+  const dirs = [process.cwd()];
+  if (process.argv[1]) dirs.push(resolve(dirname(process.argv[1]), '..'));
+  return dirs;
+}
+
+// Default runner for direct evaluate()/collectCommits() callers. The CLI (runCli) resolves git UP FRONT and fails
+// CLOSED; here a resolution failure throws into evaluate's probe, which reports it as a tooling gap.
+let resolvedGit: string | undefined;
 function git(args: string[]): string {
-  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+  resolvedGit ??= resolveGitExecutable({ pathEnv: process.env.PATH, platform: process.platform, untrusted: defaultUntrustedDirs() });
+  return gitRunnerFor(resolvedGit)(args);
 }
 
 /**
@@ -790,7 +899,22 @@ export interface CliResult {
   message: string;
 }
 
-export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv, run: GitRunner = git): CliResult {
+export function runCli(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  run?: GitRunner,
+  untrusted: readonly string[] = defaultUntrustedDirs(),
+): CliResult {
+  // No injected runner: resolve git outside the checkout NOW, and fail CLOSED (exit 1, strict or not) if we cannot.
+  // Resolving lazily inside evaluate would turn this into a fail-open "tooling gap" skip.
+  if (run === undefined) {
+    try {
+      const gitPath = resolveGitExecutable({ pathEnv: env.PATH ?? env.Path ?? env.path, platform: process.platform, untrusted });
+      run = gitRunnerFor(gitPath);
+    } catch (err) {
+      return { stream: 'error', exitCode: 1, message: `check:refute — FAILED CLOSED: ${(err as Error).message}` };
+    }
+  }
   const strict = argv.includes('--strict');
   const base = argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? env.REFUTE_BASE ?? 'origin/main';
   // --head lets CI name the PR head sha directly instead of its synthetic refs/pull/N/merge HEAD.
@@ -802,6 +926,8 @@ export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv, run: Git
 }
 
 function main(): void {
+  // Defense in depth: no command this process (or its children) runs may be looked up in the cwd on Windows.
+  process.env.NoDefaultCurrentDirectoryInExePath = '1';
   const r = runCli(process.argv.slice(2), process.env);
   console[r.stream](r.message);
   if (r.exitCode !== 0) process.exit(r.exitCode);

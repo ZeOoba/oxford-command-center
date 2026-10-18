@@ -112,10 +112,36 @@ switch them off. Every commit touching one of these needs its own trailer:
   preload there can make `npm run check:refute` exit 0 without running the check.
 - The whole `.github/workflows/` directory (prefix match, anchored at the repo root): `ci.yml` runs the gate,
   and any workflow file, including a new one, could publish a check under the required check's name.
+- `scripts/package.json`: the `package.json` nearest the gate script, which node and tsx read for its module format
+  and `#`-subpath imports. It does not exist today; protecting it costs nothing. (`scripts/lib/package.json` is not
+  protected: it would only govern `scripts/lib/**`, which the gate script does not import.)
+- **Repo-root executables.** On the Windows self-hosted runner `cmd.exe` (npm's script shell) searches the current
+  directory, which is the repo root, before `PATH` unless `NoDefaultCurrentDirectoryInExePath` is set. A committed
+  root `tsx.cmd`, `node.cmd` or `git.exe` would run instead of the real tool. So every root file (no `/` in the path)
+  with a `.cmd`, `.bat`, `.com`, `.exe` or `.ps1` extension is a gate path. So is a root `git`/`node`/`npm`/`npx`/`tsx`
+  file with a Windows script-host extension (`.js`, `.jse`, `.vbs`, `.vbe`, `.wsf`, `.wsh`, `.msc`), which `cmd.exe`
+  also tries. None exist today (`git ls-files` at the root, 2026-10-18), so **adding or editing any such root file
+  now needs a trailer.**
 
-Not protected, by decision: `package-lock.json` (a trailer on every dependency bump; a lockfile that resolves a
-tampered dependency is a known, harder variant of the `.npmrc` attack that stays open) and nested
-`package.json` / `.npmrc` files (CI runs the gate from the repo root, where npm does not read them).
+All of these match **case-insensitively** (the Windows runner checks out case-insensitively, so `PACKAGE.JSON` is
+`package.json`). The CI side is hardened too: the `refute-required` job in `.github/workflows/ci.yml` sets
+`NoDefaultCurrentDirectoryInExePath: '1'` job-wide (it also covers the lifecycle scripts `npm ci` runs), and the gate
+step runs `node node_modules/tsx/dist/cli.mjs scripts/check-refute-required.ts --strict ...` directly instead of
+`npm run check:refute`, so no `tsx` command is looked up. Developers still run `npm run check:refute` locally; it
+names the same script. The script itself resolves `git` to an absolute path **outside** the checkout and the cwd
+before running anything (`resolveGitExecutable`), and **fails closed** (exit 1, strict or not) if it cannot.
+
+Not protected, by decision:
+- `package-lock.json`: protecting it would put a trailer on every dependency bump. A lockfile that resolves a
+  tampered `tsx` or dependency is a known, harder variant of the `.npmrc` attack, and it stays open.
+- `tsconfig.json`: tsx reads it, but the gate script imports only `node:` builtins, so `paths`/`baseUrl` cannot
+  redirect anything.
+- Nested `package.json` / `.npmrc` files other than `scripts/package.json`, and `scripts/lib/package.json`. These are
+  inert for the gate **only because** the gate script imports nothing but `node:` builtins and uses no `#`-subpath
+  imports. The reason is not that "CI runs from the root": node and tsx read the `package.json` nearest the *script*.
+  If the gate script ever imports a local module, re-check this list.
+- Root files with other extensions that only matter through a tool's own config (e.g. `eslint.config.js`): the gate
+  step does not run them.
 
 _What a `Refute-Reviewed:` id may claim._ The workflow result's `clean` is true only when every lens succeeded,
 none found a real defect, the worst severity is below medium, and the **default lens set** (or a superset of it,

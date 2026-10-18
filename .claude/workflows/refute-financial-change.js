@@ -36,8 +36,9 @@
 // points; the hashes are over the UTF-8 bytes). A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true and
 // `scoped` is false (a clean scoped run is `wf_<id> (scoped)`). A run with findings you accept, or with failed lenses,
 // must say so after the id. This rule lives HERE:
-// `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
-// procedure docs that show the trailer (architecture/coding-standards.md) predate it and still show the bare form.
+// `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`;
+// architecture/coding-standards.md documents the same rules, with the `(scoped)`, `(effort=<level>)` and
+// `(base-workflow)` qualifiers (a run launched from main's copy of this workflow while the change modifies it).
 // A run with a non-null `effort` result field was a reduced-effort pass: it is a weaker claim, so say so after the id
 // (e.g. `wf_<id> (effort=low)`). `effort` records the REQUESTED level, not a confirmed applied one.
 //
