@@ -24,6 +24,7 @@ import {
   DEFAULT_DENY_ROOTS,
   NON_FINANCIAL_ROOT_PATHS,
   REFUTE_GATE_PATHS,
+  REFUTE_GATE_PATH_PREFIXES,
 } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
@@ -55,16 +56,61 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('.github\\workflows\\ci.yml')).toBe(true);
     // Path-level only (the gate reads --name-only, never diff content): EVERY package.json edit needs a trailer.
     expect(isFinancialSourcePath('package.json')).toBe(true);
-    // Exact files only: other workflows, nested package.json files and the lockfile stay out.
-    expect(isFinancialSourcePath('.github/workflows/other.yml')).toBe(false);
+    // Root .npmrc: npm exports its `node-options` key as NODE_OPTIONS to every `npm run` script, so a preload there
+    // can force `npm run check:refute` to exit 0 without running the check (wf_19fea163-b81, reproduced).
+    expect(isFinancialSourcePath('.npmrc')).toBe(true);
+    // Nested package.json files, nested .npmrc files and the lockfile stay out (lockfile: owner's call, see header).
     expect(isFinancialSourcePath('functions/package.json')).toBe(false);
+    expect(isFinancialSourcePath('functions/.npmrc')).toBe(false);
     expect(isFinancialSourcePath('package-lock.json')).toBe(false);
     expect([...REFUTE_GATE_PATHS].sort()).toEqual(
-      ['.claude/workflows/refute-financial-change.js', '.github/workflows/ci.yml', 'package.json', 'scripts/check-refute-required.ts'].sort(),
+      ['.claude/workflows/refute-financial-change.js', '.npmrc', 'package.json', 'scripts/check-refute-required.ts'].sort(),
     );
+    expect([...REFUTE_GATE_PATH_PREFIXES]).toEqual(['.github/workflows/']);
+  });
+  it('flags the WHOLE .github/workflows/ directory by prefix (any workflow can publish a look-alike check name)', () => {
+    for (const p of [
+      '.github/workflows/ci.yml',
+      '.github/workflows/full-gate-selfhosted.yml',
+      '.github/workflows/order-fragility.yml',
+      '.github/workflows/brand-new.yml',
+      '.github/workflows/nested/dir/x.yaml',
+      '.github\\workflows\\brand-new.yml',
+    ]) {
+      expect(isFinancialSourcePath(p)).toBe(true);
+    }
+    // Look-alikes are NOT gate paths: the prefix is anchored at the repo root and ends in a slash.
+    for (const p of ['.github/workflows-notes.md', '.github/workflows.yml', 'docs/.github/workflows/x.yml', 'x/.github/workflows/ci.yml', '.github/ISSUE_TEMPLATE/bug.yml']) {
+      expect(isFinancialSourcePath(p)).toBe(false);
+    }
+  });
+  it('every protected runtime input of the CI gate step, read from the repo itself, is classified financial', () => {
+    const root = process.cwd();
+    // The CI gate step runs the check THROUGH npm, so its inputs are ci.yml, the package.json script entry, the root
+    // .npmrc (node-options -> NODE_OPTIONS), the script that entry names, and the workflow whose result it attests.
+    const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    expect(ci).toMatch(/run: npm run check:refute -- --strict/);
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    const target = /\b(scripts\/[\w./-]+\.ts)\b/.exec(pkg.scripts['check:refute'] ?? '')?.[1];
+    expect(target).toBe('scripts/check-refute-required.ts');
+    const tracked = execFileSync('git', ['ls-files', '--', '.npmrc', '.github/workflows'], { cwd: root, encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean);
+    expect(tracked).toContain('.npmrc');
+    expect(tracked).toContain('.github/workflows/ci.yml');
+    expect(tracked.length).toBeGreaterThan(2); // the sibling workflows are tracked too
+    const inputs = ['.github/workflows/ci.yml', 'package.json', '.npmrc', target ?? '', '.claude/workflows/refute-financial-change.js', ...tracked];
+    for (const p of inputs) expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: true });
   });
   it('gate paths are checked FIRST: listing them in an exemption set does not switch the gate off', () => {
-    const gate = ['.claude/workflows/refute-financial-change.js', 'scripts/check-refute-required.ts', '.github/workflows/ci.yml', 'package.json'];
+    const gate = [
+      '.claude/workflows/refute-financial-change.js',
+      'scripts/check-refute-required.ts',
+      '.github/workflows/ci.yml',
+      '.github/workflows/brand-new.yml',
+      'package.json',
+      '.npmrc',
+    ];
     const exemptions = [NON_FINANCIAL_ROOT_PATHS, DELIVERY_ONLY_PATHS] as unknown as Set<string>[];
     const added: Array<[Set<string>, string]> = [];
     try {
@@ -1033,7 +1079,10 @@ describe('check-refute-required — per-commit attestation', () => {
       '.claude\\workflows\\refute-financial-change.js',
       'scripts/check-refute-required.ts',
       '.github/workflows/ci.yml',
+      '.github/workflows/order-fragility.yml',
+      '.github/workflows/brand-new.yml',
       'package.json',
+      '.npmrc',
     ]) {
       const bare: CommitRecord = { sha: 'w0f1', message: 'chore(refute): tweak the gate\n', files: [file] };
       const r = evaluate('origin/main', healthy([bare]));

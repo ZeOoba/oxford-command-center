@@ -99,6 +99,35 @@ commit changing financial-decision source lands without a `Refute-Reviewed: wf_<
 `server/**` and `scripts/**` are default-deny, plus `src/analytics/**` and the named contract, seed and
 config files. Make it a required check via branch protection to hard-block.
 
+_The gate protects itself (2026-10-18, PR #490)._ `REFUTE_GATE_PATHS` and `REFUTE_GATE_PATH_PREFIXES` in
+`scripts/check-refute-required.ts` are checked **before** every exemption set, so no later exemption entry can
+switch them off. Every commit touching one of these needs its own trailer:
+
+- `.claude/workflows/refute-financial-change.js` (decides what `clean` means) and
+  `scripts/check-refute-required.ts` (decides which paths need a trailer).
+- The **root** `package.json`, as a whole. It defines the `check:refute` script CI calls, and the gate
+  classifies by path only (`git show --name-only`, never diff content), so it cannot tell that entry from a
+  dependency bump: **every root `package.json` edit, dependency bumps included, now needs a trailer.**
+- The **root** `.npmrc`. npm exports its `node-options` key as `NODE_OPTIONS` to every `npm run` script, so a
+  preload there can make `npm run check:refute` exit 0 without running the check.
+- The whole `.github/workflows/` directory (prefix match, anchored at the repo root): `ci.yml` runs the gate,
+  and any workflow file, including a new one, could publish a check under the required check's name.
+
+Not protected, by decision: `package-lock.json` (a trailer on every dependency bump; a lockfile that resolves a
+tampered dependency is a known, harder variant of the `.npmrc` attack that stays open) and nested
+`package.json` / `.npmrc` files (CI runs the gate from the repo root, where npm does not read them).
+
+_What a `Refute-Reviewed:` id may claim._ The workflow result's `clean` is true only when every lens succeeded,
+none found a real defect, the worst severity is below medium, and the **default lens set** (or a superset of it,
+each default lens verbatim) ran; a custom or re-worded lens set is never `clean`. A lens counts as defect-free only
+when `foundRealDefect` is exactly `false` (missing, `null`, `0` or a string fails closed), and a non-array
+`findings` ranks as critical. Record a bare `Refute-Reviewed: wf_<id>` only for a clean, unscoped run; otherwise
+qualify it after the id: `(scoped)` when `outOfScope` was used, `(effort=<level>)` for a reduced-effort run, and
+`(base-workflow)` when the run was launched from main's copy of the workflow while the change under review modifies
+the workflow itself (the attestation then comes from the rules being replaced, not the ones being merged).
+`changeSet` / `greenContext` are trusted caller input: the result records their sha256 and length (UTF-16 code
+units) so an auditor can match them to the cited change set.
+
 _Attestation is per commit, not per range (2026-09-23)._ Every commit in `base..HEAD` whose **own**
 changed paths include financial source must carry the trailer in **its own** message. A trailer on
 one commit never attests another, whether the other commit comes earlier or later. The gate used to
