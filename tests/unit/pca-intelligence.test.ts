@@ -146,6 +146,8 @@ describe('monthsSince', () => {
     expect(monthsSince('2024-10-07', '2026-10-13')).toBe(24);
     expect(monthsSince('2024', '2026-10-13')).toBe(22); // bare year → December (age never overstated)
     expect(monthsSince('2026', '2026-10-13')).toBe(0); // same-year bare year floors at 0, never negative
+    expect(monthsSince('2027', '2026-10-13')).toBeNull(); // a future year is not an age of 0 (#474)
+    expect(monthsSince('2027-03', '2026-10-13')).toBe(-5); // a stated future month is reported as is, not floored
     expect(monthsSince('2025-03', '2026-10-13')).toBe(19); // stated month is unchanged
     expect(monthsSince(null, '2026-10-13')).toBeNull();
   });
@@ -392,5 +394,38 @@ describe('display sorts use code-unit compare, not localeCompare (#474)', () => 
   it('the PCA display modules contain no localeCompare', () => {
     const files = ['src/analytics/pca-intelligence.ts', 'src/analytics/building-specs.ts', 'server/warehouse/property-condition.ts', 'src/modules/property-condition/SpecsView.tsx'];
     for (const f of files) expect(readFileSync(join(process.cwd(), f), 'utf-8'), f).not.toMatch(/localeCompare/);
+  });
+});
+
+describe('#474 currency alert copy and undated drafts', () => {
+  const undatedDraft = prop('undated-draft', 'Undated Draft Plaza', brief({ reportDate: null, usabilityClass: 'draft', immediateUsd: 9000 }));
+  const undatedFinal = prop('undated-final', 'Undated Final Park', brief({ reportDate: null, usabilityClass: 'current', immediateUsd: 9000 }));
+
+  it('the stale summary names undated reports as a stale cause', () => {
+    const a = currencyAlerts([undatedFinal], '2026-10-13', { rentRolls: [] }).find((x) => x.propertyKey === '_stale')!;
+    const cause = a.message.split(':')[0]!; // the cause clause, before the property list
+    expect(cause).toMatch(/undated/i);
+    expect(cause).toContain('pre-2024');
+    expect(a.message).toContain('Undated Final Park');
+  });
+
+  it('an undated DRAFT stays excluded from totals (STALE) but still gets its DRAFT warning', () => {
+    expect(reportStatus(undatedDraft.current)).toBe('STALE');
+    const alerts = currencyAlerts([undatedDraft], '2026-10-13', { rentRolls: [] });
+    const draft = alerts.find((x) => x.kind === 'draft')!;
+    expect(draft).toMatchObject({ propertyKey: 'undated-draft', severity: 'warn' });
+    expect(draft.message).toContain('DRAFT');
+    expect(alerts.find((x) => x.propertyKey === '_stale')!.message).toContain('Undated Draft Plaza'); // still named as excluded
+    expect(nearTermRollup([undatedDraft]).totalUsd).toBe(0);
+  });
+
+  it('a draft whose date is unparseable text counts as undated and still gets the DRAFT warning', () => {
+    const tbd = prop('tbd', 'TBD Plaza', brief({ reportDate: 'TBD' as unknown as string, usabilityClass: 'draft' }));
+    expect(currencyAlerts([tbd], '2026-10-13', { rentRolls: [] }).some((x) => x.kind === 'draft')).toBe(true);
+  });
+
+  it('an undated non-draft and a pre-2024 draft get no DRAFT alert', () => {
+    const pre = prop('pre', 'Pre Draft', brief({ reportDate: '2015-08', usabilityClass: 'draft' }));
+    expect(currencyAlerts([undatedFinal, pre], '2026-10-13', { rentRolls: [] }).filter((x) => x.kind === 'draft')).toEqual([]);
   });
 });
