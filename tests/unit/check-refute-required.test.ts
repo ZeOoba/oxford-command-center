@@ -40,6 +40,15 @@ describe('check-refute-required — financial-source classification', () => {
   // without a gate-required refute trailer. This is the second occurrence of the scope-staleness
   // mode (2026-07-24 was the first, one directory over) — a NEW financial directory must not be
   // invisible by default.
+  it('flags the refute gate itself: the refute workflow and this check script are trailer-required', () => {
+    expect(isFinancialSourcePath('.claude/workflows/refute-financial-change.js')).toBe(true);
+    expect(isFinancialSourcePath('.claude\\workflows\\refute-financial-change.js')).toBe(true);
+    expect(isFinancialSourcePath('scripts/check-refute-required.ts')).toBe(true);
+    // Pinned ahead of the exemption list: listing the gate as non-financial must not switch it off.
+    expect(NON_FINANCIAL_ROOT_PATHS.has('scripts/check-refute-required.ts')).toBe(false);
+    // Only the named file, not the whole directory.
+    expect(isFinancialSourcePath('.claude/workflows/some-other-workflow.js')).toBe(false);
+  });
   it('flags server/workbook/ — the workbook parser and debt-service cross-check feed DSCR', () => {
     expect(isFinancialSourcePath('server/workbook/parse.ts')).toBe(true);
     expect(isFinancialSourcePath('server/workbook/debt-service-crosscheck.ts')).toBe(true);
@@ -980,6 +989,17 @@ describe('check-refute-required — per-commit attestation', () => {
     const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
     const run = (args: string[]): string => (args.includes('rev-list') ? 'd0c5 b0\n' : showOutput(docs));
     expect(evaluate('origin/main', run)).toMatchObject({ outcome: 'ok' });
+  });
+
+  it('evaluate: a change to the refute workflow itself needs a trailer (the gate cannot be weakened unattested)', () => {
+    for (const file of ['.claude/workflows/refute-financial-change.js', '.claude\\workflows\\refute-financial-change.js', 'scripts/check-refute-required.ts']) {
+      const bare: CommitRecord = { sha: 'w0f1', message: 'chore(refute): tweak the gate\n', files: [file] };
+      const r = evaluate('origin/main', healthy([bare]));
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain('w0f1');
+      const attested: CommitRecord = { ...bare, message: bare.message + '\nRefute-Skip: test fixture — gate self-change\n' };
+      expect(evaluate('origin/main', healthy([attested]))).toMatchObject({ outcome: 'ok' });
+    }
   });
 });
 
