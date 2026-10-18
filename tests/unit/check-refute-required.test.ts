@@ -49,6 +49,28 @@ describe('check-refute-required — financial-source classification', () => {
     // Only the named file, not the whole directory.
     expect(isFinancialSourcePath('.claude/workflows/some-other-workflow.js')).toBe(false);
   });
+  it('gate paths are checked FIRST: listing them in an exemption set does not switch the gate off', () => {
+    const gate = ['.claude/workflows/refute-financial-change.js', 'scripts/check-refute-required.ts'];
+    const exemptions = [NON_FINANCIAL_ROOT_PATHS, DELIVERY_ONLY_PATHS] as unknown as Set<string>[];
+    const added: Array<[Set<string>, string]> = [];
+    try {
+      for (const set of exemptions) {
+        for (const p of gate) {
+          if (!set.has(p)) {
+            set.add(p);
+            added.push([set, p]);
+          }
+        }
+      }
+      // Sanity: the exemption really is in effect for a non-gate sibling path.
+      (NON_FINANCIAL_ROOT_PATHS as unknown as Set<string>).add('scripts/__exempt-probe.ts');
+      added.push([NON_FINANCIAL_ROOT_PATHS as unknown as Set<string>, 'scripts/__exempt-probe.ts']);
+      expect(isFinancialSourcePath('scripts/__exempt-probe.ts')).toBe(false);
+      for (const p of gate) expect(isFinancialSourcePath(p)).toBe(true);
+    } finally {
+      for (const [set, p] of added) set.delete(p);
+    }
+  });
   it('flags server/workbook/ — the workbook parser and debt-service cross-check feed DSCR', () => {
     expect(isFinancialSourcePath('server/workbook/parse.ts')).toBe(true);
     expect(isFinancialSourcePath('server/workbook/debt-service-crosscheck.ts')).toBe(true);
