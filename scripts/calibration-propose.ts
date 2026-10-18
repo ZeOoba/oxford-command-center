@@ -113,12 +113,44 @@ export function linesFromRegister(parsed: ParsedRegister, workbookName: string):
 /** Locale-independent string compare (code units): ICU / machine locale must never decide which quote or fact survives. */
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Best PCA line for a quote: same property + component + unit; newest report, then largest quantity. */
-function pickPca(pca: PcaLine[], q: QuoteLine): PcaLine | null {
+/** a is on or before b, comparing only the precision both dates state ('2025-06' vs '2025-06-20' is the same month, so not after). */
+const onOrBefore = (a: string, b: string): boolean => {
+  const n = Math.min(a.length, b.length);
+  return a.slice(0, n) <= b.slice(0, n);
+};
+
+export interface PcaPick {
+  line: PcaLine;
+  /** Several sections of one report priced differently and the quote does not single one out: no unit cost is chosen. */
+  ambiguous: PcaLine[];
+  /** Every PCA report on this scope postdates the quote, so it may describe the finished work rather than the estimate. */
+  afterQuote: boolean;
+}
+
+/**
+ * PCA line for a quote: same property + component + unit. Vintage first: the newest report dated on or before the quote
+ * (the estimate the quote answers), else the earliest one after it, flagged. Within that one report, a single priced section
+ * is the pairing; several sections at different unit costs (a multi-roof property) pair only when the quote's quantity matches
+ * exactly one of them, otherwise the pairing is ambiguous and the caller leaves the PCA unit cost null.
+ */
+export function pickPca(pca: PcaLine[], q: QuoteLine): PcaPick | null {
   const hits = pca.filter((p) => p.propertyKey === q.propertyKey && p.component === q.component && p.unit === q.unit);
-  // Total order (register row order must never decide the unit-cost basis): newest report, largest qty, then stable keys.
-  hits.sort((a, b) => byCode(b.reportDate, a.reportDate) || (b.qty ?? 0) - (a.qty ?? 0) || byCode(a.reportId, b.reportId) || byCode(a.sourceFile, b.sourceFile) || a.unitCost - b.unitCost);
-  return hits[0] ?? null;
+  if (hits.length === 0) return null;
+  // A STALE report never counts toward stats, so an earlier STALE one must not shadow a live report dated after the quote.
+  const live = hits.filter((p) => p.status !== 'STALE');
+  const base = live.length > 0 ? live : hits;
+  const before = base.filter((p) => onOrBefore(p.reportDate, q.docDate));
+  const afterQuote = before.length === 0;
+  // Total order (register row order must never decide the unit-cost basis): newest report (earliest when all postdate the quote), largest qty, then stable keys.
+  const tail = (a: PcaLine, b: PcaLine) => (b.qty ?? 0) - (a.qty ?? 0) || byCode(a.reportId, b.reportId) || byCode(a.sourceFile, b.sourceFile) || a.unitCost - b.unitCost;
+  const pool = afterQuote ? base : before;
+  pool.sort((a, b) => (afterQuote ? byCode(a.reportDate, b.reportDate) : byCode(b.reportDate, a.reportDate)) || tail(a, b));
+  const top = pool[0] as PcaLine;
+  const section = pool.filter((p) => p.reportId === top.reportId); // by report id only: one report cited at two date precisions is still one report
+  if (new Set(section.map((p) => p.unitCost)).size <= 1) return { line: top, ambiguous: [], afterQuote };
+  const exact = q.qty !== null && q.qty > 0 ? section.filter((p) => p.qty === q.qty) : [];
+  if (exact.length > 0 && new Set(exact.map((p) => p.unitCost)).size === 1) return { line: exact[0] as PcaLine, ambiguous: [], afterQuote };
+  return { line: top, ambiguous: section, afterQuote };
 }
 
 /** Ledger rows that stand in for a quote with no identified vendor on the same scope: a real quote may replace one (promote --supersedes). */
@@ -172,18 +204,25 @@ export function proposePairs(
       byCode(a.propertyLabel, b.propertyLabel) || byCode(a.status, b.status) || Number(a.isActual) - Number(b.isActual),
   );
   for (const q of ordered) {
-    const p = pickPca(pca, q);
-    if (!p) continue;
+    const pick = pickPca(pca, q);
+    if (!pick) continue;
+    const p = pick.line;
+    const pcaNote = [
+      pick.ambiguous.length > 0
+        ? ` PCA pairing is AMBIGUOUS: report ${p.reportId} prices ${pick.ambiguous.length} sections of ${q.component} differently and the quote quantity (${q.qty ?? 'n/a'} ${q.unit}) matches none (or more than one) of them exactly, so the PCA unit cost is left null. Candidates: ${pick.ambiguous.map((c) => `${c.sourceFile} ${c.qty ?? 'n/a'} ${c.unit} @ $${c.unitCost}`).join('; ')}.`
+        : '',
+      pick.afterQuote ? ` The PCA report (${p.reportDate}) is dated after the quote (${q.docDate}) and may describe the finished work, not the estimate the quote answered.` : '',
+    ].join('');
     const contractorUnit = q.totalUsd !== null && q.totalUsd > 0 && q.qty !== null && q.qty > 0 ? q.totalUsd / q.qty : null // a credit / $0 placeholder is not a price;
     const proposal = CalibrationProposal.parse({
       obs_id: `${q.propertyKey}:${q.component}:${slugify(q.vendor)}:${q.docDate}`,
       property: q.propertyLabel, component: q.component, unit: q.unit,
       qty: q.qty !== null && q.qty > 0 ? q.qty : null,
-      pca_unit_cost: p.unitCost,
+      pca_unit_cost: pick.ambiguous.length > 0 ? null : p.unitCost,
       pca_source: { consultant: p.consultant, report_date: p.reportDate, source_file: p.sourceFile, source_date: p.reportDate, price_basis: 'PCA_CONSULTANT_ESTIMATE', status: p.status },
       contractor_unit_cost: contractorUnit === null ? null : Math.round(contractorUnit * 1e6) / 1e6,
       contractor_source: { vendor: q.vendor, doc_date: q.docDate, status: q.status, source_file: q.sourceFile, source_date: q.docDate, price_basis: q.isActual ? 'CONTRACTOR_ACTUAL' : 'CONTRACTOR_QUOTE' },
-      scope_note: `Auto-matched on property + component (${q.component}); PCA line ${p.reportId} qty ${p.qty ?? 'n/a'} ${p.unit}. Review scope equivalence before promoting.${placeholderNote(existing.ledger, q)}`,
+      scope_note: `Auto-matched on property + component (${q.component}); PCA line ${p.reportId} qty ${p.qty ?? 'n/a'} ${p.unit}. Review scope equivalence before promoting.${pcaNote}${placeholderNote(existing.ledger, q)}`,
       include_in_stats: !q.superseded,
       exclusion_reason: q.superseded ? 'quote superseded by a later version' : null,
       proposed_at: today, proposed_from: proposedFrom,
