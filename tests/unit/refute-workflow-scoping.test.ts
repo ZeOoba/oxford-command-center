@@ -12,6 +12,7 @@
 //  (3) a bad `outOfScope` type throws instead of silently dropping the scoping;
 //  (4) the result carries `clean` / `lensCount` so a Refute-Reviewed trailer can only be a bare run id when
 //      EVERY lens succeeded and none found a real defect.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -26,11 +27,15 @@ interface WorkflowResult {
   lensCount: number;
   worstSeverityRank: number;
   clean: boolean;
-  worstSeverityRank: number;
   lensesDefault: boolean;
   lensLabels: string[];
   outOfScope: string[];
   scoped: boolean;
+  repo: string;
+  changeSetSha256: string | null;
+  changeSetLength: number | null;
+  greenContextSha256: string | null;
+  greenContextLength: number | null;
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
@@ -96,6 +101,10 @@ describe('refute-financial-change — reviewer hygiene', () => {
       expect(rm).toBeGreaterThan(-1);
       expect(plain).toBeGreaterThan(rm);
       expect(block).toMatch(/refuses.*uncommitted.*STOP and report/s);
+      // Never reads as permission to delete a node_modules recursively: only a junction/symlink is removed.
+      expect(block).not.toMatch(/delete a node_modules/);
+      expect(block).toMatch(/remove ONLY a node_modules junction or symlink/);
+      expect(block).toMatch(/leave a real node_modules directory alone/);
     }
   });
 });
@@ -195,6 +204,79 @@ describe('refute-financial-change — a thrown lens agent is never clean', () =>
   });
 });
 
+describe('refute-financial-change — foundRealDefect must be exactly false to count as clean', () => {
+  for (const [name, value] of [
+    ['missing', undefined],
+    ['null', null],
+    ['0', 0],
+    ["'false'", 'false'],
+    ["''", ''],
+  ] as const) {
+    it(`foundRealDefect ${name} is NOT clean`, async () => {
+      const { result, logs } = await run('x', (c) => {
+        if (lensOf(c.label) !== 'edges') return clean(lensOf(c.label));
+        const v: Record<string, unknown> = { lens: 'edges', maxSeverity: 'none', findings: [], summary: 's' };
+        if (value !== undefined) v.foundRealDefect = value;
+        return v;
+      });
+      expect(result.anyRealDefect).toBe(true);
+      expect(result.clean).toBe(false);
+      expect(logs.join('\n')).not.toContain('Clear to commit');
+    });
+  }
+
+  it('control: boolean false stays clean', async () => {
+    const { result } = await run('x', (c) => clean(lensOf(c.label)));
+    expect(result.anyRealDefect).toBe(false);
+    expect(result.clean).toBe(true);
+  });
+});
+
+describe('refute-financial-change — what was reviewed is auditable (repo, changeSet, greenContext)', () => {
+  const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+  it('echoes repo and the sha256 + length of changeSet and greenContext', async () => {
+    const changeSet = 'Change set — NOI guard; ünïcödé and an astral 𝄞 char\nline two';
+    const greenContext = 'Gate is green on the current corpus.';
+    const repo = 'C:\\some\\checkout';
+    const { result } = await run({ changeSet, greenContext, repo }, (c) => clean(lensOf(c.label)));
+    expect(result.repo).toBe(repo);
+    expect(result.changeSetSha256).toBe(sha(changeSet));
+    expect(result.changeSetLength).toBe(changeSet.length);
+    expect(result.greenContextSha256).toBe(sha(greenContext));
+    expect(result.greenContextLength).toBe(greenContext.length);
+  });
+
+  it('hashes match node:crypto across edge inputs (empty, long, multi-block, lone surrogate)', async () => {
+    for (const changeSet of ['', 'a', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'x'.repeat(10_000), 'lone \uD800 surrogate']) {
+      const { result } = await run({ changeSet }, (c) => clean(lensOf(c.label)));
+      expect(result.changeSetSha256).toBe(sha(changeSet));
+    }
+  });
+
+  it('a non-string changeSet or greenContext throws (it would otherwise reach the prompt as "[object Object]")', async () => {
+    for (const bad of [{ a: 1 }, ['x'], 42, true]) {
+      await expect(run({ changeSet: bad }, () => null)).rejects.toThrow(/changeSet must be a string/);
+      await expect(run({ changeSet: 'x', greenContext: bad }, () => null)).rejects.toThrow(/greenContext must be a string/);
+    }
+  });
+
+  it('a plain-string args value is the changeSet', async () => {
+    const { result } = await run('plain change set', (c) => clean(lensOf(c.label)));
+    expect(result.changeSetSha256).toBe(sha('plain change set'));
+    expect(result.changeSetLength).toBe('plain change set'.length);
+  });
+
+  it('absent changeSet / greenContext echo null (the built-in defaults are not caller input)', async () => {
+    const { result } = await run({}, (c) => clean(lensOf(c.label)));
+    expect(result.changeSetSha256).toBeNull();
+    expect(result.changeSetLength).toBeNull();
+    expect(result.greenContextSha256).toBeNull();
+    expect(result.greenContextLength).toBeNull();
+    expect(result.repo).toBe('C:\\Users\\Owner\\oxford-command-center');
+  });
+});
+
 describe('refute-financial-change — non-array findings fail closed', () => {
   it('findings that is not an array ranks as critical and is not clean', async () => {
     for (const findings of [undefined, null, 'none', { severity: 'low' }, 0]) {
@@ -278,6 +360,16 @@ describe('refute-financial-change — outOfScope (scoping a guard review)', () =
     const { result } = await run({ changeSet: 'x', outOfScope: twenty }, (c) => clean(lensOf(c.label)));
     expect(result.outOfScope).toHaveLength(20);
     await expect(run({ changeSet: 'x', outOfScope: [...twenty, 'one more'] }, () => null)).rejects.toThrow(/outOfScope.*20/);
+  });
+
+  it('rejects an item containing a newline or carriage return (one item cannot smuggle extra bullets)', async () => {
+    for (const item of ['limit A\n- limit B', 'limit A\r- limit B', 'a\r\nb', 'trailing\nnewline-in-middle']) {
+      await expect(run({ changeSet: 'x', outOfScope: [item] }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+      await expect(run({ changeSet: 'x', outOfScope: item }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+    }
+    // Surrounding whitespace (incl. a trailing newline) is trimmed first, so it is not a smuggled line.
+    const { result } = await run({ changeSet: 'x', outOfScope: ['  limit A\n'] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toEqual(['limit A']);
   });
 
   it('caps each item at 300 characters', async () => {
