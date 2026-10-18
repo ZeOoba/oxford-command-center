@@ -91,6 +91,8 @@ export const ReportMeta = z
     ocr: z.boolean(),
     /** The report carries a DRAFT watermark / is not final. */
     draft: z.boolean().default(false),
+    /** The capex register classed this report stale (usabilityClass 'stale'): STALE whatever its date, same rule as reportStatus. */
+    stale: z.boolean().default(false),
     status: z.enum(['READ', 'PARTIAL', 'UNREADABLE']),
     path_tried: z.string().nullable(),
     pages_total: z.number().int().nonnegative(),
@@ -107,8 +109,8 @@ export type ReportMetaT = z.infer<typeof ReportMeta>;
 
 const yearOf = (d: string): number => Number(d.slice(0, 4));
 
-export function vintageFor(meta: Pick<ReportMetaT, 'report_date' | 'draft'>, draft?: boolean): Vintage {
-  return classifyVintage(meta.report_date, { draft: draft ?? meta.draft });
+export function vintageFor(meta: Pick<ReportMetaT, 'report_date' | 'draft'> & { stale?: boolean }, draft?: boolean): Vintage {
+  return classifyVintage(meta.report_date, { draft: draft ?? meta.draft, stale: meta.stale });
 }
 
 // ── stamped records ─────────────────────────────────────────────────────────────────────────
@@ -230,6 +232,7 @@ export function canonicalAttribute(component: string, attribute: string): string
 // ── effective view: current overrides stale ─────────────────────────────────────────────────
 
 const RANK: Record<Vintage, number> = { CURRENT: 2, DRAFT: 1, STALE: 0 };
+const CONFIDENCE_RANK: Record<SpecFactT['confidence'], number> = { STATED: 1, DERIVED: 0 };
 const norm = (f: SpecFactT): string => `${String(f.value).trim().toLowerCase()}|${f.unit ?? ''}`;
 
 export interface EffectiveSpec {
@@ -257,11 +260,13 @@ export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   }
   const out: EffectiveSpec[] = [];
   for (const g of groups.values()) {
-    // Same-date ties here go to the LOWEST report_id (ascending), deliberately unlike the capex current-report rule in
-    // server/warehouse/property-condition.ts newestFirst (greatest report_id, ruled 2026-10-17): this one picks a spec fact,
-    // not a reserve total, and its order is pinned by existing tests. Revisit only with a ruling.
+    // Ties on vintage, as_of and report_date go to the report-STATED fact over a DERIVED one (a computed year range must not
+    // displace what the report printed; the derived value stays in history and flags a conflict). Remaining ties go to the
+    // LOWEST report_id (ascending), deliberately unlike the capex current-report rule in server/warehouse/property-condition.ts
+    // newestFirst (greatest report_id, ruled 2026-10-17): this one picks a spec fact, not a reserve total, and its order is
+    // pinned by existing tests. Revisit only with a ruling.
     const ordered = [...g].sort(
-      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || byCode(b.as_of, a.as_of) || byCode(b.report_date, a.report_date) || byCode(a.report_id, b.report_id) || byCode(JSON.stringify(a), JSON.stringify(b)),
+      (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || byCode(b.as_of, a.as_of) || byCode(b.report_date, a.report_date) || CONFIDENCE_RANK[b.confidence] - CONFIDENCE_RANK[a.confidence] || byCode(a.report_id, b.report_id) || byCode(JSON.stringify(a), JSON.stringify(b)),
     );
     const effective = ordered[0] as SpecFactT;
     const history = ordered.slice(1);

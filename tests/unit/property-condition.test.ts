@@ -150,6 +150,30 @@ describe('buildPropertyConditionReport — properties', () => {
 });
 
 describe('buildPropertyConditionReport — schedule, lifecycle, price book', () => {
+  it('#474: lifecycle rows come only from live (non-STALE) current reports, matching the totals and the client filter', () => {
+    const db = freshDb();
+    try {
+      const comp = (reportId: string, system: string) => ({
+        reportId, rowSeq: 1, system, qty: 1, uom: 'SF', unitCost: 5, factor: null, eul: 20, age: 17, rul: 3, rulRaw: '3', totalUsd: 1000, timing: 'Yr3', basis: 'estimate' as const, note: null,
+      });
+      writeRegister(db, parsed({
+        reports: [
+          report({ reportId: 'OLDCUR', propertyKey: 'old', propertyLabel: 'Old', reportDate: '2015-08-12', usabilityClass: 'stale' }),
+          report({ reportId: 'FLAGGED', propertyKey: 'flg', propertyLabel: 'Flagged', reportDate: '2025-03-01', usabilityClass: 'stale' }),
+          report({ reportId: 'UNDATED', propertyKey: 'und', propertyLabel: 'Undated', reportDate: null }),
+          report({ reportId: 'LIVE', propertyKey: 'live', propertyLabel: 'Live', reportDate: '2026-04-07' }),
+        ],
+        components: [comp('OLDCUR', 'old roof'), comp('FLAGGED', 'flagged roof'), comp('UNDATED', 'undated roof'), comp('LIVE', 'live roof')],
+      }));
+      const r = buildPropertyConditionReport(db, AS_OF);
+      expect(r.lifecycle.map((l) => l.system)).toEqual(['live roof']);
+      // Price book keeps every report's unit costs (history), so a stale report still contributes there.
+      expect(r.priceBook.map((p) => p.reportId).sort()).toEqual(['FLAGGED', 'LIVE', 'OLDCUR', 'UNDATED']);
+    } finally {
+      db.close();
+    }
+  });
+
   it('classifies warranty status from the stated end year only', () => {
     expect(warrantyStatus(null, 2026)).toBe('unknown');
     expect(warrantyStatus(2025, 2026)).toBe('expired');
