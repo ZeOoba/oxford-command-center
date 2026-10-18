@@ -37,7 +37,9 @@ import { buildClockRows } from './clock';
 import { EXTRA_ASSET_FACTS, INFO_LANE_DETAIL, PCA_OVERLAY } from './pca-overlay';
 import { CALIBRATION_LEDGER, CALIBRATION_PENDING } from './calibration-data';
 
-/** Reports dated before 2024 are history only — their lifecycle lines are not projected as forecasts. */
+/** Reports dated before 2024 are history only — their lifecycle lines are not projected as forecasts. Judged on the RAW
+ *  register date on purpose: lifecycle rows carry that raw date and a dueYear computed from it, so a report the overlay
+ *  re-dates must stay hidden here rather than show a forecast year that is off by the correction (refute wf_d6c1bdd5-8b6). */
 const isStaleDate = (d: string | null): boolean => d === null || Number(d.slice(0, 4)) < STALE_BEFORE_YEAR;
 
 /** Today as YYYY-MM-DD — years-left, report age and rent-roll age are all computed from this at render. */
@@ -116,7 +118,7 @@ export function PropertyConditionModule() {
           value={totals.immediateUsd}
           format={fmtUsdCompact}
           accentColor="var(--color-warn)"
-          sublabel="Σ current + draft reports · excl. pre-2024 stale"
+          sublabel="Σ current + draft reports · excl. stale (pre-2024, undated or flagged)"
         />
         <KpiStat
           label="Short-term"
@@ -134,7 +136,7 @@ export function PropertyConditionModule() {
           label="Properties With $ Figures"
           value={totals.propertiesWithFigures}
           format={(n) => `${n ?? 0} / ${totals.propertiesTotal}`}
-          sublabel="Narrative-only reports carry none"
+          sublabel="Stale and narrative-only reports excluded"
         />
       </div>
 

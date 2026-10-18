@@ -196,7 +196,7 @@ function buildBuyVerdict(
   // A null basisDiscountPct can no longer reach a buy verdict (audit 2026-10-13 G2: indeterminate
   // basis is BUY-ineligible), so the former null-basis ambiguity warning is unreachable and removed.
   // Refute round 2 T2: a WATCH capped for an unconfirmed Stage-0 gate input or unresolved
-  // DD-critical items stays buyable (policy pending Gabriel) — but its open items are disclosed.
+  // DD-critical items stays buyable — ratified by Gabriel 2026-10-17 (#483, option 1: keep permanently) — and its open items are disclosed.
   const openItems = candidate.openItems ?? [];
   const dataQuality: AllocationVerdict['dataQuality'] = openItems.map((issue) => ({
     entity: candidate.candidateId,

@@ -10,7 +10,7 @@
 // and exposes no total. When a current-vintage fact covers the same component, it wins and the stale value is kept as
 // history (see effectiveSpecs).
 import { z } from 'zod';
-import { classifyVintage } from './pca-intelligence';
+import { byCode, classifyVintage } from './pca-intelligence';
 
 export const SPEC_COMPONENTS = [
   'site', 'structure', 'roof', 'paving', 'envelope', 'hvac', 'electrical', 'plumbing', 'fire_life_safety',
@@ -247,8 +247,6 @@ export interface EffectiveSpec {
   conflicts: boolean;
 }
 
-const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
 export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   const groups = new Map<string, SpecFactT[]>();
   for (const f of facts) {
@@ -259,6 +257,9 @@ export function effectiveSpecs(facts: SpecFactT[]): EffectiveSpec[] {
   }
   const out: EffectiveSpec[] = [];
   for (const g of groups.values()) {
+    // Same-date ties here go to the LOWEST report_id (ascending), deliberately unlike the capex current-report rule in
+    // server/warehouse/property-condition.ts newestFirst (greatest report_id, ruled 2026-10-17): this one picks a spec fact,
+    // not a reserve total, and its order is pinned by existing tests. Revisit only with a ruling.
     const ordered = [...g].sort(
       (a, b) => RANK[b.report_vintage] - RANK[a.report_vintage] || byCode(b.as_of, a.as_of) || byCode(b.report_date, a.report_date) || byCode(a.report_id, b.report_id) || byCode(JSON.stringify(a), JSON.stringify(b)),
     );
@@ -488,7 +489,7 @@ function tally(items: Array<{ key: string; vintage: Vintage }>): CountRow[] {
     row[i.vintage] += 1;
     m.set(i.key, row);
   }
-  return [...m.values()].sort((a, b) => b.CURRENT + b.DRAFT + b.STALE - (a.CURRENT + a.DRAFT + a.STALE) || a.key.localeCompare(b.key));
+  return [...m.values()].sort((a, b) => b.CURRENT + b.DRAFT + b.STALE - (a.CURRENT + a.DRAFT + a.STALE) || byCode(a.key, b.key));
 }
 
 const ofAttr = (facts: SpecFactT[], component: SpecComponent, attribute: string) =>
@@ -516,7 +517,7 @@ export function roofRollup(facts: SpecFactT[]): { byType: CountRow[]; byCohort: 
     const start = Math.floor(y / 10) * 10;
     cohorts.push({ key: `${start}–${start + 9}`, vintage: f.report_vintage });
   }
-  return { byType, byCohort: tally(cohorts).sort((a, b) => a.key.localeCompare(b.key)) };
+  return { byType, byCohort: tally(cohorts).sort((a, b) => byCode(a.key, b.key)) };
 }
 
 export function hvacOwnershipRollup(facts: SpecFactT[]): CountRow[] {

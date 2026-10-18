@@ -5,8 +5,11 @@
 // 2026-10-13 PCA Command Center report; the "register" 29000 Information Ln row is deliberately the
 // WRONG one ($REDACTED-AMT / $REDACTED-AMT shown as Immediate / Short-term) so the correction is exercised.
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   applyPcaOverlay,
+  byCode,
   currencyAlerts,
   monthsSince,
   nearTermRollup,
@@ -141,7 +144,9 @@ describe('monthsSince', () => {
   it('counts whole calendar months from a partial date to the as-of date, at runtime', () => {
     expect(monthsSince('2024-09-16', '2026-10-13')).toBe(25);
     expect(monthsSince('2024-10-07', '2026-10-13')).toBe(24);
-    expect(monthsSince('2026', '2026-10-13')).toBe(9); // bare year → January
+    expect(monthsSince('2024', '2026-10-13')).toBe(22); // bare year → December (age never overstated)
+    expect(monthsSince('2026', '2026-10-13')).toBe(0); // same-year bare year floors at 0, never negative
+    expect(monthsSince('2025-03', '2026-10-13')).toBe(19); // stated month is unchanged
     expect(monthsSince(null, '2026-10-13')).toBeNull();
   });
 });
@@ -363,5 +368,29 @@ describe('overlay content', () => {
     expect(calibrationLabel([1, 1, 1])).toBe('PCA consultant estimate vs contractor quote; n=1 each; directional only below n=5');
     expect(calibrationLabel([1, 3, 0])).toContain('n=1–3 per component');
     expect(calibrationLabel([])).toContain('no countable observations');
+  });
+});
+
+describe('applyPcaOverlay — STALE reports stay out of the figures count (#474)', () => {
+  it('a pre-2024 current report with dollar figures is neither summed nor counted as a property with figures', () => {
+    const stale = prop('old', 'Old Prop', brief({ reportId: 'S1', reportDate: '2019-06-01', immediateUsd: 9000, reservesUninflUsd: 40000 }));
+    const live = prop('new', 'New Prop', brief({ reportId: 'C1', reportDate: '2025-06-01', immediateUsd: 100, reservesUninflUsd: 900 }));
+    const undated = prop('und', 'Undated', brief({ reportId: 'U1', reportDate: null, immediateUsd: 5000, reservesUninflUsd: 20000 }));
+    const flagged = prop('flg', 'Flagged', brief({ reportId: 'F1', reportDate: '2025-03-01', usabilityClass: 'stale', immediateUsd: 4000, reservesUninflUsd: 10000 }));
+    const adjusted = applyPcaOverlay(reportOf([stale, live, undated, flagged]), { corrections: [], flags: {} } as never);
+    expect(adjusted.totals).toMatchObject({ propertiesTotal: 4, propertiesWithFigures: 1, immediateUsd: 100, reservesUninflUsd: 900 });
+  });
+});
+
+describe('display sorts use code-unit compare, not localeCompare (#474)', () => {
+  it('byCode orders by UTF-16 code unit regardless of host locale', () => {
+    expect(byCode('B', 'a')).toBe(-1); // uppercase before lowercase; localeCompare would say 1
+    expect(byCode('a', 'a')).toBe(0);
+    expect(byCode('b', 'a')).toBe(1);
+  });
+
+  it('the PCA display modules contain no localeCompare', () => {
+    const files = ['src/analytics/pca-intelligence.ts', 'src/analytics/building-specs.ts', 'server/warehouse/property-condition.ts', 'src/modules/property-condition/SpecsView.tsx'];
+    for (const f of files) expect(readFileSync(join(process.cwd(), f), 'utf-8'), f).not.toMatch(/localeCompare/);
   });
 });
