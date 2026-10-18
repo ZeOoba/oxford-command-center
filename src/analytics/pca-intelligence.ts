@@ -75,7 +75,7 @@ function ymOf(partial: string): { y: number; m: number; monthStated: boolean } |
 /**
  * Whole calendar months from a YYYY / YYYY-MM / YYYY-MM-DD date to `asOf` (YYYY-MM-DD). Day is ignored. A year-only date
  * is read as December of that year (Gabriel, 2026-10-17): the age is a lower bound and is never overstated, so an age alert
- * can fire late but not early. Floored at 0 so a year-only date in the as-of year is not negative.
+ * can fire late but not early. Floored at 0 so a year-only date in the as-of year is not negative; a year-only date in a future year is null (no age), not 0.
  */
 export function monthsSince(partial: string | null, asOf: string): number | null {
   if (partial === null) return null;
@@ -84,7 +84,8 @@ export function monthsSince(partial: string | null, asOf: string): number | null
   if (!a || !b) return null;
   const aMonth = a.monthStated ? a.m : 12;
   const months = b.y * 12 + b.m - (a.y * 12 + aMonth);
-  return a.monthStated ? months : Math.max(0, months);
+  if (a.monthStated) return months;
+  return a.y > b.y ? null : Math.max(0, months); // a year-only date in a future year has no age; in the as-of year it floors at 0
 }
 
 /**
@@ -277,7 +278,9 @@ export function currencyAlerts(
   const staleLabels: string[] = [];
   for (const p of properties) {
     const status = p.status ?? reportStatus(p.current);
-    if (status === 'DRAFT') {
+    // An undated draft is classed STALE (its dollars cannot count), which would swallow the draft warning; keep both signals.
+    const undatedDraft = status === 'STALE' && (p.current.reportDate === null || ymOf(p.current.reportDate) === null) && p.current.usabilityClass === 'draft';
+    if (status === 'DRAFT' || undatedDraft) {
       alerts.push({
         kind: 'draft', severity: 'warn', propertyKey: p.propertyKey, propertyLabel: p.propertyLabel,
         message: `Report is a DRAFT${p.current.consultant ? ` (${p.current.consultant})` : ''} — final not on file`,
@@ -301,7 +304,7 @@ export function currencyAlerts(
   if (staleLabels.length > 0) {
     alerts.push({
       kind: 'age', severity: 'info', propertyKey: '_stale', propertyLabel: `${staleLabels.length} stale reports`,
-      message: `Stale (dated pre-${STALE_BEFORE_YEAR} or classed stale by the register) — install-date history only, excluded from totals: ${staleLabels.join('; ')}`,
+      message: `Stale (dated pre-${STALE_BEFORE_YEAR}, undated, or classed stale by the register) — install-date history only, excluded from totals: ${staleLabels.join('; ')}`,
     });
   }
   for (const r of overlay.rentRolls) {
