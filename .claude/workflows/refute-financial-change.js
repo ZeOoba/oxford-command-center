@@ -22,9 +22,11 @@
 // make any of them newly reachable, newly silent, or worse?". Review the mechanism itself as its own change. Without
 // this, successive rounds each find the next layer of the same root cause (one supersede guard took three rounds).
 //
-// RECORDING THE RESULT. The result carries `clean` (every lens succeeded AND no real defect) and `lensCount`. A
-// `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true. A run with findings
-// you accept, or with failed lenses, must say so after the id (see ~/.claude/commands/ship.md, "Refute attestation").
+// RECORDING THE RESULT. The result carries `clean` (every lens succeeded AND no real defect AND worst severity below
+// medium) and `lensCount`. A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean`
+// is true. A run with findings you accept, or with failed lenses, must say so after the id. This rule lives HERE:
+// `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
+// procedure docs that show the trailer (architecture/coding-standards.md) predate it and still show the bare form.
 //
 // FINDING-SEVERITY LOOP RULE. Low findings: fix in the same pass. Medium or higher: stop and report to the owner before
 // another round, so the loop stays bounded and the owner decides whether to keep going, narrow the change, or split it.
@@ -101,6 +103,9 @@ phase('Refute')
 if (A.outOfScope !== undefined && A.outOfScope !== null && typeof A.outOfScope !== 'string' && !Array.isArray(A.outOfScope)) {
   throw new Error('outOfScope must be a string or an array of strings (got ' + typeof A.outOfScope + ')')
 }
+if (Array.isArray(A.outOfScope) && A.outOfScope.some((s) => typeof s !== 'string')) {
+  throw new Error('outOfScope array elements must all be strings')
+}
 const outOfScopeItems = [].concat(A.outOfScope ?? []).map((s) => String(s).trim()).filter(Boolean)
 const outOfScopeBlock = outOfScopeItems.length
   ? '\n\nKNOWN LIMITS OF THE UNDERLYING MECHANISM (out of scope: do NOT report these as defects of this change). Judge whether THIS change is correct GIVEN these limits; report one only if this change makes it newly reachable, newly silent, or worse than before:\n' + outOfScopeItems.map((s) => '- ' + s).join('\n')
@@ -146,7 +151,7 @@ if (allFailed) {
 
 return {
   verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
-  lensCount: lenses.length, clean: succeeded.length === lenses.length && real.length === 0,
+  lensCount: lenses.length, clean: succeeded.length === lenses.length && real.length === 0 && worst < order.medium,
   models: { primary: primaryModel, fallback: effectiveFallback },
   modelFloorMet: TIERS.includes(primaryModel),
 }

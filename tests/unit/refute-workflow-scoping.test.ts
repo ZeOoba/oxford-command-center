@@ -108,6 +108,12 @@ describe('refute-financial-change — outOfScope (scoping a guard review)', () =
       await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope/);
     }
   });
+
+  it('a non-string element inside an outOfScope array throws instead of becoming "[object Object]"', async () => {
+    for (const outOfScope of [[{}], [null], [1], ['ok', ['nested']]]) {
+      await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope array elements/);
+    }
+  });
 });
 
 describe('refute-financial-change — clean / lensCount (what a bare Refute-Reviewed id may claim)', () => {
@@ -131,6 +137,24 @@ describe('refute-financial-change — clean / lensCount (what a bare Refute-Revi
     expect(result.lensCount).toBe(5);
     expect(result.anyRealDefect).toBe(false);
     expect(result.clean).toBe(false);
+  });
+
+  it('a lens reporting medium-or-higher severity with foundRealDefect=false is NOT clean (severity must agree with the loop rule)', async () => {
+    for (const maxSeverity of ['medium', 'high', 'critical']) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity, findings: [], summary: 's' } : clean(lensOf(c.label)),
+      );
+      expect(result.anyRealDefect).toBe(false);
+      expect(result.succeeded).toBe(5);
+      expect(result.clean).toBe(false);
+    }
+  });
+
+  it('a low-severity note with foundRealDefect=false is still clean', async () => {
+    const { result } = await run('x', (c) =>
+      lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [], summary: 's' } : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(true);
   });
 
   it('all lenses failing is not clean', async () => {
