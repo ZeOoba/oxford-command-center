@@ -304,29 +304,40 @@ export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
 // Scoped to scripts/ and scripts/lib/ directly — a deeper or differently-suffixed file is in scope.
 const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
 
-// The refute gate itself (2026-10-17, PR #488 review). The refute-financial-change workflow decides what `clean`
-// means for every Refute-Reviewed attestation, and this script decides which paths need one; weakening either
-// silently weakens every financial gate at once. The workflow lives under .claude/workflows/, outside both
-// default-deny roots, so it was editable with no trailer. Checked FIRST, ahead of every exemption, so a later
-// NON_FINANCIAL_ROOT_PATHS / DELIVERY_ONLY_PATHS entry cannot switch the gate off. File-level, not the directory:
-// other workflows are not financial-decision source.
-// GATE WIRING (2026-10-18, PR #490, Gabriel: protect both). .github/workflows/ci.yml runs this check (job
-// refute-required) and package.json defines the `check:refute` script it calls; either edit can switch the gate off
-// without touching the two files above. The gate classifies commits by PATH only (git show --name-only, never diff
-// content), so it cannot tell a `check:refute` edit from a dependency bump: package.json is protected WHOLE, and every
-// package.json edit needs a Refute-Reviewed / Refute-Skip trailer. Only the root package.json; package-lock.json and
-// nested package.json files stay out.
+// The refute gate itself (2026-10-17/18, PR #490; review fixes for PR #488's workflow changes). The
+// refute-financial-change workflow decides what `clean` means for every Refute-Reviewed attestation, and this script
+// decides which paths need one; weakening either silently weakens every financial gate at once. The workflow lives
+// under .claude/workflows/, outside both default-deny roots, so it was editable with no trailer. Checked FIRST, ahead
+// of every exemption, so a later NON_FINANCIAL_ROOT_PATHS / DELIVERY_ONLY_PATHS entry cannot switch the gate off.
+// File-level for .claude/workflows/: the other Claude workflows are not financial-decision source.
+//
+// GATE WIRING (2026-10-18, PR #490, Gabriel). Everything the CI gate step runs THROUGH is protected too, because any of
+// it can switch the gate off without touching the two files above:
+//  - package.json defines the `check:refute` script CI calls. The gate classifies commits by PATH only (git show
+//    --name-only, never diff content), so it cannot tell a `check:refute` edit from a dependency bump: the root
+//    package.json is protected WHOLE, and EVERY root package.json edit (dependency bumps included) needs a trailer.
+//  - .npmrc (root): npm exports its `node-options` key as NODE_OPTIONS to every `npm run` script, so
+//    `node-options=--require ./x.cjs` with a preload that forces exit 0 makes `npm run check:refute` pass without
+//    running the check (refute run wf_19fea163-b81, reproduced).
+//  - .github/workflows/ (whole directory, by PREFIX, see REFUTE_GATE_PATH_PREFIXES): ci.yml runs the check (job
+//    refute-required), and ANY workflow file, including a new one, can publish a check with the required check's name.
+// NOT protected, by decision: package-lock.json (a trailer on every dependency bump; a lockfile that resolves a
+// tampered tsx / dependency is a known, harder variant of the same attack, left open), and nested package.json /
+// .npmrc files (CI runs the gate from the repo root, where npm does not read them).
 export const REFUTE_GATE_PATHS: ReadonlySet<string> = new Set([
   '.claude/workflows/refute-financial-change.js',
   'scripts/check-refute-required.ts',
-  '.github/workflows/ci.yml',
   'package.json',
+  '.npmrc',
 ]);
+/** Directory prefixes (repo-root anchored, ending in '/') protected as a whole; checked with REFUTE_GATE_PATHS. */
+export const REFUTE_GATE_PATH_PREFIXES: readonly string[] = ['.github/workflows/'];
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
-  if (REFUTE_GATE_PATHS.has(path)) return true;
+  // Gate paths FIRST, ahead of every exemption set (see REFUTE_GATE_PATHS).
+  if (REFUTE_GATE_PATHS.has(path) || REFUTE_GATE_PATH_PREFIXES.some((pre) => path.startsWith(pre))) return true;
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
     return true;
   }
