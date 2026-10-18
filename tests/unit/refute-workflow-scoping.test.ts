@@ -26,6 +26,11 @@ interface WorkflowResult {
   lensCount: number;
   worstSeverityRank: number;
   clean: boolean;
+  worstSeverityRank: number;
+  lensesDefault: boolean;
+  lensLabels: string[];
+  outOfScope: string[];
+  scoped: boolean;
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
@@ -34,8 +39,13 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
 
 interface Call { label: string; prompt: string }
 
-/** Run the workflow under a stubbed runtime that records every prompt. */
-async function run(args: unknown, respond: (c: Call) => unknown) {
+/**
+ * Run the workflow under a stubbed runtime that records every prompt. The default `parallel` stub mirrors the
+ * Workflow runtime contract (a thunk that throws resolves to null; the call never rejects). `propagate: true`
+ * swaps in a stub that lets a thrown agent reject the whole run, so a test can prove a throw is never swallowed
+ * into a clean result under either contract.
+ */
+async function run(args: unknown, respond: (c: Call) => unknown, opts: { propagate?: boolean } = {}) {
   const src = readFileSync(SCRIPT, 'utf8').replace(/^export\s+/m, '');
   const calls: Call[] = [];
   const agent = async (prompt: string, o: { label?: string } = {}) => {
@@ -43,7 +53,9 @@ async function run(args: unknown, respond: (c: Call) => unknown) {
     calls.push(c);
     return respond(c);
   };
-  const parallel = (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
+  const parallel = opts.propagate
+    ? (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t()))
+    : (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
   const fn = new AsyncFunction('agent', 'parallel', 'phase', 'log', 'args', src);
   const logs: string[] = [];
   const result = await fn(agent, parallel, () => undefined, (m: string) => logs.push(m), args);
@@ -62,7 +74,137 @@ describe('refute-financial-change — reviewer hygiene', () => {
       expect(c.prompt).toContain('CLEAN UP before you finish');
       expect(c.prompt).toContain('cmd /c rmdir');
       expect(c.prompt).toMatch(/NEVER rm -rf or any recursive delete through it/);
-      expect(c.prompt).toContain('git worktree remove --force');
+    }
+  });
+
+  it('names the worktree under review, forbids --force, and removes the junction BEFORE a plain git worktree remove', async () => {
+    const repo = 'C:\\some\\checkout-under-review';
+    const { calls } = await run({ changeSet: 'x', repo }, (c) => clean(lensOf(c.label)));
+    expect(calls).toHaveLength(5);
+    for (const c of calls) {
+      const i = c.prompt.indexOf('CLEAN UP before you finish');
+      const block = c.prompt.slice(i, c.prompt.indexOf('CHANGE SET:'));
+      // The worktree under review is named explicitly inside the clean-up instruction.
+      expect(block).toContain(repo);
+      expect(block).toMatch(/NEVER run `git worktree remove` on the worktree under review/);
+      // --force is never recommended; it is forbidden by name.
+      expect(c.prompt).not.toContain('git worktree remove --force');
+      expect(block).toMatch(/NEVER pass --force/);
+      // Order: junction / scratch node_modules removed first, then a plain remove that fails safely.
+      const rm = block.indexOf('cmd /c rmdir');
+      const plain = block.indexOf('then run plain `git worktree remove <your-scratch-path>`');
+      expect(rm).toBeGreaterThan(-1);
+      expect(plain).toBeGreaterThan(rm);
+      expect(block).toMatch(/refuses.*uncommitted.*STOP and report/s);
+    }
+  });
+});
+
+describe('refute-financial-change — custom lenses (what clean may claim)', () => {
+  const ALL_DEFAULT = ['correctness', 'determinism', 'edges', 'sweep-completer', 'scope-auditor'];
+
+  it('a default run reports lensesDefault=true and every default label', async () => {
+    const { result } = await run('x', (c) => clean(lensOf(c.label)));
+    expect(result.lensesDefault).toBe(true);
+    expect(result.lensLabels).toEqual(ALL_DEFAULT);
+    expect(result.clean).toBe(true);
+  });
+
+  it('a single weak custom lens is NOT clean even when it passes (the "confirm it looks fine" bypass)', async () => {
+    const { result, logs } = await run({ changeSet: 'x', lenses: [{ label: 'x', focus: 'confirm it looks fine' }] }, (c) =>
+      clean(lensOf(c.label)),
+    );
+    expect(result.lensCount).toBe(1);
+    expect(result.succeeded).toBe(1);
+    expect(result.lensesDefault).toBe(false);
+    expect(result.lensLabels).toEqual(['x']);
+    expect(result.clean).toBe(false);
+    expect(logs.join('\n')).not.toContain('Clear to commit');
+  });
+
+  it('a custom lens reusing a default LABEL with a weaker focus does not count as that default lens', async () => {
+    const { result } = await run({ changeSet: 'x', lenses: ALL_DEFAULT.map((label) => ({ label, focus: 'looks fine' })) }, (c) =>
+      clean(lensOf(c.label)),
+    );
+    expect(result.lensesDefault).toBe(false);
+    expect(result.clean).toBe(false);
+  });
+
+  it('a custom set that is a SUPERSET of the default lenses can be clean', async () => {
+    // Recover the exact default lenses from a default run's prompts (prompt = base + focus).
+    const { calls } = await run('x', (c) => clean(lensOf(c.label)));
+    const base = calls[0]!.prompt.slice(0, calls[0]!.prompt.indexOf('YOUR LENS: ') + 'YOUR LENS: '.length);
+    const defaults = calls.map((c) => ({ label: lensOf(c.label), focus: c.prompt.slice(base.length) }));
+    const { result } = await run(
+      { changeSet: 'x', lenses: [...defaults, { label: 'extra', focus: 'TAX BASIS — break the depreciation split.' }] },
+      (c) => clean(lensOf(c.label)),
+    );
+    expect(result.lensCount).toBe(6);
+    expect(result.lensesDefault).toBe(false);
+    expect(result.lensLabels).toEqual([...ALL_DEFAULT, 'extra']);
+    expect(result.clean).toBe(true);
+  });
+
+  it('a malformed custom lens throws instead of running (no "YOUR LENS: undefined")', async () => {
+    const bad: unknown[] = [
+      [{ label: 'x' }],
+      [{ focus: 'f' }],
+      [{ label: '', focus: 'f' }],
+      [{ label: 'x', focus: '   ' }],
+      [{ label: 1, focus: 'f' }],
+      [{ label: 'x', focus: ['f'] }],
+      [null],
+      ['a string lens'],
+      [{ label: 'ok', focus: 'ok' }, {}],
+    ];
+    for (const lenses of bad) {
+      await expect(run({ changeSet: 'x', lenses }, () => null)).rejects.toThrow(/lens/);
+    }
+  });
+
+  it('a non-array lenses value throws instead of silently falling back to the defaults', async () => {
+    for (const lenses of ['correctness', { label: 'x', focus: 'f' }, 3, true]) {
+      await expect(run({ changeSet: 'x', lenses }, () => null)).rejects.toThrow(/lenses must be an array/);
+    }
+  });
+});
+
+describe('refute-financial-change — a thrown lens agent is never clean', () => {
+  it('runtime contract (thrown thunk -> null): one lens throwing makes the run not clean', async () => {
+    const { result, logs } = await run('x', (c) => {
+      if (lensOf(c.label) === 'edges') throw new Error('agent crashed');
+      return clean(lensOf(c.label));
+    });
+    expect(result.succeeded).toBe(4);
+    expect(result.lensCount).toBe(5);
+    expect(result.clean).toBe(false);
+    expect(logs.join('\n')).not.toContain('Clear to commit');
+  });
+
+  it('propagating parallel: one lens throwing rejects the whole run (no result, so nothing to cite as clean)', async () => {
+    await expect(
+      run(
+        'x',
+        (c) => {
+          if (lensOf(c.label) === 'edges') throw new Error('agent crashed');
+          return clean(lensOf(c.label));
+        },
+        { propagate: true },
+      ),
+    ).rejects.toThrow(/agent crashed/);
+  });
+});
+
+describe('refute-financial-change — non-array findings fail closed', () => {
+  it('findings that is not an array ranks as critical and is not clean', async () => {
+    for (const findings of [undefined, null, 'none', { severity: 'low' }, 0]) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges'
+          ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'none', findings, summary: 's' }
+          : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBe(4);
+      expect(result.clean).toBe(false);
     }
   });
 });
@@ -115,6 +257,34 @@ describe('refute-financial-change — outOfScope (scoping a guard review)', () =
     for (const outOfScope of [[{}], [null], [1], ['ok', ['nested']]]) {
       await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope array elements/);
     }
+  });
+
+  it('echoes the (trimmed, non-empty) items and flags the run as scoped', async () => {
+    const { result } = await run({ changeSet: 'x', outOfScope: ['  limit A ', '', 'limit B'] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toEqual(['limit A', 'limit B']);
+    expect(result.scoped).toBe(true);
+  });
+
+  it('an unscoped run echoes an empty list and scoped=false', async () => {
+    for (const a of ['x', { changeSet: 'x' }, { changeSet: 'x', outOfScope: [] }, { changeSet: 'x', outOfScope: '  ' }]) {
+      const { result } = await run(a, (c) => clean(lensOf(c.label)));
+      expect(result.outOfScope).toEqual([]);
+      expect(result.scoped).toBe(false);
+    }
+  });
+
+  it('caps the item count at 20', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => 'limit ' + i);
+    const { result } = await run({ changeSet: 'x', outOfScope: twenty }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toHaveLength(20);
+    await expect(run({ changeSet: 'x', outOfScope: [...twenty, 'one more'] }, () => null)).rejects.toThrow(/outOfScope.*20/);
+  });
+
+  it('caps each item at 300 characters', async () => {
+    const { result } = await run({ changeSet: 'x', outOfScope: ['a'.repeat(300)] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope[0]).toHaveLength(300);
+    await expect(run({ changeSet: 'x', outOfScope: ['a'.repeat(301)] }, () => null)).rejects.toThrow(/outOfScope.*300/);
+    await expect(run({ changeSet: 'x', outOfScope: 'a'.repeat(301) }, () => null)).rejects.toThrow(/outOfScope.*300/);
   });
 });
 

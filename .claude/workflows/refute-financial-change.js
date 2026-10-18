@@ -9,11 +9,11 @@
 // Invoke:  Workflow({ name: 'refute-financial-change', args: {
 //   changeSet: 'PROSE describing the exact uncommitted change set (files, functions, behavior).',
 //   repo: 'C:\\Users\\Owner\\oxford-command-center',         // optional; default below
-//   lenses: [ { label: 'noi', focus: 'NOI correctness & regression — ...' }, ... ],  // optional
+//   lenses: [ { label: 'noi', focus: 'NOI correctness & regression — ...' }, ... ],  // optional; see CUSTOM LENSES below
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
 //   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
-//   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[]. See SCOPING below.
+//   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[] (max 20 items, 300 chars each). See SCOPING below.
 // }})
 //
 // SCOPING A REVIEW OF A GUARD. When the change is a guard/gate on top of a mechanism with documented limits (a commit
@@ -21,18 +21,28 @@
 // the mechanism. List its known limits in `outOfScope` and ask only "is the guard correct GIVEN these limits, and does it
 // make any of them newly reachable, newly silent, or worse?". Review the mechanism itself as its own change. Without
 // this, successive rounds each find the next layer of the same root cause (one supersede guard took three rounds).
+// A scoped run tells every lens NOT to report the listed items, so the result echoes them (`outOfScope`) and sets
+// `scoped: true`; cite a scoped run as `Refute-Reviewed: wf_<id> (scoped)` so a reader knows what was excluded.
+//
+// CUSTOM LENSES. Each custom lens must carry a non-empty string `label` and `focus` (anything else throws). A custom set
+// only counts toward `clean` when it contains every default lens verbatim (same label AND focus); a narrower or
+// re-worded set is reported (`lensesDefault: false`, `lensLabels`) but never `clean`.
 //
 // RECORDING THE RESULT. The result carries `clean` (every lens succeeded AND no real defect AND worst severity below
-// medium) and `lensCount`. A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean`
-// is true. A run with findings you accept, or with failed lenses, must say so after the id. This rule lives HERE:
+// medium AND the default lens set, or a superset of it, ran), `lensCount`, `lensesDefault`, `lensLabels`, `outOfScope`
+// and `scoped`. A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true and
+// `scoped` is false (a clean scoped run is `wf_<id> (scoped)`). A run with findings you accept, or with failed lenses,
+// must say so after the id. This rule lives HERE:
 // `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
 // procedure docs that show the trailer (architecture/coding-standards.md) predate it and still show the bare form.
 //
 // FINDING-SEVERITY LOOP RULE. Low findings: fix in the same pass. Medium or higher: stop and report to the owner before
 // another round, so the loop stays bounded and the owner decides whether to keep going, narrow the change, or split it.
 //
-// REVIEWER HYGIENE. Reviewers are told to remove any scratch worktree / node_modules junction they create (junction via
-// `cmd /c rmdir`, never a recursive delete through it) before finishing; check `git worktree list` after a run anyway.
+// REVIEWER HYGIENE. Reviewers are told to remove any scratch node_modules junction they create FIRST (via `cmd /c rmdir`,
+// never a recursive delete through it), then their scratch worktree with a plain `git worktree remove` (never --force,
+// which discards uncommitted work), and never to remove the worktree under review (`repo`, named in the prompt); check
+// `git worktree list` after a run anyway.
 // There is deliberately ONE script: a forked "-opus" copy drifted (47 lines, two versions in circulation).
 // The result records which models ran (`models`, `modelFloorMet`) so a Refute-Reviewed attestation is auditable:
 // modelFloorMet is true for every accepted tier (both are at or above the Opus 5.5 floor); a lower model throws.
@@ -73,15 +83,32 @@ const A = (typeof args === 'string') ? { changeSet: args } : (args ?? {})
 const repo = A.repo ?? 'C:\\Users\\Owner\\oxford-command-center'
 const changeSet = A.changeSet ?? 'NO CHANGE SET PROVIDED — read git diff in the repo and review the uncommitted changes.'
 const greenContext = A.greenContext ?? 'Probe the EDGES the current corpus does not exercise; a green gate does not prove correctness on unencountered data.'
-const lenses = (Array.isArray(A.lenses) && A.lenses.length)
-  ? A.lenses
-  : [
-      { label: 'correctness', focus: 'NUMERIC CORRECTNESS & REGRESSION — does the change ever produce a wrong number vs the prior behavior? SQL/param binding, sign conventions, rounding, off-by-one, double-counting.' },
-      { label: 'determinism', focus: 'DETERMINISM & ORDER-INDEPENDENCE — is every comparator a total order (transitive)? Does any result depend on row/Map/iteration order? Construct a permutation that flips the output.' },
-      { label: 'edges', focus: 'EDGE CASES & COMPLETENESS — nulls, empty cohorts, singletons, mixed bases/grains, coexisting versions; does the guard cover EVERY path into the decision, or only the obvious one?' },
-      { label: 'sweep-completer', focus: 'SWEEP COMPLETENESS — the change claims to apply something EVERYWHERE (a rename, a guard, a coercion, a new field, a policy). Do NOT read the diff first and check it off. Independently enumerate, from the repo itself (grep the pattern, the callers, the sibling modules, config/fixtures/docs/tests), EVERY location that should have received the change; THEN diff your list against what was actually changed. Report each MISSED instance as a finding with its file:line. A half-applied sweep is a real defect: the unchanged half now silently disagrees with the changed half.' },
-      { label: 'scope-auditor', focus: 'SCOPE INTEGRITY — diff the ACTUAL change against the DECLARED intent above. Flag every hunk that is not required by the stated scope: unrelated files, opportunistic refactors, reformatting, dependency/lockfile churn, config or generated-artifact edits. Separately flag anything that looks SWEPT IN from a concurrent session on a shared checkout — edits in a different voice/style, changes to files this task never named, snapshot/auto-refresh output, or work matching some OTHER in-flight effort. An unrelated hunk riding along in this commit is a real defect regardless of its own quality.' },
-    ]
+const DEFAULT_LENSES = [
+  { label: 'correctness', focus: 'NUMERIC CORRECTNESS & REGRESSION — does the change ever produce a wrong number vs the prior behavior? SQL/param binding, sign conventions, rounding, off-by-one, double-counting.' },
+  { label: 'determinism', focus: 'DETERMINISM & ORDER-INDEPENDENCE — is every comparator a total order (transitive)? Does any result depend on row/Map/iteration order? Construct a permutation that flips the output.' },
+  { label: 'edges', focus: 'EDGE CASES & COMPLETENESS — nulls, empty cohorts, singletons, mixed bases/grains, coexisting versions; does the guard cover EVERY path into the decision, or only the obvious one?' },
+  { label: 'sweep-completer', focus: 'SWEEP COMPLETENESS — the change claims to apply something EVERYWHERE (a rename, a guard, a coercion, a new field, a policy). Do NOT read the diff first and check it off. Independently enumerate, from the repo itself (grep the pattern, the callers, the sibling modules, config/fixtures/docs/tests), EVERY location that should have received the change; THEN diff your list against what was actually changed. Report each MISSED instance as a finding with its file:line. A half-applied sweep is a real defect: the unchanged half now silently disagrees with the changed half.' },
+  { label: 'scope-auditor', focus: 'SCOPE INTEGRITY — diff the ACTUAL change against the DECLARED intent above. Flag every hunk that is not required by the stated scope: unrelated files, opportunistic refactors, reformatting, dependency/lockfile churn, config or generated-artifact edits. Separately flag anything that looks SWEPT IN from a concurrent session on a shared checkout — edits in a different voice/style, changes to files this task never named, snapshot/auto-refresh output, or work matching some OTHER in-flight effort. An unrelated hunk riding along in this commit is a real defect regardless of its own quality.' },
+]
+
+// Custom lenses (optional). A wrong type, or a lens without a non-empty string label AND focus, throws: a lens with no
+// focus would otherwise run as "YOUR LENS: undefined" and still count toward a clean result.
+if (A.lenses !== undefined && A.lenses !== null && !Array.isArray(A.lenses)) {
+  throw new Error('lenses must be an array of { label, focus } (got ' + typeof A.lenses + ')')
+}
+const nonEmptyString = (x) => typeof x === 'string' && x.trim() !== ''
+if (Array.isArray(A.lenses)) {
+  A.lenses.forEach((l, i) => {
+    if (l === null || typeof l !== 'object' || !nonEmptyString(l.label) || !nonEmptyString(l.focus)) {
+      throw new Error('lenses[' + i + '] must be an object with a non-empty string label and focus')
+    }
+  })
+}
+const lensesDefault = !(Array.isArray(A.lenses) && A.lenses.length)
+const lenses = lensesDefault ? DEFAULT_LENSES : A.lenses
+// `clean` may only be claimed when every default lens ran verbatim (same label AND focus): a caller-supplied set that
+// drops one, or re-words its focus ("confirm it looks fine"), is reported but never clean.
+const coversDefaultLenses = DEFAULT_LENSES.every((d) => lenses.some((l) => l.label === d.label && l.focus === d.focus))
 
 if (lenses.length > 4096) throw new Error('too many lenses')
 
@@ -106,13 +133,25 @@ if (A.outOfScope !== undefined && A.outOfScope !== null && typeof A.outOfScope !
 if (Array.isArray(A.outOfScope) && A.outOfScope.some((s) => typeof s !== 'string')) {
   throw new Error('outOfScope array elements must all be strings')
 }
+const OUT_OF_SCOPE_MAX_ITEMS = 20
+const OUT_OF_SCOPE_MAX_CHARS = 300
 const outOfScopeItems = [].concat(A.outOfScope ?? []).map((s) => String(s).trim()).filter(Boolean)
+// Bounded so a scoping list cannot quietly grow into a list of everything the change gets wrong.
+if (outOfScopeItems.length > OUT_OF_SCOPE_MAX_ITEMS) {
+  throw new Error('outOfScope may list at most ' + OUT_OF_SCOPE_MAX_ITEMS + ' items (got ' + outOfScopeItems.length + ')')
+}
+const longItem = outOfScopeItems.findIndex((s) => s.length > OUT_OF_SCOPE_MAX_CHARS)
+if (longItem !== -1) {
+  throw new Error('outOfScope items must be at most ' + OUT_OF_SCOPE_MAX_CHARS + ' characters (item ' + longItem + ' has ' + outOfScopeItems[longItem].length + ')')
+}
 const outOfScopeBlock = outOfScopeItems.length
   ? '\n\nKNOWN LIMITS OF THE UNDERLYING MECHANISM (out of scope: do NOT report these as defects of this change). Judge whether THIS change is correct GIVEN these limits; report one only if this change makes it newly reachable, newly silent, or worse than before:\n' + outOfScopeItems.map((s) => '- ' + s).join('\n')
   : ''
 // Clean-up duty (a reviewer once left a registered worktree and a node_modules junction behind). Deleting THROUGH a
-// junction deletes the real target, so the junction is removed with rmdir, never recursively.
-const hygiene = '\n\nCLEAN UP before you finish: if you created a scratch git worktree or a node_modules junction, remove the junction with `cmd /c rmdir <path>\\node_modules` (NEVER rm -rf or any recursive delete through it, which follows the link and deletes the real node_modules), then run `git worktree remove --force <path>`, and delete any probe files you wrote outside the repo. Leave the worktree you were pointed at exactly as you found it.'
+// junction deletes the real target, so the junction is removed with rmdir, never recursively. --force is forbidden:
+// with the junction / scratch node_modules gone first, a plain `git worktree remove` refuses on uncommitted work
+// instead of discarding it.
+const hygiene = '\n\nCLEAN UP before you finish. The worktree under review is ' + repo + ': NEVER run `git worktree remove` on the worktree under review, with or without --force, and leave it exactly as you found it. For any scratch git worktree YOU created: first remove its node_modules junction with `cmd /c rmdir <your-scratch-path>\\node_modules` (NEVER rm -rf or any recursive delete through it, which follows the link and deletes the real node_modules), or delete a node_modules you installed into it yourself; then run plain `git worktree remove <your-scratch-path>`. NEVER pass --force to git worktree remove: if it refuses because of uncommitted or untracked changes, STOP and report the path and what is uncommitted instead of forcing it. Delete any probe files you wrote outside the repo.'
 
 const base =
   'You are a HOSTILE financial-systems reviewer for Oxford Realty Advisors (private family-office industrial real estate). BREAK the change below; do NOT bless it. This is NOI / capital-allocation / scoring code — a silent error mis-allocates real capital. Read the ACTUAL files at ' + repo + ' (use git diff for the uncommitted change). HARD CONSTRAINT (CLAUDE.md §9, applies in every checkout and worktree): NEVER open, query, or read the live warehouse or any other data/**/*.sqlite file (data/warehouse/finance.sqlite in particular) — not even read-only, not to "check the real data". To probe a trigger, build an in-memory database in a vitest/tsx script (better-sqlite3 :memory: + runMigrations) from source and migrations only. Set foundRealDefect=true ONLY for a CONCRETE, demonstrably-triggerable defect — not a style nit or a future wish; if you cannot construct a trigger, say so and lean false. ' + greenContext + hygiene + '\n\nCHANGE SET:\n' + changeSet + outOfScopeBlock + '\n\nYOUR LENS: '
@@ -142,7 +181,9 @@ const rank = (s) => (typeof s === 'string' && Object.prototype.hasOwnProperty.ca
 // Worst over BOTH the lens's self-reported maxSeverity and every finding's own severity: the schema does not tie the
 // two together, so a lens could otherwise list a critical finding under maxSeverity 'low' and still attest clean.
 const worst = succeeded.reduce(
-  (m, v) => Math.max(m, rank(v.maxSeverity), ...(Array.isArray(v.findings) ? v.findings : []).map((f) => rank(f?.severity))),
+  // A non-array `findings` (missing, null, an object) is malformed output: it ranks as critical, like an unknown
+  // severity, so it can never read as clean.
+  (m, v) => Math.max(m, rank(v.maxSeverity), ...(Array.isArray(v.findings) ? v.findings.map((f) => rank(f?.severity)) : [order.critical])),
   0,
 )
 
@@ -151,16 +192,22 @@ if (allFailed) {
 } else {
   log(real.length
     ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
-    : succeeded.length < lenses.length
+    : !coversDefaultLenses
+      ? `No real defect in ${succeeded.length}/${lenses.length} lenses, but the custom lens set (${lenses.map((l) => l.label).join(', ')}) does not include every default lens verbatim — NOT clean; do not record a bare Refute-Reviewed id.`
+      : succeeded.length < lenses.length
       ? `No real defect in ${succeeded.length}/${lenses.length} lenses, but ${lenses.length - succeeded.length} lens(es) FAILED even after retry — PARTIAL coverage; do not treat as a full clean pass.`
       : worst >= order.medium
         ? `No lens set foundRealDefect, but worst severity rank ${worst} is medium or higher — NOT clean. Report to the owner before another round (FINDING-SEVERITY LOOP RULE); do not record a bare Refute-Reviewed id.`
         : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
 }
+if (outOfScopeItems.length) log(`SCOPED run: ${outOfScopeItems.length} item(s) were out of scope for every lens; cite it as wf_<id> (scoped).`)
 
 return {
   verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
-  lensCount: lenses.length, clean: succeeded.length === lenses.length && real.length === 0 && worst < order.medium,
+  lensCount: lenses.length,
+  clean: succeeded.length === lenses.length && real.length === 0 && worst < order.medium && coversDefaultLenses,
+  lensesDefault, lensLabels: lenses.map((l) => l.label),
+  outOfScope: outOfScopeItems, scoped: outOfScopeItems.length > 0,
   models: { primary: primaryModel, fallback: effectiveFallback },
   modelFloorMet: TIERS.includes(primaryModel),
 }

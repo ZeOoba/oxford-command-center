@@ -304,9 +304,21 @@ export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
 // Scoped to scripts/ and scripts/lib/ directly — a deeper or differently-suffixed file is in scope.
 const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
 
+// The refute gate itself (2026-10-17, PR #488 review). The refute-financial-change workflow decides what `clean`
+// means for every Refute-Reviewed attestation, and this script decides which paths need one; weakening either
+// silently weakens every financial gate at once. The workflow lives under .claude/workflows/, outside both
+// default-deny roots, so it was editable with no trailer. Checked FIRST, ahead of every exemption, so a later
+// NON_FINANCIAL_ROOT_PATHS / DELIVERY_ONLY_PATHS entry cannot switch the gate off. File-level, not the directory:
+// other workflows are not financial-decision source.
+export const REFUTE_GATE_PATHS: ReadonlySet<string> = new Set([
+  '.claude/workflows/refute-financial-change.js',
+  'scripts/check-refute-required.ts',
+]);
+
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
+  if (REFUTE_GATE_PATHS.has(path)) return true;
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
     return true;
   }
