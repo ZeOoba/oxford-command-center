@@ -137,7 +137,14 @@ const succeeded = verdicts.filter(Boolean)
 const allFailed = succeeded.length === 0
 const real = succeeded.filter((v) => v.foundRealDefect)
 const order = { critical: 4, high: 3, medium: 2, low: 1, none: 0 }
-const worst = succeeded.reduce((m, v) => Math.max(m, order[v.maxSeverity] ?? 0), 0)
+// A severity outside the enum (or missing) ranks as critical: unknown must fail closed, never read as "none".
+const rank = (s) => (typeof s === 'string' && Object.prototype.hasOwnProperty.call(order, s) ? order[s] : order.critical)
+// Worst over BOTH the lens's self-reported maxSeverity and every finding's own severity: the schema does not tie the
+// two together, so a lens could otherwise list a critical finding under maxSeverity 'low' and still attest clean.
+const worst = succeeded.reduce(
+  (m, v) => Math.max(m, rank(v.maxSeverity), ...(Array.isArray(v.findings) ? v.findings : []).map((f) => rank(f?.severity))),
+  0,
+)
 
 if (allFailed) {
   log(`All ${lenses.length} lenses failed (${primaryModel}${effectiveFallback ? ' and ' + effectiveFallback + ' fallback' : ''} unavailable) — this is a TOOLING FAILURE, not a clean result. Do not report CLEAN.`)
@@ -146,7 +153,9 @@ if (allFailed) {
     ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
     : succeeded.length < lenses.length
       ? `No real defect in ${succeeded.length}/${lenses.length} lenses, but ${lenses.length - succeeded.length} lens(es) FAILED even after retry — PARTIAL coverage; do not treat as a full clean pass.`
-      : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
+      : worst >= order.medium
+        ? `No lens set foundRealDefect, but worst severity rank ${worst} is medium or higher — NOT clean. Report to the owner before another round (FINDING-SEVERITY LOOP RULE); do not record a bare Refute-Reviewed id.`
+        : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
 }
 
 return {
