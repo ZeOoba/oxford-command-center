@@ -13,7 +13,7 @@
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
 //   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
-//   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[] (max 20 items, 300 chars each). See SCOPING below.
+//   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[] (max 20 single-line items, 300 UTF-16 code units each). See SCOPING below.
 // }})
 //
 // SCOPING A REVIEW OF A GUARD. When the change is a guard/gate on top of a mechanism with documented limits (a commit
@@ -31,7 +31,8 @@
 // RECORDING THE RESULT. The result carries `clean` (every lens succeeded AND no real defect AND worst severity below
 // medium AND the default lens set, or a superset of it, ran), `lensCount`, `lensesDefault`, `lensLabels`, `outOfScope`
 // and `scoped`, plus `repo` and `changeSetSha256` / `changeSetLength` / `greenContextSha256` / `greenContextLength`
-// (null when the arg was absent). A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true and
+// (null when the arg was absent; both lengths are UTF-16 code units, i.e. JS string .length, not bytes and not code
+// points; the hashes are over the UTF-8 bytes). A `Refute-Reviewed: wf_<id>` trailer means a clean run: record a BARE id only when `clean` is true and
 // `scoped` is false (a clean scoped run is `wf_<id> (scoped)`). A run with findings you accept, or with failed lenses,
 // must say so after the id. This rule lives HERE:
 // `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
@@ -39,7 +40,7 @@
 //
 // TRUSTED CALLER INPUT. `changeSet` and `greenContext` go into every lens prompt verbatim, uncapped and unvalidated:
 // nothing stops a caller from writing scoping ("ignore X") into them, and `scoped` does NOT detect that. They are
-// trusted input, so the result records their sha256 and length; an auditor compares those against the change-set
+// trusted input, so the result records their sha256 and length (UTF-16 code units); an auditor compares those against the change-set
 // text the author cites before accepting the attestation. Only `outOfScope` is bounded and echoed verbatim.
 //
 // FINDING-SEVERITY LOOP RULE. Low findings: fix in the same pass. Medium or higher: stop and report to the owner before
@@ -216,8 +217,9 @@ const outOfScopeItems = [].concat(A.outOfScope ?? []).map((s) => String(s).trim(
 if (outOfScopeItems.length > OUT_OF_SCOPE_MAX_ITEMS) {
   throw new Error('outOfScope may list at most ' + OUT_OF_SCOPE_MAX_ITEMS + ' items (got ' + outOfScopeItems.length + ')')
 }
-// One item is one line: an embedded newline would smuggle extra bullets past the item-count cap.
-const brokenItem = outOfScopeItems.findIndex((s) => /[\r\n]/.test(s))
+// One item is one line: an embedded line or paragraph separator (CR, LF, VT, FF, NEL, LS, PS) would smuggle extra
+// bullets past the item-count cap.
+const brokenItem = outOfScopeItems.findIndex((s) => /[\r\n\v\f\u0085\u2028\u2029]/.test(s))
 if (brokenItem !== -1) {
   throw new Error('outOfScope items must be a single line (item ' + brokenItem + ' contains a line break)')
 }
