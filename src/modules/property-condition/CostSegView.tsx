@@ -199,7 +199,7 @@ function SpecSheetCard({ ds, studyId, onStudy }: { ds: CostSegDatasetT; studyId:
 
 // ── cross-check ─────────────────────────────────────────────────────────────────────────────
 
-function CrossCheckCard({ ds, specFacts, registerSf, registerStatus }: { ds: CostSegDatasetT; specFacts: Parameters<typeof pcaComparators>[0]; registerSf: Record<string, number | null>; registerStatus: Record<string, 'CURRENT' | 'DRAFT' | 'STALE'> }) {
+export function CrossCheckCard({ ds, specFacts, registerSf, registerStatus, specsLoading = false }: { ds: CostSegDatasetT; specFacts: Parameters<typeof pcaComparators>[0]; registerSf: Record<string, number | null>; registerStatus: Record<string, 'CURRENT' | 'DRAFT' | 'STALE'>; specsLoading?: boolean }) {
   const groups = Object.keys(ds.studies).map((id) => {
     const key = COST_SEG_PROPERTY_MAP[id as CostSegStudyId] ?? null;
     const cmp = pcaComparators(specFacts, key, key === null ? null : registerSf[key] ?? null, key === null ? null : registerStatus[key] ?? null);
@@ -208,7 +208,10 @@ function CrossCheckCard({ ds, specFacts, registerSf, registerStatus }: { ds: Cos
   const differs = groups.reduce((a, g) => a + g.rows.filter((r) => r.status === 'differs').length, 0);
   return (
     <Card>
-      <CardHeader title="PCA vs cost seg — quantity cross-check" trailing={<Badge tone={differs > 0 ? 'amber' : 'neutral'}>{differs} differ</Badge>} />
+      <CardHeader
+        title="PCA vs cost seg — quantity cross-check"
+        trailing={specsLoading ? <Badge tone="neutral">loading PCA specs…</Badge> : <Badge tone={differs > 0 ? 'amber' : 'neutral'}>{differs} differ</Badge>}
+      />
       <div className="overflow-x-auto">
         <table aria-label="PCA versus cost seg quantity cross-check" style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
           <thead>
@@ -238,11 +241,11 @@ function CrossCheckCard({ ds, specFacts, registerSf, registerStatus }: { ds: Cos
                     </div>
                   </td>
                   <td className="num px-3 py-2 text-2xs" style={muted}>
-                    {r.pca.length === 0 ? 'n/a' : r.pca.map((p) => `${fmtNum(p.value)} (${p.label}${p.vintage ? ` · ${p.vintage}` : ''})`).join('; ')}
+                    {specsLoading ? 'loading…' : r.pca.length === 0 ? 'n/a' : r.pca.map((p) => `${fmtNum(p.value)} (${p.label}${p.vintage ? ` · ${p.vintage}` : ''})`).join('; ')}
                   </td>
                   <td className="px-3 py-2">
-                    <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
-                    {r.pctDiff !== null && r.status === 'differs' && (
+                    {specsLoading ? <Badge tone="neutral">pending</Badge> : <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>}
+                    {!specsLoading && r.pctDiff !== null && r.status === 'differs' && (
                       <span className="num text-2xs" style={muted}> {r.pctDiff > 0 ? '+' : '−'}{Math.abs(r.pctDiff * 100).toFixed(1)}%</span>
                     )}
                   </td>
@@ -323,7 +326,7 @@ export function CostSegPanel({ registerSf, registerStatus }: { registerSf: Recor
           PCA building specs failed to load ({specs.error instanceof Error ? specs.error.message : 'error'}) — the cross-check shows register SF only.
         </p>
       )}
-      <CrossCheckCard ds={ds} specFacts={specFacts} registerSf={registerSf} registerStatus={registerStatus} />
+      <CrossCheckCard ds={ds} specFacts={specFacts} registerSf={registerSf} registerStatus={registerStatus} specsLoading={specs.isLoading} />
       <DiscrepancyCard ds={ds} />
     </div>
   );
