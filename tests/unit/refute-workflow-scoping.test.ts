@@ -273,6 +273,12 @@ describe('refute-financial-change — what was reviewed is auditable (repo, chan
     expect(header).toMatch(/not bytes/);
   });
 
+  it('the header does not claim the procedure docs still show only the bare trailer form (this PR updated them)', () => {
+    const header = readFileSync(SCRIPT, 'utf8').split('\nexport const meta')[0]!;
+    expect(header).not.toMatch(/predate it and still show the bare form/);
+    expect(header).toMatch(/architecture\/coding-standards\.md[^\n]*\n?[^\n]*(?:qualifier|\(scoped\))/);
+  });
+
   it('a plain-string args value is the changeSet', async () => {
     const { result } = await run('plain change set', (c) => clean(lensOf(c.label)));
     expect(result.changeSetSha256).toBe(sha('plain change set'));

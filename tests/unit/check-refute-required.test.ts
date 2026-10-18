@@ -25,6 +25,8 @@ import {
   NON_FINANCIAL_ROOT_PATHS,
   REFUTE_GATE_PATHS,
   REFUTE_GATE_PATH_PREFIXES,
+  resolveGitExecutable,
+  gitRunnerFor,
 } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
@@ -64,9 +66,43 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('functions/.npmrc')).toBe(false);
     expect(isFinancialSourcePath('package-lock.json')).toBe(false);
     expect([...REFUTE_GATE_PATHS].sort()).toEqual(
-      ['.claude/workflows/refute-financial-change.js', '.npmrc', 'package.json', 'scripts/check-refute-required.ts'].sort(),
+      ['.claude/workflows/refute-financial-change.js', '.npmrc', 'package.json', 'scripts/check-refute-required.ts', 'scripts/package.json'].sort(),
     );
     expect([...REFUTE_GATE_PATH_PREFIXES]).toEqual(['.github/workflows/']);
+  });
+  it('scripts/package.json is a gate path: it is the package.json nearest the gate script (module format for node/tsx)', () => {
+    expect(isFinancialSourcePath('scripts/package.json')).toBe(true);
+    // scripts/lib/package.json would only govern scripts/lib/**, which the gate script does not import: not a gate path.
+    expect(isFinancialSourcePath('scripts/lib/package.json')).toBe(false);
+  });
+  it('a REPO-ROOT Windows executable is a gate path (cmd.exe searches the cwd before PATH: tsx.cmd / node.cmd / git.exe hijack)', () => {
+    for (const p of ['tsx.cmd', 'TSX.CMD', 'Tsx.Bat', 'node.cmd', 'git.exe', 'GIT.EXE', 'npm.com', 'anything.ps1', 'x.Cmd']) {
+      expect({ p, gate: isFinancialSourcePath(p) }).toEqual({ p, gate: true });
+    }
+    // cmd.exe also tries the other PATHEXT script-host extensions for a bare command name (tsx -> tsx.js via WSH),
+    // so a root file that shadows a command the gate step runs is a gate path with those extensions too.
+    for (const p of ['tsx.js', 'node.vbs', 'git.wsf', 'npm.jse', 'npx.vbe', 'TSX.JS']) {
+      expect({ p, gate: isFinancialSourcePath(p) }).toEqual({ p, gate: true });
+    }
+    // Root only, and only executable extensions / shadowed command names.
+    for (const p of ['docs/tsx.cmd', 'tests/fixtures/run.bat', 'eslint.config.js', 'vite.config.ts', 'README.md', 'tsx.json', 'cmd']) {
+      expect({ p, gate: isFinancialSourcePath(p) }).toEqual({ p, gate: false });
+    }
+  });
+  it('gate paths and the workflows prefix match case-insensitively (the Windows runner checks out case-insensitively)', () => {
+    for (const p of [
+      'PACKAGE.JSON',
+      'Package.json',
+      '.NPMRC',
+      'Scripts/Check-Refute-Required.ts',
+      '.Claude/Workflows/Refute-Financial-Change.JS',
+      '.GitHub/Workflows/ci.yml',
+      '.GITHUB\\WORKFLOWS\\X.YML',
+      'SCRIPTS/PACKAGE.JSON',
+    ]) {
+      expect({ p, gate: isFinancialSourcePath(p) }).toEqual({ p, gate: true });
+    }
+    expect(isFinancialSourcePath('.GitHub/Workflows-notes.md')).toBe(false);
   });
   it('flags the WHOLE .github/workflows/ directory by prefix (any workflow can publish a look-alike check name)', () => {
     for (const p of [
@@ -84,15 +120,36 @@ describe('check-refute-required — financial-source classification', () => {
       expect(isFinancialSourcePath(p)).toBe(false);
     }
   });
+  it('CI runs the gate without any cwd-searchable command lookup: job env + direct tsx entry point', () => {
+    const root = process.cwd();
+    const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const job = ci.slice(ci.indexOf('\n  refute-required:\n'));
+    expect(job.startsWith('\n  refute-required:\n')).toBe(true);
+    const jobHead = job.slice(0, job.indexOf('\n    steps:\n') + 1);
+    // cmd.exe (npm's script shell on Windows) searches the cwd before PATH unless this is set: a committed root
+    // tsx.cmd / node.cmd would otherwise run instead of the real tool on the self-hosted Windows runner.
+    expect(jobHead).toMatch(/\n {4}env:\n(?: {6}[^\n]*\n)* {6}NoDefaultCurrentDirectoryInExePath: '1'\n/);
+    // The gate step itself must not go through `npm run` (cmd.exe lookup of tsx) or a bare `tsx`.
+    const steps = job.split('\n').filter((l) => /^\s*- run: .*check-refute-required/.test(l) || /^\s*- run: .*check:refute/.test(l));
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatch(/- run: node node_modules\/tsx\/dist\/cli\.mjs scripts\/check-refute-required\.ts --strict /);
+    expect(steps[0]).not.toMatch(/npm run|npx|(?<![/\w])tsx /);
+    // ...and that path really is tsx's CLI entry (its package.json bin), present after `npm ci`.
+    const tsxPkg = JSON.parse(readFileSync(join(root, 'node_modules', 'tsx', 'package.json'), 'utf8')) as { bin: string | Record<string, string> };
+    const bin = typeof tsxPkg.bin === 'string' ? tsxPkg.bin : tsxPkg.bin.tsx;
+    expect(bin?.replace(/^\.\//, '')).toBe('dist/cli.mjs');
+    expect(readFileSync(join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'utf8').length).toBeGreaterThan(0);
+  });
   it('every protected runtime input of the CI gate step, read from the repo itself, is classified financial', () => {
     const root = process.cwd();
     // The CI gate step runs the check THROUGH npm, so its inputs are ci.yml, the package.json script entry, the root
     // .npmrc (node-options -> NODE_OPTIONS), the script that entry names, and the workflow whose result it attests.
     const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
-    expect(ci).toMatch(/run: npm run check:refute -- --strict/);
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     const target = /\b(scripts\/[\w./-]+\.ts)\b/.exec(pkg.scripts['check:refute'] ?? '')?.[1];
     expect(target).toBe('scripts/check-refute-required.ts');
+    // The CI step runs the same script file the developer `npm run check:refute` entry names.
+    expect(ci).toContain(`node node_modules/tsx/dist/cli.mjs ${target} --strict`);
     const tracked = execFileSync('git', ['ls-files', '--', '.npmrc', '.github/workflows'], { cwd: root, encoding: 'utf8' })
       .split('\n')
       .filter(Boolean);
@@ -110,6 +167,9 @@ describe('check-refute-required — financial-source classification', () => {
       '.github/workflows/brand-new.yml',
       'package.json',
       '.npmrc',
+      'scripts/package.json',
+      'tsx.cmd',
+      'PACKAGE.JSON',
     ];
     const exemptions = [NON_FINANCIAL_ROOT_PATHS, DELIVERY_ONLY_PATHS] as unknown as Set<string>[];
     const added: Array<[Set<string>, string]> = [];
@@ -1083,6 +1143,9 @@ describe('check-refute-required — per-commit attestation', () => {
       '.github/workflows/brand-new.yml',
       'package.json',
       '.npmrc',
+      'tsx.cmd',
+      'git.exe',
+      'scripts/package.json',
     ]) {
       const bare: CommitRecord = { sha: 'w0f1', message: 'chore(refute): tweak the gate\n', files: [file] };
       const r = evaluate('origin/main', healthy([bare]));
@@ -1627,4 +1690,107 @@ describe('check-refute-required — integration against real git', () => {
     expect(r.outcome).toBe('violation');
     expect(r.message).toContain('src/analytics/lib');
   }, 60_000);
+});
+
+// A committed repo-root git.exe / git.cmd must never be what the gate runs. On Windows, libuv's executable search
+// (execFileSync('git')) tries the cwd first, so the gate resolves git to an absolute path OUTSIDE the checkout up front.
+// Coverage: the PATH-walk semantics are tested with synthetic win32 AND posix paths (injected isFile, so they run on
+// any host); the fail-closed CLI path and the real-PATH resolution run against a real fs fixture on the host. What is
+// NOT re-proved here is libuv's own cwd-first lookup: the resolver makes the result independent of it.
+describe('check-refute-required — git is resolved outside the checkout (fail CLOSED)', () => {
+  // ── PATH-walk semantics, synthetic paths ──
+  const W_REPO = 'C:\\work\\repo';
+  const W_TRUSTED = 'C:\\Program Files\\Git\\cmd';
+  const P_REPO = '/work/repo';
+  const P_TRUSTED = '/usr/bin';
+  const files = new Set([
+    `${W_REPO}\\git.exe`,
+    `${W_REPO}\\bin\\git.exe`,
+    `${W_REPO}\\git.cmd`,
+    `${W_TRUSTED}\\git.exe`,
+    'C:\\cmd-only\\git.cmd',
+    'C:\\cmd-only\\git.bat',
+    `${P_REPO}/git`,
+    `${P_REPO}/bin/git`,
+    `${P_TRUSTED}/git`,
+  ]);
+  const has = (p: string): boolean => files.has(p);
+
+  it('win32: skips every PATH entry inside the checkout and returns the first git.exe outside it', () => {
+    const pathEnv = [W_REPO, `${W_REPO}\\bin`, W_TRUSTED].join(';');
+    expect(resolveGitExecutable({ pathEnv, platform: 'win32', untrusted: [W_REPO], isFile: has })).toBe(`${W_TRUSTED}\\git.exe`);
+  });
+
+  it('win32: never returns a .cmd/.bat git (execFile cannot run one without a shell)', () => {
+    expect(() => resolveGitExecutable({ pathEnv: 'C:\\cmd-only', platform: 'win32', untrusted: [W_REPO], isFile: has })).toThrow(
+      /outside the repository/,
+    );
+  });
+
+  it('win32: untrusted directories match case-insensitively, with or without a trailing separator', () => {
+    const pathEnv = [W_REPO.toUpperCase() + '\\', W_TRUSTED].join(';');
+    expect(resolveGitExecutable({ pathEnv, platform: 'win32', untrusted: [W_REPO.toLowerCase()], isFile: has })).toBe(`${W_TRUSTED}\\git.exe`);
+  });
+
+  it('skips relative and empty PATH entries (they resolve against the cwd)', () => {
+    for (const rel of ['.', '', 'bin', '.\\bin', './bin', '..\\x']) {
+      expect(resolveGitExecutable({ pathEnv: [rel, W_TRUSTED].join(';'), platform: 'win32', untrusted: [W_REPO], isFile: () => true })).toBe(
+        `${W_TRUSTED}\\git.exe`,
+      );
+    }
+    expect(resolveGitExecutable({ pathEnv: ['', '.', 'bin', P_TRUSTED].join(':'), platform: 'linux', untrusted: [P_REPO], isFile: () => true })).toBe(
+      `${P_TRUSTED}/git`,
+    );
+  });
+
+  it('posix: same rule with ":" separators and an extension-less git', () => {
+    const pathEnv = [P_REPO, `${P_REPO}/bin`, P_TRUSTED].join(':');
+    expect(resolveGitExecutable({ pathEnv, platform: 'linux', untrusted: [P_REPO], isFile: has })).toBe(`${P_TRUSTED}/git`);
+  });
+
+  it('throws (fail closed) when the only git on PATH is inside the checkout, or there is none', () => {
+    for (const pathEnv of [W_REPO, [W_REPO, `${W_REPO}\\bin`].join(';'), '', undefined]) {
+      expect(() => resolveGitExecutable({ pathEnv, platform: 'win32', untrusted: [W_REPO], isFile: has })).toThrow(/outside the repository/);
+    }
+    expect(() => resolveGitExecutable({ pathEnv: P_REPO, platform: 'linux', untrusted: [P_REPO], isFile: has })).toThrow(/outside the repository/);
+  });
+
+  // ── real fs fixture on the host ──
+  let dir = '';
+  let repo = '';
+  let marker = '';
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'refute-gitres-'));
+    repo = join(dir, 'repo');
+    marker = join(dir, 'FAKE-GIT-RAN');
+    mkdirSync(join(repo, 'bin'), { recursive: true });
+    // Fake gits inside the "repo": each would drop a marker file if it were ever executed.
+    const drop = `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`;
+    for (const d of [repo, join(repo, 'bin')]) {
+      writeFileSync(join(d, 'git.exe'), 'MZ fake');
+      writeFileSync(join(d, 'git.cmd'), `@node -e "${drop.replace(/"/g, '\\"')}"\r\n`);
+      writeFileSync(join(d, 'git'), `#!/bin/sh\nnode -e '${drop}'\n`, { mode: 0o755 });
+    }
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('runCli exits NON-ZERO with a clear message when git cannot be resolved outside the repo, and never runs the fake', () => {
+    const sep = process.platform === 'win32' ? ';' : ':';
+    const r = runCli(['--strict', '--base=origin/main'], { PATH: [repo, join(repo, 'bin')].join(sep) }, undefined, [repo]);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stream).toBe('error');
+    expect(r.message).toMatch(/FAILED CLOSED/);
+    expect(r.message).toMatch(/outside the repository/);
+    // Non-strict mode too: an unresolvable git is never a warning-and-pass.
+    const nonStrict = runCli([], { PATH: '' }, undefined, [repo]);
+    expect(nonStrict.exitCode).not.toBe(0);
+    expect(() => readFileSync(marker)).toThrow();
+  });
+
+  it('on this host, the real PATH resolves to an absolute git outside the checkout, and that git runs', () => {
+    const real = resolveGitExecutable({ pathEnv: process.env.PATH, platform: process.platform, untrusted: [process.cwd()] });
+    expect(resolve(real)).toBe(real);
+    expect(real.toLowerCase().startsWith(process.cwd().toLowerCase())).toBe(false);
+    expect(gitRunnerFor(real)(['version'])).toMatch(/^git version /);
+  });
 });

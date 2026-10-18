@@ -79,6 +79,12 @@ jobs:
   refute-required:
     if: github.event_name == 'pull_request'
     runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
+    # 2026-10-18 (PR #490, refute run wf_aaa0696c-23d): on the Windows self-hosted runner cmd.exe (npm's script shell)
+    # searches the CURRENT DIRECTORY before PATH unless this is set, and it is set neither machine- nor user-wide, so a
+    # committed repo-root tsx.cmd / node.cmd / git.exe would run instead of the real tool. Job-wide so it also covers
+    # the lifecycle scripts `npm ci` runs. Ignored on Linux. The gate script also resolves git outside the checkout.
+    env:
+      NoDefaultCurrentDirectoryInExePath: '1'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -92,4 +98,6 @@ jobs:
       # --head = the PR head sha, not the synthetic refs/pull/N/merge HEAD: attestation is per commit,
       # and that merge is built server-side by GitHub, so a local re-merge that disagrees with it would
       # flag a commit nobody can reword.
-      - run: npm run check:refute -- --strict --base="origin/${{ github.base_ref }}" --head="${{ github.event.pull_request.head.sha }}"
+      # Run tsx's own entry point with node (no `npm run` -> cmd.exe lookup of a `tsx` command, no bare `tsx`). Same
+      # script file as the developer `npm run check:refute` entry in package.json; tests pin both and tsx's bin path.
+      - run: node node_modules/tsx/dist/cli.mjs scripts/check-refute-required.ts --strict --base="origin/${{ github.base_ref }}" --head="${{ github.event.pull_request.head.sha }}"
