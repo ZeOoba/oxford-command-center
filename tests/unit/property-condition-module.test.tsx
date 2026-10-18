@@ -9,6 +9,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { PropertyConditionModule } from '../../src/modules/property-condition/PropertyConditionModule';
 import { CoverageCard } from '../../src/modules/property-condition/SpecsView';
+import { CrossCheckCard } from '../../src/modules/property-condition/CostSegView';
+import { parseCostSeg } from '../../src/analytics/cost-seg';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   PROPERTY_CONDITION_KEYS,
   ageLabel,
@@ -200,6 +204,19 @@ describe('PropertyConditionModule', () => {
     // The firewall statement is on the page.
     expect(screen.getByText(/not a condition assessment/i)).toBeTruthy();
   }, 40000);
+
+  it('#474: the cost-seg cross-check shows a loading state, never "0 differ", while the building-specs chunk is still loading', () => {
+    const ds = parseCostSeg(JSON.parse(readFileSync(join(process.cwd(), 'data', 'cost-seg', 'cost-seg.json'), 'utf-8')));
+    const props = { ds, specFacts: [], registerSf: {}, registerStatus: {} };
+    const { unmount } = render(<CrossCheckCard {...props} specsLoading />);
+    expect(screen.getByText(/loading PCA specs/)).toBeTruthy();
+    expect(screen.queryByText(/\d+ differ/)).toBeNull();
+    expect(screen.queryByText('no PCA value')).toBeNull();
+    unmount();
+    render(<CrossCheckCard {...props} />);
+    expect(screen.getByText(/\d+ differ/)).toBeTruthy();
+    expect(screen.queryByText(/loading PCA specs/)).toBeNull();
+  });
 
   it('an UNREADABLE report renders as UNREADABLE with the path that was tried', () => {
     render(
