@@ -44,8 +44,9 @@ async function run(args: unknown, respond: (c: Call) => unknown) {
   };
   const parallel = (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
   const fn = new AsyncFunction('agent', 'parallel', 'phase', 'log', 'args', src);
-  const result = await fn(agent, parallel, () => undefined, () => undefined, args);
-  return { calls, result };
+  const logs: string[] = [];
+  const result = await fn(agent, parallel, () => undefined, (m: string) => logs.push(m), args);
+  return { calls, result, logs };
 }
 
 const lensOf = (label: string) => label.replace(/^refute:/, '').replace(/:opus-fallback$/, '');
@@ -148,6 +149,46 @@ describe('refute-financial-change — clean / lensCount (what a bare Refute-Revi
       expect(result.succeeded).toBe(5);
       expect(result.clean).toBe(false);
     }
+  });
+
+  it('a finding of medium-or-higher severity under a lower self-reported maxSeverity is NOT clean (worst spans findings too)', async () => {
+    for (const severity of ['medium', 'high', 'critical']) {
+      const { result, logs } = await run('x', (c) =>
+        lensOf(c.label) === 'edges'
+          ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity, detail: 'd' }], summary: 's' }
+          : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBeGreaterThanOrEqual(2);
+      expect(result.clean).toBe(false);
+      expect(logs.join('\n')).toContain('NOT clean');
+      expect(logs.join('\n')).not.toContain('Clear to commit');
+    }
+  });
+
+  it('an unknown or missing severity fails closed (ranks as critical), including inherited-key names', async () => {
+    for (const maxSeverity of ['HIGH', 'constructor', 'toString', undefined, 7]) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity, findings: [], summary: 's' } : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBe(4);
+      expect(result.clean).toBe(false);
+    }
+    const { result } = await run('x', (c) =>
+      lensOf(c.label) === 'edges'
+        ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity: 'bogus' }], summary: 's' }
+        : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(false);
+  });
+
+  it('a clean run still logs "Clear to commit" and a low-only finding stays clean', async () => {
+    const { result, logs } = await run('x', (c) =>
+      lensOf(c.label) === 'edges'
+        ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity: 'low' }], summary: 's' }
+        : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(true);
+    expect(logs.join('\n')).toContain('Clear to commit');
   });
 
   it('a low-severity note with foundRealDefect=false is still clean', async () => {
