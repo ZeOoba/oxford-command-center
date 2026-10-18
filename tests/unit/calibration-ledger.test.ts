@@ -385,6 +385,74 @@ describe('proposal matcher (read-only)', () => {
     expect(skipped[0]!.keptObsId).toContain('paving_overlay');
   });
 
+  describe('#474 pickPca: multi-roof ambiguity and quote-vs-PCA vintage', () => {
+    const line = (over: Partial<PcaLine>): PcaLine => ({ propertyKey: 'p', component: 'roof_tpo', unit: 'SF', unitCost: 9, qty: 30000, consultant: 'c', reportDate: '2025-03-01', reportId: 'R1', status: 'CURRENT', sourceFile: 'wb > Components (R1 north roof)', ...over });
+    const q = (over: Partial<QuoteLine> = {}): QuoteLine => ({ propertyKey: 'p', propertyLabel: 'P', component: 'roof_tpo', unit: 'SF', qty: 20000, totalUsd: 200000, isActual: false, vendor: 'V', docDate: '2025-06-01', status: 'BID', superseded: false, title: 'roof', sourceFile: 's', ...over });
+    const run = (pcaLines: PcaLine[], quote: QuoteLine) => proposePairs(pcaLines, [quote], { ledger: [], pending: [] }, '2026-10-14', 't')[0]!;
+
+    it('several roof sections with different unit costs in one report: no guess - pca_unit_cost stays null and the candidates are listed', () => {
+      const north = line({});
+      const south = line({ unitCost: 15, qty: 12000, sourceFile: 'wb > Components (R1 south roof)' });
+      for (const lines of [[north, south], [south, north]]) {
+        const p = run(lines, q());
+        expect(p.pca_unit_cost).toBeNull();
+        expect(p.contractor_unit_cost).toBe(10);
+        expect(p.scope_note).toContain('north roof');
+        expect(p.scope_note).toContain('south roof');
+        expect(p.scope_note).toMatch(/ambiguous|several/i);
+      }
+    });
+
+    it('...unless the quote quantity matches exactly one section, which is then the pairing', () => {
+      const north = line({});
+      const south = line({ unitCost: 15, qty: 12000, sourceFile: 'wb > Components (R1 south roof)' });
+      const p = run([north, south], q({ qty: 12000, totalUsd: 150000 }));
+      expect(p.pca_unit_cost).toBe(15);
+      expect(p.scope_note).not.toMatch(/ambiguous/i);
+    });
+
+    it('one report cited at two date precisions (workbook vs Notion) is still one report: its sections stay ambiguous', () => {
+      const wb = line({});
+      const notion = line({ reportDate: '2025-03', unitCost: 15, qty: 12000, sourceFile: 'notion south' });
+      expect(run([wb, notion], q()).pca_unit_cost).toBeNull();
+    });
+
+    it('a STALE earlier PCA does not shadow a live report dated after the quote', () => {
+      const stale = line({ reportId: 'R0', reportDate: '2015-08-12', unitCost: 4, status: 'STALE' });
+      const live = line({ reportId: 'R2', reportDate: '2026-04-07', unitCost: 14 });
+      const p = run([stale, live], q({ docDate: '2025-06-01' }));
+      expect(p.pca_unit_cost).toBe(14);
+      expect(p.scope_note).toMatch(/dated after the quote/i);
+    });
+
+    it('sections with the same unit cost are not ambiguous', () => {
+      expect(run([line({}), line({ qty: 12000, sourceFile: 'other' })], q()).pca_unit_cost).toBe(9);
+    });
+
+    it('pairs with the newest PCA dated on or before the quote, not a later report that may describe the finished work', () => {
+      const old = line({ reportId: 'R1', reportDate: '2024-03-10', unitCost: 8 });
+      const later = line({ reportId: 'R2', reportDate: '2026-04-07', unitCost: 14, sourceFile: 'later' });
+      for (const lines of [[old, later], [later, old]]) {
+        const p = run(lines, q({ docDate: '2025-06-01' }));
+        expect(p.pca_unit_cost).toBe(8);
+        expect(p.scope_note).not.toMatch(/after the quote/i);
+      }
+    });
+
+    it('a same-month PCA counts as on-or-before (partial dates compare at the precision both state)', () => {
+      const p = run([line({ reportDate: '2025-06', unitCost: 8 }), line({ reportId: 'R2', reportDate: '2026-04-07', unitCost: 14 })], q({ docDate: '2025-06-20' }));
+      expect(p.pca_unit_cost).toBe(8);
+    });
+
+    it('when every PCA postdates the quote it still pairs (the earliest one) but the note says so', () => {
+      const a = line({ reportId: 'R1', reportDate: '2026-04-07', unitCost: 14 });
+      const b = line({ reportId: 'R2', reportDate: '2027-01-15', unitCost: 20, sourceFile: 'b' });
+      const p = run([b, a], q({ docDate: '2025-06-01' }));
+      expect(p.pca_unit_cost).toBe(14);
+      expect(p.scope_note).toMatch(/dated after the quote/i);
+    });
+  });
+
   it('a negative or $0 contractor total (credit / placeholder) yields a null price, not a crash or a ratio', () => {
     for (const totalUsd of [0, -500]) {
       const [p] = proposePairs(pca, [quote({ totalUsd })], { ledger: [], pending: [] }, '2026-10-13', 't');

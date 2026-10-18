@@ -36,13 +36,14 @@ interface WorkflowResult {
   changeSetLength: number | null;
   greenContextSha256: string | null;
   greenContextLength: number | null;
+  effort: string | null;
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...a: string[]
 ) => (...x: unknown[]) => Promise<WorkflowResult>;
 
-interface Call { label: string; prompt: string }
+interface Call { label: string; prompt: string; opts: Record<string, unknown> }
 
 /**
  * Run the workflow under a stubbed runtime that records every prompt. The default `parallel` stub mirrors the
@@ -54,7 +55,7 @@ async function run(args: unknown, respond: (c: Call) => unknown, opts: { propaga
   const src = readFileSync(SCRIPT, 'utf8').replace(/^export\s+/m, '');
   const calls: Call[] = [];
   const agent = async (prompt: string, o: { label?: string } = {}) => {
-    const c = { label: o.label ?? '?', prompt };
+    const c: Call = { label: o.label ?? '?', prompt, opts: o as Record<string, unknown> };
     calls.push(c);
     return respond(c);
   };
@@ -484,5 +485,40 @@ describe('refute-financial-change — clean / lensCount (what a bare Refute-Revi
     const { result } = await run('x', () => null);
     expect(result.allFailed).toBe(true);
     expect(result.clean).toBe(false);
+  });
+});
+
+describe('refute-financial-change — effort (optional per-lens reasoning effort)', () => {
+  it('with no effort arg no lens call carries an effort option and the result reports null', async () => {
+    const { calls, result } = await run({ changeSet: 'x' }, (c) => clean(lensOf(c.label)));
+    expect(calls).toHaveLength(5);
+    for (const c of calls) expect(c.opts).not.toHaveProperty('effort');
+    expect(result.effort).toBeNull();
+  });
+
+  it('passes the effort option to every lens call, including the fallback retry, and reports it', async () => {
+    let first = true;
+    const { calls, result } = await run({ changeSet: 'x', effort: 'low' }, (c) => {
+      if (first) { first = false; return null; } // first lens fails once -> retried on the fallback
+      return clean(lensOf(c.label));
+    });
+    expect(calls.length).toBeGreaterThanOrEqual(6);
+    for (const c of calls) expect(c.opts.effort).toBe('low');
+    expect(result.effort).toBe('low');
+  });
+
+  it('accepts every documented level', async () => {
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const { calls } = await run({ changeSet: 'x', effort }, (c) => clean(lensOf(c.label)));
+      for (const c of calls) expect(c.opts.effort).toBe(effort);
+    }
+  });
+
+  it('an unknown effort value throws instead of being silently dropped', async () => {
+    for (const effort of ['LOW', 'ultra', '', 5, null]) {
+      let dispatched = 0;
+      await expect(run({ changeSet: 'x', effort }, () => { dispatched++; return null; })).rejects.toThrow(/effort must be one of/);
+      expect(dispatched).toBe(0); // thrown before any lens was dispatched
+    }
   });
 });

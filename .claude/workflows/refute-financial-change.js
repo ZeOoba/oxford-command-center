@@ -14,6 +14,7 @@
 //   model: 'opus',           // optional: 'opus' (default; Opus 5.5 -- the floor since 2026-10-05) | 'fable' (retired from dispatch, still accepted)
 //   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model` (default 'opus' = one same-model retry per failed lens; null disables it)
 //   outOfScope: ['known limit of the mechanism this change sits on', ...],  // optional: string | string[] (max 20 single-line items, 300 UTF-16 code units each). See SCOPING below.
+//   effort: 'low',           // optional reasoning effort per lens call: low | medium | high | xhigh | max (default: inherit the session)
 // }})
 //
 // SCOPING A REVIEW OF A GUARD. When the change is a guard/gate on top of a mechanism with documented limits (a commit
@@ -37,6 +38,8 @@
 // must say so after the id. This rule lives HERE:
 // `check:refute` (scripts/check-refute-required.ts) only sees the trailer text, so it cannot enforce `clean`; the
 // procedure docs that show the trailer (architecture/coding-standards.md) predate it and still show the bare form.
+// A run with a non-null `effort` result field was a reduced-effort pass: it is a weaker claim, so say so after the id
+// (e.g. `wf_<id> (effort=low)`). `effort` records the REQUESTED level, not a confirmed applied one.
 //
 // TRUSTED CALLER INPUT. `changeSet` and `greenContext` go into every lens prompt verbatim, uncapped and unvalidated:
 // nothing stops a caller from writing scoping ("ignore X") into them, and `scoped` does NOT detect that. They are
@@ -200,6 +203,13 @@ const auditOf = (x) => (typeof x === 'string' ? { sha: sha256Hex(x), len: x.leng
 const changeSetAudit = auditOf(A.changeSet)
 const greenContextAudit = auditOf(A.greenContext)
 
+// Optional reasoning effort applied to every lens call (agent() supports opts.effort). Omitted = inherit the
+// session effort, i.e. today's behaviour; a low-effort pass is a cheaper second opinion, not a replacement
+// for the default-effort attestation run.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+if (A.effort !== undefined && !EFFORTS.includes(A.effort)) throw new Error('effort must be one of ' + EFFORTS.join(' | ') + ' (got ' + JSON.stringify(A.effort) + ')')
+const effortOpt = A.effort === undefined ? {} : { effort: A.effort }
+
 phase('Refute')
 
 // Known limits of the mechanism under the change (optional). Injected into every lens prompt so reviewers judge the
@@ -247,10 +257,10 @@ const base =
 // so that lens is retried on opus rather than silently dropped.
 const verdicts = await parallel(
   lenses.map((l) => async () => {
-    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT })
+    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT, ...effortOpt })
     if (v === null && effectiveFallback) {
       log(`${primaryModel} call failed for lens "${l.label}" — ${effectiveFallback === primaryModel ? 'retrying once on' : 'falling back to'} ${effectiveFallback}.`)
-      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT })
+      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT, ...effortOpt })
     }
     return v
   }),
@@ -297,5 +307,6 @@ return {
   changeSetSha256: changeSetAudit.sha, changeSetLength: changeSetAudit.len,
   greenContextSha256: greenContextAudit.sha, greenContextLength: greenContextAudit.len,
   models: { primary: primaryModel, fallback: effectiveFallback },
+  effort: A.effort ?? null,
   modelFloorMet: TIERS.includes(primaryModel),
 }

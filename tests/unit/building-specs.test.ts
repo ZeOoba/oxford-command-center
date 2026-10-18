@@ -621,3 +621,50 @@ describe('roofProjectionKey (issue #474 LOW: one projection per install fact, no
     expect(index.get(roofProjectionKey(newer.property, newer.report_id, newer.scope, newer.value))).toMatchObject({ installYear: 2012, ageToday: 14 });
   });
 });
+
+describe('#474 effectiveSpecs semantic tiebreak (Northwood R05)', () => {
+  const NORTHWOOD = meta({ report_id: 'R05', property_key: 'northwood', property_label: 'Northwood', report_date: '2024-09-16', inspection_date: '2024-08-28' });
+  const bldgA = 'Building A (2207 Northwood Dr)';
+  const same = { component: 'roof', scope: bldgA, as_of: '2024-08-28', source_page: 20 };
+  const stated = rawFact({ ...same, attribute: 'install_year_reported', value: 'approximately three to four years ago', confidence: 'STATED' });
+  const derived = rawFact({ ...same, attribute: 'install_year', value: '2020-2021', confidence: 'DERIVED', note: '2024 survey minus stated 3 to 4 years' });
+  const pick = (facts: unknown[]) => effectiveSpecs(stamp(NORTHWOOD, facts).facts).find((e) => e.component === 'roof' && e.attribute === 'install_year')!;
+
+  it('on an otherwise identical tie the report-STATED fact beats the DERIVED one, whatever the attribute spelling or input order', () => {
+    for (const facts of [[stated, derived], [derived, stated]]) {
+      const e = pick(facts);
+      expect(e.effective.confidence).toBe('STATED');
+      expect(e.effective.attribute).toBe('install_year_reported');
+      expect(e.history.map((h) => h.confidence)).toEqual(['DERIVED']); // derived year range kept as history
+      expect(e.conflicts).toBe(true);
+    }
+  });
+
+  it('the committed Northwood R05 roofs resolve to the STATED reported phrase for every building', () => {
+    const m = (JSON.parse(readFileSync(join(process.cwd(), 'data', 'building-specs', 'reports.json'), 'utf-8')) as Array<Record<string, unknown>>).find((r) => r.report_id === 'R05')!;
+    const facts = stamp(ReportMeta.parse(m), (JSON.parse(readFileSync(join(process.cwd(), 'data', 'building-specs', 'extractions', 'R05.json'), 'utf-8')) as { facts: unknown[] }).facts).facts;
+    const roofs = effectiveSpecs(facts).filter((e) => e.component === 'roof' && e.attribute === 'install_year');
+    expect(roofs).toHaveLength(3);
+    for (const r of roofs) expect(r.effective.attribute).toBe('install_year_reported');
+  });
+
+  it('a later as_of still beats confidence (the tiebreak only decides exact ties)', () => {
+    const later = rawFact({ ...same, attribute: 'install_year', value: 2021, confidence: 'DERIVED', as_of: '2024-09' });
+    expect(pick([stated, later]).effective.value).toBe(2021);
+  });
+});
+
+describe('#474 vintageFor honours the register stale flag', () => {
+  it('a recent report flagged stale is STALE, and stale beats draft', () => {
+    expect(vintageFor({ report_date: '2026-04-07', draft: false, stale: true })).toBe('STALE');
+    expect(vintageFor({ report_date: '2026-04-07', draft: true, stale: true })).toBe('STALE');
+    expect(vintageFor({ report_date: '2026-04-07', draft: false })).toBe('CURRENT');
+  });
+  it('ReportMeta accepts stale (default false) and stampReport carries it into every fact and finding', () => {
+    expect(ReportMeta.parse({ ...CURRENT }).stale).toBe(false);
+    const m = meta({ report_id: 'R08', report_date: '2025-10-29', stale: true });
+    const { facts, findings } = stamp(m, [rawFact({ as_of: '2025-10' })], [rawFinding()]);
+    expect(facts[0]!.report_vintage).toBe('STALE');
+    expect(findings[0]!.report_vintage).toBe('STALE');
+  });
+});
