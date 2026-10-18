@@ -1,0 +1,207 @@
+// @vitest-environment node
+//
+// tests/unit/refute-workflow-scoping.test.ts
+//
+// Pins the review-hygiene and scoping behavior added to the refute-financial-change workflow:
+//  (1) reviewers are told to clean up scratch worktrees and node_modules junctions, and to remove the
+//      junction with rmdir and NEVER recursively (a recursive delete follows the link and wipes the real
+//      node_modules);
+//  (2) an optional `outOfScope` arg injects the documented limits of the mechanism under the change into
+//      EVERY lens prompt, between the change set and the lens, so a guard is reviewed GIVEN those limits;
+//      with no `outOfScope` the prompt carries no such block;
+//  (3) a bad `outOfScope` type throws instead of silently dropping the scoping;
+//  (4) the result carries `clean` / `lensCount` so a Refute-Reviewed trailer can only be a bare run id when
+//      EVERY lens succeeded and none found a real defect.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const SCRIPT = join(process.cwd(), '.claude', 'workflows', 'refute-financial-change.js');
+
+interface WorkflowResult {
+  verdicts: unknown[];
+  anyRealDefect: boolean;
+  succeeded: number;
+  allFailed: boolean;
+  lensCount: number;
+  worstSeverityRank: number;
+  clean: boolean;
+}
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...a: string[]
+) => (...x: unknown[]) => Promise<WorkflowResult>;
+
+interface Call { label: string; prompt: string }
+
+/** Run the workflow under a stubbed runtime that records every prompt. */
+async function run(args: unknown, respond: (c: Call) => unknown) {
+  const src = readFileSync(SCRIPT, 'utf8').replace(/^export\s+/m, '');
+  const calls: Call[] = [];
+  const agent = async (prompt: string, o: { label?: string } = {}) => {
+    const c = { label: o.label ?? '?', prompt };
+    calls.push(c);
+    return respond(c);
+  };
+  const parallel = (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
+  const fn = new AsyncFunction('agent', 'parallel', 'phase', 'log', 'args', src);
+  const logs: string[] = [];
+  const result = await fn(agent, parallel, () => undefined, (m: string) => logs.push(m), args);
+  return { calls, result, logs };
+}
+
+const lensOf = (label: string) => label.replace(/^refute:/, '').replace(/:opus-fallback$/, '');
+const clean = (lens: string) => ({ lens, foundRealDefect: false, maxSeverity: 'none', findings: [], summary: 's' });
+const defect = (lens: string) => ({ lens, foundRealDefect: true, maxSeverity: 'medium', findings: [], summary: 's' });
+
+describe('refute-financial-change — reviewer hygiene', () => {
+  it('every lens prompt tells the reviewer to rmdir (never recursively delete) a node_modules junction and remove its scratch worktree', async () => {
+    const { calls } = await run('a change set', (c) => clean(lensOf(c.label)));
+    expect(calls).toHaveLength(5);
+    for (const c of calls) {
+      expect(c.prompt).toContain('CLEAN UP before you finish');
+      expect(c.prompt).toContain('cmd /c rmdir');
+      expect(c.prompt).toMatch(/NEVER rm -rf or any recursive delete through it/);
+      expect(c.prompt).toContain('git worktree remove --force');
+    }
+  });
+});
+
+describe('refute-financial-change — outOfScope (scoping a guard review)', () => {
+  it('with no outOfScope the prompt carries no known-limits block', async () => {
+    const { calls } = await run({ changeSet: 'x' }, (c) => clean(lensOf(c.label)));
+    for (const c of calls) expect(c.prompt).not.toContain('KNOWN LIMITS OF THE UNDERLYING MECHANISM');
+  });
+
+  it('injects every item into EVERY lens prompt, after the change set and before the lens', async () => {
+    const { calls } = await run(
+      { changeSet: 'CHANGE-SET-MARKER', outOfScope: ['detector flips on noise', '  restale moves rows in place  ', ''] },
+      (c) => clean(lensOf(c.label)),
+    );
+    expect(calls).toHaveLength(5);
+    for (const c of calls) {
+      expect(c.prompt).toContain('KNOWN LIMITS OF THE UNDERLYING MECHANISM');
+      expect(c.prompt).toContain('- detector flips on noise');
+      expect(c.prompt).toContain('- restale moves rows in place'); // trimmed
+      expect(c.prompt).not.toMatch(/- \s*\n/); // the empty item was dropped
+      const i = c.prompt.indexOf('CHANGE-SET-MARKER');
+      const j = c.prompt.indexOf('KNOWN LIMITS OF THE UNDERLYING MECHANISM');
+      const k = c.prompt.indexOf('YOUR LENS:');
+      expect(i).toBeGreaterThan(-1);
+      expect(j).toBeGreaterThan(i);
+      expect(k).toBeGreaterThan(j);
+    }
+  });
+
+  it('accepts a single string', async () => {
+    const { calls } = await run({ changeSet: 'x', outOfScope: 'one known limit' }, (c) => clean(lensOf(c.label)));
+    for (const c of calls) expect(c.prompt).toContain('- one known limit');
+  });
+
+  it('an empty list or empty string adds no block', async () => {
+    for (const outOfScope of [[], '', '   ', null]) {
+      const { calls } = await run({ changeSet: 'x', outOfScope }, (c) => clean(lensOf(c.label)));
+      for (const c of calls) expect(c.prompt).not.toContain('KNOWN LIMITS OF THE UNDERLYING MECHANISM');
+    }
+  });
+
+  it('a non-string, non-array outOfScope throws instead of silently dropping the scoping', async () => {
+    for (const outOfScope of [42, { a: 1 }, true]) {
+      await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope/);
+    }
+  });
+
+  it('a non-string element inside an outOfScope array throws instead of becoming "[object Object]"', async () => {
+    for (const outOfScope of [[{}], [null], [1], ['ok', ['nested']]]) {
+      await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope array elements/);
+    }
+  });
+});
+
+describe('refute-financial-change — clean / lensCount (what a bare Refute-Reviewed id may claim)', () => {
+  it('clean is true only when every lens succeeded and none found a real defect', async () => {
+    const { result } = await run('x', (c) => clean(lensOf(c.label)));
+    expect(result.lensCount).toBe(5);
+    expect(result.succeeded).toBe(5);
+    expect(result.anyRealDefect).toBe(false);
+    expect(result.clean).toBe(true);
+  });
+
+  it('a real defect in any lens makes the run not clean', async () => {
+    const { result } = await run('x', (c) => (lensOf(c.label) === 'edges' ? defect('edges') : clean(lensOf(c.label))));
+    expect(result.anyRealDefect).toBe(true);
+    expect(result.clean).toBe(false);
+  });
+
+  it('a lens that failed (even after its retry) with no defects elsewhere is NOT clean — partial coverage is not a pass', async () => {
+    const { result } = await run('x', (c) => (lensOf(c.label) === 'determinism' ? null : clean(lensOf(c.label))));
+    expect(result.succeeded).toBe(4);
+    expect(result.lensCount).toBe(5);
+    expect(result.anyRealDefect).toBe(false);
+    expect(result.clean).toBe(false);
+  });
+
+  it('a lens reporting medium-or-higher severity with foundRealDefect=false is NOT clean (severity must agree with the loop rule)', async () => {
+    for (const maxSeverity of ['medium', 'high', 'critical']) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity, findings: [], summary: 's' } : clean(lensOf(c.label)),
+      );
+      expect(result.anyRealDefect).toBe(false);
+      expect(result.succeeded).toBe(5);
+      expect(result.clean).toBe(false);
+    }
+  });
+
+  it('a finding of medium-or-higher severity under a lower self-reported maxSeverity is NOT clean (worst spans findings too)', async () => {
+    for (const severity of ['medium', 'high', 'critical']) {
+      const { result, logs } = await run('x', (c) =>
+        lensOf(c.label) === 'edges'
+          ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity, detail: 'd' }], summary: 's' }
+          : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBeGreaterThanOrEqual(2);
+      expect(result.clean).toBe(false);
+      expect(logs.join('\n')).toContain('NOT clean');
+      expect(logs.join('\n')).not.toContain('Clear to commit');
+    }
+  });
+
+  it('an unknown or missing severity fails closed (ranks as critical), including inherited-key names', async () => {
+    for (const maxSeverity of ['HIGH', 'constructor', 'toString', undefined, 7]) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity, findings: [], summary: 's' } : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBe(4);
+      expect(result.clean).toBe(false);
+    }
+    const { result } = await run('x', (c) =>
+      lensOf(c.label) === 'edges'
+        ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity: 'bogus' }], summary: 's' }
+        : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(false);
+  });
+
+  it('a clean run still logs "Clear to commit" and a low-only finding stays clean', async () => {
+    const { result, logs } = await run('x', (c) =>
+      lensOf(c.label) === 'edges'
+        ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [{ title: 't', severity: 'low' }], summary: 's' }
+        : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(true);
+    expect(logs.join('\n')).toContain('Clear to commit');
+  });
+
+  it('a low-severity note with foundRealDefect=false is still clean', async () => {
+    const { result } = await run('x', (c) =>
+      lensOf(c.label) === 'edges' ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'low', findings: [], summary: 's' } : clean(lensOf(c.label)),
+    );
+    expect(result.clean).toBe(true);
+  });
+
+  it('all lenses failing is not clean', async () => {
+    const { result } = await run('x', () => null);
+    expect(result.allFailed).toBe(true);
+    expect(result.clean).toBe(false);
+  });
+});
