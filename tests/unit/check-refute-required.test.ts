@@ -27,6 +27,8 @@ import {
   REFUTE_GATE_PATH_PREFIXES,
   resolveGitExecutable,
   gitRunnerFor,
+  NON_FINANCIAL_JSON_PATTERN,
+  NON_FINANCIAL_ROOT_PATTERNS,
 } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
@@ -135,6 +137,9 @@ describe('check-refute-required — financial-source classification', () => {
       'Server/Brief/Send.ts',
       'src/contracts/Lease.ts',
       'SRC/LIB/CN.TS',
+      // DELIVERY_ONLY_PATHS entries in odd case (real entries: server/warehouse/api.ts, .../debt-api.ts).
+      'Server/Warehouse/API.ts',
+      'SERVER/WAREHOUSE/DEBT-API.TS',
     ]) {
       expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: false });
     }
@@ -154,6 +159,14 @@ describe('check-refute-required — financial-source classification', () => {
     const literals = [...src.slice(from, to).matchAll(/'([^'\n]*\/[^'\n]*)'/g)].map((m) => m[1] ?? '');
     expect(literals.length).toBeGreaterThan(20);
     for (const l of literals) expect({ l, lower: l === l.toLowerCase() }).toEqual({ l, lower: true });
+    // Extension / suffix literals (`.md`, `.json`, ...) used by endsWith() in the classifier.
+    const exts = [...src.slice(from, to).matchAll(/'(\.[A-Za-z0-9.]+)'/g)].map((m) => m[1] ?? '');
+    expect(exts).toEqual(expect.arrayContaining(['.md', '.json']));
+    for (const l of exts) expect({ l, lower: l === l.toLowerCase() }).toEqual({ l, lower: true });
+    // The exemption regexes: their source must be lower-case too (no /i needed, none silently case-sensitive).
+    for (const re of [NON_FINANCIAL_JSON_PATTERN, ...NON_FINANCIAL_ROOT_PATTERNS]) {
+      expect({ re: re.source, lower: re.source === re.source.toLowerCase() }).toEqual({ re: re.source, lower: true });
+    }
   });
   it('flags the WHOLE .github/workflows/ directory by prefix (any workflow can publish a look-alike check name)', () => {
     for (const p of [
@@ -1166,6 +1179,66 @@ describe('check-refute-required — per-commit attestation', () => {
 
     // An empty --base is caller configuration, not a git gap: unchanged (warns, exit 0, also under --strict).
     expect(runCli(['--strict', '--base='], {}, broken)).toMatchObject({ stream: 'warn', exitCode: 0 });
+  });
+
+  it('runCli --strict FAILS CLOSED on a git that EXITS 0 with garbage; non-strict controls unchanged', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    // Empty stdout for EVERY command (git "succeeds" but says nothing): used to be "OK: no financial ... changed".
+    const empty = (): string => '';
+    const s1 = runCli(['--strict', '--base=origin/main'], {}, empty);
+    expect(s1).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(s1.message).toMatch(/FAILED CLOSED/);
+    expect(runCli(['--base=origin/main'], {}, empty)).toMatchObject({ exitCode: 0 });
+
+    // Probes fine, rev-parse prints a non-SHA, rev-list prints nothing.
+    const nonSha = (args: string[]): string => {
+      if (args.includes('rev-parse') && args.includes('--verify')) return 'not-a-sha\n';
+      if (args.includes('rev-list')) return '';
+      return healthy([fin])(args);
+    };
+    const s2 = runCli(['--strict', '--base=origin/main'], {}, nonSha);
+    expect(s2).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(s2.message).toMatch(/FAILED CLOSED/);
+    expect(runCli(['--base=origin/main'], {}, nonSha)).toMatchObject({ exitCode: 0 });
+    // A 41..63-hex string is not a SHA either (only 40 or 64).
+    const longish = (args: string[]): string =>
+      args.includes('rev-parse') && args.includes('--verify') ? 'a'.repeat(41) + '\n' : nonSha(args);
+    expect(runCli(['--strict', '--base=origin/main'], {}, longish)).toMatchObject({ stream: 'error', exitCode: 1 });
+
+    // Unparseable `git version`.
+    const badVersion = (args: string[]): string => (args[0] === 'version' ? 'hello\n' : healthy([fin])(args));
+    const s3 = runCli(['--strict', '--base=origin/main'], {}, badVersion);
+    expect(s3).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(s3.message).toMatch(/FAILED CLOSED/);
+    expect(runCli(['--base=origin/main'], {}, badVersion)).toMatchObject({ exitCode: 0 });
+
+    // Shallow probe that is neither 'true' nor 'false'.
+    const maybe = (args: string[]): string =>
+      args[0] === 'rev-parse' && args[1] === '--is-shallow-repository' ? 'maybe\n' : healthy([fin])(args);
+    const s4 = runCli(['--strict', '--base=origin/main'], {}, maybe);
+    expect(s4).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(s4.message).toMatch(/FAILED CLOSED/);
+    expect(runCli(['--base=origin/main'], {}, maybe)).toMatchObject({ exitCode: 0 });
+
+    // The empty --base= carve-out stays (caller configuration).
+    expect(runCli(['--strict', '--base='], {}, empty)).toMatchObject({ stream: 'warn', exitCode: 0 });
+    // Control: a well-formed healthy git still passes/violates exactly as before.
+    expect(runCli(['--strict', '--base=origin/main'], {}, healthy([fin]))).toMatchObject({ stream: 'error', exitCode: 1 });
+    const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
+    expect(runCli(['--strict', '--base=origin/main'], {}, healthy([docs]))).toMatchObject({ stream: 'log', exitCode: 0 });
+  });
+
+  it('runCli --strict with NO --head FAILS CLOSED when the default HEAD does not resolve', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    const headThrows = (args: string[]): string => {
+      if (args.includes('rev-parse') && args[args.length - 1] === 'HEAD^{commit}') throw new Error('fatal: bad HEAD');
+      return healthy([fin])(args);
+    };
+    const r = runCli(['--strict'], {}, headThrows);
+    expect(r).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(r.message).toMatch(/FAILED CLOSED/);
+    expect(r.message).toMatch(/HEAD does not resolve/);
+    expect(runCli([], {}, headThrows)).toMatchObject({ stream: 'warn', exitCode: 0 });
   });
 
   it('runCli --strict with a git that returns garbage for everything is NOT a pass', () => {
