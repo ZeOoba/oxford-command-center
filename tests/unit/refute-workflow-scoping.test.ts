@@ -12,6 +12,7 @@
 //  (3) a bad `outOfScope` type throws instead of silently dropping the scoping;
 //  (4) the result carries `clean` / `lensCount` so a Refute-Reviewed trailer can only be a bare run id when
 //      EVERY lens succeeded and none found a real defect.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -26,6 +27,15 @@ interface WorkflowResult {
   lensCount: number;
   worstSeverityRank: number;
   clean: boolean;
+  lensesDefault: boolean;
+  lensLabels: string[];
+  outOfScope: string[];
+  scoped: boolean;
+  repo: string;
+  changeSetSha256: string | null;
+  changeSetLength: number | null;
+  greenContextSha256: string | null;
+  greenContextLength: number | null;
   effort: string | null;
 }
 
@@ -35,8 +45,13 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
 
 interface Call { label: string; prompt: string; opts: Record<string, unknown> }
 
-/** Run the workflow under a stubbed runtime that records every prompt. */
-async function run(args: unknown, respond: (c: Call) => unknown) {
+/**
+ * Run the workflow under a stubbed runtime that records every prompt. The default `parallel` stub mirrors the
+ * Workflow runtime contract (a thunk that throws resolves to null; the call never rejects). `propagate: true`
+ * swaps in a stub that lets a thrown agent reject the whole run, so a test can prove a throw is never swallowed
+ * into a clean result under either contract.
+ */
+async function run(args: unknown, respond: (c: Call) => unknown, opts: { propagate?: boolean } = {}) {
   const src = readFileSync(SCRIPT, 'utf8').replace(/^export\s+/m, '');
   const calls: Call[] = [];
   const agent = async (prompt: string, o: { label?: string } = {}) => {
@@ -44,7 +59,9 @@ async function run(args: unknown, respond: (c: Call) => unknown) {
     calls.push(c);
     return respond(c);
   };
-  const parallel = (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
+  const parallel = opts.propagate
+    ? (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t()))
+    : (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map((t) => t().catch(() => null)));
   const fn = new AsyncFunction('agent', 'parallel', 'phase', 'log', 'args', src);
   const logs: string[] = [];
   const result = await fn(agent, parallel, () => undefined, (m: string) => logs.push(m), args);
@@ -63,7 +80,231 @@ describe('refute-financial-change — reviewer hygiene', () => {
       expect(c.prompt).toContain('CLEAN UP before you finish');
       expect(c.prompt).toContain('cmd /c rmdir');
       expect(c.prompt).toMatch(/NEVER rm -rf or any recursive delete through it/);
-      expect(c.prompt).toContain('git worktree remove --force');
+    }
+  });
+
+  it('names the worktree under review, forbids --force, and removes the junction BEFORE a plain git worktree remove', async () => {
+    const repo = 'C:\\some\\checkout-under-review';
+    const { calls } = await run({ changeSet: 'x', repo }, (c) => clean(lensOf(c.label)));
+    expect(calls).toHaveLength(5);
+    for (const c of calls) {
+      const i = c.prompt.indexOf('CLEAN UP before you finish');
+      const block = c.prompt.slice(i, c.prompt.indexOf('CHANGE SET:'));
+      // The worktree under review is named explicitly inside the clean-up instruction.
+      expect(block).toContain(repo);
+      expect(block).toMatch(/NEVER run `git worktree remove` on the worktree under review/);
+      // --force is never recommended; it is forbidden by name.
+      expect(c.prompt).not.toContain('git worktree remove --force');
+      expect(block).toMatch(/NEVER pass --force/);
+      // Order: junction / scratch node_modules removed first, then a plain remove that fails safely.
+      const rm = block.indexOf('cmd /c rmdir');
+      const plain = block.indexOf('then run plain `git worktree remove <your-scratch-path>`');
+      expect(rm).toBeGreaterThan(-1);
+      expect(plain).toBeGreaterThan(rm);
+      expect(block).toMatch(/refuses.*uncommitted.*STOP and report/s);
+      // Never reads as permission to delete a node_modules recursively: only a junction/symlink is removed.
+      expect(block).not.toMatch(/delete a node_modules/);
+      expect(block).toMatch(/remove ONLY a node_modules junction or symlink/);
+      expect(block).toMatch(/leave a real node_modules directory alone/);
+    }
+  });
+});
+
+describe('refute-financial-change — custom lenses (what clean may claim)', () => {
+  const ALL_DEFAULT = ['correctness', 'determinism', 'edges', 'sweep-completer', 'scope-auditor'];
+
+  it('a default run reports lensesDefault=true and every default label', async () => {
+    const { result } = await run('x', (c) => clean(lensOf(c.label)));
+    expect(result.lensesDefault).toBe(true);
+    expect(result.lensLabels).toEqual(ALL_DEFAULT);
+    expect(result.clean).toBe(true);
+  });
+
+  it('a single weak custom lens is NOT clean even when it passes (the "confirm it looks fine" bypass)', async () => {
+    const { result, logs } = await run({ changeSet: 'x', lenses: [{ label: 'x', focus: 'confirm it looks fine' }] }, (c) =>
+      clean(lensOf(c.label)),
+    );
+    expect(result.lensCount).toBe(1);
+    expect(result.succeeded).toBe(1);
+    expect(result.lensesDefault).toBe(false);
+    expect(result.lensLabels).toEqual(['x']);
+    expect(result.clean).toBe(false);
+    expect(logs.join('\n')).not.toContain('Clear to commit');
+  });
+
+  it('a custom lens reusing a default LABEL with a weaker focus does not count as that default lens', async () => {
+    const { result } = await run({ changeSet: 'x', lenses: ALL_DEFAULT.map((label) => ({ label, focus: 'looks fine' })) }, (c) =>
+      clean(lensOf(c.label)),
+    );
+    expect(result.lensesDefault).toBe(false);
+    expect(result.clean).toBe(false);
+  });
+
+  it('a custom set that is a SUPERSET of the default lenses can be clean', async () => {
+    // Recover the exact default lenses from a default run's prompts (prompt = base + focus).
+    const { calls } = await run('x', (c) => clean(lensOf(c.label)));
+    const base = calls[0]!.prompt.slice(0, calls[0]!.prompt.indexOf('YOUR LENS: ') + 'YOUR LENS: '.length);
+    const defaults = calls.map((c) => ({ label: lensOf(c.label), focus: c.prompt.slice(base.length) }));
+    const { result } = await run(
+      { changeSet: 'x', lenses: [...defaults, { label: 'extra', focus: 'TAX BASIS — break the depreciation split.' }] },
+      (c) => clean(lensOf(c.label)),
+    );
+    expect(result.lensCount).toBe(6);
+    expect(result.lensesDefault).toBe(false);
+    expect(result.lensLabels).toEqual([...ALL_DEFAULT, 'extra']);
+    expect(result.clean).toBe(true);
+  });
+
+  it('a malformed custom lens throws instead of running (no "YOUR LENS: undefined")', async () => {
+    const bad: unknown[] = [
+      [{ label: 'x' }],
+      [{ focus: 'f' }],
+      [{ label: '', focus: 'f' }],
+      [{ label: 'x', focus: '   ' }],
+      [{ label: 1, focus: 'f' }],
+      [{ label: 'x', focus: ['f'] }],
+      [null],
+      ['a string lens'],
+      [{ label: 'ok', focus: 'ok' }, {}],
+    ];
+    for (const lenses of bad) {
+      await expect(run({ changeSet: 'x', lenses }, () => null)).rejects.toThrow(/lens/);
+    }
+  });
+
+  it('a non-array lenses value throws instead of silently falling back to the defaults', async () => {
+    for (const lenses of ['correctness', { label: 'x', focus: 'f' }, 3, true]) {
+      await expect(run({ changeSet: 'x', lenses }, () => null)).rejects.toThrow(/lenses must be an array/);
+    }
+  });
+});
+
+describe('refute-financial-change — a thrown lens agent is never clean', () => {
+  it('runtime contract (thrown thunk -> null): one lens throwing makes the run not clean', async () => {
+    const { result, logs } = await run('x', (c) => {
+      if (lensOf(c.label) === 'edges') throw new Error('agent crashed');
+      return clean(lensOf(c.label));
+    });
+    expect(result.succeeded).toBe(4);
+    expect(result.lensCount).toBe(5);
+    expect(result.clean).toBe(false);
+    expect(logs.join('\n')).not.toContain('Clear to commit');
+  });
+
+  it('propagating parallel: one lens throwing rejects the whole run (no result, so nothing to cite as clean)', async () => {
+    await expect(
+      run(
+        'x',
+        (c) => {
+          if (lensOf(c.label) === 'edges') throw new Error('agent crashed');
+          return clean(lensOf(c.label));
+        },
+        { propagate: true },
+      ),
+    ).rejects.toThrow(/agent crashed/);
+  });
+});
+
+describe('refute-financial-change — foundRealDefect must be exactly false to count as clean', () => {
+  for (const [name, value] of [
+    ['missing', undefined],
+    ['null', null],
+    ['0', 0],
+    ["'false'", 'false'],
+    ["''", ''],
+  ] as const) {
+    it(`foundRealDefect ${name} is NOT clean`, async () => {
+      const { result, logs } = await run('x', (c) => {
+        if (lensOf(c.label) !== 'edges') return clean(lensOf(c.label));
+        const v: Record<string, unknown> = { lens: 'edges', maxSeverity: 'none', findings: [], summary: 's' };
+        if (value !== undefined) v.foundRealDefect = value;
+        return v;
+      });
+      expect(result.anyRealDefect).toBe(true);
+      expect(result.clean).toBe(false);
+      expect(logs.join('\n')).not.toContain('Clear to commit');
+    });
+  }
+
+  it('control: boolean false stays clean', async () => {
+    const { result } = await run('x', (c) => clean(lensOf(c.label)));
+    expect(result.anyRealDefect).toBe(false);
+    expect(result.clean).toBe(true);
+  });
+});
+
+describe('refute-financial-change — what was reviewed is auditable (repo, changeSet, greenContext)', () => {
+  const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+  it('echoes repo and the sha256 + length of changeSet and greenContext', async () => {
+    const changeSet = 'Change set — NOI guard; ünïcödé and an astral 𝄞 char\nline two';
+    const greenContext = 'Gate is green on the current corpus.';
+    const repo = 'C:\\some\\checkout';
+    const { result } = await run({ changeSet, greenContext, repo }, (c) => clean(lensOf(c.label)));
+    expect(result.repo).toBe(repo);
+    expect(result.changeSetSha256).toBe(sha(changeSet));
+    expect(result.changeSetLength).toBe(changeSet.length);
+    expect(result.greenContextSha256).toBe(sha(greenContext));
+    expect(result.greenContextLength).toBe(greenContext.length);
+  });
+
+  it('hashes match node:crypto across edge inputs (empty, long, multi-block, lone surrogate)', async () => {
+    for (const changeSet of ['', 'a', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'x'.repeat(10_000), 'lone \uD800 surrogate']) {
+      const { result } = await run({ changeSet }, (c) => clean(lensOf(c.label)));
+      expect(result.changeSetSha256).toBe(sha(changeSet));
+    }
+  });
+
+  it('a non-string changeSet or greenContext throws (it would otherwise reach the prompt as "[object Object]")', async () => {
+    for (const bad of [{ a: 1 }, ['x'], 42, true]) {
+      await expect(run({ changeSet: bad }, () => null)).rejects.toThrow(/changeSet must be a string/);
+      await expect(run({ changeSet: 'x', greenContext: bad }, () => null)).rejects.toThrow(/greenContext must be a string/);
+    }
+  });
+
+  it('lengths are UTF-16 code units (JS string length), not bytes or code points, and the header says so', async () => {
+    // U+1D11E is 1 code point, 2 UTF-16 code units, 4 UTF-8 bytes; 'é' is 1 unit, 2 bytes.
+    const changeSet = 'é𝄞';
+    const { result } = await run({ changeSet, greenContext: '𝄞' }, (c) => clean(lensOf(c.label)));
+    expect(result.changeSetLength).toBe(3);
+    expect(result.greenContextLength).toBe(2);
+    const header = readFileSync(SCRIPT, 'utf8').split('\nexport const meta')[0]!;
+    expect(header).toMatch(/changeSetLength[^\n]*\n?[^\n]*UTF-16 code units/);
+    expect(header).toMatch(/not bytes/);
+  });
+
+  it('the header does not claim the procedure docs still show only the bare trailer form (this PR updated them)', () => {
+    const header = readFileSync(SCRIPT, 'utf8').split('\nexport const meta')[0]!;
+    expect(header).not.toMatch(/predate it and still show the bare form/);
+    expect(header).toMatch(/architecture\/coding-standards\.md[^\n]*\n?[^\n]*(?:qualifier|\(scoped\))/);
+  });
+
+  it('a plain-string args value is the changeSet', async () => {
+    const { result } = await run('plain change set', (c) => clean(lensOf(c.label)));
+    expect(result.changeSetSha256).toBe(sha('plain change set'));
+    expect(result.changeSetLength).toBe('plain change set'.length);
+  });
+
+  it('absent changeSet / greenContext echo null (the built-in defaults are not caller input)', async () => {
+    const { result } = await run({}, (c) => clean(lensOf(c.label)));
+    expect(result.changeSetSha256).toBeNull();
+    expect(result.changeSetLength).toBeNull();
+    expect(result.greenContextSha256).toBeNull();
+    expect(result.greenContextLength).toBeNull();
+    expect(result.repo).toBe('C:\\Users\\Owner\\oxford-command-center');
+  });
+});
+
+describe('refute-financial-change — non-array findings fail closed', () => {
+  it('findings that is not an array ranks as critical and is not clean', async () => {
+    for (const findings of [undefined, null, 'none', { severity: 'low' }, 0]) {
+      const { result } = await run('x', (c) =>
+        lensOf(c.label) === 'edges'
+          ? { lens: 'edges', foundRealDefect: false, maxSeverity: 'none', findings, summary: 's' }
+          : clean(lensOf(c.label)),
+      );
+      expect(result.worstSeverityRank).toBe(4);
+      expect(result.clean).toBe(false);
     }
   });
 });
@@ -116,6 +357,52 @@ describe('refute-financial-change — outOfScope (scoping a guard review)', () =
     for (const outOfScope of [[{}], [null], [1], ['ok', ['nested']]]) {
       await expect(run({ changeSet: 'x', outOfScope }, () => null)).rejects.toThrow(/outOfScope array elements/);
     }
+  });
+
+  it('echoes the (trimmed, non-empty) items and flags the run as scoped', async () => {
+    const { result } = await run({ changeSet: 'x', outOfScope: ['  limit A ', '', 'limit B'] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toEqual(['limit A', 'limit B']);
+    expect(result.scoped).toBe(true);
+  });
+
+  it('an unscoped run echoes an empty list and scoped=false', async () => {
+    for (const a of ['x', { changeSet: 'x' }, { changeSet: 'x', outOfScope: [] }, { changeSet: 'x', outOfScope: '  ' }]) {
+      const { result } = await run(a, (c) => clean(lensOf(c.label)));
+      expect(result.outOfScope).toEqual([]);
+      expect(result.scoped).toBe(false);
+    }
+  });
+
+  it('caps the item count at 20', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => 'limit ' + i);
+    const { result } = await run({ changeSet: 'x', outOfScope: twenty }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toHaveLength(20);
+    await expect(run({ changeSet: 'x', outOfScope: [...twenty, 'one more'] }, () => null)).rejects.toThrow(/outOfScope.*20/);
+  });
+
+  it('rejects an item containing a newline or carriage return (one item cannot smuggle extra bullets)', async () => {
+    for (const item of ['limit A\n- limit B', 'limit A\r- limit B', 'a\r\nb', 'trailing\nnewline-in-middle']) {
+      await expect(run({ changeSet: 'x', outOfScope: [item] }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+      await expect(run({ changeSet: 'x', outOfScope: item }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+    }
+    // Surrounding whitespace (incl. a trailing newline) is trimmed first, so it is not a smuggled line.
+    const { result } = await run({ changeSet: 'x', outOfScope: ['  limit A\n'] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope).toEqual(['limit A']);
+  });
+
+  it('rejects every other line/paragraph separator too: \\v, \\f, NEL (U+0085), LS (U+2028), PS (U+2029)', async () => {
+    for (const sep of ['\v', '\f', '\u0085', '\u2028', '\u2029']) {
+      const item = 'limit A' + sep + '- limit B';
+      await expect(run({ changeSet: 'x', outOfScope: [item] }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+      await expect(run({ changeSet: 'x', outOfScope: item }, () => null)).rejects.toThrow(/outOfScope.*line break/);
+    }
+  });
+
+  it('caps each item at 300 characters', async () => {
+    const { result } = await run({ changeSet: 'x', outOfScope: ['a'.repeat(300)] }, (c) => clean(lensOf(c.label)));
+    expect(result.outOfScope[0]).toHaveLength(300);
+    await expect(run({ changeSet: 'x', outOfScope: ['a'.repeat(301)] }, () => null)).rejects.toThrow(/outOfScope.*300/);
+    await expect(run({ changeSet: 'x', outOfScope: 'a'.repeat(301) }, () => null)).rejects.toThrow(/outOfScope.*300/);
   });
 });
 

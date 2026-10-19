@@ -60,11 +60,18 @@
 // history still records what attested what. Nothing re-runs this gate on main.
 //
 // Default mode WARNS and exits 0 (local dev — never blocks WIP). `--strict` EXITS 1 on a violation
-// (wired into CI for PRs; also usable from /ship). Fails OPEN only when the range cannot be verified
-// at all: the base does not resolve, --base is empty, the default HEAD does not resolve (no
-// commits), the clone is shallow, git < 2.41, or git itself is unusable. Everything after both ends
-// resolve fails CLOSED: an explicit --head that does not resolve, a range that cannot be listed, a
-// commit that cannot be read (see collectCommits: no trailer clears it).
+// (wired into CI for PRs; also usable from /ship). In DEFAULT mode it skips (warns, exit 0) when the
+// range cannot be verified at all: the base does not resolve, --base is empty, the default HEAD does
+// not resolve (no commits), the clone is shallow, git < 2.41, or git itself is unusable. Under
+// --strict every one of those that is a GIT TOOLING GAP (all but an empty --base, which is caller
+// configuration) FAILS CLOSED with exit 1 (wf_d3be7fbd-39e: a git that resolves but is broken used to
+// pass CI with exit 0). Under --strict a git that exits 0 with output it cannot parse is a tooling gap
+// too: an unrecognised `git version`, a shallow probe that is neither true nor false, a base/head
+// rev-parse that is not a 40- or 64-hex commit id. Exit 1 even in default mode: git that cannot be
+// resolved to an absolute path OUTSIDE the checkout (see resolveGitExecutable: a committed repo-root
+// git.exe must never be what the gate runs). Reported as VIOLATIONS, so exit 1 under --strict only
+// (default mode warns and exits 0): an explicit --head that does not resolve, a range that cannot be
+// listed, a commit that cannot be read (see collectCommits: no trailer clears it).
 //
 // Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>] [--head=<ref>]
 //   base defaults to $REFUTE_BASE, else 'origin/main'; head defaults to HEAD.
@@ -73,8 +80,9 @@
 // unit-test without the process.exit side effects — the bottom-of-file guard runs main() only when
 // executed directly (mirrors governance-check.ts).
 import { execFileSync } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, posix, resolve, win32 } from 'node:path';
 
 // Pure route-plumbing / dispatch files in server/warehouse/ that contain no financial math —
 // subtracted from the broad prefix. Fail-CLOSED elsewhere: any warehouse file NOT listed here
@@ -180,7 +188,7 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
 // automatically once real rows exist -- not live governor inputs. Without this every edit demanded a refute
 // trailer, which trains people to reach for Refute-Skip.
-const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
+export const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
 const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
   // 2026-09-22 (weekly sweep, finding 6): the 2026-09-21 round above closed the blanket-`.json` hole
@@ -302,11 +310,97 @@ export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
 ]);
 // PowerShell smoke tests are test scaffolding (the .test/.spec rule above only knows .ts/.tsx).
 // Scoped to scripts/ and scripts/lib/ directly — a deeper or differently-suffixed file is in scope.
-const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
+export const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
+
+// The refute gate itself (2026-10-17/18, PR #490; review fixes for PR #488's workflow changes). The
+// refute-financial-change workflow decides what `clean` means for every Refute-Reviewed attestation, and this script
+// decides which paths need one; weakening either silently weakens every financial gate at once. The workflow lives
+// under .claude/workflows/, outside both default-deny roots, so it was editable with no trailer. Checked FIRST, ahead
+// of every exemption, so a later NON_FINANCIAL_ROOT_PATHS / DELIVERY_ONLY_PATHS entry cannot switch the gate off.
+// File-level for .claude/workflows/: the other Claude workflows are not financial-decision source.
+//
+// THREAT MODEL (wf_d3be7fbd-39e, accepted by Gabriel). This is a TRAILER-REQUIREMENT check, and CI runs it from the PR
+// HEAD's own copy of this script and of ci.yml. It stops an ACCIDENTAL omission (a financial or gate-wiring change
+// landing with no Refute-Reviewed / Refute-Skip trailer); it does NOT stop a malicious committer, who controls the code
+// that judges the PR. The paths below are the gate WIRING an honest commit is most likely to touch by accident; they
+// are not "everything the gate step runs through". KNOWN OPEN gaps, one line each:
+//  - package-lock.json and `npm ci` install scripts: a dependency's install script can write GITHUB_ENV (e.g.
+//    NODE_OPTIONS) and reproduce the .npmrc preload for the later gate step.
+//  - The self-hosted Windows runner (CI_RUNNER=self; not ubuntu-latest) persists state across jobs, so one run can
+//    poison the next: tsx's on-disk transform cache, the setup-node tool cache, the workspace `.git` (info/attributes
+//    survives --attr-source, so `merge=union` can silence a remerge conflict; .git/config), and the runner user's
+//    profile / global gitconfig.
+//  - resolveGitExecutable compares PATH entries textually: an alias of the checkout (trailing dot, 8.3 short name,
+//    junction/symlink) is not recognised as "inside" it.
+//  - tsconfig.json (tsx reads it) and nested package.json / .npmrc files other than scripts/package.json.
+// STRUCTURAL FIX (tracked separately, not done here): run the gate from the BASE branch's trusted copy on an ephemeral
+// runner, so the PR under review cannot change the code or the machine that reviews it.
+//
+// GATE WIRING (2026-10-18, PR #490, Gabriel). A commit touching any of these needs its own trailer:
+//  - package.json (root) defines the developer `check:refute` script and the install scripts `npm ci` runs in the
+//    gate job. The gate classifies commits by PATH only (git show --name-only, never diff content), so it cannot tell
+//    those from a dependency bump: the root package.json is protected WHOLE, and EVERY root package.json edit
+//    (dependency bumps included) needs a trailer.
+//  - .npmrc (root): npm exports its `node-options` key as NODE_OPTIONS to every `npm run` script and to the lifecycle
+//    scripts `npm ci` runs, so a preload there could force `npm run check:refute` (the developer form) to exit 0
+//    without running the check (refute run wf_19fea163-b81, reproduced). CI now calls node directly (ci.yml), so the
+//    gate step itself no longer goes through `npm run`; `npm ci` in the same job still reads .npmrc.
+//  - .github/workflows/ (whole directory, by PREFIX): ci.yml runs the check (job refute-required), and ANY workflow
+//    file, including a new one, can publish a check with the required check's name.
+//  - scripts/package.json: the package.json NEAREST this script, which node/tsx read for its module format and
+//    `#`-subpath imports. It does not exist today; protecting it costs nothing and closes that lookup.
+//  - REPO-ROOT executables (refute run wf_aaa0696c-23d, reproduced): on the Windows self-hosted runner cmd.exe searches
+//    the cwd (the repo root) before PATH unless NoDefaultCurrentDirectoryInExePath is set, so a committed root
+//    tsx.cmd / node.cmd / git.exe runs instead of the real tool. Any root file (no slash) with a Windows-executable
+//    extension (cmd bat com exe ps1) is a gate path, and so is a root file named after a command the gate step runs
+//    (git node npm npx tsx) with a Windows script-host extension (js jse vbs vbe wsf wsh msc), which cmd.exe also tries.
+//    CI additionally sets NoDefaultCurrentDirectoryInExePath and runs tsx's entry point directly (ci.yml), and this
+//    script resolves git outside the checkout (resolveGitExecutable).
+// Every comparison is CASE-INSENSITIVE (the Windows runner checks out case-insensitively: PACKAGE.JSON is package.json).
+// NOT protected, by decision (see KNOWN OPEN gaps above): package-lock.json (a trailer on every dependency bump);
+// tsconfig.json (tsx reads it, but this script imports only node: builtins, so `paths`/`baseUrl` redirect nothing);
+// nested package.json / .npmrc files other than scripts/package.json. Those are inert ONLY because this script imports
+// nothing but node: builtins and uses no `#`-subpath imports, NOT because "CI runs from the root": node and tsx read the
+// package.json nearest the SCRIPT. If this script ever imports a local module, re-check this list.
+export const REFUTE_GATE_PATHS: ReadonlySet<string> = new Set([
+  '.claude/workflows/refute-financial-change.js',
+  'scripts/check-refute-required.ts',
+  'package.json',
+  '.npmrc',
+  'scripts/package.json',
+]);
+/** Directory prefixes (repo-root anchored, lower-case, ending in '/') protected as a whole; checked with REFUTE_GATE_PATHS. */
+export const REFUTE_GATE_PATH_PREFIXES: readonly string[] = ['.github/workflows/'];
+const REFUTE_GATE_PATHS_LOWER: ReadonlySet<string> = new Set([...REFUTE_GATE_PATHS].map((p) => p.toLowerCase()));
+/** A repo-root file (no slash) that Windows will execute when named on a command line. */
+const ROOT_EXECUTABLE = /^[^/]+\.(?:cmd|bat|com|exe|ps1)$/i;
+/** A repo-root file shadowing a command the gate step runs, with a Windows script-host extension cmd.exe also tries. */
+const ROOT_SHADOWED_COMMAND = /^(?:git|node|npm|npx|tsx)\.(?:js|jse|vbs|vbe|wsf|wsh|msc)$/i;
+
+/** True when a changed path can switch the refute gate itself off (see REFUTE_GATE_PATHS). Case-insensitive. */
+export function isRefuteGatePath(p: string): boolean {
+  const path = p.replace(/\\/g, '/');
+  const lower = path.toLowerCase();
+  return (
+    REFUTE_GATE_PATHS_LOWER.has(lower) ||
+    REFUTE_GATE_PATH_PREFIXES.some((pre) => lower.startsWith(pre)) ||
+    ROOT_EXECUTABLE.test(path) ||
+    ROOT_SHADOWED_COMMAND.test(path)
+  );
+}
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
-  const path = p.replace(/\\/g, '/');
+  // Lower-cased ONCE, for EVERY rule below (wf_d3be7fbd-39e): a case-variant path is classified exactly like its
+  // lower-case form (on the Windows runner's NTFS checkout `Server/warehouse/x.ts` overwrites the financial file).
+  // Every set entry, prefix, literal and exemption regex below is lower-case (pinned by a test), so no exact-case
+  // result changes. Consequently an exemption also covers case-variants of the exempt path. That only matters on a
+  // case-sensitive checkout (ubuntu-latest), where e.g. `server/warehouse/API.ts` or `server/warehouse/calc.Test.ts`
+  // is a DISTINCT file that is now exempt where it was financial before. It opens nothing new: the exempt lower-case
+  // file can already be edited without a trailer.
+  const path = p.replace(/\\/g, '/').toLowerCase();
+  // Gate paths FIRST, ahead of every exemption set (see REFUTE_GATE_PATHS).
+  if (isRefuteGatePath(path)) return true;
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
     return true;
   }
@@ -582,11 +676,88 @@ export type GitRunner = (args: string[]) => string;
  * hide a commit from the range.
  */
 export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts') };
+  // NoDefaultCurrentDirectoryInExePath: defense in depth so nothing git itself spawns searches the cwd on Windows.
+  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts'), NoDefaultCurrentDirectoryInExePath: '1' };
 }
 
+export interface GitResolveOptions {
+  /** The PATH value to walk (process.env.PATH in production). */
+  pathEnv: string | undefined;
+  platform: NodeJS.Platform;
+  /** Directories git must NOT come from: the checkout root(s) and the cwd. Matched case-insensitively on win32. */
+  untrusted: readonly string[];
+  /** Injectable for tests; default: an existing regular file (and, off Windows, executable). */
+  isFile?: (p: string) => boolean;
+}
+
+/**
+ * Absolute path of the git the gate runs, or throws. execFileSync('git') is NOT safe here: on Windows the executable
+ * search tries the CURRENT DIRECTORY first, so a committed repo-root git.exe would be the gate's git and could report
+ * an empty range (refute run wf_aaa0696c-23d). Walk PATH ourselves and accept the first git that is OUTSIDE every
+ * untrusted directory. Relative and empty PATH entries resolve against the cwd, so they are skipped. On win32 only
+ * git.exe is accepted: execFile cannot run a .cmd/.bat without a shell. The caller fails CLOSED on a throw.
+ */
+export function resolveGitExecutable(o: GitResolveOptions): string {
+  const win = o.platform === 'win32';
+  const P = win ? win32 : posix;
+  const sepChar = win ? '\\' : '/';
+  const norm = (d: string): string => {
+    const r = P.resolve(d);
+    const t = r.length > 1 && (r.endsWith('/') || r.endsWith('\\')) && !/^[A-Za-z]:\\$/.test(r) ? r.slice(0, -1) : r;
+    return win ? t.toLowerCase() : t;
+  };
+  const bad = o.untrusted.filter((d) => d !== '' && P.isAbsolute(d)).map(norm);
+  const inside = (d: string): boolean => {
+    const n = norm(d);
+    return bad.some((b) => n === b || n.startsWith(b.endsWith(sepChar) ? b : b + sepChar));
+  };
+  const isFile = o.isFile ?? ((p: string) => defaultIsExecutableFile(p, win));
+  const name = win ? 'git.exe' : 'git';
+  const skipped: string[] = [];
+  for (const raw of (o.pathEnv ?? '').split(win ? ';' : ':')) {
+    const entry = raw.trim().replace(/^"(.*)"$/, '$1');
+    if (entry === '' || !P.isAbsolute(entry)) continue;
+    if (inside(entry)) {
+      skipped.push(entry);
+      continue;
+    }
+    const candidate = P.join(entry, name);
+    if (isFile(candidate)) return candidate;
+  }
+  throw new Error(
+    `could not resolve ${name} on PATH to an absolute path outside the repository (${bad.join(', ') || 'none given'}); ` +
+      `refusing to run a git from the checkout or the cwd` +
+      (skipped.length ? ` (skipped PATH entries inside it: ${skipped.join(', ')})` : ''),
+  );
+}
+
+function defaultIsExecutableFile(p: string, win: boolean): boolean {
+  try {
+    const st = statSync(p);
+    return st.isFile() && (win || (st.mode & 0o111) !== 0);
+  } catch {
+    return false;
+  }
+}
+
+/** A GitRunner bound to ONE absolute git path (from resolveGitExecutable). */
+export function gitRunnerFor(gitPath: string): GitRunner {
+  return (args) => execFileSync(gitPath, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+}
+
+/** The checkout root (this script's parent directory) and the cwd: git must come from neither. */
+export function defaultUntrustedDirs(): string[] {
+  const dirs = [process.cwd()];
+  if (process.argv[1]) dirs.push(resolve(dirname(process.argv[1]), '..'));
+  return dirs;
+}
+
+// Default runner for direct evaluate()/collectCommits() callers. The CLI (runCli) resolves git UP FRONT and fails
+// CLOSED; here a resolution failure throws into evaluate's probe, which reports it as a tooling gap.
+let resolvedGit: string | undefined;
 function git(args: string[]): string {
-  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+  resolvedGit ??= resolveGitExecutable({ pathEnv: process.env.PATH, platform: process.platform, untrusted: defaultUntrustedDirs() });
+  return gitRunnerFor(resolvedGit)(args);
 }
 
 /**
@@ -620,21 +791,32 @@ export function collectCommits(base: string, head = 'HEAD', run: GitRunner = git
 export interface GateResult {
   outcome: 'ok' | 'skip' | 'violation';
   message: string;
+  /**
+   * Set on a skip caused by a GIT TOOLING GAP (old git, shallow clone, git unusable, base or HEAD not resolving), as
+   * opposed to caller configuration (an empty --base). runCli fails such a skip CLOSED under --strict.
+   */
+  gitToolingGap?: true;
 }
 
 /**
  * A reason this checkout cannot be verified at all, or undefined. Unparseable probe output means
  * "no known gap" (proceed); a probe that throws means git itself is unusable (skip).
  */
-export function probeToolingGap(run: GitRunner): string | undefined {
+export function probeToolingGap(run: GitRunner, strict = false): string | undefined {
+  const shown = (out: string): string => JSON.stringify(out.trim().slice(0, 60));
   try {
-    const v = /git version (\d+)\.(\d+)/.exec(run(['version']));
+    const out = run(['version']);
+    const v = /git version (\d+)\.(\d+)/.exec(out);
+    // --strict: a git that exits 0 but prints something unrecognisable is broken, not "no known gap".
+    if (!v && strict) return `git unusable (unrecognised \`git version\` output ${shown(out)})`;
     if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 41))) {
       return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.41)`;
     }
-    if (run(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+    const shallow = run(['rev-parse', '--is-shallow-repository']).trim();
+    if (shallow === 'true') {
       return 'shallow clone: a boundary commit reads as a root commit and hides every commit behind it (fetch full history, e.g. fetch-depth: 0)';
     }
+    if (shallow !== 'false' && strict) return `git unusable (unrecognised shallow-repository probe output ${shown(shallow)})`;
   } catch (err) {
     return `git unusable (${(err as Error).message.split('\n')[0]})`;
   }
@@ -642,13 +824,13 @@ export function probeToolingGap(run: GitRunner): string | undefined {
 }
 
 /** The whole gate minus process I/O; main() maps the outcome to a console stream and exit code. */
-export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): GateResult {
+export function evaluate(base: string, run: GitRunner = git, head = 'HEAD', strict = false): GateResult {
   if (base.trim() === '') {
     // `--base=` or REFUTE_BASE='' would otherwise read the empty range `..HEAD` and report OK.
     return { outcome: 'skip', message: 'check:refute — skipped: empty base ref (pass --base=<ref>).' };
   }
-  const gap = probeToolingGap(run);
-  if (gap !== undefined) return { outcome: 'skip', message: `check:refute — skipped: ${gap}.` };
+  const gap = probeToolingGap(run, strict);
+  if (gap !== undefined) return { outcome: 'skip', message: `check:refute — skipped: ${gap}.`, gitToolingGap: true };
   // Resolve both ends BEFORE listing the range. Only a failure HERE is a tooling gap: once both
   // ends resolve, a failure to list the range (e.g. `rev-list` output overflowing the buffer on a
   // PR carrying ~830k commits) must not switch the gate off.
@@ -663,20 +845,43 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   };
   let baseSha: string;
   let headSha: string;
+  let baseOut: string;
+  let headOut: string;
   try {
     // GIT_GLOBAL_ARGS here too: a replace ref on the head would otherwise resolve it to a decoy.
-    baseSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
+    baseOut = run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+    baseSha = shaOr(baseOut, base);
   } catch (err) {
     // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
-    return { outcome: 'skip', message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).` };
+    return {
+      outcome: 'skip',
+      message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).`,
+      gitToolingGap: true,
+    };
   }
   try {
-    headSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
+    headOut = run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]);
+    headSha = shaOr(headOut, head);
   } catch (err) {
     // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
     // --head that does not resolve is a caller error, and under --strict it must not pass.
-    if (head === 'HEAD') return { outcome: 'skip', message: `check:refute — skipped: HEAD does not resolve (${firstLine(err)}).` };
+    if (head === 'HEAD') {
+      return { outcome: 'skip', message: `check:refute — skipped: HEAD does not resolve (${firstLine(err)}).`, gitToolingGap: true };
+    }
     return { outcome: 'violation', message: `check:refute — --head '${head}' does not resolve to a commit (${firstLine(err)}).` };
+  }
+  // --strict: `rev-parse --verify` that exits 0 always prints one full object id (40-hex SHA-1 or 64-hex SHA-256).
+  // Anything else means git is broken; the non-strict fallback to the ref NAME would read an unverified range.
+  if (strict) {
+    for (const [name, out] of [[base, baseOut], [head, headOut]] as const) {
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(out.trim())) {
+        return {
+          outcome: 'skip',
+          message: `check:refute — skipped: git unusable (rev-parse of '${name}' printed ${JSON.stringify(out.trim().slice(0, 60))}, not a commit id).`,
+          gitToolingGap: true,
+        };
+      }
+    }
   }
   let commits: CommitRecord[];
   try {
@@ -759,18 +964,40 @@ export interface CliResult {
   message: string;
 }
 
-export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv, run: GitRunner = git): CliResult {
+export function runCli(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  run?: GitRunner,
+  untrusted: readonly string[] = defaultUntrustedDirs(),
+): CliResult {
+  // No injected runner: resolve git outside the checkout NOW, and fail CLOSED (exit 1, strict or not) if we cannot.
+  // Resolving lazily inside evaluate would turn this into a fail-open "tooling gap" skip.
+  if (run === undefined) {
+    try {
+      const gitPath = resolveGitExecutable({ pathEnv: env.PATH ?? env.Path ?? env.path, platform: process.platform, untrusted });
+      run = gitRunnerFor(gitPath);
+    } catch (err) {
+      return { stream: 'error', exitCode: 1, message: `check:refute — FAILED CLOSED: ${(err as Error).message}` };
+    }
+  }
   const strict = argv.includes('--strict');
   const base = argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? env.REFUTE_BASE ?? 'origin/main';
   // --head lets CI name the PR head sha directly instead of its synthetic refs/pull/N/merge HEAD.
   const head = argv.find((a) => a.startsWith('--head='))?.slice('--head='.length) || 'HEAD';
-  const result = evaluate(base, run, head);
+  const result = evaluate(base, run, head, strict);
   if (result.outcome === 'ok') return { stream: 'log', exitCode: 0, message: result.message };
   if (result.outcome === 'violation' && strict) return { stream: 'error', exitCode: 1, message: result.message };
+  // --strict (CI) never passes on a git tooling gap (wf_d3be7fbd-39e): a git that resolves but is broken, old, shallow
+  // or cannot resolve the range ends would otherwise skip with exit 0. Default mode still warns and exits 0.
+  if (result.outcome === 'skip' && result.gitToolingGap && strict) {
+    return { stream: 'error', exitCode: 1, message: `check:refute — FAILED CLOSED (--strict): ${result.message}` };
+  }
   return { stream: 'warn', exitCode: 0, message: result.message };
 }
 
 function main(): void {
+  // Defense in depth: no command this process (or its children) runs may be looked up in the cwd on Windows.
+  process.env.NoDefaultCurrentDirectoryInExePath = '1';
   const r = runCli(process.argv.slice(2), process.env);
   console[r.stream](r.message);
   if (r.exitCode !== 0) process.exit(r.exitCode);
