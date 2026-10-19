@@ -104,6 +104,57 @@ describe('check-refute-required — financial-source classification', () => {
     }
     expect(isFinancialSourcePath('.GitHub/Workflows-notes.md')).toBe(false);
   });
+  it('EVERY rule is case-insensitive: an NTFS case-variant of a financial file is financial (wf_d3be7fbd-39e)', () => {
+    for (const p of [
+      'Server/warehouse/x.ts',
+      'SERVER/OVERLAY.TS',
+      'server/Warehouse/Scores.ts',
+      'Scripts/foo.ts',
+      'SCRIPTS\\AR-IMPORT.TS',
+      'SRC/Analytics/y.ts',
+      'src/ANALYTICS/conditions.ts',
+      'Src/Data/Seed-Deals.ts',
+      'src/data/PUBLIC-DEALS.ts',
+      'src/contracts/LOAN.ts',
+      'Src/Contracts/Deal.ts',
+      'src/brain/Replacement-Cost.ts',
+      'Config/anything.json',
+      'CONFIG/x.JSON',
+    ]) {
+      expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: true });
+    }
+  });
+  it('exemptions are case-insensitive too: a case-variant of an exempt file stays exempt (it IS that file on NTFS)', () => {
+    for (const p of [
+      'Tests/Unit/Conditions.Test.TS',
+      'tests/unit/x.SPEC.tsx',
+      'server/warehouse/scores.TEST.ts',
+      'Architecture/Coding-Standards.MD',
+      'README.MD',
+      'SERVER/LOAD-ENV.TS',
+      'Server/Brief/Send.ts',
+      'src/contracts/Lease.ts',
+      'SRC/LIB/CN.TS',
+    ]) {
+      expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: false });
+    }
+  });
+  it('every classification set and path literal is lower-case, so lower-casing the path once is exact', () => {
+    for (const set of [DELIVERY_ONLY_PATHS, NON_FINANCIAL_CONFIG_PATHS, NON_FINANCIAL_ROOT_PATHS, REFUTE_GATE_PATHS]) {
+      for (const e of set) expect(e).toBe(e.toLowerCase());
+    }
+    for (const e of [...DEFAULT_DENY_ROOTS, ...REFUTE_GATE_PATH_PREFIXES]) expect(e).toBe(e.toLowerCase());
+    // The non-exported sets and literals: every quoted path between the first classification constant and the end of
+    // isFinancialSourcePath.
+    const src = readFileSync(join(process.cwd(), 'scripts', 'check-refute-required.ts'), 'utf8');
+    const from = src.indexOf('export const DELIVERY_ONLY_PATHS');
+    const to = src.indexOf('\n}', src.indexOf('export function isFinancialSourcePath'));
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const literals = [...src.slice(from, to).matchAll(/'([^'\n]*\/[^'\n]*)'/g)].map((m) => m[1] ?? '');
+    expect(literals.length).toBeGreaterThan(20);
+    for (const l of literals) expect({ l, lower: l === l.toLowerCase() }).toEqual({ l, lower: true });
+  });
   it('flags the WHOLE .github/workflows/ directory by prefix (any workflow can publish a look-alike check name)', () => {
     for (const p of [
       '.github/workflows/ci.yml',
@@ -1081,6 +1132,47 @@ describe('check-refute-required — per-commit attestation', () => {
     expect(runCli(['--strict', '--base='], {}, run)).toMatchObject({ stream: 'warn', exitCode: 0 });
     const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
     expect(runCli(['--strict'], {}, healthy([docs]))).toMatchObject({ stream: 'log', exitCode: 0 });
+  });
+
+  it('runCli --strict FAILS CLOSED on a git tooling gap (wf_d3be7fbd-39e); non-strict still warns and exits 0', () => {
+    const broken = (): string => {
+      throw new Error('git: broken install');
+    };
+    // git resolves but every call throws -> probeToolingGap reports "git unusable".
+    const strict = runCli(['--strict', '--base=origin/main'], {}, broken);
+    expect(strict).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(strict.message).toMatch(/FAILED CLOSED/);
+    expect(strict.message).toMatch(/git unusable/);
+    expect(runCli(['--base=origin/main'], {}, broken)).toMatchObject({ stream: 'warn', exitCode: 0 });
+
+    // Probes pass, but git throws on rev-parse: the base "does not resolve" -> also a tooling gap on git.
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    const revParseBroken = (args: string[]): string => {
+      if (args.includes('rev-parse') && args.includes('--verify')) throw new Error('fatal: broken object store');
+      return healthy([fin])(args);
+    };
+    expect(runCli(['--strict', '--base=origin/main'], {}, revParseBroken)).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(runCli(['--base=origin/main'], {}, revParseBroken)).toMatchObject({ stream: 'warn', exitCode: 0 });
+
+    // Old git and a shallow clone are git tooling gaps too.
+    const probe = (version: string, shallow: string) => (args: string[]): string => {
+      if (args[0] === 'version') return version;
+      if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return shallow;
+      return healthy([fin])(args);
+    };
+    expect(runCli(['--strict'], {}, probe('git version 2.40.4\n', 'false\n'))).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(runCli(['--strict'], {}, probe('git version 2.55.0\n', 'true\n'))).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(runCli([], {}, probe('git version 2.55.0\n', 'true\n'))).toMatchObject({ stream: 'warn', exitCode: 0 });
+
+    // An empty --base is caller configuration, not a git gap: unchanged (warns, exit 0, also under --strict).
+    expect(runCli(['--strict', '--base='], {}, broken)).toMatchObject({ stream: 'warn', exitCode: 0 });
+  });
+
+  it('runCli --strict with a git that returns garbage for everything is NOT a pass', () => {
+    const garbage = (): string => 'garbage\n';
+    const r = runCli(['--strict', '--base=origin/main'], {}, garbage);
+    expect(r.exitCode).toBe(1);
+    expect(r.stream).toBe('error');
   });
 
   it('evaluate reads the range by the RESOLVED shas, never by re-resolving the names', () => {
