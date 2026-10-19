@@ -65,10 +65,13 @@
 // not resolve (no commits), the clone is shallow, git < 2.41, or git itself is unusable. Under
 // --strict every one of those that is a GIT TOOLING GAP (all but an empty --base, which is caller
 // configuration) FAILS CLOSED with exit 1 (wf_d3be7fbd-39e: a git that resolves but is broken used to
-// pass CI with exit 0). Always fails CLOSED: git that cannot be resolved to an absolute path OUTSIDE
-// the checkout (see resolveGitExecutable: a committed repo-root git.exe must never be what the gate
-// runs), an explicit --head that does not resolve, a range that cannot be listed, a commit that cannot
-// be read (see collectCommits: no trailer clears it).
+// pass CI with exit 0). Under --strict a git that exits 0 with output it cannot parse is a tooling gap
+// too: an unrecognised `git version`, a shallow probe that is neither true nor false, a base/head
+// rev-parse that is not a 40- or 64-hex commit id. Exit 1 even in default mode: git that cannot be
+// resolved to an absolute path OUTSIDE the checkout (see resolveGitExecutable: a committed repo-root
+// git.exe must never be what the gate runs). Reported as VIOLATIONS, so exit 1 under --strict only
+// (default mode warns and exits 0): an explicit --head that does not resolve, a range that cannot be
+// listed, a commit that cannot be read (see collectCommits: no trailer clears it).
 //
 // Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>] [--head=<ref>]
 //   base defaults to $REFUTE_BASE, else 'origin/main'; head defaults to HEAD.
@@ -185,7 +188,7 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
 // automatically once real rows exist -- not live governor inputs. Without this every edit demanded a refute
 // trailer, which trains people to reach for Refute-Skip.
-const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
+export const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
 const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
   // 2026-09-22 (weekly sweep, finding 6): the 2026-09-21 round above closed the blanket-`.json` hole
@@ -307,7 +310,7 @@ export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
 ]);
 // PowerShell smoke tests are test scaffolding (the .test/.spec rule above only knows .ts/.tsx).
 // Scoped to scripts/ and scripts/lib/ directly — a deeper or differently-suffixed file is in scope.
-const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
+export const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
 
 // The refute gate itself (2026-10-17/18, PR #490; review fixes for PR #488's workflow changes). The
 // refute-financial-change workflow decides what `clean` means for every Refute-Reviewed attestation, and this script
@@ -323,8 +326,10 @@ const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/
 // are not "everything the gate step runs through". KNOWN OPEN gaps, one line each:
 //  - package-lock.json and `npm ci` install scripts: a dependency's install script can write GITHUB_ENV (e.g.
 //    NODE_OPTIONS) and reproduce the .npmrc preload for the later gate step.
-//  - tsx's on-disk transform cache and the setup-node tool cache persist on the self-hosted Windows runner
-//    (CI_RUNNER=self; not on ubuntu-latest), so one run can poison the next.
+//  - The self-hosted Windows runner (CI_RUNNER=self; not ubuntu-latest) persists state across jobs, so one run can
+//    poison the next: tsx's on-disk transform cache, the setup-node tool cache, the workspace `.git` (info/attributes
+//    survives --attr-source, so `merge=union` can silence a remerge conflict; .git/config), and the runner user's
+//    profile / global gitconfig.
 //  - resolveGitExecutable compares PATH entries textually: an alias of the checkout (trailing dot, 8.3 short name,
 //    junction/symlink) is not recognised as "inside" it.
 //  - tsconfig.json (tsx reads it) and nested package.json / .npmrc files other than scripts/package.json.
@@ -386,10 +391,13 @@ export function isRefuteGatePath(p: string): boolean {
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
-  // Lower-cased ONCE, for EVERY rule below (wf_d3be7fbd-39e): on an NTFS checkout (the Windows runner) a case-variant
-  // such as `Server/warehouse/x.ts` IS the financial file, so it must classify the same. Every set entry, prefix and
-  // literal below is lower-case (pinned by a test), so this changes no exact-case result; a case-variant of an EXEMPT
-  // file stays exempt for the same reason (it is that file).
+  // Lower-cased ONCE, for EVERY rule below (wf_d3be7fbd-39e): a case-variant path is classified exactly like its
+  // lower-case form (on the Windows runner's NTFS checkout `Server/warehouse/x.ts` overwrites the financial file).
+  // Every set entry, prefix, literal and exemption regex below is lower-case (pinned by a test), so no exact-case
+  // result changes. Consequently an exemption also covers case-variants of the exempt path. That only matters on a
+  // case-sensitive checkout (ubuntu-latest), where e.g. `server/warehouse/API.ts` or `server/warehouse/calc.Test.ts`
+  // is a DISTINCT file that is now exempt where it was financial before. It opens nothing new: the exempt lower-case
+  // file can already be edited without a trailer.
   const path = p.replace(/\\/g, '/').toLowerCase();
   // Gate paths FIRST, ahead of every exemption set (see REFUTE_GATE_PATHS).
   if (isRefuteGatePath(path)) return true;
@@ -794,15 +802,21 @@ export interface GateResult {
  * A reason this checkout cannot be verified at all, or undefined. Unparseable probe output means
  * "no known gap" (proceed); a probe that throws means git itself is unusable (skip).
  */
-export function probeToolingGap(run: GitRunner): string | undefined {
+export function probeToolingGap(run: GitRunner, strict = false): string | undefined {
+  const shown = (out: string): string => JSON.stringify(out.trim().slice(0, 60));
   try {
-    const v = /git version (\d+)\.(\d+)/.exec(run(['version']));
+    const out = run(['version']);
+    const v = /git version (\d+)\.(\d+)/.exec(out);
+    // --strict: a git that exits 0 but prints something unrecognisable is broken, not "no known gap".
+    if (!v && strict) return `git unusable (unrecognised \`git version\` output ${shown(out)})`;
     if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 41))) {
       return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.41)`;
     }
-    if (run(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+    const shallow = run(['rev-parse', '--is-shallow-repository']).trim();
+    if (shallow === 'true') {
       return 'shallow clone: a boundary commit reads as a root commit and hides every commit behind it (fetch full history, e.g. fetch-depth: 0)';
     }
+    if (shallow !== 'false' && strict) return `git unusable (unrecognised shallow-repository probe output ${shown(shallow)})`;
   } catch (err) {
     return `git unusable (${(err as Error).message.split('\n')[0]})`;
   }
@@ -810,12 +824,12 @@ export function probeToolingGap(run: GitRunner): string | undefined {
 }
 
 /** The whole gate minus process I/O; main() maps the outcome to a console stream and exit code. */
-export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): GateResult {
+export function evaluate(base: string, run: GitRunner = git, head = 'HEAD', strict = false): GateResult {
   if (base.trim() === '') {
     // `--base=` or REFUTE_BASE='' would otherwise read the empty range `..HEAD` and report OK.
     return { outcome: 'skip', message: 'check:refute — skipped: empty base ref (pass --base=<ref>).' };
   }
-  const gap = probeToolingGap(run);
+  const gap = probeToolingGap(run, strict);
   if (gap !== undefined) return { outcome: 'skip', message: `check:refute — skipped: ${gap}.`, gitToolingGap: true };
   // Resolve both ends BEFORE listing the range. Only a failure HERE is a tooling gap: once both
   // ends resolve, a failure to list the range (e.g. `rev-list` output overflowing the buffer on a
@@ -831,9 +845,12 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   };
   let baseSha: string;
   let headSha: string;
+  let baseOut: string;
+  let headOut: string;
   try {
     // GIT_GLOBAL_ARGS here too: a replace ref on the head would otherwise resolve it to a decoy.
-    baseSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
+    baseOut = run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+    baseSha = shaOr(baseOut, base);
   } catch (err) {
     // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
     return {
@@ -843,7 +860,8 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     };
   }
   try {
-    headSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
+    headOut = run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]);
+    headSha = shaOr(headOut, head);
   } catch (err) {
     // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
     // --head that does not resolve is a caller error, and under --strict it must not pass.
@@ -851,6 +869,19 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
       return { outcome: 'skip', message: `check:refute — skipped: HEAD does not resolve (${firstLine(err)}).`, gitToolingGap: true };
     }
     return { outcome: 'violation', message: `check:refute — --head '${head}' does not resolve to a commit (${firstLine(err)}).` };
+  }
+  // --strict: `rev-parse --verify` that exits 0 always prints one full object id (40-hex SHA-1 or 64-hex SHA-256).
+  // Anything else means git is broken; the non-strict fallback to the ref NAME would read an unverified range.
+  if (strict) {
+    for (const [name, out] of [[base, baseOut], [head, headOut]] as const) {
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(out.trim())) {
+        return {
+          outcome: 'skip',
+          message: `check:refute — skipped: git unusable (rev-parse of '${name}' printed ${JSON.stringify(out.trim().slice(0, 60))}, not a commit id).`,
+          gitToolingGap: true,
+        };
+      }
+    }
   }
   let commits: CommitRecord[];
   try {
@@ -953,7 +984,7 @@ export function runCli(
   const base = argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? env.REFUTE_BASE ?? 'origin/main';
   // --head lets CI name the PR head sha directly instead of its synthetic refs/pull/N/merge HEAD.
   const head = argv.find((a) => a.startsWith('--head='))?.slice('--head='.length) || 'HEAD';
-  const result = evaluate(base, run, head);
+  const result = evaluate(base, run, head, strict);
   if (result.outcome === 'ok') return { stream: 'log', exitCode: 0, message: result.message };
   if (result.outcome === 'violation' && strict) return { stream: 'error', exitCode: 1, message: result.message };
   // --strict (CI) never passes on a git tooling gap (wf_d3be7fbd-39e): a git that resolves but is broken, old, shallow

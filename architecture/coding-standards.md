@@ -135,8 +135,12 @@ switch them off. Every commit touching one of these needs its own trailer:
 
 **Every** classification rule matches **case-insensitively**, not just the gate wiring. That covers the default-deny
 roots, the allow-lists, the exemption sets and the test/doc extensions. The path is lower-cased once at the top of
-`isFinancialSourcePath`. On the Windows runner's NTFS checkout, `Server/warehouse/x.ts` *is*
-`server/warehouse/x.ts`, and a case-variant of an exempt file stays exempt for the same reason.
+`isFinancialSourcePath`, so a case-variant path is classified exactly like its lower-case form. On the Windows
+runner's NTFS checkout, `Server/warehouse/x.ts` overwrites `server/warehouse/x.ts`. As a consequence an exemption
+also covers case-variants of the exempt path. That only matters on a case-sensitive checkout such as
+`ubuntu-latest`, where `server/warehouse/API.ts` or `server/warehouse/calc.Test.ts` is a distinct file that is now
+exempt (it was financial before). It opens nothing new, because the exempt lower-case file can already be edited
+without a trailer.
 
 CI is hardened as well. The `refute-required` job in `.github/workflows/ci.yml` sets
 `NoDefaultCurrentDirectoryInExePath: '1'` job-wide, which also covers the lifecycle scripts `npm ci` runs. The gate
@@ -144,16 +148,26 @@ step runs `node node_modules/tsx/dist/cli.mjs scripts/check-refute-required.ts -
 command is looked up and nothing goes through `npm run`. Developers still run `npm run check:refute` locally; it
 names the same script. The script resolves `git` to an absolute path **outside** the checkout and the cwd before
 running anything (`resolveGitExecutable`), and **fails closed** (exit 1, strict or not) if it cannot. Under
-`--strict` (CI), a **git tooling gap** also fails closed with exit 1: git resolves but is broken, git < 2.41, a
-shallow clone, or the base or `HEAD` does not resolve. Only an empty `--base` (caller configuration) still warns and
-exits 0. In default (local) mode every one of these still warns and exits 0.
+`--strict` (CI), a **git tooling gap** also fails closed with exit 1. That covers:
+- git resolves but throws;
+- git exits 0 with output it cannot parse: an unrecognised `git version`, a shallow probe that is neither `true`
+  nor `false`, or a base/`HEAD` `rev-parse` that is not a 40- or 64-hex commit id;
+- git < 2.41;
+- a shallow clone;
+- the base or `HEAD` does not resolve.
+
+Only an empty `--base` (caller configuration) still warns and exits 0 under `--strict`. In default (local) mode
+every one of these still warns and exits 0. An explicit `--head` that does not resolve, a range that cannot be
+listed, and an unreadable commit are *violations*: exit 1 under `--strict`, warn and exit 0 in default mode.
 
 _Known open gaps_ (accepted; one line each):
 - `package-lock.json` and `npm ci` install scripts: a dependency's install script can write `GITHUB_ENV` (e.g.
   `NODE_OPTIONS`) and reproduce the `.npmrc` preload for the later gate step. The lockfile is unprotected so that
   dependency bumps don't need a trailer.
-- tsx's on-disk transform cache and the setup-node tool cache persist on the self-hosted Windows runner
-  (`CI_RUNNER=self`; not on `ubuntu-latest`), so one run can poison the next.
+- The self-hosted Windows runner (`CI_RUNNER=self`; not `ubuntu-latest`) persists state across jobs, so one run
+  can poison the next. That state is tsx's on-disk transform cache, the setup-node tool cache, the workspace `.git`
+  (`.git/info/attributes` survives `--attr-source`, so `merge=union` can silence a remerge conflict; also
+  `.git/config`), and the runner user's profile and global gitconfig.
 - `resolveGitExecutable` compares `PATH` entries as text, so an alias of the checkout (trailing dot, 8.3 short name,
   junction/symlink) is not recognised as inside it.
 - `tsconfig.json`: tsx reads it. The gate script imports only `node:` builtins, so `paths`/`baseUrl` redirect nothing
