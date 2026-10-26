@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -105,6 +105,203 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('install-git-hooks WRAPPER — refute-trailer stage', () => {
+  const REFUTE_SCRIPT = readFileSync(join(__dirname, '../../scripts/prepush-refute-check.mjs'), 'utf8');
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+  let dir: string;
+
+  /** Fixture repo with the real refute stage, a stub scanner, and a fake tsx that logs its args. */
+  function setup(opts: { tsxExit?: number; withTsx?: boolean; tsxMessage?: string; originMain?: boolean; shallow?: boolean } = {}) {
+    dir = mkdtempSync(join(tmpdir(), 'prepush-refute-test-'));
+    mkdirSync(join(dir, 'scripts'));
+    execSync('git init -q', { cwd: dir });
+    if (opts.originMain !== false) {
+      // The stage skips (fails open) when origin/main does not resolve or the clone is shallow,
+      // so the fixture needs a real origin/main commit.
+      execSync('git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base', { cwd: dir });
+      execSync('git update-ref refs/remotes/origin/main HEAD', { cwd: dir });
+      if (opts.shallow) {
+        writeFileSync(join(dir, '.git', 'shallow'), `${execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8' }).trim()}\n`);
+      }
+    }
+    writeFileSync(join(dir, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+    writeFileSync(join(dir, 'scripts', 'prepush-refute-check.mjs'), REFUTE_SCRIPT);
+    writeFileSync(join(dir, 'scripts', 'check-refute-required.ts'), '// stub\n');
+    if (opts.withTsx !== false) {
+      mkdirSync(join(dir, 'node_modules', 'tsx', 'dist'), { recursive: true });
+      writeFileSync(
+        join(dir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+        `import { appendFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(join(dir, 'tsx-calls.log'))}, process.argv.slice(2).join(' ') + '\\n');
+if (${opts.tsxExit ?? 0} === 1) console.error(${JSON.stringify(opts.tsxMessage ?? 'check:refute — 1 of 1 commit(s) changing financial-decision source are unattested:')});
+process.exit(${opts.tsxExit ?? 0});
+`,
+      );
+    }
+    const hookPath = join(dir, 'pre-push');
+    writeFileSync(hookPath, WRAPPER, { mode: 0o755 });
+    return hookPath;
+  }
+
+  function run(hookPath: string, stdin: string): { status: number; out: string } {
+    const r = spawnSync('sh', [hookPath], { cwd: dir, input: stdin, encoding: 'utf8' });
+    return { status: r.status ?? 1, out: `${r.stdout}${r.stderr}` };
+  }
+  const calls = () => (existsSync(join(dir, 'tsx-calls.log')) ? readFileSync(join(dir, 'tsx-calls.log'), 'utf8') : '');
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+
+  it('template runs the refute stage and fails closed on it', () => {
+    expect(WRAPPER).toMatch(/prepush-refute-check\.mjs" \|\| exit 1/);
+  });
+
+  it('blocks the push when the gate reports a violation, and names the pushed head', () => {
+    const hook = setup({ tsxExit: 1 });
+    try {
+      const r = run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}\n`);
+      expect(r.status).not.toBe(0);
+      expect(r.out).toContain('PUSH BLOCKED');
+      expect(calls()).toBe(`${join(dir, 'scripts', 'check-refute-required.ts')} --strict --base=origin/main --head=${SHA_A}\n`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('allows the push when the gate passes, one run per distinct pushed head', () => {
+    const hook = setup({ tsxExit: 0 });
+    try {
+      const r = run(
+        hook,
+        `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}\nrefs/heads/g ${SHA_B} refs/heads/g ${'0'.repeat(40)}\nrefs/heads/h ${SHA_A} refs/heads/h ${'0'.repeat(40)}\n`,
+      );
+      expect(r.status).toBe(0);
+      expect(calls().trim().split('\n')).toHaveLength(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips deletions and tags without running the gate', () => {
+    const hook = setup({ tsxExit: 1 });
+    try {
+      const zero = '0'.repeat(40);
+      const r = run(hook, `(delete) ${zero} refs/heads/old ${SHA_A}\nrefs/tags/v1 ${SHA_B} refs/tags/v1 ${zero}\n`);
+      expect(r.status).toBe(0);
+      expect(calls()).toBe('');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails OPEN with a warning when tsx is not installed in the checkout', () => {
+    const hook = setup({ withTsx: false });
+    try {
+      const r = run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}\n`);
+      expect(r.status).toBe(0);
+      expect(r.out).toContain('skipped');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails OPEN when the checker exits 1 without the unattested verdict (a crash or a tsx error)', () => {
+    const hook = setup({ tsxExit: 1, tsxMessage: 'SyntaxError: Unexpected token' });
+    try {
+      const r = run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}
+`);
+      expect(r.status).toBe(0);
+      expect(r.out).toContain('without an unattested-commits verdict');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails OPEN when the strict checker FAILED CLOSED on a git tooling gap', () => {
+    const hook = setup({ tsxExit: 1, tsxMessage: "check:refute — FAILED CLOSED (--strict): check:refute — skipped: base 'origin/main' does not resolve." });
+    try {
+      expect(run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}
+`).status).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails OPEN on any other non-zero status', () => {
+    const hook = setup({ tsxExit: 2 });
+    try {
+      expect(run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}
+`).status).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips without running the checker when origin/main does not resolve, even if it would block', () => {
+    const hook = setup({ tsxExit: 1, originMain: false });
+    try {
+      const r = run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}
+`);
+      expect(r.status).toBe(0);
+      expect(r.out).toContain("base 'origin/main' does not resolve");
+      expect(calls()).toBe('');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips without running the checker in a shallow clone, even if it would block', () => {
+    const hook = setup({ tsxExit: 1, shallow: true });
+    try {
+      const r = run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}
+`);
+      expect(r.status).toBe(0);
+      expect(r.out).toContain('shallow clone');
+      expect(calls()).toBe('');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('still blocks on the confidentiality scanner even when the refute gate passes', () => {
+    const hook = setup({ tsxExit: 0 });
+    try {
+      writeFileSync(join(dir, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(1);\n');
+      expect(run(hook, `refs/heads/f ${SHA_A} refs/heads/f ${'0'.repeat(40)}\n`).status).not.toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('hands the scanner the full ref list on stdin (stdin is buffered once, not consumed)', () => {
+    const hook = setup({ tsxExit: 0 });
+    try {
+      writeFileSync(
+        join(dir, 'scripts', 'prepush-confidential-scan.mjs'),
+        `import { readFileSync, writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(join(dir, 'scan-stdin.txt'))}, readFileSync(0, 'utf8'));
+`,
+      );
+      const zero = '0'.repeat(40);
+      const lines = [
+        `refs/heads/f ${SHA_A} refs/heads/f ${zero}`,
+        `refs/heads/g ${SHA_B} refs/heads/g ${zero}`,
+        `refs/tags/t ${SHA_A} refs/tags/t ${zero}`,
+      ];
+      run(hook, `${lines.join('\n')}\n`);
+      expect(readFileSync(join(dir, 'scan-stdin.txt'), 'utf8')).toBe(`${lines.join('\n')}\n`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('runs the confidentiality scanner before the refute stage', () => {
+    const scan = WRAPPER.indexOf('prepush-confidential-scan.mjs" || exit 1');
+    const refute = WRAPPER.indexOf('prepush-refute-check.mjs" || exit 1');
+    expect(scan).toBeGreaterThan(-1);
+    expect(scan).toBeLessThan(refute);
   });
 });
 
