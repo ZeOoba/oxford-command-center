@@ -1,10 +1,11 @@
 // scripts/install-git-hooks.ts
 //
 // Idempotently install the pre-push hooks: the confidentiality scanner (audit finding H1,
-// fail-closed/blocking) and the NOI cross-check reminder (OI-137/OI-162 fix #1, WARN-only/
+// fail-closed/blocking), the refute-trailer gate (blocking on a real violation, open on tooling
+// gaps) and the NOI cross-check reminder (OI-137/OI-162 fix #1, WARN-only/
 // non-blocking — see scripts/prepush-noi-crosscheck.mjs for why it must never block). Resolves
 // the real hooks dir via `git rev-parse --git-path hooks` (works for worktrees, where .git is a
-// file), writes a tiny POSIX wrapper chaining both checks, and marks it executable. Safe to run
+// file), writes a tiny POSIX wrapper chaining the checks, and marks it executable. Safe to run
 // repeatedly — invoked from `npm run hooks:install` and from `prepare` on install.
 //
 // Native TypeScript, run via tsx (see OI-206 / reference_vitest_green_typecheck_blind_spot —
@@ -33,8 +34,15 @@ export const WRAPPER = `#!/bin/sh
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
 #    .git/hooks is the common dir shared by every worktree; a checkout that predates this file
 #    (or lacks it for any other reason) must still push cleanly, hence the -f guard and '|| true'.
+# 3) Refute-trailer gate (stricter than CI's refute-required job) — fail-closed on an unattested-
+#    commits verdict only, fail-open on any tooling gap (see scripts/prepush-refute-check.mjs). Git's pre-push stdin is
+#    buffered once so the scanner and this stage each read the full ref list.
 root="$(git rev-parse --show-toplevel)"
-node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
+refs="$(cat)"
+printf '%s\\n' "$refs" | node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
+if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
+  printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
+fi
 if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
   node "$root/scripts/prepush-noi-crosscheck.mjs" || true
 fi
