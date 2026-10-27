@@ -16,6 +16,9 @@ import {
   resolveInsightPropertyId,
   candidateSeverity,
   CATEGORY_TO_FAMILY,
+  totalsBySpine,
+  WORKBOOK_BASIS_HINT,
+  LEDGER_BASIS_HINT,
   type MergedInsight,
 } from '../../src/modules/insights/insights.logic';
 
@@ -367,8 +370,8 @@ describe('buildTiers', () => {
     ]);
     const totals = tiers[0]?.totalsBySpine ?? [];
     expect(totals).toEqual([
-      { label: 'Workbook basis', totalUsd: 1000 },
-      { label: 'Ledger & combined basis', totalUsd: 2500 }, // B + cross combined under one non-A label, never folded into workbook basis
+      { label: 'Workbook basis', totalUsd: 1000, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 2500, hint: LEDGER_BASIS_HINT }, // B + cross combined under one non-A label, never folded into workbook basis
     ]);
   });
 
@@ -378,9 +381,62 @@ describe('buildTiers', () => {
     expect(priority).toBeDefined();
     expect(priority?.items).toEqual([]);
     expect(priority?.totalsBySpine).toEqual([
-      { label: 'Workbook basis', totalUsd: 0 },
-      { label: 'Ledger & combined basis', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 0, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 0, hint: LEDGER_BASIS_HINT },
     ]);
+  });
+
+  it('every basis subtotal carries a non-empty explanatory hint', () => {
+    for (const t of totalsBySpine([m({ id: 'a', severity: 'critical', impactUsd: 1 })])) {
+      expect(t.hint?.length ?? 0).toBeGreaterThan(20);
+    }
+    expect(WORKBOOK_BASIS_HINT).not.toBe(LEDGER_BASIS_HINT);
+  });
+
+  // ── grouping + pinning (Overview / Insights board: alert-fatigue fix, 2026-10-27) ─────────
+  describe('grouping by cause', () => {
+    const lease = (n: number) =>
+      m({ id: `lease-expiry-L${n}`, severity: 'critical', category: 'lease', impactUsd: 1000 * n, title: `Expiring, no renewal signal — T${n}` });
+    const lapsed = (n: number) =>
+      m({ id: `ins-lapsed-P${n}`, severity: 'critical', category: 'insurance', spine: 'B', impactUsd: null, title: `Policy expired — Prop ${n} · BCL` });
+
+    it('rolls 3+ same-cause alerts into one row that keeps its members', () => {
+      const tiers = buildTiers([lease(1), lease(2), lease(3), lease(4), lease(5), lease(6)]);
+      const critical = tiers[0]!;
+      expect(critical.items).toHaveLength(1);
+      expect(critical.items[0]!.title).toBe('6 leases expiring ≤90d with no renewal signal');
+      expect(critical.items[0]!.members).toHaveLength(6);
+      expect(critical.items[0]!.impactUsd).toBe(21_000);
+    });
+
+    it('scopes each group id by its severity tier', () => {
+      const tiers = buildTiers([lease(1), lease(2), lease(3), lapsed(1), lapsed(2), lapsed(3)]);
+      expect(tiers[0]!.items.map((i) => i.id)).toEqual(['group:critical:insurance-lapsed', 'group:critical:lease-expiry-no-signal']);
+    });
+
+    it('leaves groups below the minimum size as individual rows', () => {
+      const critical = buildTiers([lease(1), lease(2)])[0]!;
+      expect(critical.items.map((i) => i.id)).toEqual(['lease-expiry-L2', 'lease-expiry-L1']);
+    });
+
+    it('pins lapsed coverage above dollar-ranked rows even though its impact is unquantified', () => {
+      const critical = buildTiers([lease(1), lease(2), lease(3), lapsed(1), lapsed(2), lapsed(3)])[0]!;
+      expect(critical.items.map((i) => i.title)).toEqual([
+        '3 insurance policies expired or cancelled',
+        '3 leases expiring ≤90d with no renewal signal',
+      ]);
+      expect(critical.items[0]!.impactUsd).toBeNull(); // never invent a dollar exposure
+    });
+
+    it('pins a lone (ungrouped) lapsed policy above dollar-ranked rows', () => {
+      const critical = buildTiers([lease(9), lapsed(1)])[0]!;
+      expect(critical.items[0]!.id).toBe('ins-lapsed-P1');
+    });
+
+    it('does not group candidate-derived rows (no cause)', () => {
+      const cf = (n: number) => m({ id: `cf-hurdle-drag::p${n}`, severity: 'critical', category: 'CF', impactUsd: 100 * n });
+      expect(buildTiers([cf(1), cf(2), cf(3), cf(4)])[0]!.items).toHaveLength(4);
+    });
   });
 
   it('category is carried through as the chip value', () => {
@@ -447,12 +503,12 @@ describe('buildSummary', () => {
       m({ id: 'c', severity: 'info', spine: 'A', impactUsd: 300 }),
     ]);
     expect(summary.riskImpactBySpine).toEqual([
-      { label: 'Workbook basis', totalUsd: 1000 },
-      { label: 'Ledger & combined basis', totalUsd: 2000 },
+      { label: 'Workbook basis', totalUsd: 1000, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 2000, hint: LEDGER_BASIS_HINT },
     ]);
     expect(summary.monitorImpactBySpine).toEqual([
-      { label: 'Workbook basis', totalUsd: 300 },
-      { label: 'Ledger & combined basis', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 300, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 0, hint: LEDGER_BASIS_HINT },
     ]);
     expect(summary.count).toBe(3);
   });

@@ -110,9 +110,9 @@ describe('generateCfHurdleDrag', () => {
     expect(insight.title).not.toMatch(/\bdrag\b/i);
     expect(insight.title).not.toMatch(/sub-target/i);
 
-    // discovery: must contain "below" and "market median" or "repricing"
+    // discovery: must contain "below" and "market median"
     expect(insight.discovery).toMatch(/below/i);
-    expect(insight.discovery).toMatch(/market median|repricing/i);
+    expect(insight.discovery).toMatch(/market median/i);
     expect(insight.discovery).not.toMatch(/annual yield drag/i);
 
     // materialityUsd: belowMarketGap * oxfordValue
@@ -131,6 +131,23 @@ describe('generateCfHurdleDrag', () => {
 
     // novelty: Math.min(1, belowMarketGap / 0.02) = Math.min(1, 0.01/0.02) = 0.5
     expect(insight.novelty).toBeCloseTo(0.5, 10);
+  });
+
+  // 1b. Money in the prose uses the same compact format as the rest of the UI ("$77K"), never a raw
+  //     unformatted integer ("$76923") — 2026-10-27 Overview review.
+  it('formats the dollar figure in discovery compactly, not as a raw integer', () => {
+    const entry = makeEntry({
+      propertyId: 'prop-1',
+      capitalAction: 'hold',
+      impliedCapRate: 0.065,
+      capRateGap: -0.01,
+      noi: 500_000, // materialityUsd ≈ 76,923
+    });
+    const insight = generateCfHurdleDrag(makeReport([entry]))[0]!;
+    expect(insight.discovery).toContain('$77K');
+    expect(insight.discovery).not.toMatch(/\$\d{4,}/);
+    // The figure is still the unrounded value on the numeric field.
+    expect(insight.materialityUsd).toBeCloseTo(76_923, 0);
   });
 
   // 2. Hold at-or-above market → zero insights
