@@ -7,7 +7,7 @@ export function describeAlertCause(cause: string, members: TierItem[]): { title:
     case 'lease-expiry-no-signal':
       return { title: `${n} leases expiring ≤90d with no renewal signal` };
     case 'lease-lapsed':
-      return { title: `${n} leases on holdover with no executed renewal` };
+      return { title: `${n} leases past end date with no executed renewal (month-to-month or holdover)` };
     case 'lease-expiring-soon':
       return { title: `${n} leases expiring within 180d` };
     case 'lease-expired':
