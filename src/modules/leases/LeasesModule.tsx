@@ -4,7 +4,7 @@ import { Search, Download, CalendarClock } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
-import { useLeaseForecast, gapChipLabel, buildGapMap } from '../leasing/hooks';
+import { useLeaseForecast, gapChipLabel, buildGapMap, isMonthToMonth } from '../leasing/hooks';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtYears, fmtDate, fmtMonths } from '@analytics/index';
 import type { CriticalDate, CriticalDateKind } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -117,7 +117,17 @@ export function LeasesModule() {
     { key: 'end', header: 'Expires', align: 'right', render: (l) => fmtDate(l.leaseEnd), sortValue: (l) => l.monthsToExpiry ?? 99999 },
     { key: 'mos', header: 'Mos', align: 'right', render: (l) => (l.monthsToExpiry !== null ? fmtMonths(l.monthsToExpiry) : '—'), sortValue: (l) => l.monthsToExpiry ?? 99999 },
     { key: 'esc', header: 'Esc', align: 'right', render: (l) => (l.escalationPct !== null ? fmtPct(l.escalationPct, 1) : '—'), sortValue: (l) => l.escalationPct ?? 0 },
-    { key: 'status', header: 'Status', render: (l) => <Badge tone={statusTone(l.status)}>{l.status}</Badge>, sortValue: (l) => l.status },
+    {
+      key: 'status',
+      header: 'Status',
+      // Past-end leases the workbook still marks Active are month-to-month tenancies. Label only: the
+      // status filter and CSV export keep the raw workbook status.
+      render: (l) =>
+        isMonthToMonth(l, asOf)
+          ? <Badge tone="amber">Month-to-month</Badge>
+          : <Badge tone={statusTone(l.status)}>{l.status}</Badge>,
+      sortValue: (l) => l.status,
+    },
     {
       key: 'market',
       header: 'Mkt $/SF',
@@ -132,7 +142,7 @@ export function LeasesModule() {
       },
       sortValue: (l) => gapMap.get(l.id)?.gapPsf ?? null,
     },
-  ], [gapMap]);
+  ], [gapMap, asOf]);
 
   const cdCols = useMemo((): Column<CriticalDate>[] => [
     { key: 'when', header: 'In', align: 'right', render: (c) => <Badge tone={urgencyTone(c.daysToDate)}>{urgencyLabel(c.daysToDate)}</Badge>, sortValue: (c) => c.daysToDate },
