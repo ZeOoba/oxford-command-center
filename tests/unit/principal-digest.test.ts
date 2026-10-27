@@ -6,6 +6,7 @@ import type { MergedInsight } from '../../src/modules/insights/insights.logic';
 import { mergeInsightSources, buildTiers } from '../../src/modules/insights/insights.logic';
 import { principalDigest } from '../../src/brain/principal-digest';
 import { digestSummary } from '../../src/modules/principal/digest-summary';
+import { signalCount } from '../../src/lib/tier-group';
 
 const mergedInsight = (o: Partial<MergedInsight> & Pick<MergedInsight, 'id' | 'severity'>): MergedInsight => ({
   spine: 'A', propertyId: null, title: 'T', detail: 'D', impactUsd: null, category: 'debt', advisoryOnly: true, ...o,
@@ -82,8 +83,8 @@ describe('principalDigest', () => {
   });
 
   // Review follow-up: principalDigest previously kept `merged`'s own (arbitrary) order, so the
-  // Digest's top-3 could differ from the board's Critical tier, which is sorted by impactUsd desc
-  // (buildTiers -> sortByImpactDesc). Compares against buildTiers(merged) directly — the board's
+  // Digest's top-3 could differ from the board's Critical tier. principalDigest is now derived from
+  // buildTiers (grouped, pinned-first, dollar-ranked). Compares against buildTiers(merged) directly — the board's
   // OWN output — never a second call to principalDigest, so this can't pass by both sides sharing
   // the same bug.
   it("digest's critical ordering (and top-3) matches buildTiers(merged)'s Critical tier exactly", () => {
@@ -106,8 +107,47 @@ describe('principalDigest', () => {
     expect(digestCriticalIds).toEqual(['c2', 'c4', 'c1', 'c3']);
 
     const summary = digestSummary(digest);
-    expect(summary.critical).toBe(boardCritical.items.length);
-    expect(summary.review).toBe(boardPriority.items.length);
+    expect(summary.critical).toBe(boardCritical.items.reduce((n, i) => n + signalCount(i), 0));
+    expect(summary.review).toBe(boardPriority.items.reduce((n, i) => n + signalCount(i), 0));
+    expect(summary.top.map((t) => t.id)).toEqual(boardCritical.items.slice(0, 3).map((i) => i.id));
+  });
+
+  // The fixture above uses cause-less ids, so it cannot see grouping or pinning — it passed
+  // vacuously after buildTiers started rolling up (refute wf_75f08f8a-621). This one uses the ids
+  // conditions.ts really emits: ≥3 of one cause plus pinned lapsed coverage.
+  it('digest ids stay unique when one cause spans critical and warning', () => {
+    const exp = (id: string, severity: 'critical' | 'warning') =>
+      mergedInsight({ id: `expiring-${id}`, severity, category: 'lease', impactUsd: 5, title: id });
+    const ids = principalDigest(
+      snapshotWithDeals([]),
+      [exp('a', 'critical'), exp('b', 'critical'), exp('c', 'critical'), exp('d', 'warning'), exp('e', 'warning'), exp('f', 'warning')],
+    ).map((d) => d.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('digest matches the board on real alert ids: grouped rows, pinned lapsed coverage, signal counts', () => {
+    const lapsed = (n: number) =>
+      mergedInsight({ id: `ins-lapsed-P${n}`, severity: 'critical', spine: 'B', category: 'insurance', title: `Policy expired — P${n}` });
+    const lease = (n: number, usd: number) =>
+      mergedInsight({ id: `lease-expiry-L${n}`, severity: 'critical', category: 'lease', impactUsd: usd, title: `Expiring — L${n}` });
+    const merged = [
+      lapsed(1), lapsed(2), mergedInsight({ id: 'ins-lapsed-live-P3', severity: 'critical', spine: 'B', category: 'insurance', title: 'Policy lapsed — P3' }),
+      mergedInsight({ id: 'debt-balloon-1', severity: 'critical', spine: 'B', impactUsd: 400_000, title: 'Balloon' }),
+      lease(1, 50_000), lease(2, 40_000), lease(3, 30_000),
+      mergedInsight({ id: 'w1', severity: 'warning', impactUsd: 10, title: 'W1' }),
+    ];
+    const digest = principalDigest(snapshotWithDeals([]), merged);
+    const tiers = buildTiers(merged);
+    const boardCritical = tiers.find((t) => t.key === 'critical')!;
+
+    // Same rows, same order as the board's Critical tier — pinned insurance group first.
+    expect(digest.filter((d) => d.rank === 0).map((d) => d.id)).toEqual(boardCritical.items.map((i) => i.id));
+    expect(boardCritical.items[0]!.id).toBe('group:critical:insurance-lapsed');
+
+    const summary = digestSummary(digest);
+    expect(summary.critical).toBe(7); // 3 lapsed + 1 debt + 3 leases = signals, unchanged by grouping
+    expect(summary.review).toBe(1);
     expect(summary.top.map((t) => t.id)).toEqual(boardCritical.items.slice(0, 3).map((i) => i.id));
   });
 });

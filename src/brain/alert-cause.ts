@@ -16,6 +16,22 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^ins-lapsed-/, 'insurance-lapsed'],
 ];
 
+// Causes whose impact is real but cannot be quantified in dollars (a lapsed policy's exposure is
+// not its premium). They rank ahead of dollar-ranked rows rather than sinking under the null sort.
+const PINNED_CAUSES: ReadonlySet<string> = new Set(['insurance-lapsed']);
+
+export function isPinnedCause(cause: string | undefined): boolean {
+  return cause !== undefined && PINNED_CAUSES.has(cause);
+}
+
+/** Pinned until acknowledged: a lapsed-coverage alert you have marked read stops claiming #1.
+ *  ALERTS BOARD ONLY, by design: read state lives in the alert store (useAlertView) and the Insights
+ *  board, Overview widgets and Digest are built from `merged` insights, which carry none. There an
+ *  acknowledged lapse stays pinned (isPinnedCause) until the policy is renewed or its status changes. */
+export function isPinnedAlert(insight: { id: string }, read: boolean): boolean {
+  return !read && isPinnedCause(causeOf(insight));
+}
+
 export function causeOf(insight: { id: string }): string | undefined {
   for (const [pattern, cause] of RULES) if (pattern.test(insight.id)) return cause;
   return undefined;
