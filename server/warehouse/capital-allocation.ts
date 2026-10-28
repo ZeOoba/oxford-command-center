@@ -64,6 +64,7 @@ import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness
 import { governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
@@ -955,6 +956,14 @@ function loadPipelineCandidates(db: WarehouseDb): {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/** Drops period metrics for snapshot properties that are not investment assets (the residence). */
+function investmentMetrics(metrics: PeriodMetrics[], snapshot?: PortfolioSnapshot): PeriodMetrics[] {
+  const excluded = new Set(
+    (snapshot?.properties ?? []).filter((p) => !isInvestmentProperty(p)).map((p) => p.id),
+  );
+  return excluded.size === 0 ? metrics : metrics.filter((m) => !excluded.has(m.propertyId));
+}
+
 export async function buildPortfolioAllocation(
   db: WarehouseDb,
   asOf: string,
@@ -973,7 +982,11 @@ export async function buildPortfolioAllocation(
   const dgs5 = dgs5Raw !== null ? dgs5Raw / 100 : null;
 
   // Spine B: period metrics → property scores + debt scores
-  const metrics = propertyPeriodMetrics(db);
+  // Non-investment ids (the residence, ratified 2026-09-23) are dropped from the metrics BEFORE any
+  // scoring, so they are neither a verdict subject nor a peer in the same-basis median / quartile
+  // cohorts. Same predicate as buildCapitalAllocationReport; without a snapshot there is no type
+  // information, so nothing is excluded (property-master also omits the residence).
+  const metrics = investmentMetrics(propertyPeriodMetrics(db), snapshot);
   const propertyScores = scoreProperties(db, metrics);
   // Round 19g: consume the trust the engine itself read, inside its own atomic transaction —
   // never re-derive it with a second, separate call (that reopened the exact CRITICAL
@@ -1003,7 +1016,7 @@ export async function buildPortfolioAllocation(
     metricsByProperty.set(m.propertyId, arr);
   }
 
-  // Build verdicts for all properties with a score
+  // Build verdicts for all investment properties with a Spine B score.
   const verdicts: AllocationVerdict[] = propertyScores.map((ps) => {
     const entryValue = oxfordValueByProperty.get(ps.propertyId) ?? null;
     const currentNoi = currentSpineBNoi(metricsByProperty.get(ps.propertyId));
@@ -1339,7 +1352,7 @@ export async function buildCapitalAllocationReport(
   const governors = loadGovernors(db);
   const dscrFloor = governors.dscrFloor;
 
-  const metrics = propertyPeriodMetrics(db);
+  const metrics = investmentMetrics(propertyPeriodMetrics(db), snapshot);
   const scores = scoreProperties(db, metrics);
   const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
 
@@ -1414,7 +1427,13 @@ export async function buildCapitalAllocationReport(
 
   const entries: CapitalAllocationEntry[] = [];
 
-  for (const property of snapshot.properties) {
+  // Ratified 2026-09-23 (Gabriel): the residence is "other holdings", not an investment property, so
+  // it gets no capital verdict, no row in the cap-rate table and no Notion Property Register writeback,
+  // and its NOI/count never reach the portfolio totals below. One shared predicate
+  // (src/analytics/property-basis.ts) keeps this in step with the rest of the engine.
+  const investmentProperties = snapshot.properties.filter(isInvestmentProperty);
+
+  for (const property of investmentProperties) {
     const propScore = scoreByPropertyId.get(property.id);
     const debtScore = debtByPropertyId.get(property.id);
     const balloonMonths = balloonMonthsByProperty.get(property.id) ?? null;
@@ -1629,11 +1648,11 @@ export async function buildCapitalAllocationReport(
   const dispositionCount = entries.filter(
     (e) => e.capitalAction === 'disposition-candidate',
   ).length;
-  const portfolioNoi = snapshot.properties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
+  const portfolioNoi = investmentProperties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
 
   return {
     asOf,
-    propertyCount: snapshot.properties.length,
+    propertyCount: investmentProperties.length,
     entries,
     portfolioNoi,
     portfolioNoBasis: 'spine-a',
