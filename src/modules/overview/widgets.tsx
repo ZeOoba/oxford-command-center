@@ -15,7 +15,7 @@ import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause, rankRows } from '../../lib/tier-group';
+import { groupByCause } from '../../lib/tier-group';
 import { describeAlertCause } from '../alerts/cause-labels';
 
 export interface WidgetDef {
@@ -207,9 +207,11 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
   // id-keyed subtotal below can never count a row that is not shown, or count one twice.
   const seen = new Set<string>();
   const unique = merged.filter((m) => !seen.has(m.id) && seen.add(m.id));
-  // Group WITHIN each severity (as buildTiers does), then rank the rows together: `expiring-*` ids
-  // are critical or warning under one cause, and a cross-severity group would fold a critical lease
-  // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
+  // Group WITHIN each severity (as buildTiers does): `expiring-*` ids are critical or warning under
+  // one cause, and a cross-severity group would fold a critical lease into a warning roll-up and
+  // hide it from the top N (refute wf_42182077-678). Severity is also the primary rank key. A
+  // roll-up sums its members' dollars, so ranking all rows together let a warning roll-up outrank a
+  // smaller single critical row; groupByCause already ranks each severity (pinned, then dollars).
   const sorted = sortMergedByImpactDesc(unique);
   const rows = (['critical', 'warning', 'info'] as const).flatMap((severity) =>
     groupByCause(
@@ -219,13 +221,13 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  const items = rankRows(rows).slice(0, limit);
+  const items = rows.slice(0, limit).map((row, i) => ({ ...row, rank: i + 1 }));
   const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
   const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Top items by $ impact; lapsed coverage pinned first',
+    subtitle: 'Critical first, lapsed coverage pinned, then by $ impact',
     tone: 'accent',
     items,
     totalsBySpine: totalsBySpine(top),
