@@ -23,6 +23,7 @@ import type {
   ExpiryBucket,
 } from '@contracts/lease-forecast';
 import type { BadgeTone } from '@/primitives/Badge';
+import { fmtUsdCompact } from '@analytics/index';
 
 export type { RenewalSignal, MarketRentGap, RenewalLikelihood };
 
@@ -84,6 +85,93 @@ export function buildGapMap(gaps: MarketRentGap[]): Map<string, MarketRentGap> {
   const m = new Map<string, MarketRentGap>();
   for (const g of gaps) m.set(g.leaseId, g);
   return m;
+}
+
+// ── Leases outside the four bucket cards ──────────────────────────────────────
+
+export interface UnbucketedGroup {
+  count: number;
+  rent: number;
+}
+
+export interface UnbucketedSummary {
+  total: number;
+  /** Past end date, status not Expired — a month-to-month tenancy, not an expired one. */
+  mtm: UnbucketedGroup;
+  /** Past end date and the workbook itself says Expired. */
+  expired: UnbucketedGroup;
+  /** No lease end date on file. */
+  noEnd: UnbucketedGroup;
+}
+
+/**
+ * The four bucket cards cover 0-6m..24m+ only, so the forecast's 'expired' and 'unknown' buckets were
+ * invisible and the cards summed to fewer leases than the rent roll. This groups what they leave out,
+ * from the same signals the cards are built on (no engine change).
+ */
+export function summarizeUnbucketed(signals: RenewalSignal[]): UnbucketedSummary {
+  const out: UnbucketedSummary = {
+    total: 0,
+    mtm: { count: 0, rent: 0 },
+    expired: { count: 0, rent: 0 },
+    noEnd: { count: 0, rent: 0 },
+  };
+  for (const s of signals) {
+    const group =
+      s.expiryBucket === 'expired' ? (s.monthToMonth ? out.mtm : out.expired)
+      : s.expiryBucket === 'unknown' ? out.noEnd
+      : null;
+    if (!group) continue;
+    group.count += 1;
+    group.rent += s.annualRent;
+    out.total += 1;
+  }
+  return out;
+}
+
+/** One-line footnote for the leases the cards leave out; null when every lease is bucketed. */
+export function unbucketedFootnote(s: UnbucketedSummary): string | null {
+  if (s.total === 0) return null;
+  const parts: string[] = [];
+  if (s.mtm.count > 0) parts.push(`${s.mtm.count} month-to-month past end date (${fmtUsdCompact(s.mtm.rent)}/yr)`);
+  if (s.expired.count > 0) parts.push(`${s.expired.count} expired (${fmtUsdCompact(s.expired.rent)}/yr)`);
+  if (s.noEnd.count > 0) parts.push(`${s.noEnd.count} with no end date (${fmtUsdCompact(s.noEnd.rent)}/yr)`);
+  return `${s.total} ${s.total === 1 ? 'lease' : 'leases'} not in a bucket: ${parts.join(', ')}.`;
+}
+
+/**
+ * Same rule as the forecast's `monthToMonth` flag (lease-forecast.ts renewalSignals): the end date has
+ * passed and the workbook status is not Expired. Used for the rent-roll label only.
+ */
+export function isMonthToMonth(lease: { status: string; leaseEnd: string | null }, asOf: string): boolean {
+  if (!lease.leaseEnd || !asOf || lease.status === 'Expired') return false;
+  return new Date(lease.leaseEnd).getTime() < new Date(asOf).getTime();
+}
+
+// ── Market-rent suggestions ───────────────────────────────────────────────────
+
+export interface MarketRentSuggestion {
+  key: string;
+  psf: number;
+}
+
+/**
+ * Lease-market-feed asking rents (provenance 'derived-asking') not yet confirmed in the overlay, one per
+ * property. Display-only: nothing is written until the user accepts one, and the feed itself never
+ * reaches the NOI forecast (see lease-forecast-api.ts header).
+ */
+export function suggestMarketRents(gaps: MarketRentGap[], existing: Record<string, number>): MarketRentSuggestion[] {
+  const seen = new Set<string>();
+  const out: MarketRentSuggestion[] = [];
+  for (const g of gaps) {
+    if (g.provenance !== 'derived-asking') continue;
+    if (g.marketRentPsf === null || !(g.marketRentPsf > 0)) continue;
+    if (seen.has(g.propertyKey)) continue;
+    if ((existing[g.propertyKey] ?? 0) > 0) continue;
+    seen.add(g.propertyKey);
+    out.push({ key: g.propertyKey, psf: g.marketRentPsf });
+  }
+  return out.sort((a, b) => a.key.localeCompare(b.key));
 }
 
 /**

@@ -20,7 +20,14 @@
 import { lazy, Suspense, useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, TrendingUp, TrendingDown, Pencil } from 'lucide-react';
-import { useLeaseForecast, BUCKET_DISPLAY_ORDER } from './hooks';
+import {
+  useLeaseForecast,
+  BUCKET_DISPLAY_ORDER,
+  summarizeUnbucketed,
+  unbucketedFootnote,
+  suggestMarketRents,
+  type MarketRentSuggestion,
+} from './hooks';
 import { RolloverChart } from './RolloverChart';
 import { forecastBridge } from './forecast-bridge';
 import { Waterfall } from '@/charts/Waterfall';
@@ -148,7 +155,13 @@ const fieldStyle = {
   border: '1px solid var(--border-subtle)',
 } as const;
 
-function MarketRentEditor({ marketRents }: { marketRents: Record<string, number> }) {
+function MarketRentEditor({
+  marketRents,
+  suggestions,
+}: {
+  marketRents: Record<string, number>;
+  suggestions: MarketRentSuggestion[];
+}) {
   const qc = useQueryClient();
   const [key, setKey] = useState('');
   const [psf, setPsf] = useState('');
@@ -195,6 +208,42 @@ function MarketRentEditor({ marketRents }: { marketRents: Record<string, number>
           Enter a property key or lease ID with a $/SF annual market rent. Used for the
           under-market gap signal and the "Renew at Market" forecast scenario.
         </div>
+
+        {entries.length === 0 && (
+          <div
+            className="rounded-[var(--radius-sm)] px-3 py-2 text-2xs"
+            style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+          >
+            No market rents entered. Until you add some, the rent roll's Mkt $/SF column stays blank, the
+            under-market signal is off, and Renew at Market has nothing to price against.
+          </div>
+        )}
+
+        {/* Feed-derived asking rents: display-only until the user accepts one (never auto-written). */}
+        {suggestions.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              Asking-rent estimates from the Lease Market feed (unconfirmed). Accepting one saves it as your market rent.
+            </div>
+            {suggestions.map((s) => (
+              <div key={s.key} className="flex items-center justify-between gap-3 rounded-[var(--radius-sm)] px-3 py-1.5" style={{ background: 'var(--surface-overlay)', border: '1px dashed var(--border-subtle)' }}>
+                <span className="num text-2xs font-medium" style={{ color: 'var(--text-secondary)' }}>{s.key}</span>
+                <div className="flex items-center gap-2">
+                  <span className="num text-2xs" style={{ color: 'var(--text-warn)' }}>${s.psf.toFixed(2)}/SF</span>
+                  <Button
+                    size="sm"
+                    variant="subtle"
+                    onPress={() => saveMutation.mutate({ k: s.key, p: s.psf })}
+                    isDisabled={saveMutation.isPending}
+                    aria-label={`Accept asking-rent estimate for ${s.key}`}
+                  >
+                    Accept
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Existing entries */}
         {entries.length > 0 && (
@@ -305,6 +354,8 @@ export function LeaseForecastModule() {
   const marketRents = snapshotData?.snapshot.marketRents ?? {};
 
   const buckets = data?.bucketTotals ?? [];
+  const bucketFootnote = unbucketedFootnote(summarizeUnbucketed(data?.signals ?? []));
+  const rentSuggestions = suggestMarketRents(data?.marketGaps ?? [], marketRents);
   const velocity = data?.velocity ?? [];
   const forecast = rentMutation.data ?? null;
 
@@ -329,6 +380,7 @@ export function LeaseForecastModule() {
     <div className="flex flex-col gap-4">
       {/* Section A — Expiry Bucket Cards (forecast-backed tabs only; R2 above the strip) */}
       {showBuckets && (
+      <div className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DISPLAY_BUCKETS.map((bucket) => {
           const b = buckets.find((x) => x.bucket === bucket);
@@ -351,6 +403,12 @@ export function LeaseForecastModule() {
             </div>
           );
         })}
+      </div>
+      {bucketFootnote && (
+        <div className="num px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          {bucketFootnote}
+        </div>
+      )}
       </div>
       )}
 
@@ -555,7 +613,8 @@ export function LeaseForecastModule() {
             <CardHeader title="Leasing Velocity" />
             {velocity.length === 0 ? (
               <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                No leasing event history yet — populate lease_events to enable velocity tracking.
+                No leasing velocity yet. Median days-to-lease needs vacancy-to-lease history (when each suite went
+                vacant and when it was leased), which the Master Workbook does not carry.
               </div>
             ) : (
               <DataTable
@@ -575,7 +634,7 @@ export function LeaseForecastModule() {
       <div className="flex flex-col gap-4">
       {forecastOffline && offlineCard}
       {/* Section D — Market-Rent Editor (available even on the mirror: writes go to the overlay) */}
-      <MarketRentEditor marketRents={marketRents} />
+      <MarketRentEditor marketRents={marketRents} suggestions={rentSuggestions} />
       </div>
       </TabPanel>
 
