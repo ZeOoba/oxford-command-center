@@ -101,6 +101,9 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
           <span>
             Return <strong style={{ color: 'var(--text-primary)' }}>{returnStr}</strong>
+            {verdict.expectedReturnPct === null && verdict.action !== 'buy' && (
+              <span style={{ marginLeft: 4, color: 'var(--text-tertiary)' }}>no return data</span>
+            )}
             {aboveHurdle !== null && (
               <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--text-pos)' : 'var(--text-neg)' }}>
                 {aboveHurdle ? '↑' : '↓'} vs {hurdleStr} hurdle
@@ -115,7 +118,10 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
 
         {/* Confidence bar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-tertiary)' }}>
-          <span style={{ whiteSpace: 'nowrap' }}>
+          <span
+            style={{ whiteSpace: 'nowrap' }}
+            title={verdict.confidenceTier === 'estimated' ? 'Forecast inputs absent: confidence is capped at 65%' : undefined}
+          >
             Conf {Math.round(verdict.confidence01 * 100)}%
           </span>
           <ConfidenceBar value={verdict.confidence01} />
