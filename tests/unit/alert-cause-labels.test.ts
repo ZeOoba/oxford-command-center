@@ -8,7 +8,9 @@ describe('describeAlertCause', () => {
     expect(describeAlertCause('lease-expiry-no-signal', m(8)).title).toBe('8 leases expiring ≤90d with no renewal signal');
   });
   it('names the holdover and insurance causes', () => {
-    expect(describeAlertCause('lease-lapsed', m(4)).title).toBe('4 leases on holdover with no executed renewal');
+    expect(describeAlertCause('lease-lapsed', m(4)).title).toBe(
+      '4 leases past end date with no executed renewal (month-to-month or holdover)',
+    );
     expect(describeAlertCause('insurance-lapsed', m(12)).title).toBe('12 insurance policies expired or cancelled');
   });
   it('names the remaining lease causes', () => {

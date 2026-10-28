@@ -7,7 +7,7 @@
 // leasing-destination.test.tsx. The forecast query and the snapshot are seeded straight into the
 // QueryClient cache so the render is network-free.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { LeaseForecastModule } from '../../src/modules/leasing/LeaseForecastModule';
@@ -41,10 +41,13 @@ const FORECAST: LeaseForecastResponse = {
   ],
 };
 
-function renderModule(entry = '/leasing') {
+function renderModule(
+  entry = '/leasing',
+  over: { forecast?: Partial<LeaseForecastResponse>; marketRents?: Record<string, number> } = {},
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
-  qc.setQueryData(LEASING_KEYS.forecast, FORECAST);
-  qc.setQueryData(SNAPSHOT_KEY, { snapshot: { marketRents: { 'rarig-ave': 8.5 } } });
+  qc.setQueryData(LEASING_KEYS.forecast, { ...FORECAST, ...over.forecast });
+  qc.setQueryData(SNAPSHOT_KEY, { snapshot: { marketRents: over.marketRents ?? { 'rarig-ave': 8.5 } } });
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
@@ -141,6 +144,75 @@ describe('LeaseForecastModule — tab structure', () => {
     mockCriticalDates = [{ id: 'c2', daysToDate: 0 }, { id: 'c4', daysToDate: 40 }];
     renderModule();
     expect(screen.getByRole('tab', { name: 'Rent roll' }).textContent).toBe('Rent roll');
+  });
+});
+
+describe('LeaseForecastModule — leases outside the four buckets', () => {
+  const sig = (leaseId: string, expiryBucket: string, monthToMonth: boolean, annualRent: number) => ({
+    leaseId, tenantName: leaseId, propertyId: 'p', propertyKey: 'P', annualRent, sf: 0, leaseEnd: null,
+    monthsToExpiry: null, expiryBucket, tenureMonths: null, renewalStage: null, arrearsUsd: 0, monthToMonth,
+    likelihood: 'uncertain', rationale: '',
+  });
+
+  it('footnotes the leases the four cards leave out, so the cards visibly reconcile to the rent roll', () => {
+    renderModule('/leasing', {
+      forecast: {
+        signals: [
+          sig('a', 'expired', true, REDACTED-AMT),
+          sig('b', 'expired', true, REDACTED-AMT),
+          sig('c', 'expired', false, 0),
+          sig('d', 'unknown', false, 600),
+        ] as unknown as LeaseForecastResponse['signals'],
+      },
+    });
+    expect(
+      screen.getByText('4 leases not in a bucket: 2 month-to-month past end date ($13K/yr), 1 expired ($0/yr), 1 with no end date ($600/yr).'),
+    ).toBeTruthy();
+  });
+
+  it('shows no footnote when every lease is bucketed', () => {
+    renderModule();
+    expect(screen.queryByText(/not in a bucket/)).toBeNull();
+  });
+});
+
+describe('LeaseForecastModule — empty states', () => {
+  it('Leasing Velocity explains what source data is missing instead of naming a table', () => {
+    renderModule('/leasing', { forecast: { velocity: [] } });
+    expect(screen.queryByText(/populate lease_events/)).toBeNull();
+    expect(screen.getByText(/vacancy-to-lease history/)).toBeTruthy();
+  });
+
+  it('Market rents shows a banner when none are entered, and none when some are', () => {
+    renderModule('/leasing?tab=market-rents', { marketRents: {} });
+    expect(screen.getByText(/No market rents entered/)).toBeTruthy();
+    cleanup();
+    renderModule('/leasing?tab=market-rents');
+    expect(screen.queryByText(/No market rents entered/)).toBeNull();
+  });
+
+  it('offers feed-derived asking rents as unconfirmed suggestions; accepting one saves it (human-confirmed)', async () => {
+    const gap = {
+      leaseId: 'l1', tenantName: 'T', propertyKey: '1100 Rarig', currentRentPsf: 8, marketRentPsf: 9.5,
+      gapPsf: 1.5, gapAnnualUsd: 1_500, underMarket: true, provenance: 'derived-asking',
+    };
+    renderModule('/leasing?tab=market-rents', {
+      marketRents: {},
+      forecast: { marketGaps: [gap] as unknown as LeaseForecastResponse['marketGaps'] },
+    });
+    expect(screen.getByText(/unconfirmed/i)).toBeTruthy();
+    expect(screen.getByText('$9.50/SF')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Accept asking-rent estimate for 1100 Rarig' }));
+    const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    // The mutation fires on a microtask, so wait for the POST rather than asserting synchronously.
+    await waitFor(() => expect(calls.some(([url]) => String(url).includes('market-rent'))).toBe(true));
+    const post = calls.find(([url]) => String(url).includes('market-rent'));
+    expect(JSON.parse(String((post?.[1] as RequestInit).body))).toEqual({ key: '1100 Rarig', rentPsf: 9.5 });
+  });
+
+  it('shows no suggestions block when the feed has nothing', () => {
+    renderModule('/leasing?tab=market-rents', { marketRents: {} });
+    expect(screen.queryByText(/unconfirmed/i)).toBeNull();
   });
 });
 
