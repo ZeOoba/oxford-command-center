@@ -38,10 +38,18 @@ export function previewSubjects(members: TierItem[], take = 3): string {
 
 /**
  * Roll items that share a `cause` (and number at least `minSize`) into a single row, then rank the
- * result by annualized dollars — unquantified rows last, ties and nulls in their original order.
+ * result: pinned rows first, then by annualized dollars — unquantified rows last, ties and nulls in
+ * their original order.
  * Items with no cause, or whose cause is below `minSize`, pass through unchanged.
+ * `scope` (e.g. a severity) namespaces the synthetic group id, so one cause grouped separately in two
+ * scopes never yields two rows with the same id.
  */
-export function groupByCause(items: TierItem[], describe: DescribeCause, minSize = MIN_GROUP_SIZE): TierItem[] {
+export function groupByCause(
+  items: TierItem[],
+  describe: DescribeCause,
+  minSize = MIN_GROUP_SIZE,
+  scope?: string,
+): TierItem[] {
   const byCause = new Map<string, TierItem[]>();
   for (const item of items) {
     if (!item.cause) continue;
@@ -60,7 +68,7 @@ export function groupByCause(items: TierItem[], describe: DescribeCause, minSize
     emitted.add(item.cause);
     const text = describe(item.cause, members);
     rows.push({
-      id: `group:${item.cause}`,
+      id: `group:${scope ? `${scope}:` : ''}${item.cause}`,
       category: item.category,
       categoryTone: item.categoryTone,
       impactKind: item.impactKind,
@@ -70,12 +78,23 @@ export function groupByCause(items: TierItem[], describe: DescribeCause, minSize
       chips: item.chips,
       cause: item.cause,
       members,
+      pinned: members.some((m) => m.pinned) || undefined,
     });
   }
 
-  const ranked = rows
+  return rankRows(rows);
+}
+
+/**
+ * Rank already-built rows without regrouping them: pinned first, then dollars descending,
+ * unquantified last, ties and nulls in their original order. For callers that group per scope and
+ * then merge the scopes into one list (a second `groupByCause` would re-fold the scopes together).
+ */
+export function rankRows(rows: TierItem[]): TierItem[] {
+  return rows
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
+      if (!!a.row.pinned !== !!b.row.pinned) return a.row.pinned ? -1 : 1;
       const av = a.row.impactUsd;
       const bv = b.row.impactUsd;
       const aNull = av === null || av === undefined;
@@ -86,5 +105,4 @@ export function groupByCause(items: TierItem[], describe: DescribeCause, minSize
       return bv - av || a.index - b.index;
     })
     .map(({ row }, i) => ({ ...row, rank: i + 1 }));
-  return ranked;
 }

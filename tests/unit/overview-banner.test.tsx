@@ -17,7 +17,13 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { InsightReport, InsightCandidate } from '../../src/contracts/insights';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { INSIGHTS_KEYS } from '../../src/modules/insights/hooks';
-import { mergeInsightSources, buildSummary, buildTiers } from '../../src/modules/insights/insights.logic';
+import {
+  mergeInsightSources,
+  buildSummary,
+  buildTiers,
+  WORKBOOK_BASIS_HINT,
+  LEDGER_BASIS_HINT,
+} from '../../src/modules/insights/insights.logic';
 import { OVERVIEW_WIDGETS } from '../../src/modules/overview/widgets';
 
 const ASOF = '2026-07-06';
@@ -195,14 +201,18 @@ describe('ResultsBannerWidget', () => {
 
     // Risk Impact (critical+warning): expected workbook basis = 80,000 + 5,000 = 85,000; ledger & combined basis = 20,000.
     expect(expected.riskImpactBySpine).toEqual([
-      { label: 'Workbook basis', totalUsd: 85_000 },
-      { label: 'Ledger & combined basis', totalUsd: 20_000 },
+      { label: 'Workbook basis', totalUsd: 85_000, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 20_000, hint: LEDGER_BASIS_HINT },
     ]);
     // Monitor Impact (info-only): only c-info-1, materialityUsd null -> 0 on both spines.
     expect(expected.monitorImpactBySpine).toEqual([
-      { label: 'Workbook basis', totalUsd: 0 },
-      { label: 'Ledger & combined basis', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 0, hint: WORKBOOK_BASIS_HINT },
+      { label: 'Ledger & combined basis', totalUsd: 0, hint: LEDGER_BASIS_HINT },
     ]);
+
+    // Each basis figure explains itself on hover (Risk Impact + Monitor Impact cells).
+    expect(screen.getAllByTitle(WORKBOOK_BASIS_HINT).length).toBe(2);
+    expect(screen.getAllByTitle(LEDGER_BASIS_HINT).length).toBe(2);
     expect(expected.count).toBe(4);
 
     // The rendered banner must show exactly these independently-computed numbers (formatted the

@@ -177,6 +177,14 @@ describe('PrincipalModule render', () => {
     expect(within(dealsTile).getByText(String(summary.deals))).toBeTruthy();
   });
 
+  it('header badge shows the signal total (critical + review + deals), matching the tiles beneath it', () => {
+    renderModule();
+    const summary = expectedSummary();
+    expect(summary.attention).toBe(summary.critical + summary.review + summary.deals);
+    const header = screen.getByText('Needs your attention').parentElement!.parentElement!;
+    expect(within(header).getByText(String(summary.attention))).toBeTruthy();
+  });
+
   it('lists the top critical item(s) matching digestSummary().top', () => {
     renderModule();
     const summary = expectedSummary();

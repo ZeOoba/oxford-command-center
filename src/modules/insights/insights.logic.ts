@@ -21,6 +21,9 @@ import type { PortfolioSnapshot } from '@contracts/index';
 import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
+import { groupByCause } from '@/lib/tier-group';
+import { causeOf, isPinnedCause } from '@/brain/alert-cause';
+import { describeAlertCause } from '@/modules/alerts/cause-labels';
 
 // ── Merged shape ──────────────────────────────────────────────────────────────────────────
 
@@ -232,6 +235,11 @@ const SEVERITY_TIERS: Array<{ severity: InsightSeverity; key: string; title: str
   { severity: 'info', key: 'monitor', title: 'Monitor', tone: 'info' },
 ];
 
+export const WORKBOOK_BASIS_HINT =
+  'From the Master Workbook: current-state rent roll, leases and valuations.';
+export const LEDGER_BASIS_HINT =
+  'From the QuickBooks ledger plus loan and insurance records. A different source, so never added to the workbook figure.';
+
 /** Per-spine $ subtotal — NEVER a single combined sum (basis-mixing doctrine). */
 export function totalsBySpine(items: MergedInsight[]): TierTotal[] {
   let spineA = 0;
@@ -242,14 +250,13 @@ export function totalsBySpine(items: MergedInsight[]): TierTotal[] {
     else spineBOrCross += m.impactUsd;
   }
   return [
-    { label: 'Workbook basis', totalUsd: spineA },
-    { label: 'Ledger & combined basis', totalUsd: spineBOrCross },
+    { label: 'Workbook basis', totalUsd: spineA, hint: WORKBOOK_BASIS_HINT },
+    { label: 'Ledger & combined basis', totalUsd: spineBOrCross, hint: LEDGER_BASIS_HINT },
   ];
 }
 
-/** Exported so principalDigest (src/brain/principal-digest.ts) orders the Digest's critical/review
- *  items EXACTLY the way the Insights board orders its tiers — no re-implemented sort that could
- *  silently drift from this one. */
+/** Dollar-descending, nulls last. The board's within-tier order before grouping and pinning are
+ *  applied by buildTiers (principalDigest derives from buildTiers, not from this sort). */
 export function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
   return [...items].sort((a, b) => {
     if (a.impactUsd === null && b.impactUsd === null) return 0;
@@ -259,27 +266,42 @@ export function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
   });
 }
 
+/** One merged insight as a board row. `cause`/`pinned` come from the id (view-layer derivation, see
+ *  src/brain/alert-cause.ts) so grouping never widens the refute-gated conditions.ts surface. */
+export function mergedToTierItem(m: MergedInsight, rank: number): TierItem {
+  const cause = causeOf(m);
+  return {
+    id: m.id,
+    rank,
+    category: m.category,
+    // categoryTone drives the category badge's color in TierBoard. MergedInsight.category is a
+    // loose `string`: Spine-A-derived rows carry one of the 10 real Insight categories, but
+    // candidate-derived rows carry a warehouse FAMILY code (CF/DR/TE/TR/CR) that has no tone
+    // mapping. Guard on CATEGORY_TO_FAMILY (keyed by exactly the 10 real categories) so we only
+    // call categoryTone() for genuine categories; family-code rows stay undefined and TierBoard's
+    // existing `?? 'neutral'` fallback applies unchanged (no crash, no wrong tone).
+    categoryTone: m.category in CATEGORY_TO_FAMILY ? categoryTone(m.category as Insight['category']) : undefined,
+    impactUsd: m.impactUsd,
+    impactKind: m.severity === 'info' ? 'info' : 'risk',
+    title: m.title,
+    detail: m.detail,
+    chips: [spineLabel(m.spine)],
+    cause,
+    pinned: isPinnedCause(cause) || undefined,
+  };
+}
+
+/**
+ * Severity tiers for the Insights board and the Overview widget. Same-cause alerts roll into one
+ * row (twelve lapsed policies are one decision) with lapsed coverage pinned first. principalDigest
+ * is derived from this, so the Digest's rows, order and counts cannot drift from the board.
+ */
 export function buildTiers(merged: MergedInsight[]): Tier[] {
   return SEVERITY_TIERS.map(({ severity, key, title, tone }) => {
     const sorted = sortByImpactDesc(merged.filter((m) => m.severity === severity));
 
-    const items: TierItem[] = sorted.map((m, index) => ({
-      id: m.id,
-      rank: index + 1,
-      category: m.category,
-      // categoryTone drives the category badge's color in TierBoard. MergedInsight.category is a
-      // loose `string`: Spine-A-derived rows carry one of the 10 real Insight categories, but
-      // candidate-derived rows carry a warehouse FAMILY code (CF/DR/TE/TR/CR) that has no tone
-      // mapping. Guard on CATEGORY_TO_FAMILY (keyed by exactly the 10 real categories) so we only
-      // call categoryTone() for genuine categories; family-code rows stay undefined and TierBoard's
-      // existing `?? 'neutral'` fallback applies unchanged (no crash, no wrong tone).
-      categoryTone: m.category in CATEGORY_TO_FAMILY ? categoryTone(m.category as Insight['category']) : undefined,
-      impactUsd: m.impactUsd,
-      impactKind: severity === 'info' ? 'info' : 'risk',
-      title: m.title,
-      detail: m.detail,
-      chips: [spineLabel(m.spine)],
-    }));
+    const flat: TierItem[] = sorted.map((m, index) => mergedToTierItem(m, index + 1));
+    const items = groupByCause(flat, describeAlertCause, undefined, severity);
 
     return {
       key,

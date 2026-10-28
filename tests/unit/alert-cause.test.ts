@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease, InsurancePolicy } from '@contracts/index';
 import { evaluateConditions } from '@analytics/index';
-import { causeOf } from '../../src/brain/alert-cause';
+import { causeOf, isPinnedAlert } from '../../src/brain/alert-cause';
 
 const ASOF = '2026-06-21';
 const NOW = Date.parse('2026-06-21T12:00:00.000Z');
@@ -93,5 +93,13 @@ describe('insight cause tags', () => {
   it('maps ids the dedup normally suppresses or that need extra inputs (formats pinned here)', () => {
     expect(causeOf({ id: 'lease-undermarket-abc' })).toBe('lease-undermarket');
     expect(causeOf({ id: 'expired-abc' })).toBe('lease-expired');
+  });
+
+  it('pins lapsed coverage (both lapse ids) until it is read; renewal warnings are never pinned', () => {
+    expect(isPinnedAlert({ id: 'ins-lapsed-x' }, false)).toBe(true);
+    expect(isPinnedAlert({ id: 'ins-lapsed-live-x' }, false)).toBe(true);
+    expect(isPinnedAlert({ id: 'ins-lapsed-x' }, true)).toBe(false); // acknowledged: stops claiming #1
+    expect(isPinnedAlert({ id: 'ins-x' }, false)).toBe(false); // renewing-soon warning
+    expect(isPinnedAlert({ id: 'lease-expiry-x' }, false)).toBe(false);
   });
 });

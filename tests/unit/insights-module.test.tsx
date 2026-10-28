@@ -18,6 +18,7 @@ import type { InsightReport } from '../../src/contracts/insights';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { INSIGHTS_KEYS } from '../../src/modules/insights/hooks';
 import { InsightsModule } from '../../src/modules/insights/InsightsModule';
+import { LEDGER_BASIS_HINT, WORKBOOK_BASIS_HINT } from '../../src/modules/insights/insights.logic';
 
 const ASOF = '2026-07-06';
 
@@ -189,6 +190,23 @@ describe('InsightsModule', () => {
     expect(screen.getByText(/CF ·/)).toBeTruthy();
     expect(screen.getByText(/DR ·/)).toBeTruthy();
     expect(screen.getByText(/TE ·/)).toBeTruthy();
+  });
+
+  it('explains each basis total with a tooltip on the Risk and Monitor impact stats', () => {
+    renderModule();
+
+    // Both stats carry the same two spine subtotals; the tooltip is what tells a reader which
+    // figure to trust, so it must be on the labelled cell, not just in the logic layer.
+    const workbook = screen.getAllByText('Workbook basis');
+    const ledger = screen.getAllByText('Ledger & combined basis');
+    expect(workbook).toHaveLength(2);
+    expect(ledger).toHaveLength(2);
+    for (const label of workbook) {
+      expect(label.closest('[title]')?.getAttribute('title')).toBe(WORKBOOK_BASIS_HINT);
+    }
+    for (const label of ledger) {
+      expect(label.closest('[title]')?.getAttribute('title')).toBe(LEDGER_BASIS_HINT);
+    }
   });
 
   it('the unratified ranking-weights badge is present', () => {
