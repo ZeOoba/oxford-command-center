@@ -22,6 +22,7 @@
  */
 
 import type { CapitalAllocationReport } from '@contracts/capital-allocation';
+import { fmtUsdCompact } from '../../../src/analytics/format';
 import type { RankInput } from '../rank';
 
 // Novelty ceiling: 200 bps below-market gap = full novelty 1.0
@@ -32,7 +33,7 @@ const NOVELTY_FULL_GAP = 0.02;
  *
  * For each 'hold' entry where the implied cap rate is below the market median
  * (capRateGap < 0), emits one RankInput flagging the rich valuation and
- * estimated repricing headroom — a potential harvest or refi signal.
+ * NOI gap to the market-median yield at the current value — a potential harvest or refi signal.
  */
 export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput[] {
   const results: RankInput[] = [];
@@ -53,7 +54,7 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
     // Back-compute Oxford asset value from Spine-A NOI and implied cap rate
     const oxfordValue = entry.noi / impliedCapRate;
 
-    // Estimated repricing headroom: the NOI increase required to match the
+    // NOI gap to market median (shown in `discovery`): the NOI increase required to match the
     // market median yield at the current Oxford workbook value.
     const materialityUsd = belowMarketGap * oxfordValue;
 
@@ -91,7 +92,7 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
         `In-place cap rate of ${(impliedCapRate * 100).toFixed(2)}% is ` +
         `${(belowMarketGap * 10_000).toFixed(0)} bps below the market median of ` +
         `${(marketMedianCapRate * 100).toFixed(2)}%, indicating a rich valuation relative to peers. ` +
-        `Estimated repricing headroom: $${materialityUsd.toFixed(0)}.`,
+        `NOI gap to the market-median yield at current value: ${fmtUsdCompact(materialityUsd)}.`,
 
       prov: {
         source: 'capital-allocation-report',

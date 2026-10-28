@@ -7,7 +7,7 @@ import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../
 import { spineLabel } from '../../lib/spine-label';
 import { MAX_ITEMS } from '../../lib/ranked-cap';
 import { groupByCause } from '../../lib/tier-group';
-import { causeOf } from '../../brain/alert-cause';
+import { causeOf, isPinnedAlert } from '../../brain/alert-cause';
 import { describeAlertCause } from './cause-labels';
 
 const SEV_COLOR: Record<InsightSeverity, string> = {
@@ -68,6 +68,7 @@ function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: 
     chips: [spineLabel(insight.spine)],
     muted: item.read,
     cause: causeOf(insight),
+    pinned: isPinnedAlert(insight, item.read) || undefined,
   };
 }
 
