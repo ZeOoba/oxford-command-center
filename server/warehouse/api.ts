@@ -1024,8 +1024,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   //
   // Recomputes the 5-way allocation verdicts (buildPortfolioAllocation — the SAME engine the Capital
   // page and IC memo render; audit 2026-10-13 G5) plus the Capital Allocation Report (priorityScore),
-  // then writes each property's allocation action + priorityScore back to the Notion 🏢 Property
-  // Register (the operational per-property DB). Both builders share one asOf (IC-memo pattern).
+  // then writes each INVESTMENT property's allocation action + priorityScore back to the Notion 🏢 Property
+  // Register (the operational per-property DB). The residence is not an entry (isInvestmentProperty), so
+  // its Notion row is intentionally left untouched. Both builders share one asOf (IC-memo pattern).
   // Requires NOTION_TOKEN (never committed). Localhost-only via the existing CORS guard.
   //
   // FAIL-OPEN: the writeback never throws on per-property mismatch or a single page failure —
