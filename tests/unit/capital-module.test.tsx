@@ -232,6 +232,43 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('CapitalModule — what the verdict cards do not cover', () => {
+  it('footnotes properties that have a cap-table row but no allocation verdict', () => {
+    renderModule();
+    // Fixture: the report covers prop-1 and prop-2; only prop-1 has a verdict.
+    expect(screen.getByText('Not scored: no ledger P&L, so no allocation verdict. Prop Two.')).toBeTruthy();
+  });
+
+  it('shows no footnote when every report property has a verdict', () => {
+    const qc = seededClient();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponseWithTrustIssues());
+    renderModule('/capital', qc);
+    expect(screen.queryByText(/Not scored/)).toBeNull();
+  });
+
+  it('explains "estimated" once, above the cards, only when a verdict carries it', () => {
+    renderModule();
+    expect(screen.queryByText(/forecast inputs are absent/i)).toBeNull(); // fixture verdict is "derived"
+    cleanup();
+    const qc = seededClient();
+    const resp = allocationResponse();
+    resp.portfolio.verdicts[0] = { ...resp.portfolio.verdicts[0]!, confidenceTier: 'estimated', confidence01: 0.5 };
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], resp);
+    renderModule('/capital', qc);
+    expect(screen.getByText(/"estimated" means forecast inputs are absent/)).toBeTruthy();
+    expect(screen.getByTitle('Forecast inputs absent: confidence is capped at 65%')).toBeTruthy();
+  });
+
+  it('labels an owned property with no return figure instead of a bare dash', () => {
+    const qc = seededClient();
+    const resp = allocationResponse();
+    resp.portfolio.verdicts[0] = { ...resp.portfolio.verdicts[0]!, expectedReturnPct: null, returnAboveHurdle: null };
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], resp);
+    renderModule('/capital', qc);
+    expect(screen.getByText('no return data')).toBeTruthy();
+  });
+});
+
 describe('CapitalModule — market cap-rate positioning (folded in from CapitalAllocationModule)', () => {
   it('renders impliedCapRate / capRateGap / capRatePercentile for a scored property', () => {
     renderModule();

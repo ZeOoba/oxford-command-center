@@ -41,6 +41,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { useToast } from '@/primitives/toast-context';
 import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from './hooks';
 import { AllocationCard } from './AllocationCard';
+import { unscoredPropertyNames } from './unscored';
 import { HurdleRateBanner } from './HurdleRateBanner';
 import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTab } from './tabs';
 import { ScatterChart } from '@/charts/ScatterChart';
@@ -264,6 +265,24 @@ function AllocationHeader({ data }: { data: CapitalData }) {
   );
 }
 
+/** Owned properties the cap-rate report covers but the ledger-based verdicts do not. Pipeline buy
+ *  candidates carry `pipeline:` ids that never match a report entry, so they need no special case. */
+function UnscoredFootnote({
+  verdicts,
+  entries,
+}: {
+  verdicts: ReadonlyArray<{ propertyId: string }>;
+  entries: ReadonlyArray<{ propertyId: string; propertyName: string | null }>;
+}) {
+  const names = unscoredPropertyNames(verdicts, entries);
+  if (names.length === 0) return null;
+  return (
+    <p className="num px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+      {`Not scored: no ledger P&L, so no allocation verdict. ${names.join(', ')}.`}
+    </p>
+  );
+}
+
 export function CapitalModule() {
   const { data, isLoading, error } = useCapitalAllocation();
   const { data: report, isLoading: reportLoading, error: reportError } = useCapitalAllocationReport();
@@ -330,6 +349,11 @@ export function CapitalModule() {
       <div className="flex flex-col gap-4">
       {/* Portfolio allocation list */}
       <div className="flex flex-col gap-3">
+        {portfolio.verdicts.some((v) => v.confidenceTier === 'estimated') && (
+          <p className="num px-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            "estimated" means forecast inputs are absent, so a verdict's confidence is capped at 65%.
+          </p>
+        )}
         {portfolio.verdicts.length === 0 ? (
           <Card>
             <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
@@ -345,6 +369,7 @@ export function CapitalModule() {
             />
           ))
         )}
+        {reportUsable && <UnscoredFootnote verdicts={portfolio.verdicts} entries={capEntries} />}
       </div>
 
       {/* Cap-rate positioning scatter — display-only plot of the same capEntries rows below.
