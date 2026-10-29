@@ -10,8 +10,8 @@ describe('Overview default layout (one home per attention list)', () => {
     expect(OVERVIEW_WIDGETS.some((w) => w.id === 'insights')).toBe(true); // still addable via Edit layout
   });
 
-  it('opens on Priority Actions, full width, ahead of the descriptive widgets', () => {
-    expect(DEFAULT_WIDGET_ORDER[0]).toBe('priority-actions');
+  it('puts Priority Actions right after the KPI strip, full width, ahead of the descriptive widgets', () => {
+    expect(DEFAULT_WIDGET_ORDER.slice(0, 2)).toEqual(['kpis', 'priority-actions']);
     expect(OVERVIEW_WIDGETS.find((w) => w.id === 'priority-actions')?.span).toBe('full');
   });
 

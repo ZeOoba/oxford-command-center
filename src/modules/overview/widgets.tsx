@@ -287,11 +287,12 @@ function InsightsWidget() {
 }
 
 /** Overview widget registry — drop a new entry here and it's available to the dashboard. Registry
- *  order IS the default layout order: what needs a decision first, descriptive charts after (or off
- *  by default and addable via Edit layout). */
+ *  order IS the default layout order: KPIs, then what needs a decision, descriptive charts after (or
+ *  off by default and addable via Edit layout). KPIs stay first until Priority Actions has compact
+ *  rows (design step 4); full-width tall cards would otherwise push them ~1,400px down. */
 export const OVERVIEW_WIDGETS: WidgetDef[] = [
-  { id: 'priority-actions', title: 'Priority Actions', span: 'full', Component: PriorityActionsWidget },
   { id: 'kpis', title: 'Portfolio KPIs', span: 'full', Component: KpiStripWidget },
+  { id: 'priority-actions', title: 'Priority Actions', span: 'full', Component: PriorityActionsWidget },
   { id: 'results-banner', title: 'Results', span: 'full', Component: ResultsBannerWidget },
   { id: 'cash-trend', title: 'Cash Trend', span: 'half', Component: CashTrendWidget },
   { id: 'lease-rollover', title: 'Lease Rollover', span: 'half', Component: LeaseRolloverWidget },
