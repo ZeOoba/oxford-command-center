@@ -187,12 +187,38 @@ _What a `Refute-Reviewed:` id may claim._ The workflow result's `clean` is true 
 none found a real defect, the worst severity is below medium, and the **default lens set** (or a superset of it,
 each default lens verbatim) ran; a custom or re-worded lens set is never `clean`. A lens counts as defect-free only
 when `foundRealDefect` is exactly `false` (missing, `null`, `0` or a string fails closed), and a non-array
-`findings` ranks as critical. Record a bare `Refute-Reviewed: wf_<id>` only for a clean, unscoped run; otherwise
-qualify it after the id: `(scoped)` when `outOfScope` was used, `(effort=<level>)` for a reduced-effort run, and
+`findings` ranks as critical. Record a bare `Refute-Reviewed: wf_<id>` only for a clean, unscoped run (the check
+cannot verify this; see the grammar below); otherwise qualify it after the id: `(scoped)` when `outOfScope` was used,
+`(effort=<level>)` for a reduced-effort run, and
 `(base-workflow)` when the run was launched from main's copy of the workflow while the change under review modifies
 the workflow itself (the attestation then comes from the rules being replaced, not the ones being merged).
 `changeSet` / `greenContext` are trusted caller input: the result records their sha256 and length (UTF-16 code
 units) so an auditor can match them to the cited change set.
+
+_Qualifier grammar (enforced by `check:refute`)._ `check:refute` sees only the trailer text, so it cannot verify
+that a **bare** id is clean: that stays on the author, and the workflow's `clean` field is the authority. What it does
+enforce is that a qualifier, once written in a parenthetical right after the `wf_<id>`, is well-formed.
+
+- Items, comma-separated, each at most once, in any order: `clean` (explicit synonym of bare), `scoped`,
+  `base-workflow`, `effort=<low|medium|high|xhigh|max>`, `partial: <reason>` (a lens failed) and
+  `accepted: <reason>` (findings the author accepted).
+- `partial`/`accepted` need a real reason (no placeholder, `<blank>` or `wf_<runId>`). `clean:`, `scoped:` and
+  `base-workflow:` may carry a free-text note, as in main's `(clean: nothing above LOW; ...)` form (#480).
+- A note or reason runs up to the next comma segment that itself starts an item, so it may contain commas and nested
+  parentheses but never hides a following item. `clean` cannot sit beside `scoped`/`partial`/`accepted`.
+- A parenthetical is a qualifier only when its first word is one of those words followed by `,` `:` `=` `)` or the
+  end. Anything else (`(opus 5.5 subagents)`, `(scoped to the ingest)`) is prose, and a bare id or prose trailer is
+  unchanged, because main already carries both. A malformed qualifier (`effort=ultra`, `partial` with no reason, a
+  duplicate item) rejects the trailer.
+- Only the first id's first parenthetical is inspected, and nothing after its closing parenthesis is read. A qualifier
+  separated from the id by anything but whitespace (a colon, `'s`, full-width parentheses) is prose. A wrapper
+  around the id (`` `wf_x` (effort=zzz) ``) does not hide the qualifier.
+- Known open gaps (refute `wf_f2435027-ad6`, accepted by Gabriel), each failing open to the pre-grammar behavior: an
+  unbalanced `(` inside a note hides later items; a `partial`/`accepted` reason is tested raw, so a wrapped
+  placeholder (`"TBD"`) passes; a wrapped id followed by prose hides the qualifier; items separated by anything but
+  commas (semicolon, space) are prose, which reads as a bare id.
+- Example: `Refute-Reviewed: wf_d10ede49-078 (scoped, effort=low, accepted: one low, fixed next commit)`. The squash
+  commit's union of trailers (below) keeps each qualifier verbatim.
 
 _Attestation is per commit, not per range (2026-09-23)._ Every commit in `base..HEAD` whose **own**
 changed paths include financial source must carry the trailer in **its own** message. A trailer on
@@ -223,6 +249,7 @@ unattested `src/analytics/conditions.ts` change in its child.
   shared checkout. The steps, in Git Bash, use no editor:
   1. `PRE=$(git rev-parse HEAD)`
   2. `GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`
+     (bare id = clean, unscoped run only; otherwise append the qualifier, e.g. `'Refute-Reviewed: wf_<runId> (scoped)'`)
   3. `GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash <merge-base sha>`
   4. `git diff --exit-code "$PRE" HEAD`
 
