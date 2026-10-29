@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupByCause, signalCount } from '../../src/lib/tier-group';
+import { groupByCause, rankRows, signalCount } from '../../src/lib/tier-group';
 import type { TierItem } from '../../src/primitives/TierBoard';
 
 const lease = (id: string, tenant: string, usd: number | null): TierItem => ({
@@ -67,6 +67,52 @@ describe('groupByCause', () => {
       { id: 'n2', title: 'N2', impactUsd: null },
     ];
     expect(groupByCause(items, describeCause).map((i) => i.id)).toEqual(['q', 'n1', 'n2']);
+  });
+});
+
+describe('groupByCause scope', () => {
+  it('namespaces the synthetic group id by scope so one cause in two scopes never collides', () => {
+    const items = [lease('a', 'A', 3), lease('b', 'B', 2), lease('c', 'C', 1)];
+    expect(groupByCause(items, describeCause, 3, 'critical')[0]!.id).toBe('group:critical:lease-expiry');
+    expect(groupByCause(items, describeCause, 3, 'warning')[0]!.id).toBe('group:warning:lease-expiry');
+    expect(groupByCause(items, describeCause)[0]!.id).toBe('group:lease-expiry'); // unscoped unchanged
+  });
+});
+
+describe('rankRows', () => {
+  it('re-ranks already-built rows (pinned, then dollars, nulls last) without regrouping them', () => {
+    const rows: TierItem[] = [
+      { id: 'g1', title: 'G1', impactUsd: 10, cause: 'c', members: [{ id: 'm1', title: 'm1' }] },
+      { id: 'big', title: 'Big', impactUsd: 99 },
+      { id: 'p', title: 'P', impactUsd: null, pinned: true },
+    ];
+    const out = rankRows(rows);
+    expect(out.map((r) => r.id)).toEqual(['p', 'big', 'g1']);
+    expect(out.map((r) => r.rank)).toEqual([1, 2, 3]);
+    expect(out[2]!.members).toHaveLength(1);
+  });
+});
+
+describe('groupByCause pinning', () => {
+  it('ranks a pinned row above larger dollar rows, group or not', () => {
+    const items: TierItem[] = [
+      { id: 'big', title: 'Big', impactUsd: 900_000 },
+      { id: 'p1', title: 'P1', impactUsd: null, cause: 'lapsed', pinned: true },
+      { id: 'p2', title: 'P2', impactUsd: null, cause: 'lapsed', pinned: true },
+      { id: 'p3', title: 'P3', impactUsd: null, cause: 'lapsed', pinned: true },
+    ];
+    const out = groupByCause(items, (_c, ms) => ({ title: `${ms.length} lapsed` }));
+    expect(out.map((i) => i.title)).toEqual(['3 lapsed', 'Big']);
+    expect(out[0]!.pinned).toBe(true);
+    expect(out[0]!.impactUsd).toBeNull();
+  });
+
+  it('keeps a lone pinned item ahead of dollar-ranked items', () => {
+    const items: TierItem[] = [
+      { id: 'big', title: 'Big', impactUsd: 5 },
+      { id: 'p', title: 'P', impactUsd: null, pinned: true },
+    ];
+    expect(groupByCause(items, () => ({ title: 'x' })).map((i) => i.id)).toEqual(['p', 'big']);
   });
 });
 
