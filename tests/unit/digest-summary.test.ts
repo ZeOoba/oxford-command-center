@@ -10,4 +10,18 @@ describe('digestSummary', () => {
     expect(s).toMatchObject({ critical: 4, review: 1, deals: 1 });
     expect(s.top.map((x) => x.id)).toEqual(['a', 'b', 'd']);
   });
+
+  it('attention is the signal total across critical, review and deals — never the row count', () => {
+    const rows = [{ ...it_('g', 0), signals: 9 }, { ...it_('w', 1), signals: 3 }, it_('d', 2, 'deal')];
+    const s = digestSummary(rows);
+    expect(rows).toHaveLength(3);
+    expect(s.attention).toBe(13); // 9 + 3 + 1
+    expect(s.attention).toBe(s.critical + s.review + s.deals);
+  });
+
+  it('counts signals, not rows, for rolled-up rows', () => {
+    const s = digestSummary([{ ...it_('g', 0), signals: 3 }, it_('b', 0), { ...it_('w', 1), signals: 2 }, it_('x', 1)]);
+    expect(s).toMatchObject({ critical: 4, review: 3, deals: 0 });
+    expect(s.top.map((x) => x.id)).toEqual(['g', 'b']);
+  });
 });

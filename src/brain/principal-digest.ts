@@ -1,6 +1,7 @@
 import type { PortfolioSnapshot } from '@contracts/index';
 import type { MergedInsight } from '@/modules/insights/insights.logic';
-import { sortByImpactDesc } from '@/modules/insights/insights.logic';
+import { buildTiers } from '@/modules/insights/insights.logic';
+import { signalCount } from '@/lib/tier-group';
 
 export interface DigestItem {
   id: string;
@@ -8,6 +9,9 @@ export interface DigestItem {
   rank: number; // 0 critical, 1 warning, 2 deal — sort key
   title: string;
   detail: string;
+  /** Underlying signals this row stands for (a rolled-up board row stands for all its members).
+   *  Absent = 1. The Critical/Review counts sum this, so grouping never changes a KPI. */
+  signals?: number;
 }
 
 const ATTENTION_STAGES = new Set(['LOI/PSA', 'Closing']);
@@ -28,9 +32,11 @@ const ATTENTION_STAGES = new Set(['LOI/PSA', 'Closing']);
  * would reintroduce the same drift. They get their own labelled line on the Principal Home
  * (PrincipalModule) that links to Worklist › Alerts, where `useAlertView` already bridges them in.
  *
- * Ordering (review follow-up): critical/warning items are sorted by `sortByImpactDesc` — the
- * SAME sort `buildTiers()` applies to the board's Critical/Priority tiers — so the Digest's top-3
- * (digestSummary's `top`) is never a different top-3 than the board's Critical tier shows.
+ * Ordering: the Digest's critical/warning rows ARE `buildTiers()`'s Critical/Priority rows — the
+ * same grouped, pinned-first order the board renders — so the Digest's top-3 (digestSummary's
+ * `top`) is by construction the board's top-3, and the counts (summed `signals`) are the board's
+ * signal totals. Deriving from the board, rather than re-sorting, is what keeps the two from
+ * drifting when the board's grouping or pinning rules change (refute wf_75f08f8a-621).
  */
 export function principalDigest(
   snapshot: PortfolioSnapshot,
@@ -38,10 +44,11 @@ export function principalDigest(
 ): DigestItem[] {
   const items: DigestItem[] = [];
 
-  const critical = sortByImpactDesc(merged.filter((m) => m.severity === 'critical'));
-  const warning = sortByImpactDesc(merged.filter((m) => m.severity === 'warning'));
-  for (const m of [...critical, ...warning]) {
-    items.push({ id: m.id, kind: 'insight', rank: m.severity === 'critical' ? 0 : 1, title: m.title, detail: m.detail });
+  const tiers = buildTiers([...merged]);
+  for (const [key, rank] of [['critical', 0], ['priority', 1]] as const) {
+    for (const row of tiers.find((t) => t.key === key)?.items ?? []) {
+      items.push({ id: row.id, kind: 'insight', rank, title: row.title, detail: row.detail ?? '', signals: signalCount(row) });
+    }
   }
   for (const d of snapshot.deals) {
     if (ATTENTION_STAGES.has(d.stage)) {

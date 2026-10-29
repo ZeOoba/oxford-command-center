@@ -26,12 +26,12 @@
     "last_updated": "2026-10-15T00:00:00Z"
   },
   "festive-bartik-42b09f": {
-    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
-    "phase": "Stale governor-regime BUY gate (refute wf_f5f45202-de8 follow-up): acq-engine stamps score_json.governorRegime; capital-allocation withholds BUY from stale scores. Touches ARCHITECT-OWNED src/contracts/capital.ts (additive PortfolioAllocation.dataQuality, default []).",
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-27",
+    "phase": "Overview alert fixes (PR #497): CF-1 discovery dollars via fmtUsdCompact (server/insights/generators/cf-hurdle-drag.ts, refute-gated), basis-subtotal tooltips, same-cause alert grouping + lapsed-coverage pinning (src/lib/tier-group.ts, src/brain/alert-cause.ts, Priority Actions, Digest parity). No architect-owned files, no migrations, no governor constants.",
     "status": "in_progress",
-    "blocked_by": "PR #456 (isBuyEligible) unmerged - branched from its head",
-    "review_needed": true,
-    "last_updated": "2026-10-13T00:00:00Z"
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-27T00:00:00Z"
   },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",

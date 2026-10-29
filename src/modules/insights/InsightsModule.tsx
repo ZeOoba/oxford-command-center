@@ -52,7 +52,7 @@ function SpineSplitStat({
         </div>
         <div className="flex flex-wrap gap-x-5 gap-y-1">
           {totals.map((t) => (
-            <div key={t.label}>
+            <div key={t.label} title={t.hint} style={{ cursor: t.hint ? 'help' : undefined }}>
               <div className="num text-lg font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
                 {fmtUsdCompact(t.totalUsd)}
               </div>
