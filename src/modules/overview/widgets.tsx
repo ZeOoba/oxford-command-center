@@ -10,12 +10,13 @@ import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
 import { RolloverChart } from '../leasing/RolloverChart';
 import { AreaChart } from '@/charts/AreaChart';
-import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
-import { spineLabel } from '@/lib/spine-label';
+import { TierBoard, type Tier, type TierTotal } from '@/primitives/TierBoard';
 import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
-import { mergeInsightSources, buildSummary, buildTiers, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
+import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
+import { groupByCause, rankRows } from '../../lib/tier-group';
+import { describeAlertCause } from '../alerts/cause-labels';
 
 export interface WidgetDef {
   id: string;
@@ -129,7 +130,7 @@ function SpineSplitCell({
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         {totals.map((t) => (
-          <div key={t.label}>
+          <div key={t.label} title={t.hint} style={{ cursor: t.hint ? 'help' : undefined }}>
             <div className="num text-base font-semibold leading-none" style={{ color: accentColor }}>
               {fmtUsdCompact(t.totalUsd)}
             </div>
@@ -181,11 +182,12 @@ function ResultsBannerWidget() {
 // ── Priority Actions (top-N across all severities, reusing the same merged feed) ────────────
 //
 // Unlike buildTiers() (which groups by severity into Critical/Priority/Monitor), this widget
-// wants a single cross-severity ranking by raw $ impact — "what are the N biggest-dollar things
-// happening right now, regardless of severity." That ranking isn't something insights.logic.ts
-// exports (its buildTiers groups by severity on purpose), so the sort/slice lives here as a
-// small presentation-only helper; the underlying merge + per-spine subtotal (totalsBySpine) are
-// still the shared, reused functions — only the top-N selection is new.
+// wants a single cross-severity ranking by $ impact — "what are the N biggest things happening
+// right now, regardless of severity." That ranking isn't something insights.logic.ts exports
+// (its buildTiers groups by severity on purpose), so the sort/group/slice lives here as a small
+// presentation-only helper; the merge, row shape (mergedToTierItem), grouping (groupByCause) and
+// per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
+// is new.
 const PRIORITY_ACTIONS_LIMIT = 5;
 
 function sortMergedByImpactDesc(items: MergedInsight[]): MergedInsight[] {
@@ -197,22 +199,33 @@ function sortMergedByImpactDesc(items: MergedInsight[]): MergedInsight[] {
   });
 }
 
-function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier {
-  const top = sortMergedByImpactDesc(merged).slice(0, limit);
-  const items: TierItem[] = top.map((m, index) => ({
-    id: m.id,
-    rank: index + 1,
-    category: m.category,
-    impactUsd: m.impactUsd,
-    impactKind: m.severity === 'info' ? 'info' : 'risk',
-    title: m.title,
-    detail: m.detail,
-    chips: [spineLabel(m.spine)],
-  }));
+// Same-cause alerts roll into one row BEFORE the cut to N (twelve lapsed policies are one decision,
+// not twelve slots), and lapsed coverage is pinned first — its impact is unquantified, so a pure
+// dollar sort could never surface it here.
+export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier {
+  // Ids are unique by construction (conditions.ts / mergeInsightSources); dedupe defensively so the
+  // id-keyed subtotal below can never count a row that is not shown, or count one twice.
+  const seen = new Set<string>();
+  const unique = merged.filter((m) => !seen.has(m.id) && seen.add(m.id));
+  // Group WITHIN each severity (as buildTiers does), then rank the rows together: `expiring-*` ids
+  // are critical or warning under one cause, and a cross-severity group would fold a critical lease
+  // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
+  const sorted = sortMergedByImpactDesc(unique);
+  const rows = (['critical', 'warning', 'info'] as const).flatMap((severity) =>
+    groupByCause(
+      sorted.filter((m) => m.severity === severity).map((m, index) => mergedToTierItem(m, index + 1)),
+      describeAlertCause,
+      undefined,
+      severity,
+    ),
+  );
+  const items = rankRows(rows).slice(0, limit);
+  const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
+  const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Top items by $ impact, all severities',
+    subtitle: 'Top items by $ impact; lapsed coverage pinned first',
     tone: 'accent',
     items,
     totalsBySpine: totalsBySpine(top),

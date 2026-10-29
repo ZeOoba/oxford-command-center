@@ -58,7 +58,7 @@ export function PrincipalModule() {
       </div>
 
       <Card>
-        <CardHeader title="Needs your attention" trailing={<Badge tone={digest.length ? 'amber' : 'green'}>{digest.length}</Badge>} />
+        <CardHeader title="Needs your attention" trailing={<Badge tone={summary.attention ? 'amber' : 'green'}>{summary.attention}</Badge>} />
         {digest.length === 0 ? (
           <div className="px-4 py-8 text-sm" style={{ color: 'var(--text-tertiary)' }}>Nothing needs a decision right now.</div>
         ) : (

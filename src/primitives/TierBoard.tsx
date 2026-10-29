@@ -33,11 +33,16 @@ export interface TierItem {
   cause?: string;
   /** Present on a rolled-up row: the individual items it stands for, shown on expand. */
   members?: TierItem[];
+  /** Ranks ahead of every unpinned row regardless of dollars — for items whose impact is real but
+   *  unquantified (lapsed coverage). `groupByCause` honors it; it never invents a dollar figure. */
+  pinned?: boolean;
 }
 
 export interface TierTotal {
   label: string;
   totalUsd: number;
+  /** One-line explanation of what this basis is, shown as a tooltip beside the figure. */
+  hint?: string;
 }
 
 export interface Tier {
@@ -229,7 +234,12 @@ function TierColumn({ tier, visible }: { tier: Tier; visible: number }) {
           style={{ background: 'var(--surface-overlay)', borderBottom: '1px solid var(--border-subtle)' }}
         >
           {tier.totalsBySpine.map((t) => (
-            <span key={t.label} className="num text-2xs" style={{ color: 'var(--text-secondary)' }}>
+            <span
+              key={t.label}
+              className="num text-2xs"
+              style={{ color: 'var(--text-secondary)', cursor: t.hint ? 'help' : undefined }}
+              title={t.hint}
+            >
               {t.label}:{' '}
               <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fmtUsdCompact(t.totalUsd)}</span>
             </span>
