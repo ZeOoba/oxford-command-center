@@ -9,6 +9,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { BarList } from '@/charts/BarList';
+import { cn } from '@/lib/cn';
 import { useTabParam } from '@/lib/useTabParam';
 import { useTabSpecs } from '@/shell/tab-badges';
 import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
@@ -38,6 +39,36 @@ const STAGE_TONE: Record<DealStage, BadgeTone> = {
   Dead: 'neutral',
 };
 
+// A Notion deal's Next Action is a running log (up to ~3,400 characters). Collapsed, it clamps to two
+// lines; anything longer than this gets a more/less toggle that expands it in place.
+const NEXT_ACTION_CLAMP_CHARS = 140;
+
+function NextActionCell({ text }: { text: string | null }) {
+  const [open, setOpen] = useState(false);
+  if (!text) return <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>—</span>;
+  const long = text.length > NEXT_ACTION_CLAMP_CHARS;
+  return (
+    <div className="flex max-w-[26rem] flex-col items-start gap-0.5">
+      <span className={cn('text-xs', long && !open && 'line-clamp-2')} style={{ color: 'var(--text-secondary)' }}>
+        {text}
+      </span>
+      {long && (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={open ? 'Collapse next action' : 'Show full next action'}
+          // The row opens the deal on click; this control must only expand the text.
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+          className="text-2xs font-semibold"
+          style={{ color: 'var(--accent)' }}
+        >
+          {open ? 'less' : 'more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 type SyncState =
   | { phase: 'idle' }
   | { phase: 'syncing' }
@@ -51,6 +82,8 @@ export function AcquisitionsModule() {
   const [scoreDealId, setScoreDealId] = useState<string>('');
   const [sync, setSync] = useState<SyncState>({ phase: 'idle' });
   const [hubspotSync, setHubspotSync] = useState<SyncState>({ phase: 'idle' });
+  // The pipeline table lists active deals (not Closed/Dead) unless the user asks for the rest.
+  const [showClosed, setShowClosed] = useState(false);
   const [acqTab, setAcqTab] = useTabParam<AcqTab>(ACQUISITIONS_TAB_KEYS, 'pipeline');
   const acqTabSpecs = useTabSpecs(ACQUISITIONS_TABS);
   // Oxford Edge (spec §8.1/§8.4). The board's sort/filter state lives here, like scoreDealId, so it
@@ -116,6 +149,7 @@ export function AcquisitionsModule() {
   const deals = data.snapshot.deals;
   const scoreDeal = deals.find((d) => d.id === scoreDealId) ?? null;
   const active = deals.filter((d) => d.stage !== 'Closed' && d.stage !== 'Dead');
+  const closedCount = deals.length - active.length;
   const stageCounts = STAGE_ORDER.map((s) => ({ label: s, value: deals.filter((d) => d.stage === s).length })).filter((x) => x.value > 0);
   const bestCap = Math.max(0, ...active.map((d) => d.capRate ?? 0));
   const pipelineSf = active.reduce((s, d) => s + (d.sf ?? 0), 0);
@@ -138,7 +172,7 @@ export function AcquisitionsModule() {
     { key: 'price', header: 'Est. Price', align: 'right', render: (d) => fmtUsdCompact(d.estPrice), sortValue: (d) => d.estPrice ?? 0 },
     { key: 'cap', header: 'Cap', align: 'right', render: (d) => (d.capRate !== null ? fmtPct(d.capRate, 2) : '—'), sortValue: (d) => d.capRate ?? 0 },
     { key: 'em', header: 'EM', align: 'right', render: (d) => (d.equityMultiple !== null ? fmtMultiple(d.equityMultiple) : '—'), sortValue: (d) => d.equityMultiple ?? 0 },
-    { key: 'next', header: 'Next Action', render: (d) => <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{d.nextAction ?? '—'}</span>, sortValue: (d) => d.nextAction ?? '' },
+    { key: 'next', header: 'Next Action', render: (d) => <NextActionCell text={d.nextAction} />, sortValue: (d) => d.nextAction ?? '' },
   ];
 
   return (
@@ -241,8 +275,25 @@ export function AcquisitionsModule() {
               </div>
             </Card>
             <Card>
-              <CardHeader title="Active Deals" trailing={<Badge tone="gold">{deals.length} deals</Badge>} />
-              <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
+              <CardHeader
+                title={showClosed ? 'All Deals' : 'Active Deals'}
+                trailing={
+                  <div className="flex items-center gap-2">
+                    {closedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowClosed((v) => !v)}
+                        className="num text-2xs font-semibold"
+                        style={{ color: 'var(--accent)' }}
+                      >
+                        {showClosed ? 'Hide closed / dead' : `Show closed / dead (${closedCount})`}
+                      </button>
+                    )}
+                    <Badge tone="gold">{showClosed ? `${deals.length} deals` : `${active.length} active`}</Badge>
+                  </div>
+                }
+              />
+              <DataTable columns={cols} rows={showClosed ? deals : active} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
             </Card>
           </div>
         </TabPanel>
