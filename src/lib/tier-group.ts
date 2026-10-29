@@ -1,6 +1,7 @@
 // Signal discipline — "group by cause before listing". Symptoms of one problem become one row
 // (twelve expiring leases are one decision, not twelve), ranked by the dollars the group carries.
 import type { TierItem } from '@/primitives/TierBoard';
+import { rankByImpact } from './impact-score';
 
 /** A cause needs this many members before it is worth a row of its own. */
 export const MIN_GROUP_SIZE = 3;
@@ -91,18 +92,5 @@ export function groupByCause(
  * then merge the scopes into one list (a second `groupByCause` would re-fold the scopes together).
  */
 export function rankRows(rows: TierItem[]): TierItem[] {
-  return rows
-    .map((row, index) => ({ row, index }))
-    .sort((a, b) => {
-      if (!!a.row.pinned !== !!b.row.pinned) return a.row.pinned ? -1 : 1;
-      const av = a.row.impactUsd;
-      const bv = b.row.impactUsd;
-      const aNull = av === null || av === undefined;
-      const bNull = bv === null || bv === undefined;
-      if (aNull && bNull) return a.index - b.index;
-      if (aNull) return 1;
-      if (bNull) return -1;
-      return bv - av || a.index - b.index;
-    })
-    .map(({ row }, i) => ({ ...row, rank: i + 1 }));
+  return rankByImpact(rows).map((row, i) => ({ ...row, rank: i + 1 }));
 }
