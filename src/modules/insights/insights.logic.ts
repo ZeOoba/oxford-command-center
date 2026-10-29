@@ -21,6 +21,7 @@ import type { PortfolioSnapshot } from '@contracts/index';
 import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
+import { rankByImpact } from '@/lib/impact-score';
 import { groupByCause } from '@/lib/tier-group';
 import { causeOf, isPinnedCause } from '@/brain/alert-cause';
 import { describeAlertCause } from '@/modules/alerts/cause-labels';
@@ -258,12 +259,7 @@ export function totalsBySpine(items: MergedInsight[]): TierTotal[] {
 /** Dollar-descending, nulls last. The board's within-tier order before grouping and pinning are
  *  applied by buildTiers (principalDigest derives from buildTiers, not from this sort). */
 export function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
-  return [...items].sort((a, b) => {
-    if (a.impactUsd === null && b.impactUsd === null) return 0;
-    if (a.impactUsd === null) return 1; // nulls last
-    if (b.impactUsd === null) return -1;
-    return b.impactUsd - a.impactUsd;
-  });
+  return rankByImpact(items);
 }
 
 /** One merged insight as a board row. `cause`/`pinned` come from the id (view-layer derivation, see
