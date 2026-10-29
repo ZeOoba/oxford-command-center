@@ -63,8 +63,11 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   };
 }
 
+// Bounded so a hung Graph call degrades the To-Do source instead of blocking the workbook parse.
+const GRAPH_FETCH_TIMEOUT_MS = 15_000;
+
 async function graphGet<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`${GRAPH}${path}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' } });
+  const res = await fetch(`${GRAPH}${path}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' }, signal: AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Graph ${res.status}`);
   return (await res.json()) as T;
 }

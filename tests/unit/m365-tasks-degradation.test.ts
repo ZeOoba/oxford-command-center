@@ -180,3 +180,46 @@ describe('requireLiveM365Source — writer-side gate for the unflagged not-confi
     expect(result.warning).toMatch(/not-configured/);
   });
 });
+
+describe('loadM365Tasks — bounded Graph calls', () => {
+  it('passes a timeout AbortSignal on the Graph request and degrades when it fires', async () => {
+    const graphSignals: Array<AbortSignal | null | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('login.microsoftonline.com')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      }
+      graphSignals.push(init?.signal);
+      // Model a hung Graph call: reject the way fetch does once the signal aborts.
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }));
+    await withGraphEnv({ GRAPH_TENANT_ID: 't', GRAPH_CLIENT_ID: 'c', GRAPH_CLIENT_SECRET: 's', GRAPH_USER: 'u@x.com' }, async () => {
+      const out = await loadM365Tasks();
+      expect(graphSignals.length).toBeGreaterThan(0);
+      for (const s of graphSignals) expect(s).toBeInstanceOf(AbortSignal);
+      expect(out.tasks).toEqual([]);
+      expect(out.degraded?.reason).toBe('fetch-failed');
+    });
+  });
+});
+
+describe('loadM365Tasks — bounded Graph token request', () => {
+  it('passes a timeout AbortSignal on the token request and degrades to token-failed when it fires', async () => {
+    _resetGraphTokenCache();
+    const tokenSignals: Array<AbortSignal | null | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('login.microsoftonline.com')) {
+        tokenSignals.push(init?.signal);
+        // Model a hung token endpoint: reject the way fetch does once the signal aborts.
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      }
+      throw new Error('Graph must not be reached without a token');
+    }));
+    await withGraphEnv({ GRAPH_TENANT_ID: 't', GRAPH_CLIENT_ID: 'c', GRAPH_CLIENT_SECRET: 's', GRAPH_USER: 'u@x.com' }, async () => {
+      const out = await loadM365Tasks();
+      expect(tokenSignals.length).toBeGreaterThan(0);
+      for (const s of tokenSignals) expect(s).toBeInstanceOf(AbortSignal);
+      expect(out.tasks).toEqual([]);
+      expect(out.degraded?.reason).toBe('token-failed');
+    });
+  });
+});
