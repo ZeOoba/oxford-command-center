@@ -1,4 +1,13 @@
 {
+  "refute-check-clean-effort-d750f8": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-28",
+    "phase": "Refute gate: qualifier grammar for Refute-Reviewed wf_<id> trailers (clean/scoped/effort/base-workflow/partial/accepted), per Gabriel's AskUserQuestion pick 2026-10-28.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edits: scripts/check-refute-required.ts (trailerRejection qualifier parse), architecture/coding-standards.md (trailer convention + reword recipe). Also tests/unit/check-refute-required.test.ts. Branch claude/refute-check-clean-effort-d750f8. Not pushed or merged.",
+    "last_updated": "2026-10-28T00:00:00Z"
+  },
   "acq-current-score-pointer": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
     "phase": "Fix: history-independent current acq score (refute wf_f5f45202-de8 on PR #456). Add acq_candidates.current_score_id, set by every persistAndLogScore call incl. the idempotent no-op path; capital-allocation.ts loadPipelineCandidates, api.ts /acq/candidates, brain-report.ts floor-indeterminate join on it.",

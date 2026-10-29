@@ -848,7 +848,7 @@ describe('check-refute-required — Refute-Reviewed value', () => {
   it('a placeholder Refute-Reviewed does not mask a valid Refute-Skip in the same message', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Reviewed: TODO\nRefute-Skip: formatting only\n')).toBe(true);
   });
-  // Every distinct trailer line on origin/main as of 2276211 (2026-09-27). A tightening of the rule
+  // Every distinct trailer line on origin/main as of the sha in the fixture header. A tightening of the rule
   // must never reject what main already carries — round 3 caught exactly that (#367's `<pid>`).
   it('every historical trailer line on main still attests', () => {
     const fixture = readFileSync(resolve(__dirname, '../fixtures/refute-trailers-main.txt'), 'utf8');
@@ -860,6 +860,80 @@ describe('check-refute-required — Refute-Reviewed value', () => {
   it('CRLF messages behave the same', () => {
     expect(hasRefuteApproval('fix\r\n\r\nRefute-Reviewed: wf_d10ede49-078\r\n')).toBe(true);
     expect(hasRefuteApproval('fix\r\n\r\nRefute-Reviewed: PENDING\r\n')).toBe(false);
+  });
+});
+
+describe('check-refute-required — run qualifier grammar', () => {
+  it.each([
+    'wf_d10ede49-078',
+    'wf_d10ede49-078 (clean)',
+    'wf_d10ede49-078 (scoped)',
+    'wf_d10ede49-078 (effort=low)',
+    'wf_d10ede49-078 (EFFORT=XHigh)',
+    'wf_d10ede49-078 (base-workflow)',
+    'wf_d10ede49-078 (scoped, effort=max, base-workflow)',
+    'wf_d10ede49-078 (partial: security lens failed twice, rerun pending on the follow-up)',
+    'wf_d10ede49-078 (effort=low, accepted: one low, doc wording; fixed in next commit)',
+    'wf_d10ede49-078 (opus 5.5 subagents)',
+    'wf_d10ede49-078 (cleanly applied)',
+    'wf_d10ede49-078: clean (scoped)',
+    // main's own phrasing (#480): a note after `clean:` is free text, commas and all.
+    'wf_911caeac-216 (clean: nothing above LOW; reviewed commit 13ec71df, tree bc5c2d19; 3 lows fixed, 1 deferred)',
+    'wf_d10ede49-078 (scoped: guard only, mechanism out of scope)',
+    // Nested parentheses inside a reason or note are part of it.
+    'wf_d10ede49-078 (partial: security lens failed (timeout), rerun pending)',
+    'wf_d10ede49-078 (effort=low, accepted: one low (doc wording), fixed next commit)',
+    // Text after the closing paren is prose.
+    'wf_d10ede49-078 (scoped) see the PR (#500) for the change set',
+    // Head word not followed by , : = ) or the end is prose.
+    'wf_d10ede49-078 (scoped to the ingest change)',
+    'wf_d10ede49-078 (accepted 2 MEDIUMs)',
+    'wf_d10ede49-078 (clean-up only)',
+    'wf_d10ede49-078 (clean (opus 5.5))',
+    // A note or reason runs to the next comma segment that starts a qualifier item, so item order is free.
+    'wf_d10ede49-078 (clean: fine, effort=low)',
+    'wf_d10ede49-078 (effort=low, clean: fine)',
+    'wf_d10ede49-078 (accepted: one low, doc wording, scoped)',
+  ])('accepts %j', (value) => {
+    expect(rejectedRefuteTrailers(`fix\n\nRefute-Reviewed: ${value}\n`)).toEqual([]);
+    expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(true);
+  });
+  it.each([
+    ['wf_d10ede49-078 (effort=ultra)', /effort level "ultra"/],
+    ['wf_d10ede49-078 (effort=)', /effort level ""/],
+    ['wf_d10ede49-078 (effort)', /unknown qualifier "effort"/],
+    ['wf_d10ede49-078 (partial)', /unknown qualifier "partial"/],
+    ['wf_d10ede49-078 (partial:)', /needs a real reason/],
+    ['wf_d10ede49-078 (accepted: TODO)', /needs a real reason/],
+    ['wf_d10ede49-078 (accepted: <findings>)', /unfilled template blank "<findings>"/],
+    ['wf_d10ede49-078 (scoped, bogus)', /unknown qualifier "bogus"/],
+    // The grammar survives parentheses inside the qualifier (was: fell back to prose and attested).
+    ['wf_d10ede49-078 (effort=bogus (note))', /unknown qualifier "effort=bogus/],
+    ['wf_d10ede49-078 (clean, partial: TODO (x))', /contradicts|needs a real reason/],
+    ['wf_d10ede49-078 (effort=low, effort=max)', /given twice/],
+    ['wf_d10ede49-078 (scoped, scoped)', /given twice/],
+    // Order independence: a note placed first must not swallow a later item.
+    ['wf_d10ede49-078 (clean: fine, scoped)', /contradicts/],
+    ['wf_d10ede49-078 (scoped, clean: fine)', /contradicts/],
+    ['wf_d10ede49-078 (clean: x, effort=ultra)', /effort level "ultra"/],
+    ['wf_d10ede49-078 (effort=ultra, clean: x)', /effort level "ultra"/],
+    ['wf_d10ede49-078 (scoped: x, scoped)', /given twice/],
+    ['wf_d10ede49-078 (base-workflow: note, effort=bogus, partial: )', /effort level "bogus"/],
+    ['wf_d10ede49-078 (partial: one lens failed, clean)', /contradicts/],
+    ['wf_d10ede49-078 (partial: wf_<runId>)', /needs a real reason/],
+    // A wrapper around the id must not hide the qualifier.
+    ['(wf_d10ede49-078) (effort=zzz)', /effort level "zzz"/],
+    ['`wf_d10ede49-078` (effort=zzz)', /effort level "zzz"/],
+    ['"wf_d10ede49-078" (scoped, bogus)', /unknown qualifier "bogus"/],
+    ['[wf_d10ede49-078] (effort=ultra)', /effort level "ultra"/],
+    ['wf_d10ede49-078 (clean, partial: one lens failed)', /contradicts/],
+    ['wf_d10ede49-078 (clean, scoped)', /contradicts/],
+  ])('rejects %j', (value, why) => {
+    expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
+    expect(rejectedRefuteTrailers(`fix\n\nRefute-Reviewed: ${value}\n`)[0]).toMatch(why);
+  });
+  it('a malformed qualifier does not mask a valid Refute-Skip in the same message', () => {
+    expect(hasRefuteApproval('fix\n\nRefute-Reviewed: wf_d10ede49-078 (effort=ultra)\nRefute-Skip: formatting only\n')).toBe(true);
   });
 });
 
