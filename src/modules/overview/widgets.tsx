@@ -14,7 +14,7 @@ import { TierBoard, type Tier, type TierTotal } from '@/primitives/TierBoard';
 import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
-import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
+import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 import { groupByCause, rankRows } from '../../lib/tier-group';
 import { describeAlertCause } from '../alerts/cause-labels';
 
@@ -190,15 +190,6 @@ function ResultsBannerWidget() {
 // is new.
 const PRIORITY_ACTIONS_LIMIT = 5;
 
-function sortMergedByImpactDesc(items: MergedInsight[]): MergedInsight[] {
-  return [...items].sort((a, b) => {
-    if (a.impactUsd === null && b.impactUsd === null) return 0;
-    if (a.impactUsd === null) return 1; // nulls last
-    if (b.impactUsd === null) return -1;
-    return b.impactUsd - a.impactUsd;
-  });
-}
-
 // Same-cause alerts roll into one row BEFORE the cut to N (twelve lapsed policies are one decision,
 // not twelve slots), and lapsed coverage is pinned first — its impact is unquantified, so a pure
 // dollar sort could never surface it here.
@@ -210,7 +201,7 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
   // Group WITHIN each severity (as buildTiers does), then rank the rows together: `expiring-*` ids
   // are critical or warning under one cause, and a cross-severity group would fold a critical lease
   // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
-  const sorted = sortMergedByImpactDesc(unique);
+  const sorted = sortByImpactDesc(unique);
   const rows = (['critical', 'warning', 'info'] as const).flatMap((severity) =>
     groupByCause(
       sorted.filter((m) => m.severity === severity).map((m, index) => mergedToTierItem(m, index + 1)),
