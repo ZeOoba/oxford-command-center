@@ -519,6 +519,102 @@ function trailerRejection(value: string): string | null {
   if (id !== undefined && !(REFUTE_RUN_ID.test(id) && /\d/.test(id))) {
     return `"${id}" poses as a refute run id but is not one (expected wf_<id> like wf_d10ede49-078)`;
   }
+  if (id !== undefined) return qualifierRejection(norm.slice(id.length));
+  return null;
+}
+
+/** First word of a parenthetical that makes it a run-qualifier: a head word right after `(`, then `,` `:` `=` `)` or the end. Prose like `(scoped to the ingest)` stays prose. */
+const QUALIFIER_HEAD = /^\s*\(\s*(?:clean|scoped|effort|base-workflow|partial|accepted)(?=\s*(?:[,:=)]|$))/i;
+/** A comma segment that starts a new qualifier item (also ends a preceding note / reason, so item order never matters). */
+const QUALIFIER_ITEM_START = /^(?:clean|scoped|base-workflow)(?=\s*(?::|$))|^effort\s*=|^(?:partial|accepted)\s*:/i;
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** Body of the parenthetical opening `s` (which starts at its `(`): up to the matching `)`, nesting-aware; unclosed runs to the end. */
+function parentheticalBody(s: string): string {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')' && --depth === 0) return s.slice(s.indexOf('(') + 1, i);
+  }
+  return s.slice(s.indexOf('(') + 1);
+}
+
+/** Split on commas that are not inside nested parentheses. */
+function splitTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') depth = Math.max(0, depth - 1);
+    else if (s[i] === ',' && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
+}
+
+/**
+ * Grammar of the run qualifier that follows a `wf_<id>`, e.g. `wf_d10ede49-078 (scoped, effort=low)`.
+ * A bare id (or one followed by prose) means a CLEAN run: this check sees only the trailer text, so it cannot
+ * verify that (the workflow's `clean` field is the authority; see its RECORDING THE RESULT paragraph). What it CAN
+ * enforce is that a qualifier, once written, is well-formed, so a reader and the pre-push stage can rely on it.
+ * Items, comma-separated at the top level, each at most once, in any order: `clean` | `scoped` | `base-workflow` |
+ * `effort=<low|medium|high|xhigh|max>` | `partial: <reason>` | `accepted: <reason>`. `clean:`, `scoped:` and
+ * `base-workflow:` may carry a free-text note, and `partial`/`accepted` REQUIRE a real reason (no placeholder or
+ * `<blank>`); a note or reason runs up to the next comma segment that itself starts a qualifier item, so it may hold
+ * commas and nested parentheses but never hides a following item. `clean` cannot sit beside `partial`/`accepted`/
+ * `scoped`. The qualifier-versus-prose call is made from the head word alone: a parenthetical that does not start with
+ * one of those words (`(opus 5.5)`, `(scoped to the ingest)`) is prose, because main already carries such trailers,
+ * including `(clean: nothing above LOW; ...)` (#480). Only the first id's first parenthetical is inspected, and a
+ * qualifier separated from the id by anything but whitespace (a colon, `'s`, full-width parentheses) is prose.
+ * KNOWN OPEN (refute wf_f2435027-ad6, accepted by Gabriel): an unbalanced `(` inside a note hides later items; a
+ * partial/accepted reason is tested raw, so a WRAPPED placeholder (`"TBD"`) passes; a wrapped id followed by prose
+ * hides the qualifier; items separated by anything but commas are prose. Each fails open to the pre-grammar behavior.
+ */
+function qualifierRejection(afterId: string): string | null {
+  // A wrapper closer glued to the id (`(wf_x) (effort=zzz)` normalizes to `wf_x) (effort=zzz`) must not hide the qualifier.
+  const tail = afterId.replace(/^["'`‘’“”)\]}]+/, '');
+  if (!QUALIFIER_HEAD.test(tail)) return null;
+  const segments = splitTopLevel(parentheticalBody(tail.slice(tail.indexOf('(')))).map((s) => s.trim());
+  const seen = new Set<string>();
+  const add = (item: string): string | null => {
+    if (seen.has(item)) return `qualifier "${item}" given twice`;
+    seen.add(item);
+    return null;
+  };
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i] ?? '';
+    let m: RegExpExecArray | null;
+    let dup: string | null;
+    if ((m = /^(clean|scoped|base-workflow|partial|accepted)\s*:\s*(.*)$/is.exec(seg))) {
+      const item = (m[1] ?? '').toLowerCase();
+      const parts = [(m[2] ?? '').trim()];
+      while (i + 1 < segments.length && !QUALIFIER_ITEM_START.test(segments[i + 1] ?? '')) parts.push(segments[++i] ?? '');
+      const note = parts.join(', ').replace(/^,\s*/, '');
+      if (
+        (item === 'partial' || item === 'accepted') &&
+        (note === '' || PLACEHOLDER_VALUE.test(note) || UNFILLED_TEMPLATE.test(` ${note}`) || note.includes('<runId>'))
+      ) {
+        return `qualifier "${item}:" needs a real reason, not "${note}"`;
+      }
+      if ((dup = add(item))) return dup;
+    } else if ((m = /^(clean|scoped|base-workflow)$/i.exec(seg))) {
+      if ((dup = add((m[1] ?? '').toLowerCase()))) return dup;
+    } else if ((m = /^effort=(\w*)$/i.exec(seg))) {
+      if (!EFFORT_LEVELS.includes((m[1] ?? '').toLowerCase())) {
+        return `effort level "${m[1]}" is not one of ${EFFORT_LEVELS.join('|')}`;
+      }
+      if ((dup = add('effort'))) return dup;
+    } else {
+      return `unknown qualifier "${seg}" (expected clean|scoped|base-workflow|effort=<level>|partial: <reason>|accepted: <reason>)`;
+    }
+  }
+  if (seen.has('clean') && ['partial', 'accepted', 'scoped'].some((q) => seen.has(q))) {
+    return 'qualifier "clean" contradicts partial/accepted/scoped';
+  }
   return null;
 }
 
@@ -938,6 +1034,9 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD', stri
     'Substitute the real run id (or describe the non-workflow review that ran). Placeholders are',
     'rejected: wf_<runId>, PENDING, TODO, TBD, N/A, wf_pending, unfilled <blanks>. Not run yet? Run it, or',
     'Refute-Skip: with the real reason.',
+    'A bare wf_<runId> claims a CLEAN run (result.clean true, not scoped). Otherwise qualify it, e.g. wf_<runId> (scoped, effort=low)',
+    'or wf_<runId> (partial: <failed lenses>) / (accepted: <findings taken>); partial/accepted need a real reason.',
+    'A malformed qualifier is rejected.',
     'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
     'shared checkout, with no editor at all (POSIX shell / Git Bash):',
     '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
