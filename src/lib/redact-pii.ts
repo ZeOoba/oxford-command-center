@@ -19,16 +19,20 @@
  *   1. Signature block: from a sign-off ("Regards,", "Best regards,", "Sincerely,", "Thanks,",
  *      "Thank you,", "Cheers,", "Best,", "Sent from my ...", or a "-- " delimiter) to the end of the
  *      text, when that tail is at most SIGNATURE_MAX_TAIL chars -> "[signature redacted]".
- *      A cue that STARTS A LINE must be within the last SIGNATURE_MAX_LINES lines. A cue in the
- *      middle of a line (every M365 note is one line: htmlToText collapses whitespace; multi-line
- *      text too since round 3) also cuts when the tail is at most MIDLINE_SIGNATURE_MAX_TAIL chars.
+ *      A cue that STARTS A LINE above the last SIGNATURE_MAX_LINES lines cuts only when its tail
+ *      carries contact data or the lines below it read as a name block (round 4: a 6+-line signature
+ *      block kept the name where main cut it). A cue in the middle of a line (every M365 note is one
+ *      line: htmlToText collapses whitespace; multi-line text too since round 3) cuts when the tail
+ *      is at most MIDLINE_SIGNATURE_MAX_TAIL (= SIGNATURE_MAX_TAIL, round 4) chars.
  *      A cue with text after it on its line opens a signature only when that text starts with a
- *      capital (lower-case continuation is prose: "Regards, the tenant will renew", "following up
- *      with regards, the roof") AND the tail either carries contact data or -- strong cues only
- *      (Regards / Sincerely) -- reads as a name block (no lower-case word but connectors such as
- *      "of" / "and") with no business fact ($, an SF figure, a suite / unit number, a date). So
- *      "Sincerely, Lowe's will deliver Friday" is kept and "Thanks, Robert Jones ... 614-... x@y" is
- *      cut. Both run to their own fixed point in one step, so stacked sign-off blocks cut at once.
+ *      capital, after any quote / emoji / punctuation (lower-case continuation is prose: "Regards,
+ *      the tenant will renew", "following up with regards, the roof") AND the tail either carries
+ *      contact data or -- strong cues only (Regards / Sincerely) -- reads as a name block (no
+ *      lower-case word but connectors such as "of" / "and"; digits, "$" and dates are not words, so
+ *      "Regards, Jane Doe Suite 200" is cut as main cuts it -- round 4 dropped the business-fact veto,
+ *      which kept the name). So "Sincerely, Lowe's will deliver Friday" is kept and "Thanks, Robert
+ *      Jones ... 614-... x@y" is cut. Both run to their own fixed point in one step, so stacked
+ *      sign-off blocks cut at once.
  *   2. Mail-header names: the display name after From:/To:/Cc:/Bcc: and any "Name <addr>" pair
  *      -> "[contact redacted]".
  *   2b. Capitalised name(s) immediately before a phone number -> "[contact redacted]".
@@ -87,9 +91,14 @@ const NAME_ADDR_RE = new RegExp(
 );
 // Name directly before a phone number ("Test Person (555) 010-0123", "Test Person - 555-010-0123"):
 // signature / contact-list names with no sign-off cue. Up to 5 capitalised words (round 2: 3 split
-// "Oakview Business Park Building C" and left the front of a longer person + company span).
+// "Oakview Business Park Building C" and left the front of a longer person + company span). Round 4:
+// the span does not cross a line break after a sentence end, so "...at Riverside Commerce Center.\n
+// Call Acme LLC 614-..." keeps the property on the line above. It still crosses a plain line break
+// (a signature's "Jane Doe" line above its phone line, which main redacts) and one after an
+// abbreviation or initial ("Acme Inc.", "Jane Doe Jr.", "Robert A.").
+const NAME_SEP = String.raw`(?:[ \t]+|(?<![.!?])\s+|(?<=\b(?:Inc|Corp|Co|Ltd|Jr|Sr|Dr|Mr|Mrs|Ms|St|[A-Z])\.)\s+)`;
 const NAME_PHONE_RE = new RegExp(
-  String.raw`(?:[A-Z][\w'’.-]*\s+){1,5}(?:[-–:]\s*)?(?=${PHONE_SRC})`,
+  String.raw`(?:[A-Z][\w'’.-]*${NAME_SEP}){1,5}(?:[-–:]\s*)?(?=${PHONE_SRC})`,
   'g',
 );
 // The parts of a name span that are a company or property rather than a person (adversarial review
@@ -195,22 +204,10 @@ const NAME_BLOCK_CONNECTORS: ReadonlySet<string> = new Set([
   'of', 'and', 'at', 'the', 'for', 'de', 'la', 'van', 'von', 'du', 'del', 'da', 'y', 'e', 'x', 'ext',
   'cell', 'mobile', 'office', 'tel', 'phone', 'fax', 'email', 'direct', 'main',
 ]);
-/** Longest tail a mid-line cue may cut; a signature block flattened onto one line is short. */
-export const MIDLINE_SIGNATURE_MAX_TAIL = 120;
-// Business facts that mean a mid-line "Regards," tail is note text, not a signature: an amount, an
-// SF figure, a suite / unit / building number, or a date.
-const BUSINESS_TAIL_RE = new RegExp(
-  [
-    String.raw`\$`,
-    String.raw`\d[\d,.]*\s*(?:sf|sq\.?\s*ft|square\s+f(?:ee|oo)t)\b`,
-    String.raw`/\s*sf\b`,
-    String.raw`\b(?:suite|ste\.?|unit|bldg\.?|building)\s*#?\s*(?:\d|[a-z]\b)`,
-    String.raw`\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b`,
-    String.raw`\b\d{4}-\d{2}-\d{2}\b`,
-    String.raw`\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b`,
-  ].join('|'),
-  'i',
-);
+/** Longest tail a mid-line cue may cut. Round 4: equal to SIGNATURE_MAX_TAIL -- at 120 a full
+ *  signature flattened onto one line ("Thank you, <name>, <place>, <title>, <address>, C: <phone>,
+ *  <email>") ran past the cap and kept the name where main cut it. */
+export const MIDLINE_SIGNATURE_MAX_TAIL = SIGNATURE_MAX_TAIL;
 
 /** Text after a cue that reads as a name / title / address block: every lower-case word is a
  *  connector ("Jane Doe Director of Leasing"), so "Lowe's will deliver Friday" is prose. */
@@ -227,9 +224,9 @@ function isNameBlock(after: string): boolean {
 function isSignatureTail(strong: boolean, after: string, tail: string): boolean {
   const rest = after.trim();
   if (rest === '') return strong || CONTACT_TOKEN_RE.test(tail);
-  if (!/^[A-Z]/.test(rest)) return false;
+  if (!/^[^A-Za-z0-9$]*[A-Z]/.test(rest)) return false;
   if (CONTACT_TOKEN_RE.test(tail)) return true;
-  return strong && isNameBlock(rest) && !BUSINESS_TAIL_RE.test(rest);
+  return strong && isNameBlock(rest);
 }
 
 function cutAt(text: string, cueStart: number): string {
@@ -281,11 +278,11 @@ function stripLineSignature(text: string): string {
     const line = lines[i] ?? '';
     const lineStart = offset;
     offset += line.length + 1;
-    if (i < lines.length - SIGNATURE_MAX_LINES) continue;
     const m = SIGNOFF_LINE_RE.exec(line);
     if (!m) continue;
     const cueStart = lineStart + (line.length - line.trimStart().length);
     const tail = text.slice(cueStart);
+    if (i < lines.length - SIGNATURE_MAX_LINES && !CONTACT_TOKEN_RE.test(tail) && !isNameBlock(text.slice(lineStart + line.length))) continue;
     if (tail.length > SIGNATURE_MAX_TAIL) continue;
     // "Thanks," / "Best," / "Cheers," / "Thank you," also open ordinary sentences; treat them as a
     // sign-off only when the tail carries contact data. Text after the cue on its own line must read
