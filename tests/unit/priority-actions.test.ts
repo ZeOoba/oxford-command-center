@@ -233,7 +233,7 @@ describe('buildPriorityActionsTier', () => {
     // Round 2 (Gabriel 2026-10-30): the C4 fix made every critical row mandatory once a pinned
     // warning showed, so 20 critical arrears + 1 pinned covenant watch put 21 rows on the 7-row
     // Overview. Critical rows beyond the cap now fold into ONE expandable roll-up row.
-    describe('critical overflow folds into one roll-up row (board stays ~limit+1)', () => {
+    describe('critical overflow folds into one roll-up row (board <= max(limit, pinned) + 1 rows; pinned rows are never cut)', () => {
       const leaves = (row: { id: string; members?: Array<{ id: string; members?: unknown[] }> }): string[] =>
         row.members ? row.members.flatMap((x) => leaves(x as typeof row)) : [row.id];
       const arrears = (n: number) =>
@@ -241,7 +241,7 @@ describe('buildPriorityActionsTier', () => {
           m({ id: `arrears-T${i + 1}`, category: 'collections', spine: 'B', severity: 'critical', impactUsd: 900_000 - i * 1_000 }),
         );
 
-      it('20 critical arrears + 1 pinned dscr- warning: <= limit+1 rows, one roll-up, nothing hidden', () => {
+      it('20 critical arrears + 1 pinned dscr- warning: <= max(limit, 1 pinned) + 1 rows, one roll-up, nothing hidden', () => {
         const merged = [...arrears(20), m({ id: 'dscr-P3', category: 'debt', spine: 'B', severity: 'warning' })];
         const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
         expect(tier.items.length).toBeLessThanOrEqual(OVERVIEW_MAX_ITEMS + 1);

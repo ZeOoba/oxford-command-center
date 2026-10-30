@@ -201,7 +201,8 @@ function ResultsBannerWidget() {
 // stand for — so an indicator built on it can never go negative or miss a held-back group's members.
 // When a pinned warning / info row shows, no critical row may be held back behind it (#505, C4); the
 // critical rows that do not fit fold into ONE expandable roll-up row (OVERFLOW_ROW_ID), so the board
-// stays at about `limit` + 1 rows and every critical signal is still on it (round 2, 2026-10-30).
+// shows <= max(`limit`, pinned rows) + 1 rows — pinned rows are never cut, so they alone can exceed
+// `limit` — and every critical signal is still on it (round 2, 2026-10-30).
 export interface PriorityActionsTier extends Tier {
   heldBack: { rows: number; signals: number };
 }
