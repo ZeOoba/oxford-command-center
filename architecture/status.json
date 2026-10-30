@@ -33,6 +33,15 @@
     "review_needed": false,
     "last_updated": "2026-10-27T00:00:00Z"
   },
+  "wave-a-warehouse-freshness": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
+    "phase": "Wave A item 1.1 (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md, lands with PR feat/wave-a-residence-nnn-honesty): warehouseLedger feed on /api/health, 45-day budget on the last committed P&L import.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Architect-owned server/index.ts edit (9 lines, feed input only) acknowledged by Gabriel in-turn 2026-10-30 (AskUserQuestion). Also server/feed-freshness.ts, tests/unit/feed-freshness.test.ts. Branch feat/wave-a-warehouse-freshness.",
+    "last_updated": "2026-10-30T19:40:00Z"
+  },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
     "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
