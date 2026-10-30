@@ -27,7 +27,7 @@ describe('redactNotesText', () => {
   });
 
   it('cuts a signature block at a Regards sign-off', () => {
-    const out = redactNotesText('Can you confirm the date? Thanks. Regards, Test Person (555) 010-0123 (mobile) www.example.test 1 Main St, Testville');
+    const out = redactNotesText('Can you confirm the date? Thanks.\nRegards,\nTest Person (555) 010-0123 (mobile) www.example.test 1 Main St, Testville');
     expect(out).toBe(`Can you confirm the date? Thanks. ${SIGNATURE_PLACEHOLDER}`);
   });
 
@@ -35,12 +35,12 @@ describe('redactNotesText', () => {
     expect(redactNotesText('Thanks, I will follow up with the tenant on Monday.')).toBe(
       'Thanks, I will follow up with the tenant on Monday.',
     );
-    expect(redactNotesText('Done. Thanks, Test Person 555-010-0123')).toBe(`Done. ${SIGNATURE_PLACEHOLDER}`);
+    expect(redactNotesText('Done.\nThanks, Test Person 555-010-0123')).toBe(`Done. ${SIGNATURE_PLACEHOLDER}`);
   });
 
   it('cuts at a "-- " delimiter line and "Sent from my" footers', () => {
     expect(redactNotesText('See attached.\n--\nTest Person\nExample Co')).toBe(`See attached. ${SIGNATURE_PLACEHOLDER}`);
-    expect(redactNotesText('Will do. Sent from my phone')).toBe(`Will do. ${SIGNATURE_PLACEHOLDER}`);
+    expect(redactNotesText('Will do.\nSent from my phone')).toBe(`Will do. ${SIGNATURE_PLACEHOLDER}`);
   });
 
   it('does not cut a very long tail after a sign-off cue', () => {
@@ -71,7 +71,7 @@ describe('redactNotesText', () => {
   });
 
   it('is deterministic and idempotent', () => {
-    const s = 'Regards, Test Person 555-010-0123 tp@example.com and From: A B <ab@example.com>';
+    const s = 'From: A B <ab@example.com> ok\nRegards, Test Person 555-010-0123 tp@example.com';
     const once = redactNotesText(s);
     expect(redactNotesText(s)).toBe(once);
     expect(redactNotesText(once)).toBe(once);
@@ -80,6 +80,55 @@ describe('redactNotesText', () => {
   it('leaves clean text and the empty string unchanged', () => {
     expect(redactNotesText('')).toBe('');
     expect(redactNotesText('Renew COI; roof quote due 10/15.')).toBe('Renew COI; roof quote due 10/15.');
+  });
+});
+
+describe('redactNotesText — review follow-up (2026-10-30)', () => {
+  const idem = (s: string) => {
+    const once = redactNotesText(s);
+    expect(redactNotesText(once)).toBe(once);
+    return once;
+  };
+
+  it('is idempotent on stacked truncated-address fragments', () => {
+    expect(idem('note a <b <c')).toBe('note a');
+  });
+
+  it('is idempotent when email redaction shortens a tail under SIGNATURE_MAX_TAIL', () => {
+    const email = `${'a'.repeat(50)}@example.test`.padEnd(66, 'x'); // 66 chars
+    expect(email).toHaveLength(66);
+    idem(`Regards, ${'x'.repeat(250)} ${email}`);
+  });
+
+  it('a mid-line sign-off word is business text, not a signature', () => {
+    const s = 'Re roof. Regards, the $8,200 HVAC quote for Suite 104 covers the RTU swap; tenant pays $9.75/SF NNN.';
+    expect(redactNotesText(s)).toBe(s);
+  });
+
+  it('a line-start sign-off is a signature only within the last ~5 lines', () => {
+    const early = ['Regards,', 'line 1', 'line 2', 'line 3', 'line 4', 'line 5', 'line 6'].join('\n');
+    expect(redactNotesText(early)).toBe(early);
+    const late = ['Update below.', 'Roof done.', 'Regards,', 'Test Person', 'Example Co'].join('\n');
+    expect(redactNotesText(late)).toBe(`Update below.\nRoof done. ${SIGNATURE_PLACEHOLDER}`);
+  });
+
+  it('still redacts contact data that follows a mid-line sign-off', () => {
+    const out = redactNotesText('Done. Regards, Test Person 555-010-0123 tp@example.com');
+    expect(out).not.toMatch(/555-010-0123|tp@example\.com|Test Person/);
+  });
+
+  it('keeps company and property names before a phone number (LLC/Inc/Co, Suite/Building/Park)', () => {
+    for (const name of ['Acme Roofing LLC', 'Example Mechanical Inc.', 'Sample Paving Co', 'Building C', 'Suite B', 'Oakview Business Park']) {
+      const out = redactNotesText(`Call ${name} 555-010-0123 re gutters`);
+      expect(out).toBe(`Call ${name} ${PHONE_PLACEHOLDER} re gutters`);
+    }
+  });
+
+  it('keeps a company display name in a mail header but redacts the address', () => {
+    const out = redactNotesText('From: Acme Roofing LLC <billing@example.com> Sent: Monday');
+    expect(out).toContain('Acme Roofing LLC');
+    expect(out).not.toContain('billing@example.com');
+    expect(redactNotesText('To: Test Person <tp@example.com>')).toBe(`To: ${CONTACT_PLACEHOLDER}`);
   });
 });
 

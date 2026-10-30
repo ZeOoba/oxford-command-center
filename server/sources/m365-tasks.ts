@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataQualityFlag, Task, TaskStatus } from '../../src/contracts/index';
 import { getGraphToken } from './graph-auth';
 import { htmlToText } from './html-to-text';
+import { redactNotesText } from '../../src/lib/redact-pii';
 
 /**
  * Microsoft 365 To-Do → Tasks (Phase 6). Pulls open To-Do tasks via Microsoft Graph and prepends
@@ -57,7 +58,9 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
     role: null,
     type: 'M365 To-Do',
     dueDay: due ? due.slice(0, 10) : null,
-    notes: note ? note.slice(0, 200) : null,
+    // Redacted HERE so every consumer (Brain.persist, the snapshot writers, bake-mirror) gets the
+    // scrubbed text: To-Do bodies are pasted email threads carrying third-party contact data.
+    notes: note ? redactNotesText(note.slice(0, 200)) : null,
     status,
     monthlyPmt: null,
   };
