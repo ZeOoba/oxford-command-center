@@ -9,8 +9,10 @@
  * not cover) can set it.
  *
  * Config (Pages environment variables; same names as the Brain Server):
- *  - ACCESS_REQUIRE  exactly '1' verifies. Unset or empty is inert: no verification, no identity.
- *                    Any other value ('true', '1 ', '0') fails closed: `denied` 503 (config error).
+ *  - ACCESS_REQUIRE  exactly '1' verifies. Unset, empty or '0' is inert (explicit off; the repo's
+ *                    0=off convention, as server/access-authz.ts accessAuthzOptionsFromEnv): no
+ *                    verification, no identity. Any other value ('true', '1 ', 'yes') fails closed:
+ *                    `denied` 503 (config error).
  *  - ACCESS_ISSUER   https://<team>.cloudflareaccess.com   (required when ACCESS_REQUIRE=1)
  *  - ACCESS_AUD      the Access application's AUD tag       (required when ACCESS_REQUIRE=1)
  *
@@ -54,12 +56,13 @@ export function createAccessIdentityResolver(): AccessIdentityResolver {
     },
     async resolve(request, env, deps) {
       const e = env ?? {};
-      // Exactly '1' enables; unset or empty is inert. Any OTHER value ('true', '1 ', '0') is a
-      // misconfiguration and fails closed (adversarial review 2026-10-30, C5): an operator who set
-      // ACCESS_REQUIRE meant to enforce Access, and silently going inert would drop verification.
-      if (e.ACCESS_REQUIRE === undefined || e.ACCESS_REQUIRE === '') return { kind: 'inert' };
+      // Exactly '1' enables; unset, empty or '0' is inert ('0' = explicit off, round 2 2026-10-30).
+      // Any OTHER value ('true', '1 ', 'yes') is a misconfiguration and fails closed (adversarial
+      // review 2026-10-30, C5): an operator who wrote it meant to enforce Access, and silently going
+      // inert would drop verification.
+      if (e.ACCESS_REQUIRE === undefined || e.ACCESS_REQUIRE === '' || e.ACCESS_REQUIRE === '0') return { kind: 'inert' };
       if (e.ACCESS_REQUIRE !== '1') {
-        return { kind: 'denied', status: 503, reason: 'ACCESS_REQUIRE is set but not exactly "1"' };
+        return { kind: 'denied', status: 503, reason: 'ACCESS_REQUIRE is set but is neither "1" nor "0"' };
       }
 
       const issuer = e.ACCESS_ISSUER?.trim() ?? '';
