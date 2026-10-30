@@ -14,7 +14,13 @@
  *    malformed history turns are dropped and every spend-bearing length is capped;
  *  - a per-identity sliding-window rate limit bounds Anthropic spend per Access user (best-effort:
  *    the window lives in this isolate's memory, so it resets on a cold start and is not shared
- *    across colos — a durable limit needs KV/Durable Objects; this closes the trivial-abuse case);
+ *    across colos — a durable limit needs KV/Durable Objects; this closes the trivial-abuse case).
+ *    The identity is the VERIFIED Access JWT email (functions/_shared/access-identity.ts, the same
+ *    path whoami uses), never the forgeable Cf-Access-Authenticated-User-Email header. With
+ *    ACCESS_REQUIRE=1 a request that fails verification is refused (403, or 503 when Access config
+ *    or the JWKS is unavailable) before any snapshot read or model call; ACCESS_REQUIRE set to
+ *    anything but '1' or '0' is a 503 config error. Inert mode (ACCESS_REQUIRE unset, empty or '0', e.g.
+ *    local dev) keys on CF-Connecting-IP instead, IPv6 collapsed to its /64 (rateLimitKeyForIp);
  *  - an edge confidentiality scan (OI-225 counterpart) derived from the baked snapshot's own
  *    `confidential:true` deals runs over the question, the history and every tool result,
  *    mirroring the roster-based guard the Brain Server injects. The mirror has no roster on disk,
@@ -47,8 +53,10 @@ import { runAgent, sanitizeAgentInput, type AgentEvent } from '../../server/ai/a
 import { matchRosterTerms } from '../../server/briefing/roster-core';
 import type { DealTerms } from '../../server/briefing/confidential';
 import { formsContain, normalizeForScan, scanTexts } from '../../server/briefing/confidential-normalize';
+import { createAccessIdentityResolver, type AccessEnv, type AccessIdentityDeps } from '../_shared/access-identity';
+import { fetchAccessJwks } from '../_shared/access-jwt';
 
-interface Env {
+interface Env extends AccessEnv {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
   ANTHROPIC_EFFORT?: string;
@@ -74,13 +82,20 @@ export const RATE_LIMIT_MAX = 20;
 export const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const windows = new Map<string, number[]>();
 
-function identity(request: Request): string {
-  return (
-    request.headers.get('cf-access-authenticated-user-email') ||
-    request.headers.get('cf-connecting-ip') ||
-    'anonymous'
-  );
+export type AiDeps = AccessIdentityDeps;
+
+const accessIdentity = createAccessIdentityResolver();
+
+/** Test hook: drop the JWKS cache used to verify the caller. */
+export function resetAiIdentityCache(): void {
+  accessIdentity.reset();
 }
+
+const jsonError = (error: string, status: number, extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify({ error }), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra },
+  });
 
 /** Returns true when the request is within budget (and records it), false when it must be refused. */
 export function admit(id: string, now = Date.now()): boolean {
@@ -102,6 +117,51 @@ export function admit(id: string, now = Date.now()): boolean {
 /** Test seam — clears the in-memory windows. */
 export function resetRateLimit(): void {
   windows.clear();
+}
+
+/** Expand an IPv6 address (no zone id) to its 8 hextets, or null when it is not valid IPv6. An
+ *  IPv4-dotted tail (::ffff:a.b.c.d) counts as two hextets. */
+function ipv6Hextets(addr: string): string[] | null {
+  let s = addr;
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (v4) {
+    const o = v4.slice(1).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    s = `${s.slice(0, v4.index)}${((o[0]! << 8) | o[1]!).toString(16)}:${((o[2]! << 8) | o[3]!).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const all = [...head, ...tail];
+  if (all.some((h) => !/^[0-9a-f]{1,4}$/i.test(h))) return null;
+  if (halves.length === 1) return all.length === 8 ? all : null;
+  if (all.length > 7) return null;
+  return [...head, ...Array<string>(8 - all.length).fill('0'), ...tail];
+}
+
+/** Inert-mode rate-limit key for the CF-Connecting-IP (adversarial review 2026-10-30, C5). IPv4 is
+ *  keyed as-is. IPv6 collapses to its /64 (`ip6:<first 4 hextets>::/64`, leading zeros dropped,
+ *  lowercase): a single subscriber is routinely handed a whole /64, so keying the exact address gave
+ *  one caller ~2^64 independent budgets. An IPv4-mapped (::ffff:0:0/96), IPv4-translated
+ *  (::ffff:0:0:0/96) or NAT64 well-known-prefix (64:ff9b::/96) address keys as its embedded IPv4. */
+export function rateLimitKeyForIp(raw: string | null | undefined): string {
+  const ip = (raw ?? '').trim();
+  if (!ip) return 'ip:unknown';
+  if (!ip.includes(':')) return `ip:${ip}`;
+  const hextets = ipv6Hextets(ip.split('%')[0]!);
+  if (!hextets) return `ip:${ip.toLowerCase()}`;
+  const h = hextets.map((x) => parseInt(x, 16));
+  const v4 = () => `ip:${h[6]! >> 8}.${h[6]! & 0xff}.${h[7]! >> 8}.${h[7]! & 0xff}`;
+  // ::ffff:a.b.c.d (IPv4-mapped): the caller is an IPv4 client.
+  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) return v4();
+  // ::ffff:0:a.b.c.d (RFC 2765 IPv4-translated) and 64:ff9b::a.b.c.d (RFC 6052 NAT64 well-known
+  // prefix): the low 32 bits are the client's IPv4. Keying the /64 would put every client behind
+  // one translator on a single budget (round 2, 2026-10-30).
+  if (h.slice(0, 4).every((x) => x === 0) && h[4] === 0xffff && h[5] === 0) return v4();
+  if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((x) => x === 0)) return v4();
+  return `ip6:${h.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
 }
 
 /** Roster-free confidential scan built from the snapshot's own flagged deals (see header): the
@@ -140,8 +200,25 @@ export const MIRROR_SCAN_UNAVAILABLE_MESSAGE =
   'carries no confidential-deal terms), so the AI assistant is disabled here. The request was ' +
   'stopped before reaching the API.';
 
-export async function onRequestPost(context: PagesContext): Promise<Response> {
+export function onRequestPost(context: PagesContext): Promise<Response> {
+  return handleAiPost(context, {
+    fetchJwks: fetchAccessJwks,
+    nowSeconds: () => Math.floor(Date.now() / 1000),
+  });
+}
+
+export async function handleAiPost(context: PagesContext, deps: AiDeps): Promise<Response> {
   const { request, env } = context;
+  // Identity first: an unverified caller is refused before the body, the snapshot or the model.
+  const who = await accessIdentity.resolve(request, env, deps);
+  if (who.kind === 'denied') {
+    console.warn('[ai] denied:', who.reason);
+    return jsonError(who.status === 503 ? 'unavailable' : 'forbidden', who.status);
+  }
+  // Verified email when Access is enforced; otherwise (inert / local dev) the connecting IP. The
+  // plain email header is never a key: it is forgeable off the Access path.
+  const rateKey = who.kind === 'verified' ? `user:${who.email.toLowerCase()}` : rateLimitKeyForIp(request.headers.get('cf-connecting-ip'));
+
   const body: unknown = await request.json().catch(() => ({}));
   const input = sanitizeAgentInput(body);
   if (!input.ok) {
@@ -150,11 +227,8 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       headers: { 'content-type': 'application/json; charset=utf-8' },
     });
   }
-  if (!admit(identity(request))) {
-    return new Response(JSON.stringify({ error: 'Too many requests — try again in a few minutes.' }), {
-      status: 429,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'retry-after': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)) },
-    });
+  if (!admit(rateKey)) {
+    return jsonError('Too many requests — try again in a few minutes.', 429, { 'retry-after': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)) });
   }
   const { question, history } = input;
 
