@@ -40,4 +40,30 @@ describe('OVERVIEW_LAYOUT_MIGRATION — June 3 – July 6 default', () => {
     stored({ order: JUNE_DEFAULT.order, hidden: ['top-tenants'] });
     expect(load().visibleOrder.slice(0, 3)).toEqual(['kpis', 'noi-market', 'cash-trend']);
   });
+
+  // Adversarial review 2026-10-30 (C5): version 3 re-checked EVERY legacy default for any state
+  // below 3, so a v2 user who deliberately put the layout back to the pre-#514 order after #514
+  // migrated them was overwritten again. Each step applies only to states older than it.
+  const LEGACY_ORDER = ['kpis', 'results-banner', 'noi-market', 'top-tenants', 'priority-actions', 'cash-trend', 'lease-rollover', 'insights'];
+
+  it('leaves a v2 workspace the user set back to the legacy order (insights hidden) unchanged', () => {
+    stored({ order: LEGACY_ORDER, hidden: ['insights'] }, 2);
+    const ws = load();
+    expect(ws.visibleOrder).toEqual(LEGACY_ORDER.filter((id) => id !== 'insights'));
+    expect(ws.hiddenIds).toEqual(['insights']);
+  });
+
+  it('leaves a v2 workspace on the legacy order with nothing hidden unchanged', () => {
+    stored({ order: LEGACY_ORDER, hidden: [] }, 2);
+    expect(load().visibleOrder).toEqual(LEGACY_ORDER);
+  });
+
+  it('still migrates a v1 (and unversioned) workspace on the legacy order', () => {
+    const current = ALL_WIDGET_IDS.filter((id) => !DEFAULT_HIDDEN_WIDGET_IDS.includes(id));
+    stored({ order: LEGACY_ORDER, hidden: ['insights'] }, 1);
+    expect(load().visibleOrder).toEqual(current);
+    localStorage.clear();
+    stored({ order: LEGACY_ORDER, hidden: [] });
+    expect(load().visibleOrder).toEqual(current);
+  });
 });
