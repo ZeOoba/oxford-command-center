@@ -332,8 +332,13 @@ export interface LeaseRunAssumptionsPatch {
 export function useSetLeaseRunAssumptions() {
   const invalidate = useWarehouseInvalidate();
   return useMutation({
-    mutationFn: (input: LeaseRunAssumptionsPatch) =>
-      postJson<LeaseRunAssumptionsResult>('/api/actions/lease-run-assumptions', input),
+    // postJson resolves on any status; a refused overlay save (500 {ok:false}) must reach the view
+    // as an error, not as a success that silently reverts on refetch (roadmap item 1.5).
+    mutationFn: async (input: LeaseRunAssumptionsPatch) => {
+      const r = await postJson<LeaseRunAssumptionsResult>('/api/actions/lease-run-assumptions', input);
+      if (!r.ok) throw new Error(r.error ?? 'save failed');
+      return r;
+    },
     onSuccess: invalidate,
   });
 }
