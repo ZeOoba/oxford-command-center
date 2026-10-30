@@ -42,6 +42,14 @@
     "review_detail": "Gabriel approved the plan and all four placement/source/engine/current decisions in-turn 2026-10-07 and approved the architect-edit-ok sentinel in-turn (AskUserQuestion). Architect-owned files touched: server/warehouse/migrations/035_property_condition.sql (new), src/contracts/property-condition.ts (new) + one export line in src/contracts/index.ts, package.json (one script), server/warehouse/sub-routers.ts (one mount line). Registry change: new standalone destination 'property-condition' in the Capital rail group (Capital is at the 5-tab cap, so not a 6th tab); tests/unit/ia-registry.test.ts updated 13→14 destinations, Capital group 2→3. No governor/model files touched. Needs architect acknowledgment at PR review.",
     "last_updated": "2026-10-07T00:00:00Z"
   },
+  "wave-b-ui": {
+    "agent_role": "UX Agent (Claude Code) - Gabriel-approved 2026-10-30 via session local_1396c1a7",
+    "phase": "Actionable Intelligence Roadmap Wave B: Track 2 (2.2-2.6; 2.1 after feat/action-list-rows merges) + Track 3.2/3.3 UI on the existing ledger. Worktree upbeat-maxwell-870996. Files: src/charts/*, src/modules/property/* (new), src/modules/property-financials/*, src/modules/alerts/*, src/modules/insights/*, src/brain/EntityDrawer.tsx, src/shell/modules.tsx, src/modules/overview/OverviewModule.tsx. NOT touching src/modules/overview/widgets.tsx or src/primitives/TierBoard.tsx (action-rows WIP).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-30T22:15:00Z"
+  },
   "pca-intelligence": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
     "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts, plus module 10 (cost segregation property data: src/analytics/cost-seg.ts, data/cost-seg, Cost seg view). Display only; no contracts, migrations, server, hooks or governor files touched.",

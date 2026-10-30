@@ -1,7 +1,7 @@
 // tests/unit/bar-chart.test.tsx
 //
 // Minors (2026-09-23 review): BarChart's <svg role="img"> had no aria-label, unlike
-// ScatterChart/Waterfall. Adds an optional `ariaLabel` prop passed straight through.
+// ScatterChart/Waterfall. Roadmap 2.5 (2026-10-30) made `ariaLabel` required.
 import { describe, expect, it, afterEach, beforeEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { BarChart } from '../../src/charts/BarChart';
@@ -36,10 +36,6 @@ describe('BarChart', () => {
     expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe('Test chart');
   });
 
-  it('renders no aria-label attribute when none is passed (no regression for existing callers)', () => {
-    const { container } = render(<BarChart data={[{ label: 'A', value: 1 }]} />);
-    expect(container.querySelector('svg')?.hasAttribute('aria-label')).toBe(false);
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -74,7 +70,7 @@ describe('BarChart negative values', () => {
       { label: 'C', value: 40 },
       { label: 'D', value: -100 },
     ];
-    const { container } = render(<BarChart data={data} />);
+    const { container } = render(<BarChart ariaLabel="T" data={data} />);
     const g = bars(container);
     expect(g).toHaveLength(4);
     for (const b of g) {
@@ -94,6 +90,7 @@ describe('BarChart negative values', () => {
   it('all-positive data keeps the original geometry (bottom edge on plot bottom, height proportional)', () => {
     const { container } = render(
       <BarChart
+        ariaLabel="T"
         data={[
           { label: 'A', value: 10 },
           { label: 'B', value: 20 },
@@ -111,7 +108,7 @@ describe('BarChart negative values', () => {
 
   it('all-negative data renders visible bars hanging from the zero line', () => {
     const { container } = render(
-      <BarChart data={[{ label: 'A', value: -10 }, { label: 'B', value: -30 }]} />,
+      <BarChart ariaLabel="T" data={[{ label: 'A', value: -10 }, { label: 'B', value: -30 }]} />,
     );
     const g = bars(container);
     expect(g).toHaveLength(2);
@@ -122,7 +119,7 @@ describe('BarChart negative values', () => {
 
   it('zero value renders without negative or NaN attributes', () => {
     const { container } = render(
-      <BarChart data={[{ label: 'A', value: 0 }, { label: 'B', value: -5 }, { label: 'C', value: 5 }]} />,
+      <BarChart ariaLabel="T" data={[{ label: 'A', value: 0 }, { label: 'B', value: -5 }, { label: 'C', value: 5 }]} />,
     );
     for (const b of bars(container)) {
       expect(Number.isNaN(b.y) || Number.isNaN(b.h)).toBe(false);
@@ -131,9 +128,9 @@ describe('BarChart negative values', () => {
   });
 
   it('empty and single-bar data do not throw', () => {
-    expect(() => render(<BarChart data={[]} />)).not.toThrow();
+    expect(() => render(<BarChart ariaLabel="T" data={[]} />)).not.toThrow();
     cleanup();
-    const { container } = render(<BarChart data={[{ label: 'A', value: -3 }]} />);
+    const { container } = render(<BarChart ariaLabel="T" data={[{ label: 'A', value: -3 }]} />);
     expect(bars(container)[0]!.h).toBeGreaterThan(0);
   });
 });

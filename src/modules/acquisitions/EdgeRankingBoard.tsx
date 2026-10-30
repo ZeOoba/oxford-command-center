@@ -237,7 +237,7 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
                 const pts = observedValues(m, 'trades');
                 return (
                   <span role="img" aria-label={sparklineLabel(pts, SERIES_UNITS.trades)}>
-                    <Sparkline data={pts} width={56} height={18} />
+                    <Sparkline data={pts} label="Recorded trades by year" width={56} height={18} />
                   </span>
                 );
               })()}

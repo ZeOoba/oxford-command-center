@@ -127,6 +127,7 @@ export function LeaseRunView({ propertyId }: Props) {
           <AreaChart
             data={points.map((p) => ({ date: p.label, value: p.value }))}
             valueFormat={(n) => fmtUsdCompact(n)}
+            ariaLabel="Forward NOI trajectory (projected from the lease run)"
           />
           <div className="px-2 pb-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
             Rollover / option boundaries:{' '}
