@@ -15,7 +15,8 @@ import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause, signalCount } from '../../lib/tier-group';
+import { groupByCause, previewSubjects, signalCount } from '../../lib/tier-group';
+import type { TierItem } from '@/primitives/TierBoard';
 import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
@@ -198,8 +199,35 @@ function ResultsBannerWidget() {
 // exceed `limit` (a cause collapses only at MIN_GROUP_SIZE, so two-member pinned causes stay separate
 // rows and can outnumber the cap). `heldBack` counts what the cap did cut — rows and the signals they
 // stand for — so an indicator built on it can never go negative or miss a held-back group's members.
+// When a pinned warning / info row shows, no critical row may be held back behind it (#505, C4); the
+// critical rows that do not fit fold into ONE expandable roll-up row (OVERFLOW_ROW_ID), so the board
+// stays at about `limit` + 1 rows and every critical signal is still on it (round 2, 2026-10-30).
 export interface PriorityActionsTier extends Tier {
   heldBack: { rows: number; signals: number };
+}
+
+/** Id of the roll-up row that carries the critical rows beyond the cap (see buildPriorityActionsTier). */
+export const OVERFLOW_ROW_ID = 'group:critical:overflow';
+
+/** The underlying signal ids a row stands for, through nested roll-ups (the overflow row's members
+ *  can themselves be cause groups). */
+function leafIds(row: TierItem): string[] {
+  return row.members ? row.members.flatMap(leafIds) : [row.id];
+}
+
+function overflowRow(rows: TierItem[]): TierItem {
+  const quantified = rows.filter((r) => r.impactUsd !== null && r.impactUsd !== undefined);
+  return {
+    id: OVERFLOW_ROW_ID,
+    category: 'critical',
+    categoryTone: 'red',
+    impactKind: 'risk',
+    // Unquantified members stay unquantified: never a $0 figure.
+    impactUsd: quantified.length > 0 ? quantified.reduce((n, r) => n + (r.impactUsd as number), 0) : null,
+    title: `${rows.length} more critical`,
+    detail: previewSubjects(rows),
+    members: rows,
+  };
 }
 
 export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): PriorityActionsTier {
@@ -221,26 +249,39 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  // Selection (adversarial review 2026-10-30, C4): every pinned row is shown, and so is every row of
-  // a tier MORE severe than the least-severe tier holding a pinned row — a pinned warning (DSCR
-  // covenant watch, LTV ceiling) must never push a critical dollar row (balloon, arrears) off the
-  // surface. Both may exceed `limit`. Remaining slots go to the other rows in display order.
+  // Selection (adversarial review 2026-10-30, C4; round 2): every pinned row is shown (it may exceed
+  // `limit` on its own). Free slots go to the other rows in display order, so critical rows take them
+  // first. When a pinned row of a LESS severe tier shows, every critical row must stay reachable — a
+  // pinned warning (DSCR covenant watch, LTV ceiling) must never push a critical dollar row (balloon,
+  // arrears) off the surface — so the critical rows left without a slot fold into one roll-up row
+  // instead of being held back. Clamped to the critical tier: an info-severity pinned id can force
+  // critical rows, never the warning tier.
   const lowestPinnedTier = tiers.reduce((acc, rows, i) => (rows.some((row) => row.pinned) ? i : acc), -1);
+  const forcedTiers = Math.min(lowestPinnedTier, 1); // tiers [0, forcedTiers) must stay reachable
   const display = tiers.flat();
-  const mandatory = new Set(
-    tiers.flatMap((rows, i) => (i < lowestPinnedTier ? rows : rows.filter((row) => row.pinned))),
-  );
-  let free = Math.max(0, limit - mandatory.size);
-  const selected = new Set(mandatory);
+  const selected = new Set(display.filter((row) => row.pinned));
+  let free = Math.max(0, limit - selected.size);
   for (const row of display) {
     if (free === 0) break;
     if (selected.has(row)) continue;
     selected.add(row);
     free--;
   }
-  const items = display.filter((row) => selected.has(row)).map((row, i) => ({ ...row, rank: i + 1 }));
-  const held = display.filter((row) => !selected.has(row));
-  const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
+  let overflow = tiers.slice(0, Math.max(0, forcedTiers)).flat().filter((row) => !selected.has(row));
+  if (overflow.length === 1) {
+    // A one-row roll-up costs the same slot as the row itself: show the row.
+    selected.add(overflow[0]!);
+    overflow = [];
+  }
+  const inOverflow = new Set(overflow);
+  const rollup = overflow.length > 0 ? [overflowRow(overflow)] : [];
+  const items = [
+    ...tiers[0]!.filter((row) => selected.has(row)),
+    ...rollup,
+    ...tiers.slice(1).flat().filter((row) => selected.has(row)),
+  ].map((row, i) => ({ ...row, rank: i + 1 }));
+  const held = display.filter((row) => !selected.has(row) && !inOverflow.has(row));
+  const shownIds = new Set(items.flatMap(leafIds));
   const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
