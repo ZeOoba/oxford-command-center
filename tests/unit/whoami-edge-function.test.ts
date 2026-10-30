@@ -94,8 +94,8 @@ describe('whoami edge function', () => {
     expect(JSON.parse(text)).not.toHaveProperty('email');
   });
 
-  it('header-only forgery yields no identity when inert (ACCESS_REQUIRE unset or empty)', async () => {
-    for (const env of [{}, { ACCESS_REQUIRE: '' }, undefined]) {
+  it("header-only forgery yields no identity when inert (ACCESS_REQUIRE unset, empty or '0')", async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '' }, { ...ENV, ACCESS_REQUIRE: '0' }, undefined]) {
       const res = await handleWhoami(
         { request: req({ 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }), env },
         deps(),
@@ -107,8 +107,8 @@ describe('whoami edge function', () => {
 
   // Adversarial review 2026-10-30 (C5): a set-but-malformed ACCESS_REQUIRE ('true', '1 ') used to go
   // silently inert, so an operator who meant to enforce Access got no verification at all.
-  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', '0'])(
-    'fails closed (503, no identity) when ACCESS_REQUIRE is set but not exactly "1" (%j)',
+  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', 'on', '01', '00'])(
+    'fails closed (503, no identity) when ACCESS_REQUIRE is set but neither "1" nor "0" (%j)',
     async (value) => {
       const res = await handleWhoami(
         {

@@ -160,6 +160,13 @@ describe('rateLimitKeyForIp — IPv6 collapses to its /64', () => {
     ['::1', 'ip6:0:0:0:0::/64'],
     ['fe80::1%eth0', 'ip6:fe80:0:0:0::/64'],
     ['::ffff:198.51.100.7', 'ip:198.51.100.7'],
+    // Round 2: NAT64 (RFC 6052 64:ff9b::/96) and IPv4-translated (RFC 2765 ::ffff:0:0/96) embed the
+    // client's IPv4; key on it so every client behind one translator is not one shared /64 budget.
+    ['64:ff9b::198.51.100.7', 'ip:198.51.100.7'],
+    ['64:ff9b::c633:6407', 'ip:198.51.100.7'],
+    ['::ffff:0:198.51.100.7', 'ip:198.51.100.7'],
+    ['::ffff:0:c633:6407', 'ip:198.51.100.7'],
+    ['64:ff9b:1::c633:6407', 'ip6:64:ff9b:1:0::/64'],
     ['', 'ip:unknown'],
     [null, 'ip:unknown'],
   ])('%j -> %j', (ip, key) => {
@@ -180,17 +187,20 @@ describe('functions/api/ai — malformed ACCESS_REQUIRE fails closed', () => {
     vi.mocked(runAgent).mockClear();
   });
 
-  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', '0'])('503 when ACCESS_REQUIRE=%j, before the body or the model', async (value) => {
+  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', 'on', '01', '00'])('503 when ACCESS_REQUIRE=%j, before the body or the model', async (value) => {
     const res = await handleAiPost(ctx({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid') }, { ...ACCESS, ACCESS_REQUIRE: value }), deps());
     expect(res.status).toBe(503);
     expect(fetchJwks).not.toHaveBeenCalled();
     expect(vi.mocked(runAgent)).not.toHaveBeenCalled();
   });
 
-  it('unset or empty ACCESS_REQUIRE is still inert (IP key)', async () => {
-    for (const env of [{}, { ACCESS_REQUIRE: '' }] as Array<Record<string, string>>) {
+  // Round 2 (Gabriel 2026-10-30): '0' is an explicit OFF (repo 0=off convention, matching
+  // server/access-authz.ts accessAuthzOptionsFromEnv), not a misconfiguration.
+  it("unset, empty or '0' ACCESS_REQUIRE is inert (IP key, no JWKS fetch)", async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '' }, { ...ACCESS, ACCESS_REQUIRE: '0' }] as Array<Record<string, string>>) {
       expect((await handleAiPost(ctx({ 'cf-connecting-ip': '198.51.100.20' }, env), deps())).status).toBe(200);
     }
+    expect(fetchJwks).not.toHaveBeenCalled();
   });
 });
 

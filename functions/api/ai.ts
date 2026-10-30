@@ -19,7 +19,7 @@
  *    path whoami uses), never the forgeable Cf-Access-Authenticated-User-Email header. With
  *    ACCESS_REQUIRE=1 a request that fails verification is refused (403, or 503 when Access config
  *    or the JWKS is unavailable) before any snapshot read or model call; ACCESS_REQUIRE set to
- *    anything but exactly '1' is a 503 config error. Inert mode (ACCESS_REQUIRE unset or empty, e.g.
+ *    anything but '1' or '0' is a 503 config error. Inert mode (ACCESS_REQUIRE unset, empty or '0', e.g.
  *    local dev) keys on CF-Connecting-IP instead, IPv6 collapsed to its /64 (rateLimitKeyForIp);
  *  - an edge confidentiality scan (OI-225 counterpart) derived from the baked snapshot's own
  *    `confidential:true` deals runs over the question, the history and every tool result,
@@ -144,7 +144,8 @@ function ipv6Hextets(addr: string): string[] | null {
 /** Inert-mode rate-limit key for the CF-Connecting-IP (adversarial review 2026-10-30, C5). IPv4 is
  *  keyed as-is. IPv6 collapses to its /64 (`ip6:<first 4 hextets>::/64`, leading zeros dropped,
  *  lowercase): a single subscriber is routinely handed a whole /64, so keying the exact address gave
- *  one caller ~2^64 independent budgets. An IPv4-mapped IPv6 address keys as its IPv4. */
+ *  one caller ~2^64 independent budgets. An IPv4-mapped (::ffff:0:0/96), IPv4-translated
+ *  (::ffff:0:0:0/96) or NAT64 well-known-prefix (64:ff9b::/96) address keys as its embedded IPv4. */
 export function rateLimitKeyForIp(raw: string | null | undefined): string {
   const ip = (raw ?? '').trim();
   if (!ip) return 'ip:unknown';
@@ -152,10 +153,14 @@ export function rateLimitKeyForIp(raw: string | null | undefined): string {
   const hextets = ipv6Hextets(ip.split('%')[0]!);
   if (!hextets) return `ip:${ip.toLowerCase()}`;
   const h = hextets.map((x) => parseInt(x, 16));
+  const v4 = () => `ip:${h[6]! >> 8}.${h[6]! & 0xff}.${h[7]! >> 8}.${h[7]! & 0xff}`;
   // ::ffff:a.b.c.d (IPv4-mapped): the caller is an IPv4 client.
-  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) {
-    return `ip:${h[6]! >> 8}.${h[6]! & 0xff}.${h[7]! >> 8}.${h[7]! & 0xff}`;
-  }
+  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) return v4();
+  // ::ffff:0:a.b.c.d (RFC 2765 IPv4-translated) and 64:ff9b::a.b.c.d (RFC 6052 NAT64 well-known
+  // prefix): the low 32 bits are the client's IPv4. Keying the /64 would put every client behind
+  // one translator on a single budget (round 2, 2026-10-30).
+  if (h.slice(0, 4).every((x) => x === 0) && h[4] === 0xffff && h[5] === 0) return v4();
+  if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((x) => x === 0)) return v4();
   return `ip6:${h.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
 }
 
