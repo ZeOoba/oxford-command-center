@@ -9,8 +9,17 @@
 // Synthetic RSA keys, issuer and AUD throughout.
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
-import { RATE_LIMIT_MAX, handleAiPost, resetAiIdentityCache, resetRateLimit, type AiDeps } from '../../functions/api/ai';
+import {
+  RATE_LIMIT_MAX,
+  handleAiPost,
+  onRequestPost,
+  rateLimitKeyForIp,
+  resetAiIdentityCache,
+  resetRateLimit,
+  type AiDeps,
+} from '../../functions/api/ai';
 import type { Jwk } from '../../functions/_shared/access-jwt';
+import { runAgent } from '../../server/ai/agent';
 
 vi.mock('../../server/ai/agent', async (importOriginal) => {
   const real = await importOriginal<Record<string, unknown>>();
@@ -132,5 +141,118 @@ describe('functions/api/ai — inert mode (ACCESS_REQUIRE not "1")', () => {
     await exhaust({ 'cf-connecting-ip': '198.51.100.9', 'Cf-Access-Jwt-Assertion': token('u@example.invalid') });
     expect((await handleAiPost(ctx({ 'cf-connecting-ip': '198.51.100.9', 'Cf-Access-Jwt-Assertion': token('v@example.invalid') }), deps())).status).toBe(429);
     expect(fetchJwks).not.toHaveBeenCalled();
+  });
+});
+
+// Adversarial review 2026-10-30 (C5): inert mode keyed on the exact cf-connecting-ip, so one IPv6
+// /64 (what a single subscriber is routinely given) held ~2^64 independent budgets.
+describe('rateLimitKeyForIp — IPv6 collapses to its /64', () => {
+  it.each([
+    ['198.51.100.7', 'ip:198.51.100.7'],
+    ['2001:db8:1:2::1', 'ip6:2001:db8:1:2::/64'],
+    ['2001:DB8:0001:0002:aaaa:bbbb:cccc:dddd', 'ip6:2001:db8:1:2::/64'],
+    ['2001:db8::', 'ip6:2001:db8:0:0::/64'],
+    ['2001:db8::5:6:7:8', 'ip6:2001:db8:0:0::/64'],
+    ['1::4:5:6:7:8', 'ip6:1:0:0:4::/64'],
+    ['1:2:3::7:8', 'ip6:1:2:3:0::/64'],
+    ['1:2:3:4:5:6:7:8', 'ip6:1:2:3:4::/64'],
+    ['::', 'ip6:0:0:0:0::/64'],
+    ['::1', 'ip6:0:0:0:0::/64'],
+    ['fe80::1%eth0', 'ip6:fe80:0:0:0::/64'],
+    ['::ffff:198.51.100.7', 'ip:198.51.100.7'],
+    ['', 'ip:unknown'],
+    [null, 'ip:unknown'],
+  ])('%j -> %j', (ip, key) => {
+    expect(rateLimitKeyForIp(ip)).toBe(key);
+  });
+
+  it('addresses in the same /64 share one budget; the next /64 is independent', async () => {
+    await exhaust({ 'cf-connecting-ip': '2001:db8:1:2::1' });
+    expect((await handleAiPost(ctx({ 'cf-connecting-ip': '2001:db8:1:2:ffff:ffff:ffff:fffe' }), deps())).status).toBe(429);
+    expect((await handleAiPost(ctx({ 'cf-connecting-ip': '2001:0db8:0001:0002:0:0:0:9' }), deps())).status).toBe(429);
+    expect((await handleAiPost(ctx({ 'cf-connecting-ip': '2001:db8:1:3::1' }), deps())).status).toBe(200);
+  });
+});
+
+// Adversarial review 2026-10-30 (C5): ACCESS_REQUIRE set to anything but exactly '1' went inert.
+describe('functions/api/ai — malformed ACCESS_REQUIRE fails closed', () => {
+  beforeEach(() => {
+    vi.mocked(runAgent).mockClear();
+  });
+
+  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', '0'])('503 when ACCESS_REQUIRE=%j, before the body or the model', async (value) => {
+    const res = await handleAiPost(ctx({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid') }, { ...ACCESS, ACCESS_REQUIRE: value }), deps());
+    expect(res.status).toBe(503);
+    expect(fetchJwks).not.toHaveBeenCalled();
+    expect(vi.mocked(runAgent)).not.toHaveBeenCalled();
+  });
+
+  it('unset or empty ACCESS_REQUIRE is still inert (IP key)', async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '' }] as Array<Record<string, string>>) {
+      expect((await handleAiPost(ctx({ 'cf-connecting-ip': '198.51.100.20' }, env), deps())).status).toBe(200);
+    }
+  });
+});
+
+// C2t: deny must precede the body parse, the snapshot read and the model. An invalid body yields 400
+// once a caller is admitted, so a 403/503 on the same body proves the order.
+describe('functions/api/ai — deny precedes body parse, snapshot read and model', () => {
+  function badBodyCtx(headers: Record<string, string>, env: Record<string, string>) {
+    const assets = vi.fn(async () => new Response('{}', { status: 200 }));
+    const request = new Request('https://mirror.test/api/ai', { method: 'POST', body: JSON.stringify({ question: 42 }), headers });
+    return { assets, context: { request, env: { ...env, ASSETS: { fetch: assets } } } as unknown as Parameters<typeof handleAiPost>[0] };
+  }
+
+  beforeEach(() => {
+    vi.mocked(runAgent).mockClear();
+  });
+
+  it('the invalid body really is a 400 once the caller is admitted', async () => {
+    const { assets, context } = badBodyCtx({ 'cf-connecting-ip': '198.51.100.30' }, {});
+    expect((await handleAiPost(context, deps())).status).toBe(400);
+    expect(assets).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['403: no JWT', () => ({}), () => ACCESS, 403],
+    ['403: expired JWT', () => ({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid', { exp: NOW - 1 }) }), () => ACCESS, 403],
+    ['503: config incomplete', () => ({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid') }), () => ({ ACCESS_REQUIRE: '1' }), 503],
+    ['503: malformed ACCESS_REQUIRE', () => ({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid') }), () => ({ ...ACCESS, ACCESS_REQUIRE: 'true' }), 503],
+  ] as const)('%s: no ASSETS.fetch, no runAgent, no 400', async (_name, headers, env, status) => {
+    const { assets, context } = badBodyCtx(headers(), env());
+    const res = await handleAiPost(context, deps());
+    expect(res.status).toBe(status);
+    expect(assets).not.toHaveBeenCalled();
+    expect(vi.mocked(runAgent)).not.toHaveBeenCalled();
+  });
+
+  it('503: an unavailable JWKS also stops before ASSETS.fetch and runAgent', async () => {
+    fetchJwks.mockRejectedValueOnce(new Error('network'));
+    const { assets, context } = badBodyCtx({ 'Cf-Access-Jwt-Assertion': token('u@example.invalid') }, ACCESS);
+    expect((await handleAiPost(context, deps())).status).toBe(503);
+    expect(assets).not.toHaveBeenCalled();
+    expect(vi.mocked(runAgent)).not.toHaveBeenCalled();
+  });
+});
+
+// The production entry point wires nowSeconds as Math.floor(Date.now() / 1000). A milliseconds clock
+// would read every token as expired; this pins the seconds wiring through onRequestPost.
+describe('functions/api/ai — onRequestPost clock wiring (verified mode)', () => {
+  it('verifies against the wall clock in SECONDS', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ keys: jwks }), { status: 200 })));
+    try {
+      vi.setSystemTime(NOW * 1000 + 999); // floor -> NOW
+      const ok = await onRequestPost(ctx({ 'Cf-Access-Jwt-Assertion': token('clock@example.invalid', { exp: NOW + 60 }) }, ACCESS));
+      expect(ok.status).toBe(200);
+      const expired = await onRequestPost(ctx({ 'Cf-Access-Jwt-Assertion': token('clock@example.invalid', { exp: NOW - 1 }) }, ACCESS));
+      expect(expired.status).toBe(403);
+      vi.setSystemTime((NOW + 61) * 1000); // past exp
+      const later = await onRequestPost(ctx({ 'Cf-Access-Jwt-Assertion': token('clock@example.invalid', { exp: NOW + 60 }) }, ACCESS));
+      expect(later.status).toBe(403);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

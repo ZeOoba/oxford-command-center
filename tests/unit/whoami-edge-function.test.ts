@@ -94,8 +94,8 @@ describe('whoami edge function', () => {
     expect(JSON.parse(text)).not.toHaveProperty('email');
   });
 
-  it('header-only forgery yields no identity when inert (ACCESS_REQUIRE unset or not "1")', async () => {
-    for (const env of [{}, { ACCESS_REQUIRE: '0' }, { ACCESS_REQUIRE: 'true' }, undefined]) {
+  it('header-only forgery yields no identity when inert (ACCESS_REQUIRE unset or empty)', async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '' }, undefined]) {
       const res = await handleWhoami(
         { request: req({ 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }), env },
         deps(),
@@ -104,6 +104,26 @@ describe('whoami edge function', () => {
     }
     expect(fetchJwks).not.toHaveBeenCalled();
   });
+
+  // Adversarial review 2026-10-30 (C5): a set-but-malformed ACCESS_REQUIRE ('true', '1 ') used to go
+  // silently inert, so an operator who meant to enforce Access got no verification at all.
+  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', '0'])(
+    'fails closed (503, no identity) when ACCESS_REQUIRE is set but not exactly "1" (%j)',
+    async (value) => {
+      const res = await handleWhoami(
+        {
+          request: req({ 'Cf-Access-Jwt-Assertion': sign(claims()), 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }),
+          env: { ...ENV, ACCESS_REQUIRE: value },
+        },
+        deps(),
+      );
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).not.toContain('verified.user@example.invalid');
+      expect(body).not.toContain('forged@example.invalid');
+      expect(fetchJwks).not.toHaveBeenCalled();
+    },
+  );
 
   it('missing JWT header -> 403, no identity', async () => {
     const res = await handleWhoami({ request: req({}), env: ENV }, deps());
