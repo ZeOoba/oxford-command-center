@@ -20,6 +20,12 @@ export function describeAlertCause(cause: string, members: TierItem[]): { title:
       return { title: `${n} rent escalations past due` };
     case 'insurance-lapsed':
       return { title: `${n} insurance policies expired or cancelled` };
+    case 'dscr-floor':
+      return { title: `${n} properties below the DSCR floor` };
+    case 'dscr-covenant':
+      return { title: `${n} properties on DSCR covenant watch` };
+    case 'ltv-ceiling':
+      return { title: `${n} properties above the 65% LTV ceiling` };
     default:
       return { title: `${n} related alerts` };
   }

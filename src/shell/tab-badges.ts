@@ -28,6 +28,28 @@ export function useCriticalDatesTabBadge(): TabBadge | undefined {
   return count > 0 ? { count, tone: 'red' } : undefined;
 }
 
+const TONE_SEVERITY: Partial<Record<TabBadge['tone'], number>> = { red: 2, amber: 1 };
+
+/**
+ * The rail badge for a destination: its single worst tab badge — most severe tone, then larger count.
+ * Never a sum: two tabs can count the same underlying item (an overdue lease is both a critical date
+ * and an alert), so adding them would overstate the work. Zero-count badges are ignored.
+ */
+export function pickRailBadge(badges: ReadonlyArray<TabBadge | undefined>): TabBadge | undefined {
+  let best: TabBadge | undefined;
+  for (const b of badges) {
+    if (!b || b.count <= 0) continue;
+    if (!best) {
+      best = b;
+      continue;
+    }
+    const sev = TONE_SEVERITY[b.tone] ?? 0;
+    const bestSev = TONE_SEVERITY[best.tone] ?? 0;
+    if (sev > bestSev || (sev === bestSev && b.count > best.count)) best = b;
+  }
+  return best;
+}
+
 /** Resolves every tab's badge in declaration order. The tab list is a module-level constant, so
  *  the hook call order is stable across renders. */
 export function useTabBadges(tabs: readonly ModuleTabDef[]): Array<TabBadge | undefined> {

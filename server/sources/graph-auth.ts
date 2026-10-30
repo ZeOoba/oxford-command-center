@@ -19,6 +19,9 @@ export function _resetGraphTokenCache(): void {
   cached = null;
 }
 
+// Bounded so a hung token endpoint degrades the To-Do source (token-failed) instead of blocking the workbook parse.
+const TOKEN_FETCH_TIMEOUT_MS = 15_000;
+
 const TOKEN_URL = (tenant: string): string => `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
 
 /** Resolve a Graph bearer token, or null when Graph is not configured. `now` is injectable for tests. */
@@ -43,6 +46,7 @@ export async function getGraphToken(now: number = Date.now()): Promise<string | 
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(TOKEN_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Graph token request failed: ${res.status}`);
   const json = (await res.json()) as { access_token?: string; expires_in?: number };

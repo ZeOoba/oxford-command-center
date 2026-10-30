@@ -922,5 +922,21 @@
     "review_needed": true,
     "review_detail": "NOT merge-ready until the parse.ts net-of-abatement change lands (without it annualRent == monthly x 12 and these consumers are no-ops). PROPOSED Architect-owned edits NOT made, awaiting acknowledgment: (1) src/contracts/lease.ts doc comment on Lease.annualRent, and optionally an abatedMonths field so AR liveness can key on an explicit abatement signal instead of monthlyRent > 0; (2) DONE in this PR per Gabriel in-turn 2026-10-07 (refute wf_b8fc84af-5c6 medium finding): src/analytics/engine.ts rolloverSchedule.expiringRent, criticalDates annualRent and revenueAtRisk now read contractAnnualRent; WALT/concentration stay net. Refute rounds: wf_0ca5a142-694 (fable), wf_5dd73f0f-2b1 (opus 5.5).",
     "last_updated": "2026-10-07T21:30:00Z"
+  },
+  "oi254-selfhosted-gate-comment": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-29",
+    "phase": "OI-254: comment-only correction of the stale runner burn-in note in .github/workflows/full-gate-selfhosted.yml (a shared single-writer surface). No step, trigger or runner label changes.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-29T00:00:00Z"
+  },
+  "untrack-gate-output-log": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-29",
+    "phase": "Hygiene: untrack the committed gate-output.log (git rm --cached) and add *.log to .gitignore (shared-infra single-writer surface, claimed per CLAUDE.md section 2). No architect-owned files, no migrations, no governor constants.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-29T17:50:00Z"
   }
 }

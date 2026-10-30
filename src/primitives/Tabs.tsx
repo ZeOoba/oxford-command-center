@@ -17,6 +17,7 @@ import type { ReactNode } from 'react';
 import { Tabs as RACTabs, TabList, Tab, type Key } from 'react-aria-components';
 import { cn } from '@/lib/cn';
 import { isStill } from '@/lib/stillMode';
+import { formatBadgeCount } from '@/lib/badge-count';
 import { Badge, type BadgeTone } from './Badge';
 
 /** Mirrors the reduced-motion gate already used in TierBoard.tsx / Sidebar.tsx / useCountUp.ts —
@@ -55,10 +56,6 @@ export interface TabsProps {
    *  fetching keyed off the panel's own id) stay with the panel, not this primitive. */
   children: ReactNode;
   className?: string;
-}
-
-function formatBadgeCount(count: number): string {
-  return count > 99 ? '99+' : String(count);
 }
 
 /**
