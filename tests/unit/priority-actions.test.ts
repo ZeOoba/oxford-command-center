@@ -44,6 +44,19 @@ describe('buildPriorityActionsTier', () => {
     expect(tier.items[0]!.impactUsd).toBeNull();
   });
 
+  it('never lets dollar rows crowd out an unquantified breach (DSCR floor, reconcile failure)', () => {
+    const merged = [
+      // Ids with no cause, so each is its own row and competes for a slot.
+      ...[1, 2, 3, 4, 5, 6].map((n) => m({ id: `debt-note-${n}`, category: 'debt', spine: 'B', impactUsd: 100_000 - n })),
+      m({ id: 'dscr-floor-P9', category: 'debt', spine: 'B', title: 'DSCR below floor — P9' }),
+      m({ id: 'reconcile-fail', category: 'data', spine: 'B', title: 'Reconciliation failure' }),
+    ];
+    const ids = buildPriorityActionsTier(merged, 3).items.map((i) => i.id);
+    expect(ids).toContain('dscr-floor-P9');
+    expect(ids).toContain('reconcile-fail');
+    expect(ids).toHaveLength(3);
+  });
+
   // wf_42182077-678: `expiring-*` ids are critical (<60d) OR warning (60-180d) under ONE cause. Grouping
   // across severities folded a critical lease into a warning roll-up and hid it from the top 5.
   it('groups within each severity, so a critical lease never folds into a warning roll-up', () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ViewProfileProvider } from '../../src/brain/view-profile';
 import { Sidebar } from '../../src/shell/Sidebar';
 
@@ -10,18 +11,22 @@ afterEach(() => cleanup());
 function setup(props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   const onSelect = vi.fn();
   const onMobileClose = vi.fn();
+  // The rail's badges read the same react-query data the tabs do, so it needs a client (the app always has one).
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
   render(
-    <ViewProfileProvider>
-      <Sidebar
-        activeId="overview"
-        onSelect={onSelect}
-        collapsed={false}
-        onToggle={vi.fn()}
-        mobileOpen
-        onMobileClose={onMobileClose}
-        {...props}
-      />
-    </ViewProfileProvider>,
+    <QueryClientProvider client={qc}>
+      <ViewProfileProvider>
+        <Sidebar
+          activeId="overview"
+          onSelect={onSelect}
+          collapsed={false}
+          onToggle={vi.fn()}
+          mobileOpen
+          onMobileClose={onMobileClose}
+          {...props}
+        />
+      </ViewProfileProvider>
+    </QueryClientProvider>,
   );
   return { onSelect, onMobileClose };
 }

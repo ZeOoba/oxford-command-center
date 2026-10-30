@@ -6,8 +6,13 @@ name: Full Gate (self-hosted)
 # because reconcile/warehouse:verify need the Master Workbook and the 32-file
 # Property Financials directory, which never leave Oxford machines.
 #
-# workflow_dispatch ONLY for now: add a `schedule:` trigger after the runner
-# burn-in period, per docs/SERVER-MIGRATION-RUNBOOK.md in ora-claude-config.
+# workflow_dispatch ONLY, deliberately (OI-254, 2026-10-13): this workflow has never run. Its
+# runs-on label set below matches no registered runner, and PR-blocking CI was declined, so
+# there is no runner burn-in to wait for and no `schedule:` trigger is planned. The scheduled
+# watcher is the CC/MCP fleet task `ora-full-gate-weekly` (Mondays 11:30 ET), which runs this
+# same full gate from a throwaway origin/main worktree on the machine that has the data and
+# emails on a non-zero stage. Keep this file only if a self-hosted linux/ora-data runner is
+# ever provisioned for PR-blocking use.
 on:
   workflow_dispatch:
 

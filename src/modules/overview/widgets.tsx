@@ -16,6 +16,9 @@ import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 import { groupByCause } from '../../lib/tier-group';
+import { groupByCause, rankRows } from '../../lib/tier-group';
+import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
+import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
 
 export interface WidgetDef {
@@ -188,8 +191,6 @@ function ResultsBannerWidget() {
 // presentation-only helper; the merge, row shape (mergedToTierItem), grouping (groupByCause) and
 // per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
 // is new.
-const PRIORITY_ACTIONS_LIMIT = 5;
-
 // Same-cause alerts roll into one row BEFORE the cut to N (twelve lapsed policies are one decision,
 // not twelve slots), and lapsed coverage is pinned first — its impact is unquantified, so a pure
 // dollar sort could never surface it here.
@@ -234,11 +235,11 @@ function PriorityActionsWidget() {
 
   const candidates = insightsQuery.data?.candidates ?? [];
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
-  const tier = buildPriorityActionsTier(merged, PRIORITY_ACTIONS_LIMIT);
+  const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
 
   // A single ranked tier — full width, one column, so the card doesn't render half-empty. "See
   // all" is the one link out to the full Insights tier board (Brain › Insights) — the ratified
-  // "one home per attention list" IA (global-constraints.md): Overview stays a compact top-5,
+  // "one home per attention list" IA (global-constraints.md): Overview stays a compact top-7,
   // the full board lives in one place. Navigates via useUi().openTab — the app's existing
   // module+tab nav hook (used by the command palette's "Destination > Tab" entries) — rather than
   // a react-router-dom <Link>, since 'insights' is a legacy-aliased tab id (routing.ts
@@ -288,17 +289,34 @@ function InsightsWidget() {
   );
 }
 
-/** Overview widget registry — drop a new entry here and it's available to the dashboard. */
+/** Overview widget registry — drop a new entry here and it's available to the dashboard. Registry
+ *  order IS the default layout order: KPIs, then what needs a decision, descriptive charts after (or
+ *  off by default and addable via Edit layout). KPIs stay first until Priority Actions has compact
+ *  rows (design step 4); full-width tall cards would otherwise push them ~1,400px down. */
 export const OVERVIEW_WIDGETS: WidgetDef[] = [
   { id: 'kpis', title: 'Portfolio KPIs', span: 'full', Component: KpiStripWidget },
+  { id: 'priority-actions', title: 'Priority Actions', span: 'full', Component: PriorityActionsWidget },
   { id: 'results-banner', title: 'Results', span: 'full', Component: ResultsBannerWidget },
-  { id: 'noi-market', title: 'NOI by Market', span: 'half', Component: NoiByMarketWidget },
-  { id: 'top-tenants', title: 'Top Tenants', span: 'half', Component: TopTenantsWidget },
-  { id: 'priority-actions', title: 'Priority Actions', span: 'half', Component: PriorityActionsWidget },
   { id: 'cash-trend', title: 'Cash Trend', span: 'half', Component: CashTrendWidget },
   { id: 'lease-rollover', title: 'Lease Rollover', span: 'half', Component: LeaseRolloverWidget },
+  { id: 'noi-market', title: 'NOI by Market', span: 'half', Component: NoiByMarketWidget, defaultOn: false },
+  { id: 'top-tenants', title: 'Top Tenants', span: 'half', Component: TopTenantsWidget, defaultOn: false },
   { id: 'insights', title: 'Insights & Alerts', span: 'full', Component: InsightsWidget, defaultOn: false },
 ];
+
+const LEGACY_ORDER = ['kpis', 'results-banner', 'noi-market', 'top-tenants', 'priority-actions', 'cash-trend', 'lease-rollover', 'insights'];
+
+/** Bump `version` whenever the default layout changes. A saved workspace still equal to a previous
+ *  shipped default (untouched) moves to the new default once; any layout the user arranged is kept.
+ *  Two previous defaults exist: the current one (Insights hidden) and the one saved before Insights
+ *  became default-hidden (nothing hidden) — a stored layout keeps the default it was created under. */
+export const OVERVIEW_LAYOUT_MIGRATION: LayoutMigration = {
+  version: 2,
+  legacyDefaults: [
+    { order: LEGACY_ORDER, hidden: ['insights'] },
+    { order: LEGACY_ORDER, hidden: [] },
+  ],
+};
 
 /** The subset of widgets a brand-new layout shows VISIBLE out of the box — every widget except
  *  those opted out via `defaultOn: false` (currently just the full Insights tier board, whose

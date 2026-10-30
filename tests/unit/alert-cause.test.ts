@@ -95,6 +95,29 @@ describe('insight cause tags', () => {
     expect(causeOf({ id: 'expired-abc' })).toBe('lease-expired');
   });
 
+  it('tags the unquantified safety alerts (DSCR floor/covenant, LTV ceiling, reconcile failure) and pins them', () => {
+    expect(causeOf({ id: 'dscr-floor-p1' })).toBe('dscr-floor');
+    expect(causeOf({ id: 'dscr-p1' })).toBe('dscr-covenant');
+    expect(causeOf({ id: 'ltv-p1' })).toBe('ltv-ceiling');
+    expect(causeOf({ id: 'reconcile-fail' })).toBe('reconcile-fail');
+    for (const id of ['dscr-floor-p1', 'dscr-p1', 'ltv-p1', 'reconcile-fail']) expect(isPinnedAlert({ id }, false)).toBe(true);
+  });
+
+  it('does not pin informational or hygiene alerts', () => {
+    expect(causeOf({ id: 'ltv-governor-p1' })).toBeUndefined(); // informational governor deviation, not a breach
+    for (const id of ['ltv-governor-p1', 'workbook-stale', 'ar-stale']) expect(isPinnedAlert({ id }, false)).toBe(false);
+  });
+
+  it('pins a real reconcile-fail alert from the generator', () => {
+    const out = evaluateConditions(
+      snap({ dataQuality: [{ severity: 'error', entity: 'reconciliation', field: 'totalSf', message: 'x' }] as never }),
+      { now: NOW },
+    );
+    const rf = out.find((i) => i.id === 'reconcile-fail');
+    expect(rf).toBeDefined();
+    expect(causeOf(rf!)).toBe('reconcile-fail');
+  });
+
   it('pins lapsed coverage (both lapse ids) until it is read; renewal warnings are never pinned', () => {
     expect(isPinnedAlert({ id: 'ins-lapsed-x' }, false)).toBe(true);
     expect(isPinnedAlert({ id: 'ins-lapsed-live-x' }, false)).toBe(true);
