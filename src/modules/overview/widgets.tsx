@@ -324,15 +324,24 @@ export const OVERVIEW_WIDGETS: WidgetDef[] = [
 
 const LEGACY_ORDER = ['kpis', 'results-banner', 'noi-market', 'top-tenants', 'priority-actions', 'cash-trend', 'lease-rollover', 'insights'];
 
+/** The June 3 – July 6 default, `['kpis','noi-market','top-tenants','cash-trend','lease-rollover',
+ *  'insights']` with nothing hidden, AS NORMALIZED: useWorkspaces compares a saved layout after
+ *  normalize() appends the widgets it has never seen (priority-actions, results-banner; neither is
+ *  default-hidden, so `hidden` stays empty). Listing the raw June order would never match. */
+const JUNE_DEFAULT_ORDER = ['kpis', 'noi-market', 'top-tenants', 'cash-trend', 'lease-rollover', 'insights', 'priority-actions', 'results-banner'];
+
 /** Bump `version` whenever the default layout changes. A saved workspace still equal to a previous
  *  shipped default (untouched) moves to the new default once; any layout the user arranged is kept.
- *  Two previous defaults exist: the current one (Insights hidden) and the one saved before Insights
- *  became default-hidden (nothing hidden) — a stored layout keeps the default it was created under. */
+ *  Previous defaults, each in normalized form: the June 3 – July 6 default; the one saved before
+ *  Insights became default-hidden (nothing hidden); and the one with Insights hidden — a stored
+ *  layout keeps the default it was created under. Version 3 re-runs the migration for layouts
+ *  version 2 already stamped, so a June default that version 2 missed is moved too. */
 export const OVERVIEW_LAYOUT_MIGRATION: LayoutMigration = {
-  version: 2,
+  version: 3,
   legacyDefaults: [
     { order: LEGACY_ORDER, hidden: ['insights'] },
     { order: LEGACY_ORDER, hidden: [] },
+    { order: JUNE_DEFAULT_ORDER, hidden: [] },
   ],
 };
 
