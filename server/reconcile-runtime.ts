@@ -355,6 +355,19 @@ export function annualRentGapIsExplainedByAbatement(
   });
 }
 
+/**
+ * The snapshot as every writer should persist it: its parse flags plus the runtime reconciliation
+ * flags (stale lease rows, debt basis, cash invariants, totals tie-outs). Brain.refresh/rederive
+ * already persist this shape; the two CLI writers (extract-workbook, lease-snapshot-drift-check)
+ * used to only GATE on these flags and write without them, so the committed and mirrored snapshot,
+ * and the read-only Health page reading it, never showed them (roadmap 2026-10-30, item 1.6).
+ * Call it on a FRESH parse only: re-running it on an already-persisted snapshot would duplicate.
+ */
+export function withRuntimeFlags(s: PortfolioSnapshot): PortfolioSnapshot {
+  const rt = checkSnapshot(s);
+  return rt.length ? { ...s, dataQuality: [...s.dataQuality, ...rt] } : s;
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>

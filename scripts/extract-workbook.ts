@@ -5,6 +5,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
+import { withRuntimeFlags } from '../server/reconcile-runtime';
 import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, requireLiveM365Source, type DriftLeaseView } from './lease-snapshot-drift-check';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
 
@@ -121,7 +122,8 @@ async function main() {
   // scripts/ar-import-headless.ts's patchSnapshot(): a crash mid-write must not leave
   // portfolio.json truncated for the next reader.
   const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, JSON.stringify(enriched, null, 2));
+  // Persist the runtime reconciliation flags too, the same shape Brain.persist writes (item 1.6).
+  writeFileSync(tmp, JSON.stringify(withRuntimeFlags(enriched), null, 2));
   // Retried on the Windows AV/indexer transient lock (EPERM/EBUSY/EACCES) -- see server/lib/rename-retry.
   renameSyncWithRetry(tmp, SNAPSHOT_PATH);
 
