@@ -44,18 +44,28 @@ export function isTaskList(list: { wellknownListName?: string }): boolean {
 }
 
 const NOTE_MAX_CHARS = 200;
+/** Input cap before the full redaction (round 2): the rules are quadratic on one long token (a 50K-char
+ *  run took seconds), and only the first NOTE_MAX_CHARS of the result are stored. */
+const NOTE_INPUT_MAX_CHARS = 4000;
 
 /** Redact, THEN bound to NOTE_MAX_CHARS (adversarial review 2026-10-30, C1): slicing first left a
  *  partial local part or 7 of 10 phone digits at the cut, which no rule recognises. A cut that lands
  *  mid-token drops that partial token (and a half-written placeholder), and the result is redacted
  *  once more so the stored note is a fixed point (the snapshot guard re-runs the same function). */
 function boundedRedactedNote(note: string): string {
-  const red = redactNotesText(note);
+  const red = redactNotesText(note.slice(0, NOTE_INPUT_MAX_CHARS));
   if (red.length <= NOTE_MAX_CHARS) return red;
   let cut = red.slice(0, NOTE_MAX_CHARS);
   if (/\S/.test(red.charAt(NOTE_MAX_CHARS))) cut = cut.replace(/\S+$/, '');
-  cut = cut.replace(/\s*\[(?:email|phone|contact|signature)(?: redacted)?$/, '').trimEnd();
+  // Any half-written placeholder at the cut ("... [phone", "... [email red"), with its spacing.
+  cut = cut.replace(/\s*\[[a-z ]*$/, '').trimEnd();
   return redactNotesText(cut);
+}
+
+/** A literal `<jdoe@example.com>` in a body is an address, not a tag: htmlToText would strip it, and
+ *  the redactor would lose the marker that ties the name in front of it to a contact (round 2). */
+function escapeAddressTags(html: string): string {
+  return html.replace(/<([^<>\s]+@[^<>\s]+)>/g, '&lt;$1&gt;');
 }
 
 /** Map a Graph To-Do task to our Task contract. Pure (exported for tests). */
@@ -65,7 +75,7 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const due = t.dueDateTime?.dateTime ?? null;
   const overdue = !!due && new Date(due).getTime() < Date.now();
   const status: TaskStatus = t.status === 'completed' ? 'done' : overdue ? 'overdue' : 'pending';
-  const note = htmlToText(t.body?.content ?? '') || null;
+  const note = htmlToText(escapeAddressTags(t.body?.content ?? '')) || null;
   return {
     id: `m365-${hashId(t.id ?? label)}`,
     label,

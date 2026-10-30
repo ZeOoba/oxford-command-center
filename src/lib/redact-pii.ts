@@ -20,19 +20,25 @@
  *      "Thank you,", "Cheers,", "Best,", "Sent from my ...", or a "-- " delimiter) to the end of the
  *      text, when that tail is at most SIGNATURE_MAX_TAIL chars -> "[signature redacted]".
  *      In multi-line text the cue must START A LINE within the last SIGNATURE_MAX_LINES lines.
- *      Single-line text (every M365 note: htmlToText collapses whitespace) also cuts at a STRONG
- *      mid-line cue (Regards, / Best regards, / Sincerely, / Sent from my ...) when the tail is at most
- *      MIDLINE_SIGNATURE_MAX_TAIL chars and carries no business fact ($, an SF figure, a suite / unit
- *      number, a date): "Re roof. Regards, the $8,200 quote for Suite 104 ..." is kept. Weak cues
- *      (Thanks/Thank you/Cheers/Best) count only at a line start and need contact data in the tail.
- *      Both run to their own fixed point in one step, so stacked sign-off blocks cut at once.
+ *      Single-line text (every M365 note: htmlToText collapses whitespace) also cuts at a mid-line
+ *      cue when the tail is at most MIDLINE_SIGNATURE_MAX_TAIL chars. A cue with text after it on its
+ *      line (always the case mid-line) opens a signature only when that text starts with a capital
+ *      (lower-case continuation is prose: "Regards, the tenant will renew"; "following up with
+ *      regards, the roof" is never a cue) AND the tail either carries contact data or -- strong cues
+ *      only (Regards / Sincerely) -- reads as a name block (no lower-case word but connectors such as
+ *      "of" / "and") with no business fact ($, an SF figure, a suite / unit number, a date). So
+ *      "Sincerely, Lowe's will deliver Friday" is kept and "Thanks, Robert Jones ... 614-... x@y" is
+ *      cut. Both run to their own fixed point in one step, so stacked sign-off blocks cut at once.
  *   2. Mail-header names: the display name after From:/To:/Cc:/Bcc: and any "Name <addr>" pair
  *      -> "[contact redacted]".
  *   2b. Capitalised name(s) immediately before a phone number -> "[contact redacted]".
  *   Rules 2 and 2b keep only the business sub-span of a name (a legal-suffix company, "<descriptor>
  *   Business Park"-style place, or a Suite/Unit/Building id; see KEEP_NAME_RE): the vendor or the
  *   suite is the business fact the note is about. Every other capitalised word in the span -- a
- *   person before, after or comma-separated from it -- is redacted, as is the address or phone.
+ *   person after or comma-separated from it -- is redacted, as is the address or phone. A company or
+ *   place is kept only when it follows a cue word (Call / Attn / cc ...; up to 4 name words) or opens
+ *   the span with at most ONE name word in front of its suffix / descriptor; a person's name in front
+ *   of it ("Jane Doe Acme Inc", "Mike Park Business Park") redacts the WHOLE span.
  *   3. Truncated address fragments at end of text ("<localpart" with no closing) -> removed, the
  *      whole run at once.
  *   4. Email addresses -> "[email redacted]".
@@ -80,17 +86,20 @@ const NAME_ADDR_RE = new RegExp(
   'g',
 );
 // Name directly before a phone number ("Test Person (555) 010-0123", "Test Person - 555-010-0123"):
-// signature / contact-list names with no sign-off cue. Up to 3 capitalised words.
+// signature / contact-list names with no sign-off cue. Up to 5 capitalised words (round 2: 3 split
+// "Oakview Business Park Building C" and left the front of a longer person + company span).
 const NAME_PHONE_RE = new RegExp(
-  String.raw`(?:[A-Z][\w'’.-]*\s+){1,3}(?:[-–:]\s*)?(?=${PHONE_SRC})`,
+  String.raw`(?:[A-Z][\w'’.-]*\s+){1,5}(?:[-–:]\s*)?(?=${PHONE_SRC})`,
   'g',
 );
 // The parts of a name span that are a company or property rather than a person (adversarial review
 // 2026-10-30, C4). Only these sub-spans are kept; every other capitalised word in the span is redacted.
 // A business word anywhere in the span used to keep the WHOLE span, so "Mike Park", "Jane Group",
 // "Jane Doe, Acme Realty" and "Acme LLC Jane Doe" all leaked the person.
-//  - a legal-suffix company: up to 4 capitalised words ending in LLC / Inc / Corp / Co / Ltd / LP /
-//    LLP / PLLC / PC (the suffix anchors the end, so a name AFTER it is not swallowed);
+//  - a legal-suffix company: up to 4 capitalised words ending in LLC / Inc / Corp / Company / Ltd /
+//    LP / LLP / PLLC (the suffix anchors the end, so a name AFTER it is not swallowed). Bare Co / PC
+//    are not suffixes (round 2): "Jane Doe Co" is a person. The words in FRONT of the suffix are
+//    vetted by scrubName (see allowedPrefix), because they can be a person ("Jane Doe Acme Inc");
 //  - a place: a descriptor (Business, Industrial, Office, ...) + Park / Center / Plaza, so "Oakview
 //    Business Park" is kept but "Mike Park" is not;
 //  - a property id: Suite / Ste / Unit / Building / Bldg + a short id ("Suite B", "Unit 104").
@@ -99,8 +108,8 @@ const NAME_PHONE_RE = new RegExp(
 const NAME_WORD = String.raw`[A-Z][\w&'’.-]*`;
 const KEEP_NAME_RE = new RegExp(
   [
-    String.raw`(?:${NAME_WORD}\s+){0,4}(?:LLC|L\.L\.C\.?|Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|Ltd\.?|LP|LLP|PLLC|PC)(?![\w&'’-])`,
-    String.raw`(?:${NAME_WORD}\s+){0,2}(?:Business|Industrial|Office|Commerce|Commercial|Corporate|Technology|Tech|Trade|Distribution|Shopping|Medical|Logistics|Research|Executive)\s+(?:Park|Center|Centre|Plaza)\b`,
+    String.raw`(?<cpre>(?:${NAME_WORD}\s+){0,4})(?:LLC|L\.L\.C\.?|Inc\.?|Incorporated|Corp\.?|Corporation|Company|Ltd\.?|LP|LLP|PLLC)(?![\w&'’-])`,
+    String.raw`(?<ppre>(?:${NAME_WORD}\s+){0,2})(?:Business|Industrial|Office|Commerce|Commercial|Corporate|Technology|Tech|Trade|Distribution|Shopping|Medical|Logistics|Research|Executive)\s+(?:Park|Center|Centre|Plaza)\b`,
     String.raw`\b(?:Suite|Ste\.?|Unit|Building|Bldg\.?)\s+#?(?:\d[\w-]{0,5}|[A-Z]{1,2}-?\d{0,4})\b`,
   ].join('|'),
   'g',
@@ -113,23 +122,63 @@ const NON_NAME_WORDS: ReadonlySet<string> = new Set([
   'mobile', 'cell', 'office', 'fax', 'tenant', 'vendor', 'owner', 'landlord', 'and', 'or',
 ]);
 
-/** Keep the business sub-spans of a name span and redact the rest; null when nothing is kept. */
-function scrubName(span: string): string | null {
+const isNonNameWord = (w: string): boolean => NON_NAME_WORDS.has(w.replace(/[.,]+$/, '').toLowerCase());
+// A cue word (or a mail-header label) directly in front of a name span, outside it: "From: Acme
+// Roofing LLC <addr>", "cc Acme LLC Jane Doe <addr>". The span regexes start at a capital, so these
+// never fall inside the span.
+const CUE_BEFORE_RE = new RegExp(
+  String.raw`(?:^|[^\w])(?:${[...NON_NAME_WORDS, 'from', 'to', 'bcc'].join('|')})\s*:?\s*$`,
+  'i',
+);
+const cueBefore = (all: string, offset: number): boolean => CUE_BEFORE_RE.test(all.slice(Math.max(0, offset - 16), offset));
+const gapWords = (gap: string): string[] =>
+  gap.replace(/\[(?:contact|email|phone) redacted\]/g, ' ').match(/[A-Za-z][\w'’.-]*/g) ?? [];
+
+/** Name words a company / place may carry in front of its suffix or descriptor (round 2, C4). A
+ *  company: up to 4 after a cue word ("Call Acme Roofing Supply LLC"), at most 1 when it opens the
+ *  span ("Acme LLC"). A place: at most 1 either way ("Oakview Business Park"), because "Park" is also
+ *  a surname ("Call Mike Park Business Park"). Two or more name words at the front can be a person
+ *  ("Jane Doe Acme Inc"), and over-redacting a vendor is safe where leaking a person is not. */
+function allowedPrefix(nameWords: number, afterCue: boolean, place: boolean): boolean {
+  return afterCue && !place ? nameWords <= 4 : nameWords <= 1;
+}
+
+/** Keep the business sub-spans of a name span and redact the rest; null when nothing is kept (the
+ *  caller then redacts the whole span). */
+function scrubName(span: string, afterCueWord = false): string | null {
   const parts: string[] = [];
   let last = 0;
   let kept = false;
   const pushGap = (gap: string) => {
-    const words = gap.replace(/\[(?:contact|email|phone) redacted\]/g, ' ').match(/[A-Za-z][\w'’.-]*/g) ?? [];
-    if (words.length > 0 && words.every((w) => NON_NAME_WORDS.has(w.replace(/[.]+$/, '').toLowerCase()))) {
+    const words = gapWords(gap);
+    if (words.length > 0 && words.every(isNonNameWord)) {
       parts.push(gap.trim().replace(/[,\s]+$/, '')); // "Call", "Attn" — an instruction, not a person
     } else if (words.length > 0) parts.push(CONTACT_PLACEHOLDER);
     else if (gap.includes(CONTACT_PLACEHOLDER)) parts.push(CONTACT_PLACEHOLDER);
   };
   for (const m of span.matchAll(KEEP_NAME_RE)) {
-    const idx = m.index ?? 0;
+    let idx = m.index ?? 0;
+    let text = m[0];
+    const pre = m.groups?.cpre ?? m.groups?.ppre;
+    if (pre !== undefined) {
+      // Cue words the prefix picked up ("Call Acme LLC") belong to the gap, not the company.
+      let consumed = 0;
+      let nameWords = 0;
+      for (const w of pre.matchAll(/(\S+)\s+/g)) {
+        if (nameWords === 0 && isNonNameWord(w[1]!)) consumed += w[0].length;
+        else nameWords += 1;
+      }
+      idx += consumed;
+      text = text.slice(consumed);
+      const before = gapWords(span.slice(last, idx));
+      // A person in front of a company / place: redact the whole span (round 2, C4).
+      if (before.some((w) => !isNonNameWord(w))) return null;
+      const afterCue = before.length > 0 || (last === 0 && afterCueWord);
+      if (!allowedPrefix(nameWords, afterCue, m.groups?.ppre !== undefined)) return null;
+    }
     pushGap(span.slice(last, idx));
-    parts.push(m[0].trim());
-    last = idx + m[0].length;
+    parts.push(text.trim());
+    last = idx + text.length;
     kept = true;
   }
   if (!kept) return null;
@@ -144,10 +193,18 @@ const HEADER_NAME_RE = /\b(From|To|Cc|Bcc|Sent by):(\s*)([^<\n:[\]]{1,60}?)\s*(?
 // one step (adversarial review 2026-10-30, C2): one fragment per pass outran the fixed-point cap.
 const TRUNC_ADDR_RE = /(?:\s*<[^\s<>]*)+$/;
 
-// Strong sign-off cue in the middle of a line (single-line text: htmlToText collapses all whitespace,
-// so an M365 note never has a line start to anchor on). A comma or end of text after Regards /
-// Sincerely, so "with regards to the roof" is not a cue.
-const MIDLINE_SIGNOFF_RE = /\b(?:(?:best|kind|warm|warmest)\s+regards|regards|sincerely)\s*(?:,|$)|\bsent\s+from\s+my\s+\w+/gi;
+// Sign-off cue in the middle of a line (single-line text: htmlToText collapses all whitespace, so an
+// M365 note never has a line start to anchor on). Group 1 = strong cue (Regards / Sincerely; a comma
+// or end of text after it, so "with regards to the roof" is not a cue), group 2 = weak cue (Thanks /
+// Thank you / Cheers / Best, comma required), group 3 = "Sent from my ...". Whether a cue opens a
+// signature is decided by isSignatureTail.
+const MIDLINE_SIGNOFF_RE =
+  /\b((?:best|kind|warm|warmest)\s+regards|regards|sincerely)\s*(?:,|$)|\b(thanks|thank\s+you|cheers|best)\s*,|\b(sent\s+from\s+my\s+\w+)/gi;
+// Lower-case words a name / title block may hold ("Director of Leasing", "Smith and Sons").
+const NAME_BLOCK_CONNECTORS: ReadonlySet<string> = new Set([
+  'of', 'and', 'at', 'the', 'for', 'de', 'la', 'van', 'von', 'du', 'del', 'da', 'y', 'e', 'x', 'ext',
+  'cell', 'mobile', 'office', 'tel', 'phone', 'fax', 'email', 'direct', 'main',
+]);
 /** Longest tail a mid-line cue may cut; a signature block flattened onto one line is short. */
 export const MIDLINE_SIGNATURE_MAX_TAIL = 120;
 // Business facts that mean a mid-line "Regards," tail is note text, not a signature: an amount, an
@@ -165,6 +222,26 @@ const BUSINESS_TAIL_RE = new RegExp(
   'i',
 );
 
+/** Text after a cue that reads as a name / title / address block: every lower-case word is a
+ *  connector ("Jane Doe Director of Leasing"), so "Lowe's will deliver Friday" is prose. */
+function isNameBlock(after: string): boolean {
+  const words = after.replace(/\[(?:contact|email|phone|signature) redacted\]/g, ' ').match(/[A-Za-z][\w'’.&-]*/g) ?? [];
+  return words.every((w) => /^[A-Z]/.test(w) || NAME_BLOCK_CONNECTORS.has(w.toLowerCase()));
+}
+
+/** Does the text after a sign-off cue open a signature (round 2, C3)? `after` is the rest of the
+ *  cue's line, `tail` the rest of the text. Empty `after` (cue alone on its line / at the end): a
+ *  strong cue opens a signature, a weak one needs contact data in the tail. Otherwise the text must
+ *  start with a capital (lower-case continuation is prose), and the tail must carry contact data or,
+ *  for a strong cue, be a name block with no business fact on the cue's line. */
+function isSignatureTail(strong: boolean, after: string, tail: string): boolean {
+  const rest = after.trim();
+  if (rest === '') return strong || CONTACT_TOKEN_RE.test(tail);
+  if (!/^[A-Z]/.test(rest)) return false;
+  if (CONTACT_TOKEN_RE.test(tail)) return true;
+  return strong && isNameBlock(rest) && !BUSINESS_TAIL_RE.test(rest);
+}
+
 function cutAt(text: string, cueStart: number): string {
   return `${text.slice(0, cueStart).trimEnd()} ${SIGNATURE_PLACEHOLDER}`.trimStart();
 }
@@ -174,7 +251,12 @@ function stripMidlineSignature(text: string): string {
   for (const m of text.matchAll(MIDLINE_SIGNOFF_RE)) {
     const cueStart = m.index ?? 0;
     const tail = text.slice(cueStart);
-    if (tail.length > MIDLINE_SIGNATURE_MAX_TAIL || BUSINESS_TAIL_RE.test(tail)) continue;
+    if (tail.length > MIDLINE_SIGNATURE_MAX_TAIL) continue;
+    if (m[3] === undefined) {
+      // "following up with regards, the roof": lower-case "with" before a bare Regards is prose.
+      if (/^regards/i.test(m[0]) && /\bwith\s+$/.test(text.slice(0, cueStart))) continue;
+      if (!isSignatureTail(m[1] !== undefined, text.slice(cueStart + m[0].length), tail)) continue;
+    }
     return cutAt(text, cueStart);
   }
   return text;
@@ -207,10 +289,13 @@ function stripLineSignature(text: string): string {
     const tail = text.slice(cueStart);
     if (tail.length > SIGNATURE_MAX_TAIL) continue;
     // "Thanks," / "Best," / "Cheers," / "Thank you," also open ordinary sentences; treat them as a
-    // sign-off only when the tail carries contact data.
+    // sign-off only when the tail carries contact data. Text after the cue on its own line must read
+    // as a signature too ("Sincerely, Lowe's will deliver Friday" is a sentence; round 2, C3).
     const cue = (m[1] ?? '').toLowerCase();
-    const strong = m[1] === undefined || /regards|sincerely/.test(cue);
-    if (!strong && !CONTACT_TOKEN_RE.test(tail)) continue;
+    if (m[2] === undefined && m[3] === undefined) {
+      const strong = /regards|sincerely/.test(cue);
+      if (!isSignatureTail(strong, line.slice(line.indexOf(m[0].trim()) + m[0].trim().length), tail)) continue;
+    }
     return cutAt(text, cueStart);
   }
   return text;
@@ -218,18 +303,18 @@ function stripLineSignature(text: string): string {
 
 function redactOnce(text: string): string {
   let out = stripSignature(text);
-  out = out.replace(NAME_ADDR_RE, (match: string) => {
-    const scrubbed = scrubName(match.slice(0, match.indexOf('<')).trim());
+  out = out.replace(NAME_ADDR_RE, (match: string, offset: number, all: string) => {
+    const scrubbed = scrubName(match.slice(0, match.indexOf('<')).trim(), cueBefore(all, offset));
     return scrubbed === null ? CONTACT_PLACEHOLDER : `${scrubbed} <${EMAIL_PLACEHOLDER}>`;
   });
-  out = out.replace(NAME_PHONE_RE, (match: string) => {
+  out = out.replace(NAME_PHONE_RE, (match: string, offset: number, all: string) => {
     const trailing = /[\s\-–:]*$/.exec(match)?.[0] ?? '';
-    const scrubbed = scrubName(match.slice(0, match.length - trailing.length));
+    const scrubbed = scrubName(match.slice(0, match.length - trailing.length), cueBefore(all, offset));
     return scrubbed === null ? `${CONTACT_PLACEHOLDER} ` : `${scrubbed}${trailing}`;
   });
   out = out.replace(HEADER_NAME_RE, (match: string, label: string, gap: string, name: string, offset: number, all: string) => {
     if (!/[A-Za-z]/.test(name)) return match;
-    const scrubbed = scrubName(name.trim());
+    const scrubbed = scrubName(name.trim(), true); // the header label is the cue
     if (scrubbed !== null) return `${label}:${gap}${scrubbed} `;
     // The name alone; a placeholder already following it stands for the whole contact.
     const rest = all.slice(offset + match.length);

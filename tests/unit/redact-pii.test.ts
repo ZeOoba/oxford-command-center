@@ -117,11 +117,14 @@ describe('redactNotesText — review follow-up (2026-10-30)', () => {
     expect(out).not.toMatch(/555-010-0123|tp@example\.com|Test Person/);
   });
 
-  it('keeps company and property names before a phone number (LLC/Inc/Co, Suite/Building/Park)', () => {
-    for (const name of ['Acme Roofing LLC', 'Example Mechanical Inc.', 'Sample Paving Co', 'Building C', 'Suite B', 'Oakview Business Park']) {
+  it('keeps company and property names before a phone number (LLC/Inc/Company, Suite/Building/Park)', () => {
+    for (const name of ['Acme Roofing LLC', 'Example Mechanical Inc.', 'Sample Paving Company', 'Building C', 'Suite B', 'Oakview Business Park']) {
       const out = redactNotesText(`Call ${name} 555-010-0123 re gutters`);
       expect(out).toBe(`Call ${name} ${PHONE_PLACEHOLDER} re gutters`);
     }
+    // Round 2: bare "Co" / "PC" are no longer suffixes ("Jane Doe Co" is a person), so a "... Co"
+    // vendor is over-redacted -- the safe direction.
+    expect(redactNotesText('Call Sample Paving Co 555-010-0123 re gutters')).toBe(`${CONTACT_PLACEHOLDER} ${PHONE_PLACEHOLDER} re gutters`);
   });
 
   it('keeps a company display name in a mail header but redacts the address', () => {
@@ -181,6 +184,71 @@ describe('redactNotesText — regression corpus (adversarial review 2026-10-30)'
     // Kept business names (the vendor / the property is the business fact).
     { name: 'keeps an LLC vendor', input: 'Call Acme Roofing LLC 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Acme Roofing LLC'] },
     { name: 'keeps a business park', input: 'Call Oakview Business Park 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Oakview Business Park'] },
+
+    // Round 2 (2026-10-30). C4 regression: the {0,4} / {0,2} words in front of a legal suffix or a
+    // place descriptor swallowed a person's name, keeping it as part of the "company".
+    { name: 'R2-C4 person before an Inc company', input: 'Jane Doe Acme Inc 614-555-0123 re roof', absent: ['Jane', 'Doe', '614-555-0123'], present: ['re roof'] },
+    { name: 'R2-C4 bare Co is not a suffix', input: 'Jane Doe Co 614-555-0123 re roof', absent: ['Jane', 'Doe', '614-555-0123'], present: ['re roof'] },
+    { name: 'R2-C4 bare PC is not a suffix', input: 'Jane Doe PC 614-555-0123 re roof', absent: ['Jane', 'Doe', '614-555-0123'], present: ['re roof'] },
+    { name: 'R2-C4 person-named Park before a Business Park', input: 'Mike Park Business Park 614-555-0123 re gutters', absent: ['Mike', '614-555-0123'], present: ['re gutters'] },
+    { name: 'R2-C4 cue + person-named Park before a Business Park', input: 'Call Mike Park Business Park 614-555-0123 re gutters', absent: ['Mike', '614-555-0123'], present: ['re gutters'] },
+    { name: 'R2-C4 person before an Industrial Park (phone)', input: 'Jane Doe Industrial Park 614-555-0123 re gutters', absent: ['Jane', 'Doe', '614-555-0123'], present: ['re gutters'] },
+    { name: 'R2-C4 person before an Industrial Park (address)', input: 'Jane Doe Industrial Park <jdoe@example.com> re gutters', absent: ['Jane', 'Doe', 'jdoe@example.com'], present: ['re gutters'] },
+    { name: 'R2-C4 person, company Inc in a header', input: 'From: Jane Doe, Acme Realty Inc <jdoe@example.com> re lease', absent: ['Jane', 'Doe', 'jdoe@example.com'], present: ['re lease'] },
+    { name: 'R2 keeps a cue-led multi-word LLC vendor', input: 'Attn Acme Roofing Supply LLC 614-555-0123 re gutters', absent: ['614-555-0123'], present: ['Attn', 'Acme Roofing Supply LLC'] },
+    // NAME_PHONE_RE looked only 3 words back, splitting a place + building id.
+    {
+      name: 'R2 business park + building id is not split',
+      input: 'Oakview Business Park Building C 614-555-0123 re gutters',
+      absent: ['614-555-0123', CONTACT_PLACEHOLDER],
+      present: ['Oakview Business Park Building C', 're gutters'],
+    },
+    // M365 header shape (the html-to-text tag strip is covered in m365-tasks.test.ts).
+    { name: 'R2 header person, company before an address', input: 'From: Jane Doe, Acme Realty <jdoe@example.com> re lease', absent: ['Jane', 'Doe', 'jdoe@example.com'], present: ['re lease'] },
+    // Weak sign-off mid-line (single-line M365 text) with a contact tail is cut.
+    {
+      name: 'R2 mid-line Thanks with a contact tail is cut',
+      input: 'Please review the bid. Thanks, Robert Jones Senior Project Manager Allied Mechanical 614-555-0123 rjones@example.com',
+      absent: ['Robert', 'Jones', 'Allied', 'rjones'],
+      exact: `Please review the bid. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    {
+      name: 'R2 mid-line Thanks with no contact data is kept',
+      input: 'Please review the bid. Thanks, Robert will walk the roof Friday',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Please review the bid. Thanks, Robert will walk the roof Friday',
+    },
+    // C3 over-cut: a cue followed by lower-case prose, or by a capitalised word that opens a sentence.
+    {
+      name: 'R2-C3 "with regards," is prose',
+      input: 'Following up with regards, the roof at Riverside Commons',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Following up with regards, the roof at Riverside Commons',
+    },
+    {
+      name: 'R2-C3 Regards, + lower-case continuation is prose',
+      input: 'Lease expires 12/31/2026. Regards, the tenant will renew for five years',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Lease expires 12/31/2026. Regards, the tenant will renew for five years',
+    },
+    {
+      name: 'R2-C3 Sincerely, + a sentence (line start) is prose',
+      input: "Sincerely, Lowe's will deliver Friday morning",
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: "Sincerely, Lowe's will deliver Friday morning",
+    },
+    {
+      name: 'R2-C3 Sincerely, + a sentence (mid-line) is prose',
+      input: "Order placed. Sincerely, Lowe's will deliver Friday morning",
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: "Order placed. Sincerely, Lowe's will deliver Friday morning",
+    },
+    {
+      name: 'R2-C3 a name-only Regards tail is still cut',
+      input: 'Approved. Regards, Jane Doe Director of Leasing',
+      absent: ['Jane'],
+      exact: `Approved. ${SIGNATURE_PLACEHOLDER}`,
+    },
   ];
 
   for (const c of CASES) {
