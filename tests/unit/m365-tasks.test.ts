@@ -82,3 +82,42 @@ describe('mapGraphTask — notes redaction (#511 follow-up)', () => {
     expect(t!.notes).toContain('[phone redacted]');
   });
 });
+
+// Adversarial review 2026-10-30: htmlToText collapses whitespace, so a Graph body never carries '\n'
+// and a line-start-only sign-off rule never fires (C3); and slicing to 200 BEFORE redacting left a
+// partial address / phone at the cut (C1). All fixtures synthetic (example domains, 555-01xx).
+describe('mapGraphTask — notes redaction (adversarial review 2026-10-30)', () => {
+  const at = (n: number, tail: string) => {
+    const base = 'Roof quote follow up for the tenant. ';
+    return `${base.repeat(Math.ceil(n / base.length)).slice(0, n)}${tail}`;
+  };
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-cut', title: 'Cut', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('C3: cuts a signature from an HTML body (no newlines survive htmlToText)', () => {
+    const notes = notesOf('Approved the quote.</p><p>Regards,</p><p>Jane Doe</p><p>Property Manager</p><p>Acme Realty</p><p>1 Main St Testville');
+    expect(notes).toBe('Approved the quote. [signature redacted]');
+  });
+
+  it('C1: an email whose local part straddles the 200-char cut leaves no partial local part', () => {
+    const notes = notesOf(at(195, 'jane.roe@example.com please'));
+    expect(notes.length).toBeLessThanOrEqual(200);
+    expect(notes).not.toMatch(/jane/);
+  });
+
+  it('C1: a phone number straddling the 200-char cut leaves no partial digits', () => {
+    for (const start of [191, 192, 193, 194, 195, 196]) {
+      const notes = notesOf(at(start, '555-010-0123 call back'));
+      expect(notes.length).toBeLessThanOrEqual(200);
+      expect(notes).not.toMatch(/555|010-0/);
+    }
+  });
+
+  it('C1: the stored note is a redaction fixed point (snapshot guard stays a no-op)', async () => {
+    const { redactNotesText } = await import('../../src/lib/redact-pii');
+    for (const start of [185, 190, 195, 199]) {
+      const notes = notesOf(at(start, 'jane.roe@example.com 555-010-0123'));
+      expect(redactNotesText(notes)).toBe(notes);
+    }
+  });
+});

@@ -43,6 +43,21 @@ export function isTaskList(list: { wellknownListName?: string }): boolean {
   return list.wellknownListName !== 'flaggedEmails';
 }
 
+const NOTE_MAX_CHARS = 200;
+
+/** Redact, THEN bound to NOTE_MAX_CHARS (adversarial review 2026-10-30, C1): slicing first left a
+ *  partial local part or 7 of 10 phone digits at the cut, which no rule recognises. A cut that lands
+ *  mid-token drops that partial token (and a half-written placeholder), and the result is redacted
+ *  once more so the stored note is a fixed point (the snapshot guard re-runs the same function). */
+function boundedRedactedNote(note: string): string {
+  const red = redactNotesText(note);
+  if (red.length <= NOTE_MAX_CHARS) return red;
+  let cut = red.slice(0, NOTE_MAX_CHARS);
+  if (/\S/.test(red.charAt(NOTE_MAX_CHARS))) cut = cut.replace(/\S+$/, '');
+  cut = cut.replace(/\s*\[(?:email|phone|contact|signature)(?: redacted)?$/, '').trimEnd();
+  return redactNotesText(cut);
+}
+
 /** Map a Graph To-Do task to our Task contract. Pure (exported for tests). */
 export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const label = (t.title ?? '').trim();
@@ -60,7 +75,7 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
     dueDay: due ? due.slice(0, 10) : null,
     // Redacted HERE so every consumer (Brain.persist, the snapshot writers, bake-mirror) gets the
     // scrubbed text: To-Do bodies are pasted email threads carrying third-party contact data.
-    notes: note ? redactNotesText(note.slice(0, 200)) : null,
+    notes: note ? boundedRedactedNote(note) : null,
     status,
     monthlyPmt: null,
   };
