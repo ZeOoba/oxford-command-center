@@ -48,18 +48,31 @@ const NOTE_MAX_CHARS = 200;
  *  run took seconds), and only the first NOTE_MAX_CHARS of the result are stored. */
 const NOTE_INPUT_MAX_CHARS = 4000;
 
-/** Redact, THEN bound to NOTE_MAX_CHARS (adversarial review 2026-10-30, C1): slicing first left a
- *  partial local part or 7 of 10 phone digits at the cut, which no rule recognises. A cut that lands
- *  mid-token drops that partial token (and a half-written placeholder), and the result is redacted
- *  once more so the stored note is a fixed point (the snapshot guard re-runs the same function). */
-function boundedRedactedNote(note: string): string {
-  const red = redactNotesText(note.slice(0, NOTE_INPUT_MAX_CHARS));
-  if (red.length <= NOTE_MAX_CHARS) return red;
+/** Cut+redact rounds before the hard fallback; real notes settle in 1-2 (each round only shortens). */
+const NOTE_BOUND_ROUNDS = 4;
+
+/** Cut to NOTE_MAX_CHARS on a token boundary: a cut that lands mid-token drops that partial token,
+ *  and any half-written placeholder at the cut ("... [phone", "... [email red") with its spacing. */
+function cutToBound(red: string): string {
   let cut = red.slice(0, NOTE_MAX_CHARS);
   if (/\S/.test(red.charAt(NOTE_MAX_CHARS))) cut = cut.replace(/\S+$/, '');
-  // Any half-written placeholder at the cut ("... [phone", "... [email red"), with its spacing.
-  cut = cut.replace(/\s*\[[a-z ]*$/, '').trimEnd();
-  return redactNotesText(cut);
+  return cut.replace(/\s*\[[a-z ]*$/, '').trimEnd();
+}
+
+/** Redact, THEN bound to NOTE_MAX_CHARS (adversarial review 2026-10-30, C1): slicing first left a
+ *  partial local part or 7 of 10 phone digits at the cut, which no rule recognises. The cut text is
+ *  redacted again, and that can grow it past the bound (a raw token -> a longer placeholder) or leave
+ *  it short of a fixed point, so cut+redact repeats until the note is <= NOTE_MAX_CHARS AND a fixed
+ *  point (round 3; the snapshot guard re-runs redactNotesText). If NOTE_BOUND_ROUNDS do not settle
+ *  it, the length bound wins (a final token-boundary cut). */
+function boundedRedactedNote(note: string): string {
+  let out = redactNotesText(note.slice(0, NOTE_INPUT_MAX_CHARS));
+  for (let round = 0; round < NOTE_BOUND_ROUNDS; round += 1) {
+    const next = redactNotesText(out.length > NOTE_MAX_CHARS ? cutToBound(out) : out);
+    if (next === out && out.length <= NOTE_MAX_CHARS) return out;
+    out = next;
+  }
+  return out.length > NOTE_MAX_CHARS ? cutToBound(out) : out;
 }
 
 /** A literal `<jdoe@example.com>` in a body is an address, not a tag: htmlToText would strip it, and

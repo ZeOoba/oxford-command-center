@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { redactNotesTextMainBaseline } from './fixtures/redact-pii-main-baseline';
 import {
   redactNotesText,
   redactSnapshotNotes,
@@ -117,20 +118,27 @@ describe('redactNotesText — review follow-up (2026-10-30)', () => {
     expect(out).not.toMatch(/555-010-0123|tp@example\.com|Test Person/);
   });
 
-  it('keeps company and property names before a phone number (LLC/Inc/Company, Suite/Building/Park)', () => {
-    for (const name of ['Acme Roofing LLC', 'Example Mechanical Inc.', 'Sample Paving Company', 'Building C', 'Suite B', 'Oakview Business Park']) {
+  it('keeps one-word companies and property names before a phone number (LLC/Inc/Company, Suite/Building/Park)', () => {
+    for (const name of ['Acme LLC', 'Example Inc.', 'Sample Company', 'Building C', 'Suite B', 'Oakview Business Park']) {
       const out = redactNotesText(`Call ${name} 555-010-0123 re gutters`);
       expect(out).toBe(`Call ${name} ${PHONE_PLACEHOLDER} re gutters`);
+    }
+    // Round 3: two or more words in front of a legal suffix can be a person ("Call Jane Doe Acme
+    // Inc"), even after a cue word, so a multi-word vendor is over-redacted -- the safe direction.
+    for (const name of ['Acme Roofing LLC', 'Example Mechanical Inc.', 'Sample Paving Company']) {
+      expect(redactNotesText(`Call ${name} 555-010-0123 re gutters`)).toBe(`${CONTACT_PLACEHOLDER} ${PHONE_PLACEHOLDER} re gutters`);
     }
     // Round 2: bare "Co" / "PC" are no longer suffixes ("Jane Doe Co" is a person), so a "... Co"
     // vendor is over-redacted -- the safe direction.
     expect(redactNotesText('Call Sample Paving Co 555-010-0123 re gutters')).toBe(`${CONTACT_PLACEHOLDER} ${PHONE_PLACEHOLDER} re gutters`);
   });
 
-  it('keeps a company display name in a mail header but redacts the address', () => {
-    const out = redactNotesText('From: Acme Roofing LLC <billing@example.com> Sent: Monday');
-    expect(out).toContain('Acme Roofing LLC');
+  it('keeps a one-word company display name in a mail header but redacts the address', () => {
+    const out = redactNotesText('From: Acme LLC <billing@example.com> Sent: Monday');
+    expect(out).toContain('Acme LLC');
     expect(out).not.toContain('billing@example.com');
+    // Round 3: a two-word company name is over-redacted (it could be "Jane Doe Acme Inc").
+    expect(redactNotesText('From: Acme Roofing LLC <billing@example.com> Sent: Monday')).toBe(`From: ${CONTACT_PLACEHOLDER} Sent: Monday`);
     expect(redactNotesText('To: Test Person <tp@example.com>')).toBe(`To: ${CONTACT_PLACEHOLDER}`);
   });
 });
@@ -182,7 +190,9 @@ describe('redactNotesText — regression corpus (adversarial review 2026-10-30)'
     },
     { name: 'C4 suite then person before a phone', input: 'Suite B Jane 555-010-0123 re keys', absent: ['Jane', '555-010-0123'], present: ['Suite B', 're keys'] },
     // Kept business names (the vendor / the property is the business fact).
-    { name: 'keeps an LLC vendor', input: 'Call Acme Roofing LLC 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Acme Roofing LLC'] },
+    { name: 'keeps a one-word LLC vendor', input: 'Call Acme LLC 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Acme LLC'] },
+    // Round 3: a two-word vendor is over-redacted (the person-first shape cannot be told apart).
+    { name: 'R3 a two-word LLC vendor is over-redacted', input: 'Call Acme Roofing LLC 555-010-0123 re gutters', absent: ['555-010-0123', 'Roofing'], present: ['re gutters'] },
     { name: 'keeps a business park', input: 'Call Oakview Business Park 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Oakview Business Park'] },
 
     // Round 2 (2026-10-30). C4 regression: the {0,4} / {0,2} words in front of a legal suffix or a
@@ -195,7 +205,8 @@ describe('redactNotesText — regression corpus (adversarial review 2026-10-30)'
     { name: 'R2-C4 person before an Industrial Park (phone)', input: 'Jane Doe Industrial Park 614-555-0123 re gutters', absent: ['Jane', 'Doe', '614-555-0123'], present: ['re gutters'] },
     { name: 'R2-C4 person before an Industrial Park (address)', input: 'Jane Doe Industrial Park <jdoe@example.com> re gutters', absent: ['Jane', 'Doe', 'jdoe@example.com'], present: ['re gutters'] },
     { name: 'R2-C4 person, company Inc in a header', input: 'From: Jane Doe, Acme Realty Inc <jdoe@example.com> re lease', absent: ['Jane', 'Doe', 'jdoe@example.com'], present: ['re lease'] },
-    { name: 'R2 keeps a cue-led multi-word LLC vendor', input: 'Attn Acme Roofing Supply LLC 614-555-0123 re gutters', absent: ['614-555-0123'], present: ['Attn', 'Acme Roofing Supply LLC'] },
+    // Round 3: was kept after a cue word (up to 4 words); now capped at 1 word, so over-redacted.
+    { name: 'R3 a cue-led multi-word LLC vendor is over-redacted', input: 'Attn Acme Roofing Supply LLC 614-555-0123 re gutters', absent: ['614-555-0123', 'Roofing'], present: ['re gutters'] },
     // NAME_PHONE_RE looked only 3 words back, splitting a place + building id.
     {
       name: 'R2 business park + building id is not split',
@@ -249,6 +260,71 @@ describe('redactNotesText — regression corpus (adversarial review 2026-10-30)'
       absent: ['Jane'],
       exact: `Approved. ${SIGNATURE_PLACEHOLDER}`,
     },
+
+    // Round 3 (2026-10-30): each shape must leak no more than main.
+    // 1. The "with regards" guard is gone; the capital-letter check alone keeps the prose case above.
+    { name: 'R3 "with regards, Jane" is cut', input: 'with regards, Jane', absent: ['Jane'], exact: `with ${SIGNATURE_PLACEHOLDER}` },
+    { name: 'R3 "with regards, Jane Doe" mid-line is cut', input: 'Following up with regards, Jane Doe', absent: ['Jane', 'Doe'] },
+    // 2. A mid-line cue in multi-line text: cut as main does.
+    {
+      name: 'R3 mid-line Regards then a multi-line name block is cut',
+      input: 'Please confirm the COI. Regards,\nJane Doe\nAcme Roofing LLC',
+      absent: ['Jane', 'Doe', 'Acme'],
+      exact: `Please confirm the COI. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    {
+      name: 'R3 mid-line Regards + name on its line, address lines below, is cut',
+      input: 'COI received. Regards, Jane Doe\nAcme Realty\n1 Main St Suite 200',
+      absent: ['Jane', 'Doe', 'Acme'],
+      exact: `COI received. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    {
+      name: 'R3 mid-line Thanks + multi-line contact tail is cut',
+      input: 'Bid attached. Thanks,\nRobert Jones\n614-555-0142',
+      absent: ['Robert', '555-0142'],
+      exact: `Bid attached. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    // Multi-line business text is not over-redacted.
+    {
+      name: 'R3 multi-line business note with no cue is kept',
+      input: 'Roof quote $8,200 approved.\nSuite 104 renewal at $9.75/SF NNN.\nInspection 11/14.',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Roof quote $8,200 approved.\nSuite 104 renewal at $9.75/SF NNN.\nInspection 11/14.',
+    },
+    {
+      name: 'R3 multi-line mid-line Regards + lower-case prose is kept',
+      input: 'Re roof. Regards, the $8,200 quote is for Suite 104.\nTenant pays $9.75/SF from 11/14.\nKeys at the desk.',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Re roof. Regards, the $8,200 quote is for Suite 104.\nTenant pays $9.75/SF from 11/14.\nKeys at the desk.',
+    },
+    {
+      name: 'R3 multi-line mid-line Regards + capitalised business facts is kept',
+      input: 'Update. Regards, Suite 104 rent $9.75/SF from 11/14\nKeys at the desk',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Update. Regards, Suite 104 rent $9.75/SF from 11/14\nKeys at the desk',
+    },
+    {
+      name: 'R3 multi-line line-start Thanks + business prose is kept',
+      input: 'Thanks, the roof is done.\nSuite 104 owes $1,200 by 12/01.\nUnit 7 keys at the desk.',
+      absent: [SIGNATURE_PLACEHOLDER],
+      exact: 'Thanks, the roof is done.\nSuite 104 owes $1,200 by 12/01.\nUnit 7 keys at the desk.',
+    },
+    {
+      name: 'R3 multi-line business lines then a signature: only the signature goes',
+      input: 'Suite 104 owes $1,200 by 12/01.\nRoof quote $8,200.\nRegards,\nJane Doe\n614-555-0142',
+      absent: ['Jane', '555-0142'],
+      exact: `Suite 104 owes $1,200 by 12/01.\nRoof quote $8,200. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    // 3. At most one name word in front of a company, even after a cue word.
+    { name: 'R3 header person + company Inc', input: 'From: Jane Doe Acme Inc <jd@example.com> re roof', absent: ['Jane', 'Doe', 'jd@example.com'], present: ['re roof'] },
+    { name: 'R3 header initials + company Inc', input: 'Cc: F L Acme Inc <x@example.com> re roof', absent: ['F L', 'x@example.com'], present: ['re roof'] },
+    { name: 'R3 cue + person + company Inc + phone', input: 'Call Jane Doe Acme Inc 614-555-0142 re roof', absent: ['Jane', 'Doe', '555-0142'], present: ['re roof'] },
+    { name: 'R3 cue + person + two-word LLC + phone', input: 'Call Jane Doe Acme Roofing LLC 614-555-0142 re roof', absent: ['Jane', 'Doe', '555-0142'], present: ['re roof'] },
+    { name: 'R3 cue + person + two-word LLC + address', input: 'Call Jane Doe Acme Roofing LLC <jd@example.com> re roof', absent: ['Jane', 'Doe', 'jd@example.com'], present: ['re roof'] },
+    // 4. An adjacent-phone run folds in one pass (the lookbehind skipped every second number, so x9
+    //    outran the 8-pass cap and the last one stayed raw).
+    { name: 'R3 nine adjacent phones', input: '(614) 555-0142'.repeat(9), absent: ['555-0142', '(614)'] },
+    { name: 'R3 forty adjacent phones', input: `call ${'(614) 555-0142'.repeat(40)} re roof`, absent: ['555-0142', '(614)'], present: ['re roof'] },
   ];
 
   for (const c of CASES) {
@@ -282,6 +358,55 @@ describe('redactNotesText — regression corpus (adversarial review 2026-10-30)'
     expect(redactNotesText(`note a${' <frag'.repeat(20)}`)).toBe('note a');
     expect(redactNotesText(`Status ok.${' Regards, Jane Doe'.repeat(10)}`)).toBe(`Status ok. ${SIGNATURE_PLACEHOLDER}`);
     expect(redactNotesText(`Status ok.${'\nRegards,\nJane Doe'.repeat(10)}`)).toBe(`Status ok. ${SIGNATURE_PLACEHOLDER}`);
+  });
+});
+
+// Round 3: "strictly no worse than main" as a property. A small corpus is generated from the review's
+// shapes (sign-off cues, header / cue + person + company spans, adjacent phones); for every input the
+// count of planted PII tokens left in the PR output must be <= the count main (a frozen copy in
+// fixtures/) leaves. Synthetic only: invented names, example domains, the 555-01xx block.
+describe('redactNotesText — leaks no more than main (round 3)', () => {
+  const FIRST = ['Jane', 'Robert', 'Maria', 'F'];
+  const LAST = ['Doe', 'Jones', 'Lopez', 'L'];
+  const COMPANY = ['Acme Inc', 'Acme Roofing LLC', 'Allied Mechanical Corp', 'Oakview Business Park'];
+  const PHONE = '614-555-0142';
+  const EMAIL = 'jd@example.com';
+  type Gen = { input: string; pii: string[] };
+  const corpus: Gen[] = [];
+  for (const f of FIRST) {
+    for (const l of LAST) {
+      const pii = [f, l];
+      corpus.push({ input: `with regards, ${f}`, pii: [f] });
+      corpus.push({ input: `Following up with regards, ${f} ${l}`, pii });
+      corpus.push({ input: `Please confirm the COI. Regards,\n${f} ${l}\nAcme Roofing LLC`, pii });
+      corpus.push({ input: `Bid attached. Thanks,\n${f} ${l}\n${PHONE}`, pii: [...pii, PHONE] });
+      for (const c of COMPANY) {
+        for (const cue of ['From:', 'Cc:', 'To:', 'Call', 'Attn', '']) {
+          corpus.push({ input: `${cue} ${f} ${l} ${c} <${EMAIL}> re roof`.trim(), pii: [...pii, EMAIL] });
+          corpus.push({ input: `${cue} ${f} ${l} ${c} ${PHONE} re roof`.trim(), pii: [...pii, PHONE] });
+        }
+      }
+    }
+  }
+  for (const n of [1, 2, 8, 9, 10, 20]) corpus.push({ input: `call ${'(614) 555-0142'.repeat(n)} re roof`, pii: ['555-0142'] });
+
+  const leaks = (out: string, pii: string[]): number =>
+    pii.reduce((k, t) => k + (new RegExp(`(?<![\\w])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`).test(out) ? 1 : 0), 0);
+
+  it('PR output leaks <= main on every one of the generated inputs', () => {
+    expect(corpus.length).toBeGreaterThan(300);
+    const worse: string[] = [];
+    let prTotal = 0;
+    let mainTotal = 0;
+    for (const g of corpus) {
+      const pr = leaks(redactNotesText(g.input), g.pii);
+      const main = leaks(redactNotesTextMainBaseline(g.input), g.pii);
+      prTotal += pr;
+      mainTotal += main;
+      if (pr > main) worse.push(`${g.input} -> pr ${pr} > main ${main}`);
+    }
+    expect(worse).toEqual([]);
+    expect(prTotal).toBeLessThanOrEqual(mainTotal);
   });
 });
 
