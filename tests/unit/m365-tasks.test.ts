@@ -161,3 +161,31 @@ describe('mapGraphTask — notes redaction (round 2)', () => {
     }
   });
 });
+
+// Round 3 review (2026-10-30). Synthetic fixtures only.
+describe('mapGraphTask — notes redaction (round 3)', () => {
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-r3', title: 'R3', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('an adjacent-phone run leaves no raw number (it used to outrun the 8-pass cap at x9)', () => {
+    for (const n of [9, 10, 12]) {
+      const notes = notesOf('(614) 555-0142'.repeat(n));
+      expect(notes).not.toMatch(/555-0142|\(614\)/);
+    }
+  });
+
+  it('the stored note is <= 200 chars and a redaction fixed point after the post-cut re-redaction', async () => {
+    const { redactNotesText } = await import('../../src/lib/redact-pii');
+    const units = ['(614) 555-0142', '614-555-0142 ', 'a@b.c ', 'a@b ', 'x <y ', 'Jo <a@b.c> ', 'Regards, Jo ', 'Jo Do 614-555-0142 '];
+    for (const u of units) {
+      for (let pre = 0; pre <= 200; pre += 7) {
+        for (const n of [1, 3, 9, 20, 40]) {
+          const notes = notesOf(`${'k'.repeat(pre)} ${u.repeat(n)}`);
+          expect(notes.length, `${u} pre=${pre} n=${n}`).toBeLessThanOrEqual(200);
+          expect(redactNotesText(notes), `${u} pre=${pre} n=${n}`).toBe(notes);
+          expect(notes).not.toMatch(/555-0142|@b/);
+        }
+      }
+    }
+  });
+});

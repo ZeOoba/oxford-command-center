@@ -19,13 +19,13 @@
  *   1. Signature block: from a sign-off ("Regards,", "Best regards,", "Sincerely,", "Thanks,",
  *      "Thank you,", "Cheers,", "Best,", "Sent from my ...", or a "-- " delimiter) to the end of the
  *      text, when that tail is at most SIGNATURE_MAX_TAIL chars -> "[signature redacted]".
- *      In multi-line text the cue must START A LINE within the last SIGNATURE_MAX_LINES lines.
- *      Single-line text (every M365 note: htmlToText collapses whitespace) also cuts at a mid-line
- *      cue when the tail is at most MIDLINE_SIGNATURE_MAX_TAIL chars. A cue with text after it on its
- *      line (always the case mid-line) opens a signature only when that text starts with a capital
- *      (lower-case continuation is prose: "Regards, the tenant will renew"; "following up with
- *      regards, the roof" is never a cue) AND the tail either carries contact data or -- strong cues
- *      only (Regards / Sincerely) -- reads as a name block (no lower-case word but connectors such as
+ *      A cue that STARTS A LINE must be within the last SIGNATURE_MAX_LINES lines. A cue in the
+ *      middle of a line (every M365 note is one line: htmlToText collapses whitespace; multi-line
+ *      text too since round 3) also cuts when the tail is at most MIDLINE_SIGNATURE_MAX_TAIL chars.
+ *      A cue with text after it on its line opens a signature only when that text starts with a
+ *      capital (lower-case continuation is prose: "Regards, the tenant will renew", "following up
+ *      with regards, the roof") AND the tail either carries contact data or -- strong cues only
+ *      (Regards / Sincerely) -- reads as a name block (no lower-case word but connectors such as
  *      "of" / "and") with no business fact ($, an SF figure, a suite / unit number, a date). So
  *      "Sincerely, Lowe's will deliver Friday" is kept and "Thanks, Robert Jones ... 614-... x@y" is
  *      cut. Both run to their own fixed point in one step, so stacked sign-off blocks cut at once.
@@ -36,9 +36,9 @@
  *   Business Park"-style place, or a Suite/Unit/Building id; see KEEP_NAME_RE): the vendor or the
  *   suite is the business fact the note is about. Every other capitalised word in the span -- a
  *   person after or comma-separated from it -- is redacted, as is the address or phone. A company or
- *   place is kept only when it follows a cue word (Call / Attn / cc ...; up to 4 name words) or opens
- *   the span with at most ONE name word in front of its suffix / descriptor; a person's name in front
- *   of it ("Jane Doe Acme Inc", "Mike Park Business Park") redacts the WHOLE span.
+ *   place is kept only with at most ONE name word in front of its suffix / descriptor, after a cue
+ *   word (Call / Attn / From: ...) or not; two or more ("Jane Doe Acme Inc", "Acme Roofing LLC",
+ *   "Mike Park Business Park") redact the WHOLE span, so a multi-word vendor is over-redacted.
  *   3. Truncated address fragments at end of text ("<localpart" with no closing) -> removed, the
  *      whole run at once.
  *   4. Email addresses -> "[email redacted]".
@@ -96,10 +96,10 @@ const NAME_PHONE_RE = new RegExp(
 // 2026-10-30, C4). Only these sub-spans are kept; every other capitalised word in the span is redacted.
 // A business word anywhere in the span used to keep the WHOLE span, so "Mike Park", "Jane Group",
 // "Jane Doe, Acme Realty" and "Acme LLC Jane Doe" all leaked the person.
-//  - a legal-suffix company: up to 4 capitalised words ending in LLC / Inc / Corp / Company / Ltd /
-//    LP / LLP / PLLC (the suffix anchors the end, so a name AFTER it is not swallowed). Bare Co / PC
-//    are not suffixes (round 2): "Jane Doe Co" is a person. The words in FRONT of the suffix are
-//    vetted by scrubName (see allowedPrefix), because they can be a person ("Jane Doe Acme Inc");
+//  - a legal-suffix company: capitalised words ending in LLC / Inc / Corp / Company / Ltd / LP / LLP /
+//    PLLC (the suffix anchors the end, so a name AFTER it is not swallowed). Bare Co / PC are not
+//    suffixes (round 2): "Jane Doe Co" is a person. The words in FRONT of the suffix are vetted by
+//    scrubName (see MAX_COMPANY_PREFIX_WORDS), because they can be a person ("Jane Doe Acme Inc");
 //  - a place: a descriptor (Business, Industrial, Office, ...) + Park / Center / Plaza, so "Oakview
 //    Business Park" is kept but "Mike Park" is not;
 //  - a property id: Suite / Ste / Unit / Building / Bldg + a short id ("Suite B", "Unit 104").
@@ -123,29 +123,20 @@ const NON_NAME_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 const isNonNameWord = (w: string): boolean => NON_NAME_WORDS.has(w.replace(/[.,]+$/, '').toLowerCase());
-// A cue word (or a mail-header label) directly in front of a name span, outside it: "From: Acme
-// Roofing LLC <addr>", "cc Acme LLC Jane Doe <addr>". The span regexes start at a capital, so these
-// never fall inside the span.
-const CUE_BEFORE_RE = new RegExp(
-  String.raw`(?:^|[^\w])(?:${[...NON_NAME_WORDS, 'from', 'to', 'bcc'].join('|')})\s*:?\s*$`,
-  'i',
-);
-const cueBefore = (all: string, offset: number): boolean => CUE_BEFORE_RE.test(all.slice(Math.max(0, offset - 16), offset));
 const gapWords = (gap: string): string[] =>
   gap.replace(/\[(?:contact|email|phone) redacted\]/g, ' ').match(/[A-Za-z][\w'’.-]*/g) ?? [];
 
-/** Name words a company / place may carry in front of its suffix or descriptor (round 2, C4). A
- *  company: up to 4 after a cue word ("Call Acme Roofing Supply LLC"), at most 1 when it opens the
- *  span ("Acme LLC"). A place: at most 1 either way ("Oakview Business Park"), because "Park" is also
- *  a surname ("Call Mike Park Business Park"). Two or more name words at the front can be a person
- *  ("Jane Doe Acme Inc"), and over-redacting a vendor is safe where leaking a person is not. */
-function allowedPrefix(nameWords: number, afterCue: boolean, place: boolean): boolean {
-  return afterCue && !place ? nameWords <= 4 : nameWords <= 1;
-}
+/** Name words a company / place may carry in front of its suffix or descriptor: at most ONE, after a
+ *  cue word or not ("Acme LLC", "Call Acme LLC", "Oakview Business Park"). Two or more can be a
+ *  person -- "Jane Doe Acme Inc", "Call Jane Doe Acme Roofing LLC", "Cc: F L Acme Inc", "Call Mike
+ *  Park Business Park" -- and a cue word does not tell them apart (round 3 dropped the up-to-4 after
+ *  a cue). So "Call Acme Roofing LLC" is over-redacted; over-redacting a vendor is safe where leaking
+ *  a person is not. */
+const MAX_COMPANY_PREFIX_WORDS = 1;
 
 /** Keep the business sub-spans of a name span and redact the rest; null when nothing is kept (the
  *  caller then redacts the whole span). */
-function scrubName(span: string, afterCueWord = false): string | null {
+function scrubName(span: string): string | null {
   const parts: string[] = [];
   let last = 0;
   let kept = false;
@@ -173,8 +164,7 @@ function scrubName(span: string, afterCueWord = false): string | null {
       const before = gapWords(span.slice(last, idx));
       // A person in front of a company / place: redact the whole span (round 2, C4).
       if (before.some((w) => !isNonNameWord(w))) return null;
-      const afterCue = before.length > 0 || (last === 0 && afterCueWord);
-      if (!allowedPrefix(nameWords, afterCue, m.groups?.ppre !== undefined)) return null;
+      if (nameWords > MAX_COMPANY_PREFIX_WORDS) return null;
     }
     pushGap(span.slice(last, idx));
     parts.push(text.trim());
@@ -246,16 +236,25 @@ function cutAt(text: string, cueStart: number): string {
   return `${text.slice(0, cueStart).trimEnd()} ${SIGNATURE_PLACEHOLDER}`.trimStart();
 }
 
+/** Mid-line cues, in single- AND multi-line text (round 3: multi-line text used to be skipped, so
+ *  "Please confirm the COI. Regards,\nJane Doe\nAcme Roofing LLC" kept the name where main cut it).
+ *  A cue at the START of a line belongs to stripLineSignature, which alone applies the last-N-lines
+ *  window. As there, `after` is the rest of the cue's LINE: a strong cue that ends its line opens a
+ *  signature, and the lines below are not vetted for business facts (a signature's address line
+ *  carries "Suite 200"). Round 3 also dropped the "with regards" guard: it kept "with regards, Jane";
+ *  the capital-letter check alone keeps "with regards, the roof". */
 function stripMidlineSignature(text: string): string {
-  if (text.includes('\n')) return text;
   for (const m of text.matchAll(MIDLINE_SIGNOFF_RE)) {
     const cueStart = m.index ?? 0;
+    const lineStart = text.lastIndexOf('\n', cueStart - 1) + 1;
+    if (text.slice(lineStart, cueStart).trim() === '') continue;
     const tail = text.slice(cueStart);
     if (tail.length > MIDLINE_SIGNATURE_MAX_TAIL) continue;
     if (m[3] === undefined) {
-      // "following up with regards, the roof": lower-case "with" before a bare Regards is prose.
-      if (/^regards/i.test(m[0]) && /\bwith\s+$/.test(text.slice(0, cueStart))) continue;
-      if (!isSignatureTail(m[1] !== undefined, text.slice(cueStart + m[0].length), tail)) continue;
+      const cueEnd = cueStart + m[0].length;
+      const lineEnd = text.indexOf('\n', cueEnd);
+      const after = text.slice(cueEnd, lineEnd === -1 ? text.length : lineEnd);
+      if (!isSignatureTail(m[1] !== undefined, after, tail)) continue;
     }
     return cutAt(text, cueStart);
   }
@@ -303,18 +302,18 @@ function stripLineSignature(text: string): string {
 
 function redactOnce(text: string): string {
   let out = stripSignature(text);
-  out = out.replace(NAME_ADDR_RE, (match: string, offset: number, all: string) => {
-    const scrubbed = scrubName(match.slice(0, match.indexOf('<')).trim(), cueBefore(all, offset));
+  out = out.replace(NAME_ADDR_RE, (match: string) => {
+    const scrubbed = scrubName(match.slice(0, match.indexOf('<')).trim());
     return scrubbed === null ? CONTACT_PLACEHOLDER : `${scrubbed} <${EMAIL_PLACEHOLDER}>`;
   });
-  out = out.replace(NAME_PHONE_RE, (match: string, offset: number, all: string) => {
+  out = out.replace(NAME_PHONE_RE, (match: string) => {
     const trailing = /[\s\-–:]*$/.exec(match)?.[0] ?? '';
-    const scrubbed = scrubName(match.slice(0, match.length - trailing.length), cueBefore(all, offset));
+    const scrubbed = scrubName(match.slice(0, match.length - trailing.length));
     return scrubbed === null ? `${CONTACT_PLACEHOLDER} ` : `${scrubbed}${trailing}`;
   });
   out = out.replace(HEADER_NAME_RE, (match: string, label: string, gap: string, name: string, offset: number, all: string) => {
     if (!/[A-Za-z]/.test(name)) return match;
-    const scrubbed = scrubName(name.trim(), true); // the header label is the cue
+    const scrubbed = scrubName(name.trim());
     if (scrubbed !== null) return `${label}:${gap}${scrubbed} `;
     // The name alone; a placeholder already following it stands for the whole contact.
     const rest = all.slice(offset + match.length);
@@ -322,8 +321,20 @@ function redactOnce(text: string): string {
   });
   out = out.replace(TRUNC_ADDR_RE, '');
   out = out.replace(EMAIL_RE, EMAIL_PLACEHOLDER);
-  out = out.replace(PHONE_RE, PHONE_PLACEHOLDER);
-  return out;
+  return replacePhones(out);
+}
+
+/** Phones, run to their own fixed point (round 3). PHONE_SRC's (?<![\d-]) lookbehind skips a number
+ *  glued to the one before it ("...0142(614) 555-0142"), so an adjacent run lost one number per outer
+ *  pass and a run of 9+ outran MAX_REDACTION_PASSES with the last number raw. Terminates: every
+ *  replacement removes at least 10 digits and the placeholder has none. */
+function replacePhones(text: string): string {
+  let out = text;
+  for (;;) {
+    const next = out.replace(PHONE_RE, PHONE_PLACEHOLDER);
+    if (next === out) return out;
+    out = next;
+  }
 }
 
 /** Redact one free-text string. Pure and idempotent: the rules are re-applied until the text stops
