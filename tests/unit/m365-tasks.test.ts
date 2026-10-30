@@ -121,3 +121,43 @@ describe('mapGraphTask — notes redaction (adversarial review 2026-10-30)', () 
     }
   });
 });
+
+// Round 2 adversarial review (2026-10-30). Synthetic fixtures only.
+describe('mapGraphTask — notes redaction (round 2)', () => {
+  const at = (n: number, tail: string) => {
+    const base = 'Roof quote follow up for the tenant. ';
+    return `${base.repeat(Math.ceil(n / base.length)).slice(0, n)}${tail}`;
+  };
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-r2', title: 'R2', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('a literal <addr> in the body is not stripped as an HTML tag before redaction', () => {
+    const notes = notesOf('From: Jane Doe, Acme Realty <jdoe@example.com> re lease');
+    expect(notes).not.toMatch(/Jane|Doe|jdoe/);
+    expect(notes).toContain('re lease');
+  });
+
+  it('a weak sign-off flattened onto one line is cut when its tail carries contact data', () => {
+    const notes = notesOf(
+      'Please review the bid.</p><p>Thanks,</p><p>Robert Jones</p><p>Senior Project Manager</p><p>Allied Mechanical</p><p>614-555-0123</p><p>rjones@example.com',
+    );
+    expect(notes).toBe('Please review the bid. [signature redacted]');
+  });
+
+  it('C1: a placeholder straddling the 200-char cut leaves no half placeholder', () => {
+    for (let start = 180; start <= 200; start += 1) {
+      const notes = notesOf(at(start, '555-010-0123 call back'));
+      expect(notes.length).toBeLessThanOrEqual(200);
+      expect(notes).not.toMatch(/\[[a-z ]*$/);
+    }
+  });
+
+  it('caps the input before the full redaction (a 50K-char token stays fast)', () => {
+    for (const unit of ['A', 'A.', 'Aa-']) {
+      const t0 = Date.now();
+      const notes = notesOf(unit.repeat(Math.ceil(50_000 / unit.length)));
+      expect(Date.now() - t0).toBeLessThan(1_500);
+      expect(notes.length).toBeLessThanOrEqual(200);
+    }
+  });
+});
