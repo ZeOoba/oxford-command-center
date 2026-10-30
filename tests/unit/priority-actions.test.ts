@@ -179,19 +179,21 @@ describe('buildPriorityActionsTier', () => {
       ];
       const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
       const ids = tier.items.map((i) => i.id);
-      expect(ids).toContain('balloon-L1');
-      expect(ids).toContain('arrears-T1');
+      // Round 2: the seven pinned rows fill the cap, so the two critical dollar rows ride in the ONE
+      // critical roll-up row rather than each taking a slot — on the board, never held back.
+      const rollup = tier.items.find((i) => i.id === 'group:critical:overflow');
+      expect(rollup?.members?.map((x) => x.id)).toEqual(['balloon-L1', 'arrears-T1']);
+      expect(rollup?.impactUsd).toBe(2_250_000);
       for (const p of merged.filter((x) => x.id.startsWith('dscr') || x.id.startsWith('ltv') || x.id === 'reconcile-fail')) {
         expect(ids).toContain(p.id); // pinned rows still never cut (may exceed the cap)
       }
       expect(tier.heldBack).toEqual({ rows: 0, signals: 0 });
-      // Display: critical tier (pinned first, then dollars), then warning tier.
+      // Display: critical tier (pinned first, then the overflow roll-up), then warning tier.
       expect(ids).toEqual([
         'dscr-floor-P1',
         'dscr-floor-P2',
         'reconcile-fail',
-        'balloon-L1',
-        'arrears-T1',
+        'group:critical:overflow',
         'dscr-P3',
         'dscr-P4',
         'ltv-P5',
@@ -226,6 +228,97 @@ describe('buildPriorityActionsTier', () => {
           if (order[x.severity as keyof typeof order] < worstShown) expect(shownIds.has(x.id)).toBe(true);
         }
       }
+    });
+
+    // Round 2 (Gabriel 2026-10-30): the C4 fix made every critical row mandatory once a pinned
+    // warning showed, so 20 critical arrears + 1 pinned covenant watch put 21 rows on the 7-row
+    // Overview. Critical rows beyond the cap now fold into ONE expandable roll-up row.
+    describe('critical overflow folds into one roll-up row (board stays ~limit+1)', () => {
+      const leaves = (row: { id: string; members?: Array<{ id: string; members?: unknown[] }> }): string[] =>
+        row.members ? row.members.flatMap((x) => leaves(x as typeof row)) : [row.id];
+      const arrears = (n: number) =>
+        Array.from({ length: n }, (_, i) =>
+          m({ id: `arrears-T${i + 1}`, category: 'collections', spine: 'B', severity: 'critical', impactUsd: 900_000 - i * 1_000 }),
+        );
+
+      it('20 critical arrears + 1 pinned dscr- warning: <= limit+1 rows, one roll-up, nothing hidden', () => {
+        const merged = [...arrears(20), m({ id: 'dscr-P3', category: 'debt', spine: 'B', severity: 'warning' })];
+        const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
+        expect(tier.items.length).toBeLessThanOrEqual(OVERVIEW_MAX_ITEMS + 1);
+        const ids = tier.items.map((i) => i.id);
+        expect(ids).toContain('dscr-P3');
+        const rollups = tier.items.filter((i) => i.id === 'group:critical:overflow');
+        expect(rollups).toHaveLength(1);
+        const rollup = rollups[0]!;
+        expect(rollup.members!.length).toBeGreaterThanOrEqual(12);
+        expect(rollup.members!.length).toBeLessThanOrEqual(15);
+        expect(rollup.title).toBe(`${rollup.members!.length} more critical`);
+        expect(rollup.pinned).toBeFalsy();
+        // Every critical signal is reachable: shown directly or a member of the roll-up.
+        const reachable = new Set(tier.items.flatMap(leaves));
+        for (const x of merged) expect(reachable.has(x.id)).toBe(true);
+        // Nothing is held back: the overflow is ON the board, inside the roll-up.
+        expect(tier.heldBack).toEqual({ rows: 0, signals: 0 });
+        // The roll-up closes the critical tier, ahead of the pinned warning.
+        expect(ids.indexOf('group:critical:overflow')).toBe(ids.indexOf('dscr-P3') - 1);
+        expect(tier.items.map((i) => i.rank)).toEqual(ids.map((_, i) => i + 1));
+        // Its dollars are the overflow members' sum, and the subtotal counts every reachable row.
+        const memberUsd = rollup.members!.reduce((n, x) => n + (x.impactUsd ?? 0), 0);
+        expect(rollup.impactUsd).toBe(memberUsd);
+        const byLabel = Object.fromEntries((tier.totalsBySpine ?? []).map((t) => [t.label, t.totalUsd]));
+        const all = merged.reduce((n, x) => n + (x.impactUsd ?? 0), 0);
+        expect(byLabel['Ledger & combined basis']).toBe(all);
+      });
+
+      it('holds back warnings that do not fit and counts them; the roll-up never counts as held back', () => {
+        const merged = [
+          ...arrears(20),
+          m({ id: 'dscr-P3', category: 'debt', spine: 'B', severity: 'warning' }),
+          ...[1, 2, 3].map((n) => m({ id: `note-w${n}`, category: 'debt', spine: 'B', severity: 'warning', impactUsd: 5_000_000 })),
+        ];
+        const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
+        expect(tier.items.length).toBeLessThanOrEqual(OVERVIEW_MAX_ITEMS + 1);
+        expect(tier.items.map((i) => i.id)).not.toContain('note-w1');
+        expect(tier.heldBack).toEqual({ rows: 3, signals: 3 });
+      });
+
+      it('an info-severity pinned id does not force the warning tier onto the board', () => {
+        // Pinned causes are critical/warning in the generator today; the clamp guards a future one.
+        const merged = [
+          m({ id: 'reconcile-fail', category: 'data', spine: 'B', severity: 'info' }),
+          ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => m({ id: `note-w${n}`, category: 'debt', spine: 'B', severity: 'warning', impactUsd: 100_000 - n })),
+        ];
+        const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
+        expect(tier.items).toHaveLength(OVERVIEW_MAX_ITEMS);
+        expect(tier.items.map((i) => i.id)).toContain('reconcile-fail');
+        expect(tier.heldBack).toEqual({ rows: 3, signals: 3 });
+      });
+
+      it('no roll-up when the critical tier fits, and no roll-up for an all-critical board without a pinned lower tier', () => {
+        const fits = buildPriorityActionsTier([...arrears(3), m({ id: 'dscr-P3', category: 'debt', spine: 'B', severity: 'warning' })], OVERVIEW_MAX_ITEMS);
+        expect(fits.items.map((i) => i.id)).not.toContain('group:critical:overflow');
+        const allCritical = buildPriorityActionsTier(arrears(20), OVERVIEW_MAX_ITEMS);
+        expect(allCritical.items).toHaveLength(OVERVIEW_MAX_ITEMS);
+        expect(allCritical.heldBack).toEqual({ rows: 13, signals: 13 });
+      });
+
+      it('#505 still holds with the roll-up: every shown critical row precedes every shown warning', () => {
+        for (let k = 0; k <= 20; k += 4) {
+          const merged = [
+            ...arrears(k),
+            m({ id: 'dscr-P3', category: 'debt', spine: 'B', severity: 'warning' }),
+            m({ id: 'ltv-P5', category: 'debt', spine: 'B', severity: 'warning' }),
+            ...[1, 2].map((n) => m({ id: `note-w${n}`, category: 'debt', spine: 'B', severity: 'warning', impactUsd: 9_000_000 })),
+          ];
+          const sev = new Map(merged.map((x) => [x.id, x.severity === 'critical' ? 0 : 1]));
+          const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
+          const sevs = tier.items.map((r) => sev.get(leaves(r)[0]!)!);
+          expect([...sevs].sort((a, b) => a - b)).toEqual(sevs);
+          expect(tier.items.length).toBeLessThanOrEqual(OVERVIEW_MAX_ITEMS + 1);
+          const reachable = new Set(tier.items.flatMap(leaves));
+          for (const x of merged) if (x.severity === 'critical') expect(reachable.has(x.id)).toBe(true);
+        }
+      });
     });
   });
 });
