@@ -15,7 +15,7 @@ import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause, rankRows, signalCount } from '../../lib/tier-group';
+import { groupByCause, signalCount } from '../../lib/tier-group';
 import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
@@ -211,7 +211,9 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
   // are critical or warning under one cause, and a cross-severity group would fold a critical lease
   // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
   const sorted = sortByImpactDesc(unique);
-  const rows = (['critical', 'warning', 'info'] as const).flatMap((severity) =>
+  // One ranked list per severity (pinned first, then dollars — groupByCause ranks within the scope),
+  // concatenated critical → warning → info: that concatenation IS the display order.
+  const tiers = (['critical', 'warning', 'info'] as const).map((severity) =>
     groupByCause(
       sorted.filter((m) => m.severity === severity).map((m, index) => mergedToTierItem(m, index + 1)),
       describeAlertCause,
@@ -219,17 +221,31 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  const ranked = rankRows(rows);
-  const pinned = ranked.filter((row) => row.pinned);
-  const unpinned = ranked.filter((row) => !row.pinned);
-  const items = [...pinned, ...unpinned.slice(0, Math.max(0, limit - pinned.length))];
-  const held = unpinned.slice(Math.max(0, limit - pinned.length));
+  // Selection (adversarial review 2026-10-30, C4): every pinned row is shown, and so is every row of
+  // a tier MORE severe than the least-severe tier holding a pinned row — a pinned warning (DSCR
+  // covenant watch, LTV ceiling) must never push a critical dollar row (balloon, arrears) off the
+  // surface. Both may exceed `limit`. Remaining slots go to the other rows in display order.
+  const lowestPinnedTier = tiers.reduce((acc, rows, i) => (rows.some((row) => row.pinned) ? i : acc), -1);
+  const display = tiers.flat();
+  const mandatory = new Set(
+    tiers.flatMap((rows, i) => (i < lowestPinnedTier ? rows : rows.filter((row) => row.pinned))),
+  );
+  let free = Math.max(0, limit - mandatory.size);
+  const selected = new Set(mandatory);
+  for (const row of display) {
+    if (free === 0) break;
+    if (selected.has(row)) continue;
+    selected.add(row);
+    free--;
+  }
+  const items = display.filter((row) => selected.has(row)).map((row, i) => ({ ...row, rank: i + 1 }));
+  const held = display.filter((row) => !selected.has(row));
   const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
   const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Top items by $ impact; safety alerts pinned first',
+    subtitle: 'Critical first, safety alerts pinned, then by $ impact',
     tone: 'accent',
     items,
     totalsBySpine: totalsBySpine(top),
@@ -330,18 +346,24 @@ const LEGACY_ORDER = ['kpis', 'results-banner', 'noi-market', 'top-tenants', 'pr
  *  default-hidden, so `hidden` stays empty). Listing the raw June order would never match. */
 const JUNE_DEFAULT_ORDER = ['kpis', 'noi-market', 'top-tenants', 'cash-trend', 'lease-rollover', 'insights', 'priority-actions', 'results-banner'];
 
-/** Bump `version` whenever the default layout changes. A saved workspace still equal to a previous
- *  shipped default (untouched) moves to the new default once; any layout the user arranged is kept.
- *  Previous defaults, each in normalized form: the June 3 – July 6 default; the one saved before
- *  Insights became default-hidden (nothing hidden); and the one with Insights hidden — a stored
- *  layout keeps the default it was created under. Version 3 re-runs the migration for layouts
- *  version 2 already stamped, so a June default that version 2 missed is moved too. */
+/** Add a step (with the next `toVersion`) whenever the default layout changes. A saved workspace
+ *  still equal to a previous shipped default (untouched) moves to the new default once; any layout
+ *  the user arranged is kept. Each step lists the previous defaults it migrates, in normalized form,
+ *  and applies only to states stamped below its `toVersion` (adversarial review 2026-10-30, C5): a
+ *  v2 user who deliberately restored the legacy order after #514 is not overwritten by step 3.
+ *  - v2 (#514): the default saved before Insights became default-hidden (nothing hidden) and the one
+ *    with Insights hidden — a stored layout keeps the default it was created under.
+ *  - v3: the June 3 – July 6 default, which v2 missed. */
 export const OVERVIEW_LAYOUT_MIGRATION: LayoutMigration = {
-  version: 3,
-  legacyDefaults: [
-    { order: LEGACY_ORDER, hidden: ['insights'] },
-    { order: LEGACY_ORDER, hidden: [] },
-    { order: JUNE_DEFAULT_ORDER, hidden: [] },
+  steps: [
+    {
+      toVersion: 2,
+      defaults: [
+        { order: LEGACY_ORDER, hidden: ['insights'] },
+        { order: LEGACY_ORDER, hidden: [] },
+      ],
+    },
+    { toVersion: 3, defaults: [{ order: JUNE_DEFAULT_ORDER, hidden: [] }] },
   ],
 };
 
