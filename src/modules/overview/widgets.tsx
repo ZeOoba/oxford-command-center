@@ -4,6 +4,7 @@ import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
+import { AsOfChip } from '@/primitives/AsOfChip';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { BarChart } from '@/charts/BarChart';
@@ -94,7 +95,15 @@ function CashTrendWidget() {
   const series = data.snapshot.cash.history.map((h) => ({ date: h.date, value: h.total }));
   return (
     <Card>
-      <CardHeader title="Total Cash — 12-Month Trend" trailing={<Badge tone="neutral">{series.length} mo</Badge>} />
+      <CardHeader
+        title="Total Cash — 12-Month Trend"
+        trailing={
+          <span className="inline-flex items-center gap-2">
+            <AsOfChip asOf={data.snapshot.cash.asOf} source="Cash Balances" />
+            <Badge tone="neutral">{series.length} mo</Badge>
+          </span>
+        }
+      />
       <div className="px-3 pb-2 pt-3">
         <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" />
       </div>

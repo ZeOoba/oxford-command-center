@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useSnapshot } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { Card, CardHeader } from '@/primitives/Card';
+import { AsOfChip } from '@/primitives/AsOfChip';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { AreaChart } from '@/charts/AreaChart';
@@ -91,7 +92,12 @@ export function TrendsView() {
       : histBars.some((b) => b.source === 'reconstructed')
         ? `Bars before ${firstRecordedBar} reconstructed from current leases; recorded from ${firstRecordedBar}`
         : 'Recorded months';
-  const forecastFlag = <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>;
+  const forecastFlag = (
+    <span className="inline-flex items-center gap-2">
+      <AsOfChip asOf={data.snapshot.meta.asOf} source="Rent roll" />
+      <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>
+    </span>
+  );
   // Sparklines show history + as-of only; forward months are roll-off, not a trend.
   const histPoints = points.filter((p) => !p.isForecast);
 
