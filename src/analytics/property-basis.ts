@@ -22,3 +22,15 @@
  * behavior at every call site.
  */
 export const isInvestmentProperty = (p: { readonly type?: string | null }): boolean => p.type !== 'Residence';
+
+// 2026-10-30 (Gabriel): the residence is now removed from the snapshot at parse
+// (server/workbook/parse.ts excludeNonInvestmentHoldings), so on live data this predicate no longer
+// sees one. It stays as defense in depth for any snapshot that predates that change.
+
+/** `DataQualityFlag.field` set by parse.ts flagLandlordCostsNotSourced on an NNN (not absolute)
+ *  property whose expenses read $0: landlord-paid roof, structure and paving are not sourced, so
+ *  its NOI is overstated by them (ruling 2026-10-30). Surfaces key on it to label the NOI. */
+export const LANDLORD_COSTS_NOT_SOURCED_FIELD = 'landlordCosts';
+
+export const landlordCostsNotSourced = (p: { readonly flags: readonly { readonly field: string }[] }): boolean =>
+  p.flags.some((f) => f.field === LANDLORD_COSTS_NOT_SOURCED_FIELD);
