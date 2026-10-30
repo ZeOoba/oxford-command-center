@@ -371,12 +371,20 @@ app.post('/api/refresh', async (c) => {
 /**
  * Write-back actions (Phase 5) — persist to the local overlay; the workbook stays read-only.
  * Confirm-before-write happens in the UI. Available only on the live server (the mirror is read-only).
+ * Each awaits the overlay save (roadmap item 1.5): a failed save answers 500 so the client shows it.
  */
+const SAVE_FAILED = { ok: false, error: 'overlay persistence failed' } as const;
+function saveFailed(err: unknown): null {
+  console.error(`✗ overlay write-back failed: ${err instanceof Error ? err.message : String(err)}`);
+  return null;
+}
+
 app.post('/api/actions/deal-stage', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { dealId?: string; stage?: string };
   const stage = DealStage.safeParse(body.stage);
   if (!body.dealId || !stage.success) return c.json({ ok: false, error: 'Invalid dealId or stage' }, 400);
-  const ok = brain.setDealStage(body.dealId, stage.data);
+  const ok = await brain.setDealStage(body.dealId, stage.data).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -386,7 +394,7 @@ app.post('/api/actions/task', async (c) => {
   };
   const label = String(body.label ?? '').trim();
   if (!label) return c.json({ ok: false, error: 'label required' }, 400);
-  brain.addTask({
+  const saved = await brain.addTask({
     id: `usr-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
     label,
     section: String(body.section ?? 'Added in Command Center'),
@@ -396,7 +404,8 @@ app.post('/api/actions/task', async (c) => {
     notes: body.notes ?? null,
     status: 'pending',
     monthlyPmt: null,
-  });
+  }).then(() => true, saveFailed);
+  if (saved === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok: true, state: brain.getState() });
 });
 
@@ -412,7 +421,8 @@ app.post('/api/actions/alert', async (c) => {
 app.post('/api/actions/renewal-stage', async (c) => {
   const parsed = RenewalStageInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or stage' }, 400);
-  const ok = brain.setRenewalStage(parsed.data.leaseId, parsed.data.stage);
+  const ok = await brain.setRenewalStage(parsed.data.leaseId, parsed.data.stage).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -420,7 +430,8 @@ app.post('/api/actions/tenant-note', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { tenantId?: string; note?: string };
   const tenantId = String(body.tenantId ?? '').trim();
   if (!tenantId) return c.json({ ok: false, error: 'tenantId required' }, 400);
-  const ok = brain.setTenantNote(tenantId, String(body.note ?? ''));
+  const ok = await brain.setTenantNote(tenantId, String(body.note ?? '')).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -436,35 +447,41 @@ app.post('/api/actions/deal-comps', async (c) => {
     now: new Date().toISOString(),
   });
   if (!result.ok) return c.json({ ok: false, error: result.error }, 502);
-  brain.setDealComps(deal.id, result.comps);
+  const saved = await brain.setDealComps(deal.id, result.comps).catch(saveFailed);
+  if (saved === null) return c.json(SAVE_FAILED, 500);
+  if (!saved) return c.json({ ok: false, error: 'Unknown deal' }, 404);
   return c.json({ ok: true, comps: result.comps });
 });
 
 app.post('/api/actions/noi-budget', async (c) => {
   const parsed = NoiBudgetInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid propertyId or amount' }, 400);
-  const ok = brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount);
+  const ok = await brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
 app.post('/api/actions/market-rent', async (c) => {
   const parsed = MarketRentInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid key or rentPsf' }, 400);
-  const ok = brain.setMarketRent(parsed.data.key, parsed.data.rentPsf);
+  const ok = await brain.setMarketRent(parsed.data.key, parsed.data.rentPsf).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok }, ok ? 200 : 503);
 });
 
 app.post('/api/actions/acquisition-input', async (c) => {
   const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid acquisition input' }, 400);
-  const ok = brain.setAcquisitionInput(parsed.data.dealId, parsed.data);
+  const ok = await brain.setAcquisitionInput(parsed.data.dealId, parsed.data).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
 app.post('/api/actions/tenant-arrears', async (c) => {
   const parsed = TenantArrearsInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or arrears' }, 400);
-  const ok = brain.setTenantArrears(parsed.data.leaseId, parsed.data.arrears);
+  const ok = await brain.setTenantArrears(parsed.data.leaseId, parsed.data.arrears).catch(saveFailed);
+  if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 

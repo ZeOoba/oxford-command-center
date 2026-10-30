@@ -424,7 +424,7 @@ describe('Brain roster watcher — fail closed', () => {
 
   it('a roster flip keeps overlay edits (rebuild from base must not revert write-backs)', async () => {
     const { brain, byId } = await adoptCleanSnapshot();
-    brain.setDealStage('b', 'Diligence' as never);
+    await brain.setDealStage('b', 'Diligence' as never);
     expect(brain.getSnapshot()!.deals.find((d) => d.id === 'b')!.stage).toBe('Diligence');
     setRoster(CLAIMING_ROSTER);
     fire('change');
@@ -465,7 +465,7 @@ describe('Brain.refresh — adoption re-checks the roster (closes the in-flight-
     const { brain } = await import('../../server/brain');
     setRoster(CLEAN_ROSTER);
     await brain.refresh('manual');
-    brain.setDealStage('d1', 'LOI/PSA' as never); // overlay now carries the stage; deal not claimed under CLEAN_ROSTER
+    await brain.setDealStage('d1', 'LOI/PSA' as never); // overlay now carries the stage; deal not claimed under CLEAN_ROSTER
     expect(brain.getSnapshot()!.deals[0]!.confidential).toBe(false);
 
     setRoster({ live_deal: { label: 'Live Deal', active: true, context: ['zebrafield'], context_requires_any: ['loi/psa'] } });

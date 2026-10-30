@@ -306,6 +306,11 @@ function AssumptionsPanel({
           </div>
         ))}
       </div>
+      {mutation.isError && (
+        <div className="px-4 py-2 text-xs" role="alert" style={{ color: 'var(--color-neg)' }}>
+          Not saved: {mutation.error.message}
+        </div>
+      )}
       <div className="px-4 py-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
         Management fee, reserve, vacancy, renewal growth, and cap rate are editable landlord-cost
         assumptions — not lease terms. Overrides persist to the local overlay; the workbook and

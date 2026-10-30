@@ -25,6 +25,15 @@
     "review_needed": true,
     "last_updated": "2026-10-15T00:00:00Z"
   },
+  "overlay-writeback-item-1-5": {
+    "agent_role": "Engineering (Claude Code, Opus 5.5) - side session of local_1396c1a7, Gabriel-directed in-turn 2026-10-30",
+    "phase": "Roadmap 2026-10-30 item 1.5: overlay.json write-back fix. Brain write-backs become async queued read-modify-writes (server/overlay.ts mutateOverlay); routes await the save and answer 500 on failure; setLeaseRunAssumptions routed through the same queue. Design chosen by Gabriel 2026-10-30 (async routes, no optimistic overlay, no carry/retry).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Touches Architect-owned server/index.ts (route handlers only: await + 500 on a failed save). Gabriel approved this design in-turn 2026-10-30 (relayed by the parent session); recorded here as the acknowledgment.",
+    "last_updated": "2026-10-30T18:15:00Z"
+  },
   "festive-bartik-42b09f": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-27",
     "phase": "Overview alert fixes (PR #497): CF-1 discovery dollars via fmtUsdCompact (server/insights/generators/cf-hurdle-drag.ts, refute-gated), basis-subtotal tooltips, same-cause alert grouping + lapsed-coverage pinning (src/lib/tier-group.ts, src/brain/alert-cause.ts, Priority Actions, Digest parity). No architect-owned files, no migrations, no governor constants.",
