@@ -17,6 +17,7 @@ import { NM, pct, usd } from '@analytics/property-financials/format';
 import { ChangeChip, NotMeaningful } from './components';
 import { InsightCardList } from './InsightWorkflow';
 import { PropertyGaps } from './PropertyGaps';
+import { PropertyPageLink } from '../property/PropertyPageLink';
 import { GroupedBars, StackedBars } from './charts/PeriodBars';
 import { StepChart } from './charts/StepChart';
 import { TimelineChart } from './charts/TimelineChart';
@@ -578,6 +579,11 @@ export function ExplorerView({ dataset: d, liveSf = null, selected, onSelect, on
         ))}
       </div>
       <div ref={detailRef} className="pf-xdetail" data-entity={id}>
+        {liveSf?.entries[id]?.canonicalId && (
+          <p className="pf-note" data-testid="pf-explorer-page-link">
+            <PropertyPageLink propertyId={liveSf.entries[id]!.canonicalId!} />
+          </p>
+        )}
         <Detail key={id} d={d} m={m} onOpenProperty={onOpenProperty} />
       </div>
     </div>

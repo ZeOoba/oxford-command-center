@@ -255,11 +255,12 @@ describe('rail composition', () => {
   });
 
   for (const profile of ['acquisitions', 'principal'] as const) {
-    it(`${profile}: System Health is off the rail but every other module still shows`, () => {
+    it(`${profile}: System Health and the property page are off the rail but every other module still shows`, () => {
       const rail = railModules(profile).map((m) => m.id);
-      expect(rail).not.toContain('health');
-      expect(rail).toEqual(expect.arrayContaining(IDS.filter((id) => id !== 'health')));
-      expect(orderedModules(profile).map((m) => m.id)).toContain('health'); // still registered/routable
+      const offRail = ['health', 'property'];
+      for (const id of offRail) expect(rail).not.toContain(id);
+      expect(rail).toEqual(expect.arrayContaining(IDS.filter((id) => !offRail.includes(id))));
+      for (const id of offRail) expect(orderedModules(profile).map((m) => m.id)).toContain(id); // still registered/routable
     });
 
     it(`${profile}: the order list names only registered ids and lands on a resolvable route`, () => {

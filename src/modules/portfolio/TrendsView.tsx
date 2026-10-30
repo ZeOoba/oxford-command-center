@@ -3,6 +3,7 @@ import { useSnapshot } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { Card, CardHeader } from '@/primitives/Card';
 import { AsOfChip } from '@/primitives/AsOfChip';
+import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { AreaChart } from '@/charts/AreaChart';
@@ -130,6 +131,7 @@ export function TrendsView() {
           <option value={ALL}>Entire portfolio</option>
           {names.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+        {effectiveScope !== ALL && <PropertyPageLink propertyId={effectiveScope} />}
         {recordedMonths.length > 0 && (
           <Badge tone="neutral">
             Recorded: {recordedMonths.length} {recordedMonths.length === 1 ? 'month' : 'months'} (since {recordedMonths[0]!.month})

@@ -11,6 +11,7 @@ import { BarList } from '@/charts/BarList';
 import { investmentPropertiesSublabel } from '@/modules/overview/other-holdings';
 import { landlordCostsNotSourced } from '@analytics/property-basis';
 import type { Property } from '@contracts/index';
+import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 
 export function PortfolioModule() {
   const { data } = useSnapshot();
@@ -25,7 +26,9 @@ export function PortfolioModule() {
       render: (p) => (
         <div>
           <div style={{ fontWeight: 600 }}>{p.name}</div>
-          <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{p.market}</div>
+          <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            {p.market} · <PropertyPageLink propertyId={p.id}>Page →</PropertyPageLink>
+          </div>
         </div>
       ),
       sortValue: (p) => p.name,
