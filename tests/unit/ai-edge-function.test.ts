@@ -52,14 +52,16 @@ describe('functions/api/ai — per-identity rate limit', () => {
     expect(admit('c@x', 1_000 + 5 * 60 * 1000 + 1)).toBe(true);
   });
 
-  it('returns 429 with retry-after once the Access identity is over budget', async () => {
-    const h = { 'cf-access-authenticated-user-email': 'g@oxfordra.net' };
+  // Inert mode (no ACCESS_REQUIRE): the key is CF-Connecting-IP. The verified-JWT key, fail-closed
+  // denials and header-forgery cases live in tests/unit/ai-edge-identity.test.ts.
+  it('returns 429 with retry-after once the caller is over budget', async () => {
+    const h = { 'cf-connecting-ip': '198.51.100.1' };
     for (let i = 0; i < RATE_LIMIT_MAX; i++) expect((await onRequestPost(ctx({ question: 'q' }, h))).status).toBe(200);
     const res = await onRequestPost(ctx({ question: 'q' }, h));
     expect(res.status).toBe(429);
     expect(res.headers.get('retry-after')).toBeTruthy();
-    // a different identity is unaffected
-    expect((await onRequestPost(ctx({ question: 'q' }, { 'cf-access-authenticated-user-email': 'other@x' }))).status).toBe(200);
+    // a different caller is unaffected
+    expect((await onRequestPost(ctx({ question: 'q' }, { 'cf-connecting-ip': '198.51.100.2' }))).status).toBe(200);
   });
 });
 
