@@ -132,6 +132,91 @@ describe('redactNotesText — review follow-up (2026-10-30)', () => {
   });
 });
 
+// Adversarial review 2026-10-30 (C2-C4). The snapshot guard runs the same function over the committed
+// notes, so it can never catch a rule that is wrong; this FIXED synthetic corpus pins the cases.
+// Synthetic only: reserved example domains, the 555-01xx fictional phone block, invented names.
+describe('redactNotesText — regression corpus (adversarial review 2026-10-30)', () => {
+  const CASES: Array<{ name: string; input: string; absent: string[]; present?: string[]; exact?: string }> = [
+    // C3: single-line text (what htmlToText produces) with a strong mid-line sign-off.
+    {
+      name: 'C3 mid-line Regards with a short contact-only tail is cut',
+      input: 'Approved the quote. Regards, Jane Doe Property Manager Acme Realty 1 Main St Testville',
+      absent: ['Jane', 'Doe', 'Testville'],
+      exact: `Approved the quote. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    {
+      name: 'C3 mid-line Best regards is cut',
+      input: 'Will send Monday. Best regards, Jane Doe Acme Realty',
+      absent: ['Jane'],
+      exact: `Will send Monday. ${SIGNATURE_PLACEHOLDER}`,
+    },
+    { name: 'C3 mid-line Sincerely is cut', input: 'Lease signed. Sincerely, Jane Doe', absent: ['Jane'], exact: `Lease signed. ${SIGNATURE_PLACEHOLDER}` },
+    { name: 'C3 mid-line Sent from my is cut', input: 'Ok will do. Sent from my iPhone', absent: ['iPhone'], exact: `Ok will do. ${SIGNATURE_PLACEHOLDER}` },
+    {
+      name: 'C3 mid-line Regards followed by business text is kept',
+      input: 'Re roof. Regards, the $8,200 HVAC quote for Suite 104 covers the RTU swap; tenant pays $9.75/SF NNN.',
+      absent: [],
+      exact: 'Re roof. Regards, the $8,200 HVAC quote for Suite 104 covers the RTU swap; tenant pays $9.75/SF NNN.',
+    },
+    { name: 'C3 tail with SF is kept', input: 'Noted. Regards, renewal covers 12,000 SF', absent: [], exact: 'Noted. Regards, renewal covers 12,000 SF' },
+    { name: 'C3 tail with a date is kept', input: 'Noted. Regards, inspection moved to 11/14', absent: [], exact: 'Noted. Regards, inspection moved to 11/14' },
+    { name: 'C3 tail with a unit number is kept', input: 'Noted. Regards, Unit 7 keys at the desk', absent: [], exact: 'Noted. Regards, Unit 7 keys at the desk' },
+    { name: 'C3 "with regards to" is not a sign-off', input: 'Tenant called with regards to the roof leak', absent: [], exact: 'Tenant called with regards to the roof leak' },
+    // C4: a business token next to a person must not keep the person's name.
+    { name: 'C4 Mike Park before a phone', input: 'Call Mike Park 555-010-0123', absent: ['Mike', '555-010-0123'] },
+    { name: 'C4 Jane Group before a phone', input: 'Call Jane Group 555-010-0123', absent: ['Jane', '555-010-0123'] },
+    {
+      name: 'C4 header with person, company',
+      input: 'From: Jane Doe, Acme Realty <jdoe@example.com> Sent: Monday',
+      absent: ['Jane', 'Doe', 'jdoe@example.com'],
+      present: ['Sent: Monday'],
+    },
+    {
+      name: 'C4 company then person before an address',
+      input: 'cc Acme LLC Jane Doe <jdoe@example.com> re roof',
+      absent: ['Jane', 'Doe', 'jdoe@example.com'],
+      present: ['Acme LLC', 're roof'],
+    },
+    { name: 'C4 suite then person before a phone', input: 'Suite B Jane 555-010-0123 re keys', absent: ['Jane', '555-010-0123'], present: ['Suite B', 're keys'] },
+    // Kept business names (the vendor / the property is the business fact).
+    { name: 'keeps an LLC vendor', input: 'Call Acme Roofing LLC 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Acme Roofing LLC'] },
+    { name: 'keeps a business park', input: 'Call Oakview Business Park 555-010-0123 re gutters', absent: ['555-010-0123'], present: ['Oakview Business Park'] },
+  ];
+
+  for (const c of CASES) {
+    it(c.name, () => {
+      const out = redactNotesText(c.input);
+      for (const a of c.absent) expect(out).not.toContain(a);
+      for (const p of c.present ?? []) expect(out).toContain(p);
+      if (c.exact !== undefined) expect(out).toBe(c.exact);
+      expect(redactNotesText(out)).toBe(out);
+    });
+  }
+
+  // C2: one removal per pass meant 9-10+ stacked fragments (or sign-off blocks) outran the
+  // fixed-point cap, so f(f(x)) !== f(x).
+  it('is idempotent over a corpus incl. 20 address fragments and 10 stacked Regards blocks', () => {
+    const corpus = [
+      ...CASES.map((c) => c.input),
+      `note a${' <frag'.repeat(20)}`,
+      `note a${' <b'.repeat(9)}`,
+      `note a${' <b'.repeat(10)}`,
+      `Status ok.${' Regards, Jane Doe'.repeat(10)}`,
+      `Status ok.${'\nRegards,\nJane Doe'.repeat(10)}`,
+      `Status ok.${'\nRegards,\nJane Doe 555-010-0123 jdoe@example.com'.repeat(10)}`,
+      `Status ok.${' Regards, Jane Doe jdoe@example.com <jd'.repeat(10)}`,
+      `Status ok. Regards, ${'x'.repeat(130)} Regards, Jane Doe`,
+    ];
+    for (const s of corpus) {
+      const once = redactNotesText(s);
+      expect(redactNotesText(once)).toBe(once);
+    }
+    expect(redactNotesText(`note a${' <frag'.repeat(20)}`)).toBe('note a');
+    expect(redactNotesText(`Status ok.${' Regards, Jane Doe'.repeat(10)}`)).toBe(`Status ok. ${SIGNATURE_PLACEHOLDER}`);
+    expect(redactNotesText(`Status ok.${'\nRegards,\nJane Doe'.repeat(10)}`)).toBe(`Status ok. ${SIGNATURE_PLACEHOLDER}`);
+  });
+});
+
 describe('redactSnapshotNotes', () => {
   it('rewrites only string values under "notes" and counts changes', () => {
     const input = {
