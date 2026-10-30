@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { redactNotesTextMainBaseline } from './fixtures/redact-pii-main-baseline';
+import { mapGraphTask } from '../../server/sources/m365-tasks';
+import { htmlToText } from '../../server/sources/html-to-text';
 import {
   redactNotesText,
   redactSnapshotNotes,
@@ -407,6 +409,96 @@ describe('redactNotesText — leaks no more than main (round 3)', () => {
     }
     expect(worse).toEqual([]);
     expect(prTotal).toBeLessThanOrEqual(mainTotal);
+  });
+});
+
+// Round 4 (2026-10-30): shapes the round-3 corpus missed, each of which leaked on 83aabeb0 where main
+// cut it: 1- and 3-word names, a strong cue followed by Suite / date / $, quoted names, an emoji
+// before the name, sign-off blocks taller than SIGNATURE_MAX_LINES, single-line tails over 120 chars.
+// Every input also goes through mapGraphTask and is compared with main applied to the same 200-char
+// slice of htmlToText -- the M365 path the snapshot actually takes.
+describe('redactNotesText — leaks no more than main (round 4)', () => {
+  const NAMES: [string, string[]][] = [
+    ['Jane', ['Jane']],
+    ['Jane Doe', ['Jane', 'Doe']],
+    ['Robert Lee Okafor', ['Robert', 'Okafor']],
+  ];
+  const CUES = ['Regards,', 'Best regards,', 'Sincerely,', 'Kind Regards,'];
+  const PHONE = '(614) 555-0187';
+  const EMAIL = 'r.q@example.com';
+  type Gen = { input: string; pii: string[] };
+  const corpus: Gen[] = [];
+  for (const [n, pii] of NAMES) {
+    for (const cue of CUES) {
+      for (const fact of ['Suite 200', '10/28', 'Nov 3', '$4,250', '12,500 SF']) {
+        corpus.push({ input: `Roof ok. ${cue} ${n} ${fact}`, pii });
+      }
+      corpus.push({ input: `Roof ok. ${cue} "${n}"`, pii });
+      corpus.push({ input: `Roof ok. ${cue} '${n}'`, pii });
+      corpus.push({ input: `Roof ok. ${cue} \u{1F44D} ${n}`, pii });
+      corpus.push({ input: `Approved. ${cue} ${n} Acme Realty 1 Main St Suite 200 Testville`, pii });
+      const block = [n, 'VP Operations', 'Acme Realty', '1 Main St', 'Suite 200', 'Testville OH 43215'];
+      corpus.push({ input: `Roof ok.\n${cue}\n${block.join('\n')}`, pii });
+      corpus.push({ input: `Roof ok.\n${cue}\n${block.join('\n')}\n${PHONE}\n${EMAIL}`, pii: [...pii, '555-0187', EMAIL] });
+      corpus.push({ input: `Roof ok. ${cue}\n${block.join('\n')}`, pii });
+    }
+    for (const cue of ['Thank you,', 'Thanks,', ...CUES]) {
+      corpus.push({
+        input: `COI received. ${cue} ${n}, Oakview Business Park, VP Operations, 1 Main St Suite 200 Testville OH 43215, C: ${PHONE}, ${EMAIL}`,
+        pii: [...pii, '555-0187', EMAIL],
+      });
+    }
+  }
+
+  const leaks = (out: string, pii: string[]): number =>
+    pii.reduce((k, t) => k + (new RegExp(`(?<![\\w])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`).test(out) ? 1 : 0), 0);
+  const toHtml = (text: string): string =>
+    `<html><body>${text.split('\n').map((l) => `<p>${l.replace(/&/g, '&amp;')}</p>`).join('')}</body></html>`;
+
+  it('PR output leaks <= main on every one of the generated inputs', () => {
+    expect(corpus.length).toBeGreaterThan(150);
+    const worse: string[] = [];
+    for (const g of corpus) {
+      const pr = leaks(redactNotesText(g.input), g.pii);
+      const main = leaks(redactNotesTextMainBaseline(g.input), g.pii);
+      if (pr > main) worse.push(`${JSON.stringify(g.input)} -> pr ${pr} > main ${main}`);
+    }
+    expect(worse).toEqual([]);
+  });
+
+  it('mapGraphTask notes leak <= main applied to htmlToText(...).slice(0, 200), and stay bounded', () => {
+    const worse: string[] = [];
+    for (const g of corpus) {
+      const html = toHtml(g.input);
+      const note = mapGraphTask({ id: 'x', title: 't', body: { content: html } }, 'L')?.notes ?? '';
+      const main = redactNotesTextMainBaseline(htmlToText(html).slice(0, 200));
+      expect(note.length).toBeLessThanOrEqual(200);
+      expect(redactNotesText(note)).toBe(note);
+      if (leaks(note, g.pii) > leaks(main, g.pii)) worse.push(`${JSON.stringify(g.input)} -> ${JSON.stringify(note)}`);
+    }
+    expect(worse).toEqual([]);
+  });
+
+  it('keeps a place name that ends a sentence before a "Call <company> <phone>" line', () => {
+    expect(redactNotesText('Roof leak at Riverside Commerce Center.\nCall Acme LLC 614-555-0100')).toBe(
+      `Roof leak at Riverside Commerce Center.\nCall Acme LLC ${PHONE_PLACEHOLDER}`,
+    );
+  });
+
+  it('still redacts a name on the line directly above its phone (as main does)', () => {
+    for (const s of [
+      'Roof ok.\nJane Doe\n614-555-0142',
+      'Roof ok.\nJane Doe\n(614) 555-0142',
+      'Status.\nJane Doe -\n614-555-0142',
+      'Status.\nJane Doe Jr.\n614-555-0142',
+      'Status.\nRobert A.\n614-555-0142',
+    ]) {
+      const out = redactNotesText(s);
+      expect(out, s).not.toMatch(/\b(?:Jane|Doe|Robert)\b/);
+      expect(leaks(out, ['Jane', 'Doe', 'Robert'])).toBeLessThanOrEqual(
+        leaks(redactNotesTextMainBaseline(s), ['Jane', 'Doe', 'Robert']),
+      );
+    }
   });
 });
 
