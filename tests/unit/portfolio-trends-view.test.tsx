@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type * as PortfolioTrends from '@analytics/portfolio-trends';
 import type * as TrendsHistory from '../../src/modules/portfolio/trends-history';
 import type { Lease, PortfolioSnapshot, Property } from '../../src/contracts/index';
@@ -99,7 +100,10 @@ function renderView() {
   return render(
     <QueryClientProvider client={seededClient(snapshot())}>
       <UiContext.Provider value={ui}>
-        <TrendsView />
+        {/* A scoped property links into /property/:id (roadmap 2.2), so it needs a router. */}
+        <MemoryRouter>
+          <TrendsView />
+        </MemoryRouter>
       </UiContext.Provider>
     </QueryClientProvider>,
   );
@@ -263,7 +267,7 @@ describe('TrendsView recorded history (Wave 2)', () => {
     setHist([rec('a', '2026-09'), recB('2026-09')]);
     const qc = seededClient(snapshot());
     const tree = (
-      <QueryClientProvider client={qc}><UiContext.Provider value={ui}><TrendsView /></UiContext.Provider></QueryClientProvider>
+      <QueryClientProvider client={qc}><UiContext.Provider value={ui}><MemoryRouter><TrendsView /></MemoryRouter></UiContext.Provider></QueryClientProvider>
     );
     const view = render(tree);
     fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'b' } });

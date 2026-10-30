@@ -46,6 +46,7 @@ const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketM
 const PropertyConditionModule = lazy(() =>
   import('@/modules/property-condition/PropertyConditionModule').then((m) => ({ default: m.PropertyConditionModule })),
 );
+const PropertyPage = lazy(() => import('@/modules/property/PropertyPage').then((m) => ({ default: m.PropertyPage })));
 const PropertyFinancialsModule = lazy(() =>
   import('@/modules/property-financials/PropertyFinancialsModule').then((m) => ({ default: m.PropertyFinancialsModule })),
 );
@@ -89,6 +90,9 @@ export const MODULES: ModuleDef[] = [
   { id: 'data', label: 'Data', icon: Database, group: 'System', Component: DataModule, tabs: DATA_TABS },
   // System Health left the rail in Phase 4a — it is a TopBar status dot; /health still resolves.
   { id: 'health', label: 'System Health', icon: Activity, group: 'System', Component: HealthModule, rail: false },
+  // Canonical property page (roadmap 2.2): /property/:id. Reached from the drawer, the property table,
+  // alerts and the trend views â€” never a rail entry of its own.
+  { id: 'property', label: 'Property', icon: Building2, group: 'Assets', Component: PropertyPage, rail: false },
 ];
 
 export const MODULE_GROUPS: ModuleGroup[] = ['Command', 'Assets', 'Capital', 'Market', 'System'];
