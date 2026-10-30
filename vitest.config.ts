@@ -1,6 +1,16 @@
 import { defineConfig } from 'vitest/config';
 import { fileURLToPath, URL } from 'node:url';
 
+// CI worker cap. Two self-hosted runners serve this repo on one 16-core laptop, so two gate jobs run at
+// once; vitest's default (cores - 1 forks each) put ~30 processes on 16 cores and every file ran 5-90x
+// slower than idle, so unrelated tests blew the 60s budget (2026-10-27). Capped only when CI is set;
+// local runs keep vitest's default. Override with VITEST_MAX_WORKERS (positive integer).
+const ciMaxWorkers = ((): number | undefined => {
+  if (!process.env.CI) return undefined;
+  const n = Number(process.env.VITEST_MAX_WORKERS);
+  return Number.isInteger(n) && n > 0 ? n : 6;
+})();
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -38,6 +48,7 @@ export default defineConfig({
     // flake class this config exists to prevent. See tests/unit/test-isolation.test.ts
     // for the regression guard.
     pool: 'forks',
+    maxWorkers: ciMaxWorkers,
     isolate: true,
     // testTimeout/hookTimeout: 60s, not vitest's 5000ms/10000ms defaults (2026-09-07).
     // This suite's slow tests are slow because of OS latency - spawning processes, opening
