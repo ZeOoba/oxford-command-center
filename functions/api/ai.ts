@@ -14,7 +14,12 @@
  *    malformed history turns are dropped and every spend-bearing length is capped;
  *  - a per-identity sliding-window rate limit bounds Anthropic spend per Access user (best-effort:
  *    the window lives in this isolate's memory, so it resets on a cold start and is not shared
- *    across colos — a durable limit needs KV/Durable Objects; this closes the trivial-abuse case);
+ *    across colos — a durable limit needs KV/Durable Objects; this closes the trivial-abuse case).
+ *    The identity is the VERIFIED Access JWT email (functions/_shared/access-identity.ts, the same
+ *    path whoami uses), never the forgeable Cf-Access-Authenticated-User-Email header. With
+ *    ACCESS_REQUIRE=1 a request that fails verification is refused (403, or 503 when Access config
+ *    or the JWKS is unavailable) before any snapshot read or model call. Inert mode (ACCESS_REQUIRE
+ *    not '1', e.g. local dev) keys on CF-Connecting-IP instead;
  *  - an edge confidentiality scan (OI-225 counterpart) derived from the baked snapshot's own
  *    `confidential:true` deals runs over the question, the history and every tool result,
  *    mirroring the roster-based guard the Brain Server injects. The mirror has no roster on disk,
@@ -47,8 +52,10 @@ import { runAgent, sanitizeAgentInput, type AgentEvent } from '../../server/ai/a
 import { matchRosterTerms } from '../../server/briefing/roster-core';
 import type { DealTerms } from '../../server/briefing/confidential';
 import { formsContain, normalizeForScan, scanTexts } from '../../server/briefing/confidential-normalize';
+import { createAccessIdentityResolver, type AccessEnv, type AccessIdentityDeps } from '../_shared/access-identity';
+import { fetchAccessJwks } from '../_shared/access-jwt';
 
-interface Env {
+interface Env extends AccessEnv {
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
   ANTHROPIC_EFFORT?: string;
@@ -74,13 +81,20 @@ export const RATE_LIMIT_MAX = 20;
 export const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const windows = new Map<string, number[]>();
 
-function identity(request: Request): string {
-  return (
-    request.headers.get('cf-access-authenticated-user-email') ||
-    request.headers.get('cf-connecting-ip') ||
-    'anonymous'
-  );
+export type AiDeps = AccessIdentityDeps;
+
+const accessIdentity = createAccessIdentityResolver();
+
+/** Test hook: drop the JWKS cache used to verify the caller. */
+export function resetAiIdentityCache(): void {
+  accessIdentity.reset();
 }
+
+const jsonError = (error: string, status: number, extra: Record<string, string> = {}) =>
+  new Response(JSON.stringify({ error }), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra },
+  });
 
 /** Returns true when the request is within budget (and records it), false when it must be refused. */
 export function admit(id: string, now = Date.now()): boolean {
@@ -140,8 +154,25 @@ export const MIRROR_SCAN_UNAVAILABLE_MESSAGE =
   'carries no confidential-deal terms), so the AI assistant is disabled here. The request was ' +
   'stopped before reaching the API.';
 
-export async function onRequestPost(context: PagesContext): Promise<Response> {
+export function onRequestPost(context: PagesContext): Promise<Response> {
+  return handleAiPost(context, {
+    fetchJwks: fetchAccessJwks,
+    nowSeconds: () => Math.floor(Date.now() / 1000),
+  });
+}
+
+export async function handleAiPost(context: PagesContext, deps: AiDeps): Promise<Response> {
   const { request, env } = context;
+  // Identity first: an unverified caller is refused before the body, the snapshot or the model.
+  const who = await accessIdentity.resolve(request, env, deps);
+  if (who.kind === 'denied') {
+    console.warn('[ai] denied:', who.reason);
+    return jsonError(who.status === 503 ? 'unavailable' : 'forbidden', who.status);
+  }
+  // Verified email when Access is enforced; otherwise (inert / local dev) the connecting IP. The
+  // plain email header is never a key: it is forgeable off the Access path.
+  const rateKey = who.kind === 'verified' ? `user:${who.email.toLowerCase()}` : `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`;
+
   const body: unknown = await request.json().catch(() => ({}));
   const input = sanitizeAgentInput(body);
   if (!input.ok) {
@@ -150,11 +181,8 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       headers: { 'content-type': 'application/json; charset=utf-8' },
     });
   }
-  if (!admit(identity(request))) {
-    return new Response(JSON.stringify({ error: 'Too many requests — try again in a few minutes.' }), {
-      status: 429,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'retry-after': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)) },
-    });
+  if (!admit(rateKey)) {
+    return jsonError('Too many requests — try again in a few minutes.', 429, { 'retry-after': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)) });
   }
   const { question, history } = input;
 

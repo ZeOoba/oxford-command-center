@@ -20,25 +20,15 @@
  *  - 403 { error }        JWT missing / invalid / expired / wrong audience or issuer
  *  - 503 { error }        ACCESS_REQUIRE=1 but issuer/aud unset, or the JWKS cannot be fetched
  */
-import { fetchAccessJwks, verifyAccessJwt, type Jwk } from '../_shared/access-jwt';
-
-interface Env {
-  ACCESS_REQUIRE?: string;
-  ACCESS_ISSUER?: string;
-  ACCESS_AUD?: string;
-}
+import { createAccessIdentityResolver, type AccessEnv, type AccessIdentityDeps } from '../_shared/access-identity';
+import { fetchAccessJwks } from '../_shared/access-jwt';
 
 interface PagesContext {
   request: Request;
-  env?: Env;
+  env?: AccessEnv;
 }
 
-export interface WhoamiDeps {
-  fetchJwks: (issuer: string) => Promise<readonly Jwk[]>;
-  nowSeconds: () => number;
-}
-
-const JWKS_TTL_SECONDS = 3600;
+export type WhoamiDeps = AccessIdentityDeps;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -50,58 +40,24 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** Per-isolate JWKS cache. An expired or failed fetch is never served stale: it denies (503). */
-let cached: { issuer: string; keys: readonly Jwk[]; fetchedAt: number } | null = null;
+/** Per-isolate JWKS cache (inside the resolver). An expired or failed fetch is never served stale. */
+const accessIdentity = createAccessIdentityResolver();
 
 /** Test hook: drop the module-level JWKS cache. */
 export function resetWhoamiCache(): void {
-  cached = null;
+  accessIdentity.reset();
 }
 
 export async function handleWhoami(context: PagesContext, deps: WhoamiDeps): Promise<Response> {
-  const env = context.env ?? {};
-
-  // Mirrors accessAuthzOptionsFromEnv: exactly '1' enables; anything else is inert. Inert never
-  // yields an identity — the plain header is not consulted in any mode.
-  if (env.ACCESS_REQUIRE !== '1') return json({ email: null });
-
-  const issuer = env.ACCESS_ISSUER?.trim() ?? '';
-  const audience = env.ACCESS_AUD?.trim() ?? '';
-  if (!issuer || !audience || !issuer.startsWith('https://')) {
-    console.error('[whoami] ACCESS_REQUIRE=1 but ACCESS_ISSUER (https) / ACCESS_AUD not set — denying');
-    return json({ error: 'unavailable' }, 503);
+  const who = await accessIdentity.resolve(context.request, context.env, deps);
+  // Inert never yields an identity — the plain header is not consulted in any mode.
+  if (who.kind === 'inert') return json({ email: null });
+  if (who.kind === 'denied') {
+    if (who.status === 503) console.error('[whoami] denying:', who.reason);
+    else console.warn('[whoami] denied:', who.reason);
+    return json({ error: who.status === 503 ? 'unavailable' : 'forbidden' }, who.status);
   }
-
-  const token = context.request.headers.get('Cf-Access-Jwt-Assertion');
-  if (!token) {
-    console.warn('[whoami] denied: no Cf-Access-Jwt-Assertion');
-    return json({ error: 'forbidden' }, 403);
-  }
-
-  const now = deps.nowSeconds();
-  let keys: readonly Jwk[];
-  if (cached && cached.issuer === issuer && now - cached.fetchedAt < JWKS_TTL_SECONDS) {
-    keys = cached.keys;
-  } else {
-    try {
-      keys = await deps.fetchJwks(issuer);
-    } catch (err) {
-      console.error('[whoami] JWKS fetch failed — denying:', err);
-      return json({ error: 'unavailable' }, 503);
-    }
-    if (!keys || keys.length === 0) {
-      console.error('[whoami] JWKS empty — denying');
-      return json({ error: 'unavailable' }, 503);
-    }
-    cached = { issuer, keys, fetchedAt: now };
-  }
-
-  const result = await verifyAccessJwt(token, keys, { audience, issuer, nowSeconds: now });
-  if (!result.ok) {
-    console.warn('[whoami] denied:', result.reason);
-    return json({ error: 'forbidden' }, 403);
-  }
-  return json({ email: result.email });
+  return json({ email: who.email });
 }
 
 export function onRequestGet(context: PagesContext): Promise<Response> {
