@@ -8,7 +8,7 @@ import {
   debtSummary,
 } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
-import { isInvestmentProperty } from '../../src/analytics/property-basis';
+import { isInvestmentProperty, landlordCostsNotSourced } from '../../src/analytics/property-basis';
 import { isAffiliateNoteProperty, propertyLtvLabel } from '../../src/analytics/debt-basis';
 import { TOTAL_DEBT_BASIS, EXTERNAL_DEBT_BASIS, debtBasisIssues } from './debt-basis-copy';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
@@ -229,6 +229,10 @@ const EXECUTORS: Record<ToolName, Exec> = {
         ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
         note:
           'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.' +
+          // Ruling 2026-10-30: NNN-not-absolute rows with $0/blank expenses overstate NOI and cap rate.
+          (investment.some(landlordCostsNotSourced)
+            ? ` NOI and cap rate include ${investment.filter(landlordCostsNotSourced).length} NNN propert${investment.filter(landlordCostsNotSourced).length === 1 ? 'y' : 'ies'} whose landlord-paid roof, structure and paving costs are not sourced, so they are overstated by those costs.`
+            : '') +
           (otherCount > 0
             ? ` Value, NOI, SF and counts EXCLUDE ${otherCount} non-investment holding${otherCount === 1 ? '' : 's'} (the residence), carried separately as other holdings at ${otherValue}; the workbook's own Portfolio Total includes it.`
             : ''),
@@ -245,6 +249,9 @@ const EXECUTORS: Record<ToolName, Exec> = {
         name: p.name, market: p.market, type: p.type, sf: p.sf, occupancy: fmtPct(p.occPct),
         noi: fmtUsdCompact(p.noi), capRate: fmtPct(p.capRate), dscr: p.dscr, ltv: propertyLtvLabel(p), affiliateNote: isAffiliateNoteProperty(p),
         value: fmtUsdCompact(p.oxfordValue), lender: p.lender, tenants: p.tenantCount,
+        ...(landlordCostsNotSourced(p)
+          ? { noiCaveat: 'NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced, so NOI and cap rate are overstated by them' }
+          : {}),
       })),
       refs: matches.map((p) => ({ type: 'property', id: p.id, label: p.name })),
     };
