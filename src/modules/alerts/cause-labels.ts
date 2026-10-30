@@ -28,6 +28,7 @@ export function describeAlertCause(cause: string, members: TierItem[]): { title:
       return { title: `${n} properties on DSCR covenant watch` };
     case 'ltv-ceiling':
       return { title: `${n} properties above the ${fmtPct(ALERT_THRESHOLDS.refiLtvCeilingPerProperty, 0)} LTV ceiling` };
+      return { title: `${n} properties above the 65% LTV ceiling` };
     default:
       return { title: `${n} related alerts` };
   }
