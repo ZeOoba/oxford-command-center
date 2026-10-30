@@ -15,7 +15,7 @@ import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause, rankRows } from '../../lib/tier-group';
+import { groupByCause, rankRows, signalCount } from '../../lib/tier-group';
 import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
@@ -191,9 +191,18 @@ function ResultsBannerWidget() {
 // per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
 // is new.
 // Same-cause alerts roll into one row BEFORE the cut to N (twelve lapsed policies are one decision,
-// not twelve slots), and lapsed coverage is pinned first — its impact is unquantified, so a pure
-// dollar sort could never surface it here.
-export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier {
+// not twelve slots), and pinned safety alerts (lapsed coverage, DSCR / LTV breaches, reconciliation
+// failure — see src/brain/alert-cause.ts) rank first: their impact is unquantified, so a pure dollar
+// sort could never surface them here.
+// The cap applies to UNPINNED rows only: a pinned row is never cut, even when pinned rows alone
+// exceed `limit` (a cause collapses only at MIN_GROUP_SIZE, so two-member pinned causes stay separate
+// rows and can outnumber the cap). `heldBack` counts what the cap did cut — rows and the signals they
+// stand for — so an indicator built on it can never go negative or miss a held-back group's members.
+export interface PriorityActionsTier extends Tier {
+  heldBack: { rows: number; signals: number };
+}
+
+export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): PriorityActionsTier {
   // Ids are unique by construction (conditions.ts / mergeInsightSources); dedupe defensively so the
   // id-keyed subtotal below can never count a row that is not shown, or count one twice.
   const seen = new Set<string>();
@@ -210,16 +219,21 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  const items = rankRows(rows).slice(0, limit);
+  const ranked = rankRows(rows);
+  const pinned = ranked.filter((row) => row.pinned);
+  const unpinned = ranked.filter((row) => !row.pinned);
+  const items = [...pinned, ...unpinned.slice(0, Math.max(0, limit - pinned.length))];
+  const held = unpinned.slice(Math.max(0, limit - pinned.length));
   const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
   const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Top items by $ impact; lapsed coverage pinned first',
+    subtitle: 'Top items by $ impact; safety alerts pinned first',
     tone: 'accent',
     items,
     totalsBySpine: totalsBySpine(top),
+    heldBack: { rows: held.length, signals: held.reduce((n, row) => n + signalCount(row), 0) },
   };
 }
 
@@ -246,14 +260,21 @@ function PriorityActionsWidget() {
     <div className="flex flex-col gap-2">
       <TierBoard tiers={[tier]} columns={1} />
       {merged.length > 0 && (
-        <button
-          type="button"
-          onClick={() => ui.openTab('command-brain', 'insights')}
-          className="self-end text-2xs font-semibold"
-          style={{ color: 'var(--accent)' }}
-        >
-          See all {merged.length} insights →
-        </button>
+        <div className="flex items-center justify-end gap-2">
+          {tier.heldBack.signals > 0 && (
+            <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              {tier.heldBack.signals} more held back
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => ui.openTab('command-brain', 'insights')}
+            className="text-2xs font-semibold"
+            style={{ color: 'var(--accent)' }}
+          >
+            See all {merged.length} insights →
+          </button>
+        </div>
       )}
     </div>
   );
