@@ -1,4 +1,4 @@
-# Every distinct Refute-Reviewed/Refute-Skip trailer line on origin/main as of 2276211 (2026-09-27).
+# Every distinct Refute-Reviewed/Refute-Skip trailer line on origin/main as of 6e86206f (2026-10-29).
 # Pinned by tests/unit/check-refute-required.test.ts: a tightening of the refute gate must never
 # reject a trailer main already carries. Regenerate with:
 #   git log origin/main --format=%B | grep -iE '^[ \t]*Refute-(Reviewed|Skip):' | sed -E 's/^[ \t]+//' | sort -u
@@ -49,69 +49,120 @@ Refute-Reviewed: refute-financial-change (wf_2c887457-693), 1 real mutation-prov
 Refute-Reviewed: refute-financial-change x3 all-Fable (wf_c47d11aa-990, wf_04e3f4be-054, wf_a572d07e-620); final round zero real defects
 Refute-Reviewed: refute-financial-change x5 (wf_d0987dd9-c8c, wf_495f341f-15e,
 Refute-Reviewed: refute-h4-easement-period-scope (verdict: PASS_WITH_CONCERNS —
+Refute-Reviewed: two Opus 5.5 adversarial-reviewer passes (not a refute-financial-change workflow run): full review found 3 HIGH/MED false-block paths (strict checker exits 1 on tooling gaps and crashes) and a weak stdin test, all fixed; delta review found no HIGH, with the stale-origin/main message and 3-line stdin test fixed here.
 Refute-Reviewed: two adversarial read-and-execute passes by a Claude Fable 5.1 subagent with no knowledge of the implementation session, both CONFIRMED CORRECT. Pass 1 (store.ts version): loop verified at exactly 5 attempts with sleep only between attempts (persistent EPERM measured 241 ms); code-less Error and string throws rethrown on attempt 1; 4xEBUSY-then-success converges; the .tmp is fully written before the first attempt so no partial target is possible, and on exhaustion the target is untouched while the leftover .tmp is overwritten by the next write (covered by the existing stale-.tmp test); sole caller is POST /api/actions/alert via runAlertAction, already fully synchronous; Atomics.wait confirmed legal on the Node v24.18 main thread; EACCES still rethrown unmasked; 4 of 5 new tests fail on HEAD (the ENOENT guard passes, as expected); the `default`-patch claim was reproduced (without it the factory intercepted 0 calls); the pass-through mock keeps the existing atomic-write tests on the real rename. Its one nit (a null throw would TypeError on `.code`) is fixed in the helper with `?.code`. Pass 2 (extraction + brain.ts): the helper is identical apart from that fix; on Windows a rename onto a directory is EPERM, so the existing 'logs when the mirror write fails' test now retries (248 ms) and still passes with an unchanged log line and tmp cleanup; persist() callers refresh() and rederive() (every HTTP write-back) take the <=240 ms stall only on failure; vi.resetModules() leaves the spy shared with brain.ts, and the wiring test fails against HEAD's brain.ts; eslint on all 5 files and typecheck on all 3 tsconfigs exit 0. Noted, not fixed (pre-existing): cross-process writers share the fixed `${path}.tmp` name in store.ts; a per-write unique temp name would close it. Not run through the refute-financial-change Workflow (no opt-in).
 Refute-Reviewed: two adversarial read-and-execute passes by a Claude Fable 5.1 subagent with no knowledge of the implementation session. Pass 1 found DEFECTS: concurrent saves could reorder (probe: A then B 3 ms apart, A's rename hits one EPERM -> both true, final file = older A; HEAD: A false, final = newer B). It otherwise confirmed: the isRetryable refactor keeps the sync helper identical (5 attempts, same error object, null/undefined/string/code-less throws rethrown at once); the async helper fires timers at exactly 20/40/60/80 ms, rejects with the identical error, and leaves 0 timers and no unhandled rejections; mutations fail the right tests (a synchronous-sleep backoff fails exactly the event-loop test); tests/setup.ts pre-sandboxes OVERLAY_PATH and the test awaits before restoring, so data/overlay.json is unreachable. Pass 2 (after the queue + shouldRetry fix): CONFIRMED CORRECT. The same A/B probe now gives both true with final = newer B. The queue cannot wedge: a synchronous string throw, a null rejection and an mkdir failure each return false, and the next save still lands. Callers are unchanged (brain.ts:184 void, setLeaseRunAssumptions -> 500 on false, ar-import-headless.ts:837, migrate-lease-overlay-ids.ts:307); overlay 75/75, brain 34/34. The NTFS identity check was verified empirically: a temp+rename publish changes ino, an open read handle changes nothing, and absent-at-start plus another writer creating the file -> false with theirs kept. The check-to-retry TOCTOU is one stat, far smaller than HEAD's load-to-rename window. Mutations: bypassing the queue fails exactly the call-order test; ignoring shouldRetry fails exactly the cross-process test and the two helper tests. eslint and both tsconfigs clean. Its observation that ino (not mtimeNs, which moves per NTFS tick) carries the check is now a code comment. Pre-existing, out of scope: setLeaseRunAssumptions' loadOverlay() read-modify-write sits outside the queue, so two concurrent patches can still lose one (same as HEAD); the .tmp is left behind on abandon/exhaustion; a same-ms tmp-name collision is still possible cross-process. Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: two adversarial-reviewer passes (Opus), read-only, synthetic rosters; pass 1 BLOCK (deal ids logged, warehouse capture on roster edit, arming gap, overstated release claim, missing overlay test) fixed with a mutation-checked test each; pass 2 CLEAR, 5/5 claims survived.
 Refute-Reviewed: wf_09458ba1-e01
+Refute-Reviewed: wf_0c7b00af-a06 (clean: nothing above LOW; reviewed commit 4d901484f07b429ceeb732c22d197263afed4966, tree 59060226ca00ee8d260e4fa8c71075241a37442e; this commit differs only in message. Earlier version reviewed by wf_39a56d55-0f7, LOWs only)
+Refute-Reviewed: wf_0fe3308f-c36
+Refute-Reviewed: wf_13f17df1-9cc
 Refute-Reviewed: wf_140327f2-daa
 Refute-Reviewed: wf_16fa619f-8e4
+Refute-Reviewed: wf_1a15ffc6-702
 Refute-Reviewed: wf_2086e104-f2a
+Refute-Reviewed: wf_22e37cd1-dd0
+Refute-Reviewed: wf_2881eb22-27c (5 Opus lenses, read-only, synthetic rosters): low-only - id-keyed recheckRoster diff, fixed in 1b1ed914/f031aa58; other lows scoped out (mirror not persisted on tighten, roster file created after watcher armed).
 Refute-Reviewed: wf_29ae00ad-db9
 Refute-Reviewed: wf_2b574580-61b
 Refute-Reviewed: wf_2c71b90c-4cf
 Refute-Reviewed: wf_2de7cc99-03f
 Refute-Reviewed: wf_2e034bc4-f86
 Refute-Reviewed: wf_2f51870c-4d9 wf_c0a4c2c9-506
+Refute-Reviewed: wf_31c41339-d20
+Refute-Reviewed: wf_3504a626-291
+Refute-Reviewed: wf_3765e727-a6c (5 Opus lenses, read-only, synthetic rosters): medium - refresh applied the overlay after the roster check, so an overlay stage change could make a deal claimable yet served confidential:false; closed by the adoptSnapshot choke point (94f29b3a) with a regression test (1b1ed914). Low duplicate-id recheckRoster finding fixed in 1b1ed914/f031aa58.
+Refute-Reviewed: wf_398ab502-31d (round 8, clean: nothing above LOW; reviewed range fd3f3c2a..599716d04defde0001914cd91816e228ce85da0f, tree 6d9de0c4efe2d6e0c56bc23f82594a6ac88607d6; this commit differs only in message)
 Refute-Reviewed: wf_3d29635a-922
 Refute-Reviewed: wf_3f479f7e-1eb
+Refute-Reviewed: wf_49fcb969-c07 (scoped)
+Refute-Reviewed: wf_4aa09be0-f52
 Refute-Reviewed: wf_5289ba71-3ed
 Refute-Reviewed: wf_56806bbd-1b4
 Refute-Reviewed: wf_5ada370c-c17
 Refute-Reviewed: wf_5b4af06c-01b
 Refute-Reviewed: wf_5b65d5a4-7d7
+Refute-Reviewed: wf_5f8797d8-88c
+Refute-Reviewed: wf_6240b736-133 (3 Opus lenses on the intermediate rollback version: high - a refresh() rollback would restore a stale base over a newer concurrent refresh; REJECTED and removed) then wf_5298d3e7-dfa (3 Opus lenses on the content-matched version: low-only; its suggested served-row tighten verdict applied with a failing-first test).
 Refute-Reviewed: wf_6379c805-14b
 Refute-Reviewed: wf_6409e5ab-88e
+Refute-Reviewed: wf_6819c629-1fc (round 7 of 7, model opus default effort, 5 lenses, no finding above low; earlier rounds wf_d12221a6-d8f wf_e55d18e2-75b wf_821ec1e3-fe5 wf_b64b3cd8-4a3 wf_31ee2e5f-1c8 wf_d0422503-3c4 wf_bd48d2d9-0fd)
+Refute-Reviewed: wf_68e9ac3a-319 (round 3 of 3, opus, no defect above low; earlier rounds wf_69c0ee9f-85d wf_504f0416-a0d)
 Refute-Reviewed: wf_6cf7d109-520
 Refute-Reviewed: wf_7bc5f1c9-c45
 Refute-Reviewed: wf_80769cd1-096
 Refute-Reviewed: wf_84a8d6b8-536
 Refute-Reviewed: wf_850e84c0-73b
+Refute-Reviewed: wf_86b57557-472 (full 5-lens run, NOT clean: 3 medium findings accepted as documented limits; see commit body)
+Refute-Reviewed: wf_87abfd9d-5f8
+Refute-Reviewed: wf_89167d29-b76
+Refute-Reviewed: wf_8b8525c6-c74
+Refute-Reviewed: wf_8d7273d2-bfb
+Refute-Reviewed: wf_8f5d7ffe-67b
+Refute-Reviewed: wf_8f74223f-77e
+Refute-Reviewed: wf_911caeac-216 (clean: nothing above LOW; reviewed commit 13ec71df1127345ad2483959ca3ea3ed19957c6f, tree bc5c2d19372492abb1d2d400085fe70598845db0; this commit has that identical tree, rebased onto the #479 squash dff1727a, whose tree equals the reviewed parent 0c48dfd2)
 Refute-Reviewed: wf_91807128-af3
 Refute-Reviewed: wf_99067da3-2b0
+Refute-Reviewed: wf_a07b687f-063
 Refute-Reviewed: wf_a4ae3c23-a46
+Refute-Reviewed: wf_a5b2c307-f12
+Refute-Reviewed: wf_a9ebcf74-c95 (scoped) - 3 rounds (wf_fc0fc496-a3c, wf_c396a793-46c, wf_a9ebcf74-c95). No defect in the filter; accepted MEDIUMs: sibling-surface inconsistency (latent, out of scope) and UI bundling (split into a separate commit).
+Refute-Reviewed: wf_ab404057-32f (round 2, Opus 5.5, 2/2 lenses, no real defect, worst severity low; round 1 wf_b8fc84af-5c6)
 Refute-Reviewed: wf_ab61f824-759
 Refute-Reviewed: wf_b133b214-c6f
 Refute-Reviewed: wf_b38eb421-deb
+Refute-Reviewed: wf_b43ef00d-6d9 (5 Opus lenses, read-only, synthetic rosters; reviewed 94f29b3a+1b1ed914 together): no defect in the choke point; its guard-regex lows were widened in 1b1ed914/f031aa58.
+Refute-Reviewed: wf_b43ef00d-6d9 (see 94f29b3a): medium - positional recheckRoster diff depends on base/snapshot staying in step; fixed in f031aa58 with failing-first tests.
 Refute-Reviewed: wf_b55b4d9f-366
 Refute-Reviewed: wf_b8410252-041
+Refute-Reviewed: wf_b8bf486e-602
 Refute-Reviewed: wf_b8d4eadd-e31
 Refute-Reviewed: wf_bac54169-6ca
 Refute-Reviewed: wf_be2b00ff-bab
+Refute-Reviewed: wf_bff07891-5a9
 Refute-Reviewed: wf_c23f5fd8-ddf + 3 independent Opus adversarial passes (agents a71055cb, acfe4ead, ae0692c9)
 Refute-Reviewed: wf_c45ec0c4-0b1
 Refute-Reviewed: wf_c584b590-35a wf_6246f001-1fb
 Refute-Reviewed: wf_cc6da318-309
+Refute-Reviewed: wf_cee57a30-a6e (round 7, clean: nothing above LOW; reviewed commit 254303d8d44b2c825333f6df43f10b19947d97f4, tree fd9fd82d8d73c757749478354ebc888ebe73163b; this commit differs only in message)
 Refute-Reviewed: wf_cf78f30d-1c8
 Refute-Reviewed: wf_cfb990a9-211
+Refute-Reviewed: wf_d00c72d6-689
 Refute-Reviewed: wf_d10ede49-078
 Refute-Reviewed: wf_d1161cbc-8a7
+Refute-Reviewed: wf_d333a77e-cfc
+Refute-Reviewed: wf_d3be7fbd-39e
 Refute-Reviewed: wf_d656ffc1-524
+Refute-Reviewed: wf_d6c1bdd5-8b6
 Refute-Reviewed: wf_da4fa492-752
+Refute-Reviewed: wf_dbf6e86a-30a (5 Opus lenses, read-only, synthetic rosters): no defect in this commit; the warm-fallback gap of this commit alone is closed by the next commit, the duplicate-id recheckRoster low by 1b1ed914/f031aa58.
+Refute-Reviewed: wf_dcec12cd-f52 (round 7 of 8 on final tree 18a1f91d, 5 lenses opus; one MEDIUM - pavement-striping text classified exterior_paint/sealants escapes the paving placeholder family, synthetic only - accepted by Gabriel and tracked on #474; rounds 1-6: wf_acae4be6-c0b wf_1c836936-9ea wf_fbd65c80-4ac wf_86a7fb6b-d10 wf_36a97761-f51 wf_8b987994-ee2)
 Refute-Reviewed: wf_e4c405d9-2ff wf_d8fd3fce-646
 Refute-Reviewed: wf_e5c7092c-a22
+Refute-Reviewed: wf_e7c0dd32-4ae
+Refute-Reviewed: wf_eb399188-bbb
 Refute-Reviewed: wf_f0cfcc19-9eb
 Refute-Reviewed: wf_f14cf227-ba4
+Refute-Reviewed: wf_f5f45202-de8
+Refute-Reviewed: wf_f6699a8b-92b
 Refute-Reviewed: wf_fb49dbb9-c91
+Refute-Reviewed: wf_fba3d571-284
 Refute-Reviewed: wf_h1-dscr-governor-refute-20260622
 Refute-Reviewed: wf_refute-financial-change_m5 — single-attribution PASS, score-invariance PASS, decomposition PASS (governor-regression claim refuted: loadGovernors was never in this file at base SHA 35ed3ad)
 Refute-Skip: AI copy/labels only — every figure is an engine output changed and refuted in Tasks 2 and 5; no new financial math
 Refute-Skip: CI config + plan doc only — no financial math touched
 Refute-Skip: CR follow-up only — no financial-decision code changed (no math, no scoring, no NOI computation)
 Refute-Skip: DDL + verify assertions + templates — no financial computation
+Refute-Skip: Display/calibration-proposal tooling only, no governor/reserve-total input; independently reviewed by an adversarial-reviewer subagent (Opus) on the full diff, findings fixed; the refute-financial-change Workflow was NOT run (no opt-in), so this is not a Refute-Reviewed attestation.
 Refute-Skip: G4 deduplicates alias map (identical entries, no logic change); G3 adds Zod startup validation (no financial value mutations)
 Refute-Skip: HTML-to-text sanitizer for M365 task notes; carries no deal or portfolio figures
 Refute-Skip: HTML-to-text sanitizer only; no financial computation
 Refute-Skip: Health card presentation only; no financial computation
 Refute-Skip: JSDoc docstrings only — server/warehouse/api.ts change is 6 lines of /** ... */ comments on existing briefing route handlers; no financial logic, no route signatures, no data paths modified.
+Refute-Skip: No financial math - OCR text-cache plumbing plus two offline scripts (OCR manifest, Tesseract OCR) for the document-search index; server/sources/documents.ts is already on check-refute-required exempt list. Non-workflow review that ran: two independent adversarial-reviewer (Opus) rounds over the full diff, all Important findings fixed and mutation-checked; vitest 89/89, python 29/29.
+Refute-Skip: No financial math - document-search ranking plumbing. server/ai/agent.ts changes only the passage count requested from the document searcher (5 to 8) and the injected docSearch result type; server/ai/tools.ts changes only the search_documents tool description; server/sources/documents.ts is on the check-refute-required exempt list. Non-workflow review that ran: one independent adversarial-reviewer (Opus) round over the full diff, all Important findings fixed; 24 mutants of the guards each killed by a test; vitest 461/461 across 15 files; golden-query check 10/10 on the live index.
+Refute-Skip: Oxford Edge Phase 1 follow-up — read-only display ingest + manual-pull log; no scoring, NOI, governor or capital math
+Refute-Skip: Oxford Edge Phase 1 — read-only display ingest + manual-pull log; no scoring, NOI, governor or capital math
 Refute-Skip: UI over the existing ratified acq-engine — no scoring change
 Refute-Skip: UI relocation of existing rendered fields — no computation changed
 Refute-Skip: UI sublabel copy only; no financial computation
@@ -121,16 +172,24 @@ Refute-Skip: UI-only prop addition to a chart primitive, no financial math touch
 Refute-Skip: Zod schemas + nullable data passthrough — no financial computation
 Refute-Skip: additive nullable column (content_hash TEXT) + NULL-safe
 Refute-Skip: adds a warn-only data-quality flag; no figure, threshold, or ranking changes
+Refute-Skip: adds one allowed Co-Authored-By string to the commit-msg guard allowlist and its test; no engine math, scoring, NOI, capital-allocation or financial-overlay logic is touched
 Refute-Skip: adds one exact-match string to a commit-message allow-list plus its test -- no figure, no financial computation, no data path. It cannot loosen the guard for any other trailer (it is still an exact-match Array.includes check); commitmsg-trailer-guard + install-git-hooks tests are 34/34 green, eslint and typecheck clean.
 Refute-Skip: adversarial review performed via direct multi-agent Agent-tool
+Refute-Skip: age-display helper only; no financial-decision, governor or scoring math
+Refute-Skip: alert-state durability, no financial or governor math; verified by an independent Opus 5.5 adversarial review (two defects found, fixed and pinned by tests) rather than the formal refute-financial-change workflow
 Refute-Skip: asOf date label only; indicator values and the cap-rate spread math are unchanged
+Refute-Skip: attestation-gate tooling only — changes which commit trailers count, no financial math, scoring, NOI or governor code touched
+Refute-Skip: attestation-gate tooling only — changes which commit trailers count; no financial math, scoring, NOI or governor code touched
 Refute-Skip: cap-rate and regional fields are diagnostic-only; priority score
 Refute-Skip: cap-rate overlay is display-layer diagnostic only — impliedCapRate /
 Refute-Skip: comment correction only — no logic change
 Refute-Skip: comment only; no code change
 Refute-Skip: comment-only change to server/warehouse/insurance-loss-analysis.ts (3 comment lines, no code); the rest is tests.
+Refute-Skip: comment-only change; no behavior, financial math or governor touched
 Refute-Skip: comment/doc-only edit, verified by re-reading both diffs -- no line of executable logic changed in either file.
+Refute-Skip: commit authored by another session on this branch; no refute-financial-change run covers it yet (runner session round pending); display / ordering only, covered by its own tests
 Refute-Skip: commit-trailer allowlist + status/docs only; no financial code
+Refute-Skip: confidentiality-gate hardening with no financial or governor math; verified by two independent Fable 5.1 adversarial reviews (defects fixed and pinned by tests incl. a real temp git repo) rather than the formal refute-financial-change workflow
 Refute-Skip: constant extraction — 86400000 (ms-per-day) is a fixed
 Refute-Skip: contract shape only
 Refute-Skip: contract-only tightening — no financial computation, no engine math
@@ -140,6 +199,7 @@ Refute-Skip: copy only — insight title and flag text; no condition, threshold,
 Refute-Skip: correctness-only fixes to mapping resolution; no new financial computation
 Refute-Skip: data migration only — no financial formula changed; promotes
 Refute-Skip: data plumbing only — resolvers select sources, no financial math
+Refute-Skip: data-only removal of one stale key from the tenant-name to lease-id cache; no engine, scoring or NOI math touched; no refute-financial-change workflow or adversarial review was run; verified only by npm run reconcile failing before and passing after
 Refute-Skip: debt-api.ts — transport-layer change only; no scoring math altered. getMacro→fetchFredMacro strictly reduces refi false-positive risk when FRED is unavailable.
 Refute-Skip: delivery mapping only — no financial math; direction/kind constants
 Refute-Skip: delivery-only route
@@ -157,16 +217,25 @@ Refute-Skip: display-only placeholder surface
 Refute-Skip: display-only premium history; reuses the analysis engine's same-term rule, no scoring/benchmark consumer
 Refute-Skip: display-only primitive — no financial math
 Refute-Skip: display-only primitives and alert presentation — no financial computation
+Refute-Skip: docs and test allowlist only; no financial-decision code
 Refute-Skip: docs-only + chore — no financial-decision source changed.
 Refute-Skip: docs-only change, no code or financial logic touched.
 Refute-Skip: docs-only — no financial-decision source changed.
 Refute-Skip: docs/bookkeeping-only change, no code or financial logic touched.
 Refute-Skip: document-search plumbing (documents.ts is refute-exempt; startup.ts is a comment) — no deal, financial or alert logic
+Refute-Skip: document-search plumbing (worker respawn cooldown) — no financial math
 Refute-Skip: document-search transport plumbing and a diagnostic script — no deal, financial or alert logic
 Refute-Skip: document-search transport plumbing — no deal, financial or alert logic (documents.ts is already on the refute exemption list for the same reason)
 Refute-Skip: documentation only
 Refute-Skip: documentation only, no code change.
 Refute-Skip: error transport only — no financial computation, ranking, or threshold touched
+Refute-Skip: error-handling log formatting only; no financial math, scoring, or governor logic touched
+Refute-Skip: error-handling response body only; no financial math, scoring, or governor logic touched
+Refute-Skip: error-message routing and test assertions only; no engine math or governor logic touched
+Refute-Skip: error-message text only; calibration.ts change is the error-return string, no scoring/engine math or governor logic touched
+Refute-Skip: fixes for wf_13f17df1-9cc findings; a third workflow round on these fixes was not run (diminishing returns), covered by tests
+Refute-Skip: fixes for wf_158065a8-166 findings; head not yet re-reviewed by a workflow run (runner session to re-run on this head)
+Refute-Skip: fixes for wf_7a7dda33-871 findings; no further workflow round run (loop capped by Gabriel after round 4), covered by tests
 Refute-Skip: freshness/UI reporting only (a read-guard around a status
 Refute-Skip: freshness/UI reporting only, no financial computation.
 Refute-Skip: freshness/UI reporting only, no financial computation; this
@@ -178,7 +247,9 @@ Refute-Skip: governance metadata + planning doc only — no financial math
 Refute-Skip: governance metadata only
 Refute-Skip: governance metadata only — no financial math
 Refute-Skip: ic-memo endpoint renders an already-computed CapitalAllocationReport to HTML; no financial formula, scoring, or NOI computation added
+Refute-Skip: ingest only, no financial-decision math
 Refute-Skip: ingest plumbing — validation only, no financial math
+Refute-Skip: ingest-only Notion fetch/field-mapping change (endpoint, Total SF alias, Killed status); no scoring, NOI, DSCR/LTV or governor math touched; unit-tested and live-verified
 Refute-Skip: inline adversarial pass on security-gate code (header-incapable request paths,
 Refute-Skip: insight copy only; severity, trigger, and governor constants unchanged
 Refute-Skip: label text only (server/ai/respond.ts), no computation change
@@ -193,6 +264,8 @@ Refute-Skip: no financial-decision code in this branch, and an adversarial secur
 Refute-Skip: no financial-decision code touched.
 Refute-Skip: no financial-decision code.
 Refute-Skip: no financial-decision math — pure DDL + schema assertions
+Refute-Skip: no refute-financial-change workflow run; one independent adversarial-reviewer pass ran 2026-09-30 on Opus 5.5 because Fable hit the monthly spend limit (below the Fable floor for financial code). 7 of 8 claims survived. One open finding, not fixed here: stored acq scores are keyed by an input hash with no engine version and INSERT OR IGNORE, so candidates already stored with a null officePct keep their old full-credit score until re-scored. Draft PR; re-run the refute on Fable before merge.
+Refute-Skip: no refute-financial-change workflow run; one independent adversarial-reviewer pass ran 2026-10-01 on Opus 5.5 (Fable hit the monthly spend limit, so below the Fable floor). 6 claims: 5 survived, 1 refuted: the tasks.id warn was emitted on entity reconciliation, which conditions.ts turns into the CRITICAL reconcile-fail alert email. Fixed in this commit by emitting it on entity tasks; test added. Re-run the review on Fable if required before merge.
 Refute-Skip: noiPerSf null guard is a defensive type-coercion fix (null→0 and undefined→NaN), not a financial logic change — the division itself is unchanged.
 Refute-Skip: ops tooling only (PowerShell scripts + docs + gitignore); no application code or financial logic touched.
 Refute-Skip: path-resolution refactor only; identical expression, no financial computation touched
@@ -208,15 +281,22 @@ Refute-Skip: pure Zod schema — no financial-decision math
 Refute-Skip: pure client-side filter predicate + context plumbing, no
 Refute-Skip: pure documentation fix — no code, no logic, no financial computation;
 Refute-Skip: pure render optimization — no behavior change, no financial
+Refute-Skip: read-only PowerShell runner health check; no financial-decision logic, no data writes
 Refute-Skip: read-only alert conditions surfacing existing warehouse data; no engine math, scoring, NOI, or capital-allocation logic.
 Refute-Skip: read-only display of already-computed, already-refuted
 Refute-Skip: read-only display of already-scored AcquisitionScore/
+Refute-Skip: read-only display; no financial-decision, governor or scoring math
+Refute-Skip: read-only expense and alert reporting logic with no consumer in any scoring, verdict or capital-allocation path; the new alert rules are not wired to any caller yet and emit impactAnnualUsd null. An independent Opus adversarial review of the whole branch ran (not the refute-financial-change workflow): 7 claims, 3 survived, 3 refuted, 1 unverifiable; its confirmed defects were fixed in 451c856, cac456a, a3305cd, f96974d and 69a365b; full gate green
 Refute-Skip: read-only freshness reporting; no financial figure or threshold changed
 Refute-Skip: read-only historical aggregation for display; no scoring/benchmark path consumes it
+Refute-Skip: read-only trend reporting (monthly rent/vacancy snapshots) with no consumer in any scoring, verdict or capital-allocation path. An independent Opus adversarial review of the whole branch ran (8 claims: 5 survived, 1 unverifiable, 2 refuted and fixed in 3ece24f and d40e2af); full gate green except the known-red reconcile step, with warehouse:verify passing
+Refute-Skip: read-only trend reporting derived from snapshot lease rows; no consumer in any scoring, verdict or capital-allocation path (UI display only). Independent per-task reviews plus an Opus whole-branch review ran on this range and its three Important findings were fixed in b45d630
+Refute-Skip: relocates where a health-timestamp file is written (path/env wiring) and test isolation only; no scoring, NOI, alert-condition, governor or capital math touched, and alert-state.json/dedup is unchanged
 Refute-Skip: restoration of f951b40 (PR #121) — no new formula; identical logic to the adversarially-reviewed IC Memo + Capital Allocation synthesis engine
 Refute-Skip: route mounting only — no financial math
 Refute-Skip: route-only — insights-api.ts wires the existing generator+ranker, no financial math
 Refute-Skip: schema-only migration — no financial math.
+Refute-Skip: security-gate middleware mount with no financial or governor math; verified by an independent Opus 5.5 adversarial review plus a mutation check (removing the /sse mount fails the structural test) rather than the formal refute-financial-change workflow
 Refute-Skip: server/warehouse/debt-api.ts — HTTP transport layer only; contains no financial math, scoring logic, or governor enforcement. Calls adversarially-verified scoreDebtPositions() (PR #96) and buildMaturityLadder(), returns Zod-validated responses. No capital-allocation decisions originate here.
 Refute-Skip: server/warehouse/debt-scoring.ts — hasUnknownMaturity is a guard-tightening change only (makes cash-out signal strictly harder to fire, never easier). No scoring math, governor constants, or signal-priority logic changed from the adversarially-reviewed baseline (PR #96: Opus 4.8, 5 findings fixed). Change independently reviewed by CodeRabbit automated analysis.
 Refute-Skip: server/warehouse/insurance-analysis.ts's only change in this
@@ -227,6 +307,7 @@ Refute-Skip: status claim + plan doc only; no code
 Refute-Skip: status-file housekeeping — no code or financial logic changed
 Refute-Skip: task-feed text cleanup; no financial data
 Refute-Skip: test + dedupe of a display-name lookup; no premium/cohort/benchmark math touched
+Refute-Skip: test setup only; no server, scoring, NOI, alert-condition, governor or capital code changed in this commit
 Refute-Skip: test-only change; adds three assertions over existing behaviour and
 Refute-Skip: the only financial-source-path file this PR touches is
 Refute-Skip: two independent fable-tier reviews already performed and recorded (see above); repo's own refute-financial-change Workflow not run from this environment
