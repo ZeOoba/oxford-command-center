@@ -18,8 +18,9 @@
  *    The identity is the VERIFIED Access JWT email (functions/_shared/access-identity.ts, the same
  *    path whoami uses), never the forgeable Cf-Access-Authenticated-User-Email header. With
  *    ACCESS_REQUIRE=1 a request that fails verification is refused (403, or 503 when Access config
- *    or the JWKS is unavailable) before any snapshot read or model call. Inert mode (ACCESS_REQUIRE
- *    not '1', e.g. local dev) keys on CF-Connecting-IP instead;
+ *    or the JWKS is unavailable) before any snapshot read or model call; ACCESS_REQUIRE set to
+ *    anything but exactly '1' is a 503 config error. Inert mode (ACCESS_REQUIRE unset or empty, e.g.
+ *    local dev) keys on CF-Connecting-IP instead, IPv6 collapsed to its /64 (rateLimitKeyForIp);
  *  - an edge confidentiality scan (OI-225 counterpart) derived from the baked snapshot's own
  *    `confidential:true` deals runs over the question, the history and every tool result,
  *    mirroring the roster-based guard the Brain Server injects. The mirror has no roster on disk,
@@ -118,6 +119,46 @@ export function resetRateLimit(): void {
   windows.clear();
 }
 
+/** Expand an IPv6 address (no zone id) to its 8 hextets, or null when it is not valid IPv6. An
+ *  IPv4-dotted tail (::ffff:a.b.c.d) counts as two hextets. */
+function ipv6Hextets(addr: string): string[] | null {
+  let s = addr;
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (v4) {
+    const o = v4.slice(1).map(Number);
+    if (o.some((n) => n > 255)) return null;
+    s = `${s.slice(0, v4.index)}${((o[0]! << 8) | o[1]!).toString(16)}:${((o[2]! << 8) | o[3]!).toString(16)}`;
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  const all = [...head, ...tail];
+  if (all.some((h) => !/^[0-9a-f]{1,4}$/i.test(h))) return null;
+  if (halves.length === 1) return all.length === 8 ? all : null;
+  if (all.length > 7) return null;
+  return [...head, ...Array<string>(8 - all.length).fill('0'), ...tail];
+}
+
+/** Inert-mode rate-limit key for the CF-Connecting-IP (adversarial review 2026-10-30, C5). IPv4 is
+ *  keyed as-is. IPv6 collapses to its /64 (`ip6:<first 4 hextets>::/64`, leading zeros dropped,
+ *  lowercase): a single subscriber is routinely handed a whole /64, so keying the exact address gave
+ *  one caller ~2^64 independent budgets. An IPv4-mapped IPv6 address keys as its IPv4. */
+export function rateLimitKeyForIp(raw: string | null | undefined): string {
+  const ip = (raw ?? '').trim();
+  if (!ip) return 'ip:unknown';
+  if (!ip.includes(':')) return `ip:${ip}`;
+  const hextets = ipv6Hextets(ip.split('%')[0]!);
+  if (!hextets) return `ip:${ip.toLowerCase()}`;
+  const h = hextets.map((x) => parseInt(x, 16));
+  // ::ffff:a.b.c.d (IPv4-mapped): the caller is an IPv4 client.
+  if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) {
+    return `ip:${h[6]! >> 8}.${h[6]! & 0xff}.${h[7]! >> 8}.${h[7]! & 0xff}`;
+  }
+  return `ip6:${h.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
+}
+
 /** Roster-free confidential scan built from the snapshot's own flagged deals (see header): the
  *  deal's name AND its shortName (scripts/bake-mirror.ts residue-sweep parity). undefined when the
  *  snapshot flags no deal: the caller must then refuse anything that would egress (F2).
@@ -171,7 +212,7 @@ export async function handleAiPost(context: PagesContext, deps: AiDeps): Promise
   }
   // Verified email when Access is enforced; otherwise (inert / local dev) the connecting IP. The
   // plain email header is never a key: it is forgeable off the Access path.
-  const rateKey = who.kind === 'verified' ? `user:${who.email.toLowerCase()}` : `ip:${request.headers.get('cf-connecting-ip') || 'unknown'}`;
+  const rateKey = who.kind === 'verified' ? `user:${who.email.toLowerCase()}` : rateLimitKeyForIp(request.headers.get('cf-connecting-ip'));
 
   const body: unknown = await request.json().catch(() => ({}));
   const input = sanitizeAgentInput(body);

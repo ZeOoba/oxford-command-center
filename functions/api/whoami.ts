@@ -8,17 +8,19 @@
  * deployment URL the Access application does not cover). Do not add it back as a fallback.
  *
  * Config (Pages project environment variables; same names as the Brain Server):
- *  - ACCESS_REQUIRE  must be exactly '1' to verify. Anything else is the inert/local-dev mode that
- *                    access-authz also has: no verification is attempted AND no identity is returned
- *                    (`{ email: null }`, the pre-existing "no signal" shape) — never a header echo.
+ *  - ACCESS_REQUIRE  must be exactly '1' to verify. Unset or empty is the inert/local-dev mode:
+ *                    no verification is attempted AND no identity is returned (`{ email: null }`,
+ *                    the pre-existing "no signal" shape) — never a header echo. Any other value
+ *                    ('true', '1 ', '0') is a config error and fails closed with 503.
  *  - ACCESS_ISSUER   https://<team>.cloudflareaccess.com   (required when ACCESS_REQUIRE=1)
  *  - ACCESS_AUD      the Access application's AUD tag       (required when ACCESS_REQUIRE=1)
  *
  * Responses (bodies never say why; reasons are logged):
  *  - 200 { email }        verified identity
- *  - 200 { email: null }  ACCESS_REQUIRE not '1' (inert)
+ *  - 200 { email: null }  ACCESS_REQUIRE unset or empty (inert)
  *  - 403 { error }        JWT missing / invalid / expired / wrong audience or issuer
- *  - 503 { error }        ACCESS_REQUIRE=1 but issuer/aud unset, or the JWKS cannot be fetched
+ *  - 503 { error }        ACCESS_REQUIRE set but not '1', ACCESS_REQUIRE=1 but issuer/aud unset, or
+ *                         the JWKS cannot be fetched
  */
 import { createAccessIdentityResolver, type AccessEnv, type AccessIdentityDeps } from '../_shared/access-identity';
 import { fetchAccessJwks } from '../_shared/access-jwt';
