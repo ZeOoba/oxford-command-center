@@ -1,0 +1,213 @@
+// @vitest-environment node
+// tests/unit/whoami-edge-function.test.ts
+//
+// functions/api/whoami.ts must derive identity ONLY from a verified Cf-Access-Jwt-Assertion. The
+// forgeable Cf-Access-Authenticated-User-Email header must never authenticate anyone. Synthetic RSA
+// keys, issuer and AUD throughout — no real team domain, AUD or secret appears here.
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
+import { handleWhoami, resetWhoamiCache, type WhoamiDeps } from '../../functions/api/whoami';
+import { verifyAccessJwt, type Jwk } from '../../functions/_shared/access-jwt';
+
+const ISSUER = 'https://example-team.cloudflareaccess.com';
+const AUDIENCE = 'synthetic-aud-tag';
+const NOW = 1_780_000_000;
+const ENV = { ACCESS_REQUIRE: '1', ACCESS_ISSUER: ISSUER, ACCESS_AUD: AUDIENCE };
+
+let privateKey: KeyObject;
+let wrongKey: KeyObject;
+let jwks: Jwk[];
+
+function b64url(input: Buffer | string): string {
+  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function sign(payload: Record<string, unknown>, opts: { key?: KeyObject; kid?: string; alg?: string } = {}): string {
+  const header = { alg: opts.alg ?? 'RS256', typ: 'JWT', kid: opts.kid ?? 'kid-1' };
+  const input = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(input);
+  return `${input}.${b64url(signer.sign(opts.key ?? privateKey))}`;
+}
+
+const claims = (over: Record<string, unknown> = {}) => ({
+  iss: ISSUER,
+  aud: [AUDIENCE],
+  email: 'verified.user@example.invalid',
+  exp: NOW + 3600,
+  nbf: NOW - 10,
+  ...over,
+});
+
+function req(headers: Record<string, string>): Request {
+  return new Request('https://mirror.example.invalid/api/whoami', { headers });
+}
+
+let fetchJwks: ReturnType<typeof vi.fn<WhoamiDeps['fetchJwks']>>;
+const deps = (): WhoamiDeps => ({ fetchJwks, nowSeconds: () => NOW });
+
+beforeAll(() => {
+  const a = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const b = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  privateKey = a.privateKey;
+  wrongKey = b.privateKey;
+  jwks = [{ ...(a.publicKey.export({ format: 'jwk' }) as unknown as Jwk), kid: 'kid-1', alg: 'RS256' }];
+});
+
+beforeEach(() => {
+  resetWhoamiCache();
+  fetchJwks = vi.fn<WhoamiDeps['fetchJwks']>(async () => jwks);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+describe('whoami edge function', () => {
+  it('returns the email from a valid, verified JWT', async () => {
+    const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': sign(claims()) }), env: ENV }, deps());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ email: 'verified.user@example.invalid' });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('uses the VERIFIED claim, ignoring a conflicting plain header', async () => {
+    const res = await handleWhoami(
+      {
+        request: req({
+          'Cf-Access-Jwt-Assertion': sign(claims()),
+          'Cf-Access-Authenticated-User-Email': 'attacker@example.invalid',
+        }),
+        env: ENV,
+      },
+      deps(),
+    );
+    expect(await res.json()).toEqual({ email: 'verified.user@example.invalid' });
+  });
+
+  it('header-only forgery does NOT authenticate (config enabled)', async () => {
+    const res = await handleWhoami(
+      { request: req({ 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }), env: ENV },
+      deps(),
+    );
+    expect(res.status).toBe(403);
+    const text = await res.text();
+    expect(text).not.toContain('forged@example.invalid');
+    expect(JSON.parse(text)).not.toHaveProperty('email');
+  });
+
+  it('header-only forgery yields no identity when inert (ACCESS_REQUIRE unset or not "1")', async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '0' }, { ACCESS_REQUIRE: 'true' }, undefined]) {
+      const res = await handleWhoami(
+        { request: req({ 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }), env },
+        deps(),
+      );
+      expect(await res.json()).toEqual({ email: null });
+    }
+    expect(fetchJwks).not.toHaveBeenCalled();
+  });
+
+  it('missing JWT header -> 403, no identity', async () => {
+    const res = await handleWhoami({ request: req({}), env: ENV }, deps());
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'forbidden' });
+  });
+
+  it.each([
+    ['expired', claims({ exp: NOW - 1 })],
+    ['wrong audience', claims({ aud: ['some-other-aud'] })],
+    ['wrong issuer', claims({ iss: 'https://other-team.cloudflareaccess.com' })],
+    ['missing exp', (() => { const c = claims(); delete (c as Record<string, unknown>).exp; return c; })()],
+    ['not yet valid', claims({ nbf: NOW + 3600 })],
+    ['missing email', claims({ email: '' })],
+  ])('rejects %s -> 403', async (_name, payload) => {
+    const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': sign(payload) }), env: ENV }, deps());
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'forbidden' });
+  });
+
+  it('rejects a token signed by a different key', async () => {
+    const res = await handleWhoami(
+      { request: req({ 'Cf-Access-Jwt-Assertion': sign(claims(), { key: wrongKey }) }), env: ENV },
+      deps(),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a tampered payload (signature no longer matches)', async () => {
+    const [h, , s] = sign(claims()).split('.');
+    const forgedPayload = b64url(JSON.stringify(claims({ email: 'attacker@example.invalid' })));
+    const res = await handleWhoami(
+      { request: req({ 'Cf-Access-Jwt-Assertion': `${h}.${forgedPayload}.${s}` }), env: ENV },
+      deps(),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a tampered signature', async () => {
+    const t = sign(claims());
+    const flipped = t.slice(0, -4) + (t.endsWith('AAAA') ? 'BBBB' : 'AAAA');
+    const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': flipped }), env: ENV }, deps());
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects alg:none, HS256, unknown kid, missing kid and garbage', async () => {
+    const none = `${b64url(JSON.stringify({ alg: 'none', kid: 'kid-1' }))}.${b64url(JSON.stringify(claims()))}.`;
+    const hs = sign(claims(), { alg: 'HS256' });
+    const unknownKid = sign(claims(), { kid: 'nope' });
+    const noKid = (() => {
+      const input = `${b64url(JSON.stringify({ alg: 'RS256' }))}.${b64url(JSON.stringify(claims()))}`;
+      const s = createSign('RSA-SHA256');
+      s.update(input);
+      return `${input}.${b64url(s.sign(privateKey))}`;
+    })();
+    for (const t of [none, hs, unknownKid, noKid, 'not-a-jwt', 'a.b.c', '...']) {
+      const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': t }), env: ENV }, deps());
+      expect(res.status).toBe(403);
+    }
+  });
+
+  it('fails closed (503, no identity) when ACCESS_REQUIRE=1 but issuer/aud are missing', async () => {
+    const token = sign(claims());
+    for (const env of [
+      { ACCESS_REQUIRE: '1' },
+      { ACCESS_REQUIRE: '1', ACCESS_ISSUER: ISSUER },
+      { ACCESS_REQUIRE: '1', ACCESS_AUD: AUDIENCE },
+      { ACCESS_REQUIRE: '1', ACCESS_ISSUER: 'http://insecure.example.invalid', ACCESS_AUD: AUDIENCE },
+    ]) {
+      const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env }, deps());
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'unavailable' });
+    }
+  });
+
+  it('fails closed (503) when the JWKS cannot be fetched or is empty', async () => {
+    const token = sign(claims());
+    fetchJwks.mockRejectedValueOnce(new Error('network'));
+    expect((await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, deps())).status).toBe(503);
+    fetchJwks.mockResolvedValueOnce([]);
+    expect((await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, deps())).status).toBe(503);
+  });
+
+  it('caches the JWKS within the TTL', async () => {
+    const token = sign(claims());
+    await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, deps());
+    await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, deps());
+    expect(fetchJwks).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('verifyAccessJwt parity details', () => {
+  const opts = { audience: AUDIENCE, issuer: ISSUER, nowSeconds: NOW };
+
+  it('accepts a string aud and tolerates nbf skew, but enforces exp exactly', async () => {
+    expect((await verifyAccessJwt(sign(claims({ aud: AUDIENCE })), jwks, opts)).ok).toBe(true);
+    expect((await verifyAccessJwt(sign(claims({ nbf: NOW + 30 })), jwks, opts)).ok).toBe(true);
+    expect((await verifyAccessJwt(sign(claims({ nbf: NOW + 61 })), jwks, opts)).ok).toBe(false);
+    expect((await verifyAccessJwt(sign(claims({ exp: NOW })), jwks, opts)).ok).toBe(true);
+    expect((await verifyAccessJwt(sign(claims({ exp: NOW - 1 })), jwks, opts)).ok).toBe(false);
+  });
+
+  it('rejects a malformed JWK without throwing', async () => {
+    const bad: Jwk[] = [{ kty: 'RSA', n: '!!', e: 'AQAB', kid: 'kid-1' }];
+    expect(await verifyAccessJwt(sign(claims()), bad, opts)).toMatchObject({ ok: false });
+  });
+});
