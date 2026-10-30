@@ -6,8 +6,8 @@
 // keys, issuer and AUD throughout — no real team domain, AUD or secret appears here.
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSign, generateKeyPairSync, type KeyObject } from 'node:crypto';
-import { handleWhoami, resetWhoamiCache, type WhoamiDeps } from '../../functions/api/whoami';
-import { verifyAccessJwt, type Jwk } from '../../functions/_shared/access-jwt';
+import { handleWhoami, onRequestGet, resetWhoamiCache, type WhoamiDeps } from '../../functions/api/whoami';
+import { fetchAccessJwks, verifyAccessJwt, type Jwk } from '../../functions/_shared/access-jwt';
 
 const ISSUER = 'https://example-team.cloudflareaccess.com';
 const AUDIENCE = 'synthetic-aud-tag';
@@ -94,8 +94,8 @@ describe('whoami edge function', () => {
     expect(JSON.parse(text)).not.toHaveProperty('email');
   });
 
-  it('header-only forgery yields no identity when inert (ACCESS_REQUIRE unset or not "1")', async () => {
-    for (const env of [{}, { ACCESS_REQUIRE: '0' }, { ACCESS_REQUIRE: 'true' }, undefined]) {
+  it("header-only forgery yields no identity when inert (ACCESS_REQUIRE unset, empty or '0')", async () => {
+    for (const env of [{}, { ACCESS_REQUIRE: '' }, { ...ENV, ACCESS_REQUIRE: '0' }, undefined]) {
       const res = await handleWhoami(
         { request: req({ 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }), env },
         deps(),
@@ -104,6 +104,26 @@ describe('whoami edge function', () => {
     }
     expect(fetchJwks).not.toHaveBeenCalled();
   });
+
+  // Adversarial review 2026-10-30 (C5): a set-but-malformed ACCESS_REQUIRE ('true', '1 ') used to go
+  // silently inert, so an operator who meant to enforce Access got no verification at all.
+  it.each(['true', '1 ', ' 1', 'TRUE', 'yes', 'on', '01', '00'])(
+    'fails closed (503, no identity) when ACCESS_REQUIRE is set but neither "1" nor "0" (%j)',
+    async (value) => {
+      const res = await handleWhoami(
+        {
+          request: req({ 'Cf-Access-Jwt-Assertion': sign(claims()), 'Cf-Access-Authenticated-User-Email': 'forged@example.invalid' }),
+          env: { ...ENV, ACCESS_REQUIRE: value },
+        },
+        deps(),
+      );
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).not.toContain('verified.user@example.invalid');
+      expect(body).not.toContain('forged@example.invalid');
+      expect(fetchJwks).not.toHaveBeenCalled();
+    },
+  );
 
   it('missing JWT header -> 403, no identity', async () => {
     const res = await handleWhoami({ request: req({}), env: ENV }, deps());
@@ -209,5 +229,55 @@ describe('verifyAccessJwt parity details', () => {
   it('rejects a malformed JWK without throwing', async () => {
     const bad: Jwk[] = [{ kty: 'RSA', n: '!!', e: 'AQAB', kid: 'kid-1' }];
     expect(await verifyAccessJwt(sign(claims()), bad, opts)).toMatchObject({ ok: false });
+  });
+});
+
+// Review follow-up 2026-10-30: three paths #510 shipped untested.
+describe('whoami — onRequestGet wiring, JWKS TTL and fetcher URL', () => {
+  it('onRequestGet converts Date.now() milliseconds to whole seconds before verifying', async () => {
+    // exp is enforced exactly. A ms clock would read as ~1000x later and reject this token as expired;
+    // a non-floored clock at NOW + 0.999 s would still accept it, so pin exp to NOW.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW * 1000 + 999);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ keys: jwks }), { status: 200 })));
+    try {
+      const ok = await onRequestGet({ request: req({ 'Cf-Access-Jwt-Assertion': sign(claims({ exp: NOW })) }), env: ENV });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ email: 'verified.user@example.invalid' });
+      const expired = await onRequestGet({ request: req({ 'Cf-Access-Jwt-Assertion': sign(claims({ exp: NOW - 1 })) }), env: ENV });
+      expect(expired.status).toBe(403);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('re-fetches the JWKS once the 1h TTL has elapsed, not before', async () => {
+    let now = NOW;
+    const ttlDeps = (): WhoamiDeps => ({ fetchJwks, nowSeconds: () => now });
+    const token = sign(claims({ exp: NOW + 7200 }));
+    await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, ttlDeps());
+    now = NOW + 3599;
+    await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, ttlDeps());
+    expect(fetchJwks).toHaveBeenCalledTimes(1);
+    now = NOW + 3600;
+    const res = await handleWhoami({ request: req({ 'Cf-Access-Jwt-Assertion': token }), env: ENV }, ttlDeps());
+    expect(res.status).toBe(200);
+    expect(fetchJwks).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetchAccessJwks reads <issuer>/cdn-cgi/access/certs (trailing slashes stripped) and fails on a bad body', async () => {
+    const fetchStub = vi.fn(async () => new Response(JSON.stringify({ keys: jwks }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      expect(await fetchAccessJwks(`${ISSUER}//`)).toEqual(jwks);
+      expect(fetchStub).toHaveBeenCalledWith(`${ISSUER}/cdn-cgi/access/certs`);
+      fetchStub.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+      await expect(fetchAccessJwks(ISSUER)).rejects.toThrow(/no keys/);
+      fetchStub.mockResolvedValueOnce(new Response('', { status: 500 }));
+      await expect(fetchAccessJwks(ISSUER)).rejects.toThrow(/500/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
