@@ -70,3 +70,15 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     expect(isTaskList({})).toBe(true);
   });
 });
+
+describe('mapGraphTask — notes redaction (#511 follow-up)', () => {
+  it('redacts third-party contact data in the task body before it reaches the snapshot', () => {
+    const t = mapGraphTask(
+      { id: 'pii-1', title: 'Roof quote', body: { content: '<p>Send COI to jane.roe@example.com or call 555-010-0123</p>' } },
+      'To Do',
+    );
+    expect(t!.notes).not.toMatch(/jane\.roe@example\.com|555-010-0123/);
+    expect(t!.notes).toContain('[email redacted]');
+    expect(t!.notes).toContain('[phone redacted]');
+  });
+});
