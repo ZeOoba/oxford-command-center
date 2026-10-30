@@ -87,3 +87,6 @@ data/ar/failed/
 # under data/, so it stays local-only. Regenerate with scripts/property-financials/normalize-raw.ts; tests that need it
 # skip with a visible marker when absent. Ruled by Gabriel 2026-10-06.
 data/property-financials/monthly-long.csv
+
+# Gate/build output logs (gate-output.log was tracked by mistake).
+*.log
