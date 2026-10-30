@@ -8,6 +8,17 @@ interface WorkspaceConfig {
 interface Persisted {
   workspaces: Record<string, WorkspaceConfig>;
   active: string;
+  /** Layout migration version this state has been through (absent = never migrated). */
+  version?: number;
+}
+
+/** Moves workspaces that still equal a PREVIOUS default onto the current default, once. A layout
+ *  the user arranged themselves never equals a shipped default, so it is left alone. List every
+ *  default that has shipped (a saved layout keeps the default it was created under). Pass a stable
+ *  module-level constant. */
+export interface LayoutMigration {
+  version: number;
+  legacyDefaults: readonly WorkspaceConfig[];
 }
 
 const KEY = 'ora-overview-workspaces';
@@ -17,14 +28,32 @@ const KEY = 'ora-overview-workspaces';
  *  (`activeCfg`/`mutate`/`resetActive` all depend on `defaultHidden` by reference). */
 const EMPTY_HIDDEN: readonly string[] = Object.freeze([]);
 
-function load(allIds: string[], defaultHidden: readonly string[]): Persisted {
-  const fallback: Persisted = { workspaces: { Default: { order: allIds, hidden: [...defaultHidden] } }, active: 'Default' };
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
+
+function migrate(parsed: Persisted, allIds: string[], defaultHidden: readonly string[], m: LayoutMigration): Persisted {
+  if ((parsed.version ?? 0) >= m.version) return parsed;
+  const workspaces = Object.fromEntries(
+    Object.entries(parsed.workspaces).map(([name, cfg]) => {
+      const norm = normalize(cfg, allIds, defaultHidden);
+      const untouched = m.legacyDefaults.some((d) => sameList(norm.order, d.order) && sameList(norm.hidden, d.hidden));
+      return [name, untouched ? { order: [...allIds], hidden: [...defaultHidden] } : cfg];
+    }),
+  );
+  return { ...parsed, workspaces, version: m.version };
+}
+
+function load(allIds: string[], defaultHidden: readonly string[], m?: LayoutMigration): Persisted {
+  const fallback: Persisted = {
+    workspaces: { Default: { order: allIds, hidden: [...defaultHidden] } },
+    active: 'Default',
+    ...(m ? { version: m.version } : {}),
+  };
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Persisted;
     if (!parsed.workspaces || !parsed.active) return fallback;
-    return parsed;
+    return m ? migrate(parsed, allIds, defaultHidden, m) : parsed;
   } catch {
     return fallback;
   }
@@ -47,8 +76,8 @@ function normalize(cfg: WorkspaceConfig | undefined, allIds: string[], defaultHi
   return { order, hidden };
 }
 
-export function useWorkspaces(allIds: string[], defaultHidden: readonly string[] = EMPTY_HIDDEN) {
-  const [state, setState] = useState<Persisted>(() => load(allIds, defaultHidden));
+export function useWorkspaces(allIds: string[], defaultHidden: readonly string[] = EMPTY_HIDDEN, migration?: LayoutMigration) {
+  const [state, setState] = useState<Persisted>(() => load(allIds, defaultHidden, migration));
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
@@ -94,7 +123,7 @@ export function useWorkspaces(allIds: string[], defaultHidden: readonly string[]
     (name: string) =>
       setState((s) => {
         const cfg = normalize(s.workspaces[s.active], allIds, defaultHidden);
-        return { workspaces: { ...s.workspaces, [name]: { order: [...cfg.order], hidden: [...cfg.hidden] } }, active: name };
+        return { ...s, workspaces: { ...s.workspaces, [name]: { order: [...cfg.order], hidden: [...cfg.hidden] } }, active: name };
       }),
     [allIds, defaultHidden],
   );
