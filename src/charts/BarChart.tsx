@@ -10,6 +10,9 @@ import { AXIS_TICK } from './theme';
 export interface BarDatum {
   label: string;
   value: number;
+  /** Optional provenance styling (roadmap 3.3): reconstructed bars render faint, forecast bars as a
+   *  dashed outline. Omitted = recorded/solid. Pair with <SeriesLegend>. */
+  provenance?: 'recorded' | 'reconstructed' | 'forecast';
 }
 
 interface Props {
@@ -70,8 +73,15 @@ export function BarChart({ data, height = 250, color = 'var(--accent)', negative
                     x={bx}
                     width={bw}
                     rx={4}
-                    fill={`url(#${neg ? 'barneg' : 'bar'}-${gid})`}
-                    style={{ cursor: 'pointer', opacity: hover && !active ? 0.55 : 1, transition: 'opacity 120ms' }}
+                    fill={d.provenance === 'forecast' ? 'transparent' : `url(#${neg ? 'barneg' : 'bar'}-${gid})`}
+                    stroke={d.provenance === 'forecast' ? (neg ? negativeColor : color) : undefined}
+                    strokeDasharray={d.provenance === 'forecast' ? '4 3' : undefined}
+                    data-provenance={d.provenance}
+                    style={{
+                      cursor: 'pointer',
+                      opacity: (hover && !active ? 0.55 : 1) * (d.provenance === 'reconstructed' ? 0.45 : 1),
+                      transition: 'opacity 120ms',
+                    }}
                     initial={{ height: 0, y: y0 }}
                     animate={{ height: bh, y: bTop }}
                     transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
