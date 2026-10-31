@@ -15,6 +15,8 @@ import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { UiContext, type UiState } from '../../src/brain/ui-context';
 import { PortfolioModule } from '../../src/modules/portfolio/PortfolioModule';
+import { PF_KEYS } from '../../src/modules/property-financials/hooks';
+import { TRENDS_HISTORY_KEY } from '../../src/modules/portfolio/trends-history';
 
 const ASOF = '2026-09-23';
 
@@ -93,5 +95,48 @@ describe('PortfolioModule — Portfolio Value sublabel reports other holdings', 
     renderModule(snapshot([investment]));
     expect(screen.getByText('1 investment property')).toBeTruthy();
     expect(screen.queryByText(/other holdings/)).toBeNull();
+  });
+});
+
+describe('PortfolioModule — roadmap 2.4 trend cells', () => {
+  const months = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}`).slice(0, 9);
+  const ledger = [...['2025-10', '2025-11', '2025-12'], ...months];
+
+  function renderWithTrends() {
+    const qc = seededClient(snapshot([investment, residence]));
+    qc.setQueryData(PF_KEYS.dataset, {
+      dataset: { monthly: { E1: Object.fromEntries(ledger.map((m) => [m, { noi: 40_000, revenue: 0, opex: 0, base_rent: 0 }])) } },
+      liveSf: { entries: { E1: { canonicalId: 'p1' } } },
+    });
+    qc.setQueryData(TRENDS_HISTORY_KEY, {
+      points: [
+        { propertyId: 'p1', month: '2025-09', capturedThrough: '2025-09-30', totalSf: 48000, leasedSf: 43200, inPlaceRent: 0, leaseCount: 1, occPct: 0.9, frozen: true },
+        { propertyId: 'p1', month: '2026-09', capturedThrough: '2026-09-30', totalSf: 48000, leasedSf: 48000, inPlaceRent: 0, leaseCount: 1, occPct: 1, frozen: false },
+      ],
+    });
+    return render(
+      <QueryClientProvider client={qc}>
+        <UiContext.Provider value={ui}>
+          <MemoryRouter>
+            <PortfolioModule />
+          </MemoryRouter>
+        </UiContext.Provider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('labels each new column with its basis and renders the ledger spark and the recorded occupancy change', () => {
+    renderWithTrends();
+    expect(screen.getByText('NOI 12m · ledger')).toBeTruthy();
+    expect(screen.getByText('Occ Δ · recorded')).toBeTruthy();
+    expect(screen.getByRole('img', { name: /29000 Information Lane, Easton MD monthly NOI, P&L ledger entity 100%, 12 months to 2026-09/ })).toBeTruthy();
+    expect(screen.getByText('+10.0 pp')).toBeTruthy();
+    expect(screen.getByText(/· 12 mo/)).toBeTruthy();
+  });
+
+  it('shows a dash, not a number, for a row with no ledger entity or recorded history', () => {
+    renderWithTrends();
+    expect(screen.getAllByTitle('No 12 consecutive P&L-ledger months for this property')).toHaveLength(1);
+    expect(screen.getAllByTitle('Fewer than two recorded monthly snapshots — no change shown')).toHaveLength(1);
   });
 });
