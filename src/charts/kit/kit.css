@@ -1,0 +1,139 @@
+/* src/charts/kit/kit.css
+ *
+ * Styles of the shared hand-built SVG chart kit (roadmap 2.6, promoted from Property Financials'
+ * pf.css). Every value is an app theme token, so the kit renders the same inside and outside the
+ * Property Financials module scope; series colours come from each caller, never from here. Table
+ * rules sit under :where() (zero specificity) so a module's own table styling still wins.
+ */
+.ck-xchart {
+  min-width: 0;
+}
+.ck-chart {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+.ck-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.ck-chart text {
+  fill: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+.ck-chart .ck-bar-label {
+  fill: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+}
+.ck-chart .ck-bar-value {
+  fill: var(--text-primary);
+  font-size: 11px;
+}
+.ck-chart.ck-chart-sx {
+  overflow-x: auto;
+  min-height: 0;
+  max-width: 100%;
+}
+.ck-cin {
+  position: relative;
+}
+.ck-chart-focus:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ck-chart [data-mark]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ck-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 150px;
+  max-width: 240px;
+  z-index: 4;
+}
+.ck-tip b {
+  font-weight: 600;
+}
+.ck-tip-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  font-weight: 600;
+}
+.ck-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+.ck-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.ck-tablefb {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.ck-tablefb summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  width: max-content;
+}
+.ck-tbl {
+  overflow-x: auto;
+  border-top: 1px solid var(--border-subtle);
+  max-width: 100%;
+}
+:where(.ck-tbl) table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+:where(.ck-tbl) th {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  text-align: right;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--text-primary);
+  white-space: nowrap;
+}
+:where(.ck-tbl) td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:where(.ck-tbl) th:first-child,
+:where(.ck-tbl) td:first-child {
+  text-align: left;
+}
+.ck-note {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  max-width: 80ch;
+}
+.ck-mut {
+  color: var(--text-tertiary);
+}
