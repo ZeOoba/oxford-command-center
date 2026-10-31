@@ -12,12 +12,40 @@ import { investmentPropertiesSublabel } from '@/modules/overview/other-holdings'
 import { landlordCostsNotSourced } from '@analytics/property-basis';
 import type { Property } from '@contracts/index';
 import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
+import { Sparkline } from '@/charts/Sparkline';
+import { usePfDataset } from '@/modules/property-financials/hooks';
+import { useTrendsHistory } from './trends-history';
+import { fmtPp, ledgerSparkFor, recordedOccDelta, type LedgerSpark, type RecordedOccDelta } from './table-trends';
 
 export function PortfolioModule() {
   const { data } = useSnapshot();
   const gate = useSnapshotGate();
   const { analytics } = useAnalytics();
   const ui = useUi();
+  const pf = usePfDataset();
+  const history = useTrendsHistory();
+
+  // Roadmap 2.4 trend cells, one map per basis so a row never mixes them with its workbook columns.
+  const sparks = useMemo(() => {
+    const out = new Map<string, LedgerSpark>();
+    const d = pf.data?.dataset;
+    if (!d || !data) return out;
+    for (const p of data.snapshot.properties) {
+      const s = ledgerSparkFor(d.monthly as Parameters<typeof ledgerSparkFor>[0], pf.data?.liveSf?.entries, p.id);
+      if (s) out.set(p.id, s);
+    }
+    return out;
+  }, [pf.data, data]);
+  const occDeltas = useMemo(() => {
+    const out = new Map<string, RecordedOccDelta>();
+    const recorded = history.isError ? [] : history.data?.points ?? [];
+    if (!data) return out;
+    for (const p of data.snapshot.properties) {
+      const dlt = recordedOccDelta(recorded, p.id);
+      if (dlt) out.set(p.id, dlt);
+    }
+    return out;
+  }, [history.isError, history.data, data]);
 
   const cols = useMemo((): Column<Property>[] => [
     {
@@ -37,6 +65,22 @@ export function PortfolioModule() {
     { key: 'sf', header: 'SF', align: 'right', render: (p) => fmtNum(p.sf), sortValue: (p) => p.sf },
     { key: 'occ', header: 'Occ', align: 'right', render: (p) => fmtPct(p.occPct), sortValue: (p) => p.occPct },
     {
+      key: 'occDelta',
+      header: 'Occ Δ · recorded',
+      align: 'right',
+      render: (p) => {
+        const dlt = occDeltas.get(p.id);
+        if (!dlt) return <span title="Fewer than two recorded monthly snapshots — no change shown" style={{ color: 'var(--text-tertiary)' }}>—</span>;
+        return (
+          <span title={`Lease-SF occupancy, recorded snapshots ${dlt.from} to ${dlt.to}`}>
+            <span className="num">{fmtPp(dlt.deltaPp)}</span>
+            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}> · {dlt.spanMonths} mo</span>
+          </span>
+        );
+      },
+      sortValue: (p) => occDeltas.get(p.id)?.deltaPp ?? null,
+    },
+    {
       key: 'noi',
       header: 'NOI',
       align: 'right',
@@ -50,6 +94,21 @@ export function PortfolioModule() {
         ),
       sortValue: (p) => p.noi,
     },
+    {
+      key: 'noi12',
+      header: 'NOI 12m · ledger',
+      render: (p) => {
+        const s = sparks.get(p.id);
+        if (!s) return <span title="No 12 consecutive P&L-ledger months for this property" style={{ color: 'var(--text-tertiary)' }}>—</span>;
+        return (
+          <div className="flex items-center gap-2" title={`P&L ledger, entity 100%, 12 months to ${s.through}: ${fmtUsdCompact(s.t12)}`}>
+            <Sparkline data={s.months.map((m) => m.noi)} label={`${p.name} monthly NOI, P&L ledger entity 100%, 12 months to ${s.through}`} valueFormat={fmtUsdCompact} width={72} height={22} />
+            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{fmtUsdCompact(s.t12)}</span>
+          </div>
+        );
+      },
+      sortValue: (p) => sparks.get(p.id)?.t12 ?? null,
+    },
     { key: 'cap', header: 'Cap', align: 'right', render: (p) => fmtPct(p.capRate), sortValue: (p) => p.capRate ?? 0 },
     { key: 'dscr', header: 'DSCR', align: 'right', render: (p) => (p.dscr !== null ? fmtMultiple(p.dscr) : '—'), sortValue: (p) => p.dscr ?? 0 },
     { key: 'ltv', header: 'LTV', align: 'right', render: (p) => propertyLtvLabel(p), sortValue: (p) => investmentLtv(p) ?? 0 },
@@ -60,7 +119,7 @@ export function PortfolioModule() {
       render: (p) => p.lender ?? <span style={{ color: 'var(--text-tertiary)' }}>—</span>,
       sortValue: (p) => p.lender ?? '',
     },
-  ], []);
+  ], [sparks, occDeltas]);
 
   if (gate) return gate;
   if (!data || !analytics) return null;
@@ -79,7 +138,7 @@ export function PortfolioModule() {
       </div>
 
       <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-        {fmtNum(k.propertyCount.value)} investment assets · the Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share.
+        {fmtNum(k.propertyCount.value)} investment assets · the Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share; NOI 12m is the P&L ledger at entity 100%, and Occ Δ uses recorded monthly snapshots only.
       </p>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
