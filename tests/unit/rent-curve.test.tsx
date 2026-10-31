@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import { RentCurve } from '../../src/charts/RentCurve';
 import { curveDomains, curveTickValues, sfFormat, sizeBands, validCurvePoints, type CurveDatum } from '../../src/charts/rent-curve-layout';
 
@@ -262,5 +262,39 @@ describe('RentCurve', () => {
     const xAxisLabels = Array.from(container.querySelectorAll('text')).filter((t) => /^\d+(\.\d)?K?$/.test(t.textContent ?? ''));
     expect(xAxisLabels.length).toBeGreaterThanOrEqual(2);
     expect(xAxisLabels.some((t) => /^\d+\.\dK$/.test(t.textContent ?? ''))).toBe(true);
+  });
+});
+
+// Roadmap 2.6: RentCurve renders in the shared kit's MarkFrame.
+describe('RentCurve kit frame', () => {
+  it('arrow keys walk the listings left to right by SF, even though ORA draws last', () => {
+    vi.stubGlobal('ResizeObserver', ImmediateResizeObserver);
+    const points: CurveDatum[] = [
+      { id: 'ora', sf: 9000, value: 14, solid: true, highlight: true, label: 'ORA suite' },
+      pt(1, 20000, 9),
+      pt(2, 4000, 11, false),
+    ];
+    const { container } = render(<RentCurve points={points} />);
+    const group = container.querySelector('.ck-chart-focus') as HTMLElement;
+    fireEvent.focus(group);
+    const tip = () => container.querySelector('[role="status"]')!.textContent;
+    expect(tip()).toBe('p24,000 SF · $11.00Converted / low confidence');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(tip()).toBe('ORA suite9,000 SF · $14.00Quoted NNNORA space');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(tip()).toMatch(/^p120,000 SF/);
+  });
+
+  it('the data table lists every listing, and every size band when there are any', () => {
+    vi.stubGlobal('ResizeObserver', ImmediateResizeObserver);
+    const points: CurveDatum[] = [...[8, 9, 10, 11, 12].map((v, i) => pt(i, 20000 + i * 100, v)), pt(9, 6000, 7, false)];
+    const { container } = render(<RentCurve points={points} />);
+    const tables = container.querySelectorAll('details.ck-tablefb table');
+    expect(tables).toHaveLength(2);
+    expect(tables[0]!.querySelectorAll('tbody tr')).toHaveLength(6);
+    expect(tables[0]!.querySelector('tbody tr')!.textContent).toBe('p96,000$7.00Converted / low confidence');
+    const band = [...tables[1]!.querySelectorAll('tbody tr')].map((r) => [...r.children].map((c) => c.textContent));
+    expect(band).toHaveLength(1);
+    expect(band[0]!.slice(1)).toEqual(['5', '$9.00', '$10.00', '$11.00']);
   });
 });
