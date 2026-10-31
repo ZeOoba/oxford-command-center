@@ -1,8 +1,12 @@
 /* eslint-disable react-refresh/only-export-components -- pure scatterDomain helper colocated with its chart (unit-tested) */
+// Frame: the shared kit's MarkFrame (roadmap 2.6) — one tab stop whose arrow keys walk the points,
+// a tooltip per point on hover / touch / keyboard, and a <details> data-table fallback. The plot keeps
+// its 640px drawing space at its true size, so on a narrow card it scrolls inside the frame instead of
+// shrinking its text.
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
-import { Group } from '@visx/group';
 import { AXIS_TICK, AXIS_LABEL } from './theme';
+import { MarkFrame, type TipMark } from './kit/MarkFrame';
 
 export interface ScatterPoint { id: string; x: number; y: number; label: string; tone?: 'pos' | 'neg' | 'neutral' }
 
@@ -30,24 +34,61 @@ export function ScatterChart({ points, xLabel, yLabel, xFormat, yFormat, height 
   const d = scatterDomain(points);
   const x = scaleLinear({ domain: d.x, range: [M.left, W - M.right] });
   const y = scaleLinear({ domain: d.y, range: [height - M.bottom, M.top] });
-  return (
-    <svg viewBox={`0 0 ${W} ${height}`} width="100%" role="img" aria-label={`${yLabel} vs ${xLabel}`}>
-      <Group>
-        {yRef !== undefined && (
-          <line x1={M.left} x2={W - M.right} y1={y(yRef)} y2={y(yRef)} stroke="var(--text-tertiary)" strokeDasharray="4 4" />
-        )}
+  const ariaLabel = `${yLabel} vs ${xLabel}`;
+  const marks: TipMark[] = points.map((p) => ({ x: x(p.x), y: y(p.y), lines: [p.label, `${xLabel}: ${xFormat(p.x)}`, `${yLabel}: ${yFormat(p.y)}`] }));
+  const table = (
+    <table>
+      <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+        {ariaLabel}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Point</th>
+          <th scope="col">{xLabel}</th>
+          <th scope="col">{yLabel}</th>
+        </tr>
+      </thead>
+      <tbody>
         {points.map((p) => (
-          <circle key={p.id} cx={x(p.x)} cy={y(p.y)} r={5} fill={TONE[p.tone ?? 'neutral']} fillOpacity={0.8}>
-            <title>{`${p.label} — ${xLabel} ${xFormat(p.x)}, ${yLabel} ${yFormat(p.y)}`}</title>
-          </circle>
+          <tr key={p.id}>
+            <th scope="row">{p.label}</th>
+            <td>{xFormat(p.x)}</td>
+            <td>{yFormat(p.y)}</td>
+          </tr>
         ))}
-        <AxisBottom top={height - M.bottom} scale={x} tickFormat={(v) => xFormat(Number(v))} numTicks={5} label={xLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
-          labelProps={{ ...AXIS_LABEL }} labelOffset={12} />
-        <AxisLeft left={M.left} scale={y} tickFormat={(v) => yFormat(Number(v))} numTicks={5} label={yLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
-          labelProps={{ ...AXIS_LABEL }} labelOffset={44} />
-      </Group>
-    </svg>
+      </tbody>
+    </table>
+  );
+  return (
+    <MarkFrame measureRef={null} width={W} height={height} ariaLabel={ariaLabel} marks={marks} table={table}>
+      {(bind, active) => (
+        <>
+          {yRef !== undefined && (
+            <line x1={M.left} x2={W - M.right} y1={y(yRef)} y2={y(yRef)} stroke="var(--text-tertiary)" strokeDasharray="4 4" />
+          )}
+          {points.map((p, i) => (
+            <circle
+              key={p.id}
+              {...bind(i)}
+              cx={x(p.x)}
+              cy={y(p.y)}
+              r={active === i ? 7 : 5}
+              fill={TONE[p.tone ?? 'neutral']}
+              fillOpacity={0.8}
+              stroke={active === i ? 'var(--text-primary)' : 'none'}
+              strokeWidth={1.5}
+            >
+              <title>{`${p.label} — ${xLabel} ${xFormat(p.x)}, ${yLabel} ${yFormat(p.y)}`}</title>
+            </circle>
+          ))}
+          <AxisBottom top={height - M.bottom} scale={x} tickFormat={(v) => xFormat(Number(v))} numTicks={5} label={xLabel}
+            stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
+            labelProps={{ ...AXIS_LABEL, style: { fill: AXIS_LABEL.fill } }} labelOffset={12} />
+          <AxisLeft left={M.left} scale={y} tickFormat={(v) => yFormat(Number(v))} numTicks={5} label={yLabel}
+            stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
+            labelProps={{ ...AXIS_LABEL, style: { fill: AXIS_LABEL.fill } }} labelOffset={44} />
+        </>
+      )}
+    </MarkFrame>
   );
 }
