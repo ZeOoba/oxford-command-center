@@ -259,9 +259,9 @@ describe('PriorityActionsWidget', () => {
     expect(screen.getAllByText('Ledger').length).toBeGreaterThan(0);
   });
 
-  it('caps at the configured top-N limit (4 candidates seeded, all within the 6-item cap, all render)', () => {
+  it('caps at the configured top-N limit (4 candidates seeded, all within the 7-item cap, all render)', () => {
     renderWidget('priority-actions');
-    // All 4 seeded candidates fit within PRIORITY_ACTIONS_LIMIT (6) — confirm none are dropped.
+    // All 4 seeded candidates fit within OVERVIEW_MAX_ITEMS (7) — confirm none are dropped.
     expect(screen.getByText('Below-market cap rate — Prop One')).toBeTruthy();
     expect(screen.getByText('Tenant renewal risk — Prop Two')).toBeTruthy();
     expect(screen.getByText('Secondary premium valuation — Prop Three')).toBeTruthy();
