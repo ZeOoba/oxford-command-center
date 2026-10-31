@@ -11,6 +11,7 @@ import { reconciliationCardState } from './reconciliation-card';
 
 type Tone = 'ok' | 'warn' | 'error' | 'info';
 
+const SEVERITY_RANK = { error: 0, warn: 1, info: 2 } as const;
 const ICON: Record<Tone, typeof Info> = { ok: CheckCircle2, warn: AlertTriangle, error: XCircle, info: Info };
 const COLOR: Record<Tone, string> = {
   ok: 'var(--color-pos)',
@@ -97,7 +98,9 @@ export function HealthModule() {
             {flags.length === 0 ? (
               <Row tone="ok" label="Parsed data" value="No flags" />
             ) : (
-              flags.slice(0, 14).map((fl, i) => (
+              // Severity first so a capped window can never drop a warn/error behind standing info
+              // disclosures (refute wf_b6010683-4be); stable sort keeps parse order within a tier.
+              [...flags].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]).slice(0, 14).map((fl, i) => (
                 <Row key={i} tone={fl.severity === 'error' ? 'error' : fl.severity === 'warn' ? 'warn' : 'info'} label={`${fl.entity} · ${fl.field}`} value={fl.issue} />
               ))
             )}
