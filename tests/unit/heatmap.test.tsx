@@ -164,21 +164,41 @@ describe('Heatmap', () => {
     expect(cell(container, 'Alpha', 'Jan').getAttribute('data-value')).toBe('-0.3');
   });
 
-  it('hover shows row, column and formatted value, or "no data"', () => {
+  it('hover shows row, column and formatted value, or "no data" (kit MarkFrame tooltip)', () => {
     const cells: HeatCell[] = [
       { row: 'Alpha', col: 'Jan', value: 0.25 },
       { row: 'Alpha', col: 'Feb', value: null },
     ];
-    const { container, getByTestId, queryByTestId } = render(
-      <Heatmap rows={['Alpha']} cols={['Jan', 'Feb']} cells={cells} valueFormat={(n) => `${n * 100}%`} />,
-    );
-    expect(queryByTestId('heatmap-tooltip')).toBeNull();
-    fireEvent.mouseMove(cell(container, 'Alpha', 'Jan'));
-    expect(getByTestId('heatmap-tooltip').textContent).toMatch(/Alpha.*Jan.*25%/);
-    fireEvent.mouseMove(cell(container, 'Alpha', 'Feb'));
-    expect(getByTestId('heatmap-tooltip').textContent).toMatch(/Alpha.*Feb.*no data/);
-    fireEvent.mouseLeave(cell(container, 'Alpha', 'Feb'));
-    expect(queryByTestId('heatmap-tooltip')).toBeNull();
+    const { container } = render(<Heatmap rows={['Alpha']} cols={['Jan', 'Feb']} cells={cells} valueFormat={(n) => `${n * 100}%`} />);
+    const tip = () => container.querySelector('[role="status"]');
+    expect(tip()).toBeNull();
+    fireEvent.pointerEnter(cell(container, 'Alpha', 'Jan'));
+    expect(tip()!.textContent).toMatch(/Alpha.*Jan.*25%/);
+    fireEvent.pointerEnter(cell(container, 'Alpha', 'Feb'));
+    expect(tip()!.textContent).toMatch(/Alpha.*Feb.*no data/);
+    fireEvent.pointerLeave(container.querySelector('svg')!);
+    expect(tip()).toBeNull();
+  });
+
+  it('arrow keys walk the cells row-major and the data table lists the full grid (roadmap 2.6)', () => {
+    const cells: HeatCell[] = [
+      { row: 'A', col: 'Jan', value: 0.1 },
+      { row: 'A', col: 'Feb', value: null },
+      { row: 'B', col: 'Jan', value: -0.2 },
+    ];
+    const { container } = render(<Heatmap rows={['A', 'B']} cols={['Jan', 'Feb']} cells={cells} valueFormat={(n) => `${Math.round(n * 100)}%`} />);
+    const group = container.querySelector('.ck-chart-focus') as HTMLElement;
+    fireEvent.focus(group);
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('A · Jan10%');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('A · Febno data');
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('B · Jan-20%');
+    const rows = [...container.querySelectorAll('details.ck-tablefb tbody tr')].map((r) => [...r.children].map((c) => c.textContent));
+    expect(rows).toEqual([
+      ['A', '10%', 'no data'],
+      ['B', '-20%', 'no data'],
+    ]);
   });
 });
 
@@ -199,7 +219,7 @@ describe('Heatmap rowLabels', () => {
   it('labels default to the id and the tooltip uses the label', () => {
     const { container } = render(<Heatmap rows={['id-1', 'x']} cols={['Jan']} cells={[{ row: 'id-1', col: 'Jan', value: 0.1 }]} rowLabels={{ 'id-1': 'Pretty' }} />);
     expect([...container.querySelectorAll('svg title')].map((t) => t.textContent)).toEqual(['Pretty', 'x']);
-    fireEvent.mouseMove(cell(container, 'id-1', 'Jan'));
+    fireEvent.pointerEnter(cell(container, 'id-1', 'Jan'));
     expect(container.textContent).toContain('Pretty · Jan');
   });
 });
