@@ -2,13 +2,16 @@
 //
 // Asking rent (NNN-equivalent $/SF/yr) vs. available SF, log scale, with P25–P75 bands per size band.
 // Solid = quoted NNN; hollow = converted / low confidence; highlighted = ORA space.
-import { useMemo, useState } from 'react';
-import { Group } from '@visx/group';
+// Frame: the shared kit's MarkFrame (roadmap 2.6) — one tab stop whose arrow keys walk the listings
+// left to right by SF, a tooltip per listing on hover / touch / keyboard, and a <details> data-table
+// fallback listing every point and every size band.
+import { useMemo } from 'react';
 import { scaleLinear, scaleLog } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { useMeasure } from '@/lib/useMeasure';
 import { AXIS_TICK, GRID_STROKE } from './theme';
 import { curveDomains, curveTickValues, sfFormat, sizeBands, validCurvePoints, type CurveDatum } from './rent-curve-layout';
+import { MarkFrame, type TipMark } from './kit/MarkFrame';
 
 interface Props {
   points: CurveDatum[];
@@ -17,15 +20,18 @@ interface Props {
 }
 
 const defaultFormat = (n: number) => `$${n.toFixed(2)}`;
+const sfText = (sf: number) => `${Math.round(sf).toLocaleString('en-US')} SF`;
+const basisText = (p: CurveDatum) => (p.solid ? 'Quoted NNN' : 'Converted / low confidence');
 
 export function RentCurve({ points, height = 300, valueFormat = defaultFormat }: Props) {
-  const [ref, width] = useMeasure<HTMLDivElement>();
-  const [hover, setHover] = useState<{ point: CurveDatum; left: number; top: number } | null>(null);
+  const [ref, measured] = useMeasure<HTMLDivElement>();
   // Filtered once here — feeds the circles, the aria-label count, and (redundantly-but-harmlessly,
   // since curveDomains/sizeBands filter internally too) the domains and bands below.
   const validPoints = useMemo(() => validCurvePoints(points), [points]);
   const domains = useMemo(() => curveDomains(validPoints), [validPoints]);
   const bands = useMemo(() => sizeBands(validPoints), [validPoints]);
+  // The keyboard walk reads the listings left to right; the draw order (below) is separate.
+  const walk = useMemo(() => [...validPoints].sort((a, b) => a.sf - b.sf || a.value - b.value), [validPoints]);
 
   if (!domains) {
     return (
@@ -35,6 +41,7 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
     );
   }
 
+  const width = measured > 0 ? measured : 600;
   const margin = { top: 12, right: 16, bottom: 32, left: 52 };
   const iw = Math.max(0, width - margin.left - margin.right);
   const ih = Math.max(0, height - margin.top - margin.bottom);
@@ -44,61 +51,114 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
   const tickValues = curveTickValues(domains.x);
   // Highlighted (ORA) points render last so their dots sit on top of the general cloud.
   const orderedPoints = [...validPoints].sort((a, b) => Number(a.highlight) - Number(b.highlight));
+  const walkIndex = new Map(walk.map((p, i) => [p.id, i]));
+  const ariaLabel = `Asking rent by available square feet, ${validPoints.length} listings`;
+
+  const marks: TipMark[] = walk.map((p) => ({
+    x: margin.left + clampX(p.sf),
+    y: margin.top + y(p.value),
+    lines: [p.label, `${sfText(p.sf)} · ${valueFormat(p.value)}`, basisText(p), ...(p.highlight ? ['ORA space'] : [])],
+  }));
+
+  const table = (
+    <>
+      <table>
+        <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+          {ariaLabel}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Listing</th>
+            <th scope="col">Available SF</th>
+            <th scope="col">Asking</th>
+            <th scope="col">Basis</th>
+          </tr>
+        </thead>
+        <tbody>
+          {walk.map((p) => (
+            <tr key={p.id}>
+              <th scope="row">
+                {p.label}
+                {p.highlight ? ' (ORA)' : ''}
+              </th>
+              <td>{Math.round(p.sf).toLocaleString('en-US')}</td>
+              <td>{valueFormat(p.value)}</td>
+              <td>{basisText(p)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {bands.length > 0 && (
+        <table>
+          <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+            Quoted-NNN size bands (P25 to P75 shaded, median line)
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Size band</th>
+              <th scope="col">Listings</th>
+              <th scope="col">P25</th>
+              <th scope="col">Median</th>
+              <th scope="col">P75</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bands.map((b) => (
+              <tr key={`${b.minSf}-${b.maxSf}`}>
+                <th scope="row">
+                  {sfFormat(b.minSf)}–{sfFormat(b.maxSf)}
+                </th>
+                <td>{b.n}</td>
+                <td>{valueFormat(b.p25)}</td>
+                <td>{valueFormat(b.median)}</td>
+                <td>{valueFormat(b.p75)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
 
   return (
-    <div ref={ref} style={{ width: '100%', position: 'relative' }}>
-      {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label={`Asking rent by available square feet, ${validPoints.length} listings`}>
-          <Group left={margin.left} top={margin.top}>
-            {y.ticks(5).map((t) => (
-              <line key={`g${t}`} x1={0} x2={iw} y1={y(t)} y2={y(t)} stroke={GRID_STROKE} />
-            ))}
-            {bands.map((b) => {
-              const x0 = clampX(b.minSf || domains.x[0]);
-              const x1 = clampX(b.maxSf);
-              return (
-                <g key={`${b.minSf}-${b.maxSf}`}>
-                  <rect x={x0} width={Math.max(1, x1 - x0)} y={y(b.p75)} height={Math.max(1, y(b.p25) - y(b.p75))} fill="var(--accent)" opacity={0.1} />
-                  <line x1={x0} x2={x1} y1={y(b.median)} y2={y(b.median)} stroke="var(--accent)" strokeWidth={2} opacity={0.8} />
-                </g>
-              );
-            })}
-            {orderedPoints.map((p) => {
-              const cx = clampX(p.sf);
-              const cy = y(p.value);
-              const color = p.highlight ? 'var(--color-warn)' : 'var(--color-info)';
-              return (
-                <circle
-                  key={p.id}
-                  cx={cx}
-                  cy={cy}
-                  r={p.highlight ? 5 : 3.5}
-                  fill={p.solid ? color : 'transparent'}
-                  stroke={color}
-                  strokeWidth={1.5}
-                  style={{ cursor: 'pointer' }}
-                  onMouseMove={() => setHover({ point: p, left: margin.left + cx, top: margin.top + cy })}
-                  onMouseLeave={() => setHover(null)}
-                />
-              );
-            })}
-            <AxisLeft scale={y} numTicks={5} hideAxisLine hideTicks tickFormat={(v) => valueFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'end', dx: '-0.4em', dy: '0.3em' })} />
-            <AxisBottom top={ih} scale={x} tickValues={tickValues} hideAxisLine hideTicks tickFormat={(v) => sfFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.5em' })} />
-          </Group>
-        </svg>
+    <MarkFrame measureRef={ref} width={width} height={height} ariaLabel={ariaLabel} marks={marks} table={table}>
+      {(bind, active) => (
+        <g transform={`translate(${margin.left},${margin.top})`}>
+          {y.ticks(5).map((t) => (
+            <line key={`g${t}`} x1={0} x2={iw} y1={y(t)} y2={y(t)} stroke={GRID_STROKE} />
+          ))}
+          {bands.map((b) => {
+            const x0 = clampX(b.minSf || domains.x[0]);
+            const x1 = clampX(b.maxSf);
+            return (
+              <g key={`${b.minSf}-${b.maxSf}`}>
+                <rect x={x0} width={Math.max(1, x1 - x0)} y={y(b.p75)} height={Math.max(1, y(b.p25) - y(b.p75))} fill="var(--accent)" opacity={0.1} />
+                <line x1={x0} x2={x1} y1={y(b.median)} y2={y(b.median)} stroke="var(--accent)" strokeWidth={2} opacity={0.8} />
+              </g>
+            );
+          })}
+          {orderedPoints.map((p) => {
+            const i = walkIndex.get(p.id)!;
+            const color = p.highlight ? 'var(--color-warn)' : 'var(--color-info)';
+            const base = p.highlight ? 5 : 3.5;
+            return (
+              <circle
+                key={p.id}
+                {...bind(i)}
+                cx={clampX(p.sf)}
+                cy={y(p.value)}
+                r={active === i ? base + 2 : base}
+                fill={p.solid ? color : 'transparent'}
+                stroke={active === i ? 'var(--text-primary)' : color}
+                strokeWidth={1.5}
+                style={{ cursor: 'pointer' }}
+              />
+            );
+          })}
+          <AxisLeft scale={y} numTicks={5} hideAxisLine hideTicks tickFormat={(v) => valueFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'end', dx: '-0.4em', dy: '0.3em' })} />
+          <AxisBottom top={ih} scale={x} tickValues={tickValues} hideAxisLine hideTicks tickFormat={(v) => sfFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.5em' })} />
+        </g>
       )}
-      {hover && (
-        <div
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-[var(--radius-sm)] px-2 py-1 text-2xs"
-          style={{ left: hover.left, top: hover.top - 10, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', boxShadow: '0 10px 24px -12px rgba(0,0,0,0.7)', whiteSpace: 'nowrap' }}
-        >
-          <span style={{ color: 'var(--text-tertiary)' }}>{hover.point.label}</span>
-          <span className="num ml-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {Math.round(hover.point.sf).toLocaleString('en-US')} SF · {valueFormat(hover.point.value)}
-            {hover.point.solid ? '' : ' (converted)'}
-          </span>
-        </div>
-      )}
-    </div>
+    </MarkFrame>
   );
 }
