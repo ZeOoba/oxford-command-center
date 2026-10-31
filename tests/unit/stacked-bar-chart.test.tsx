@@ -185,19 +185,42 @@ describe('StackedBarChart', () => {
     expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe('Expenses by category');
   });
 
-  it('hover shows signed per-segment values and the stack total', () => {
+  it('hover shows signed per-segment values and the stack total (kit MarkFrame tooltip)', () => {
     const { container } = render(
       <StackedBarChart
         keys={KEYS}
         valueFormat={(n) => `$${n}`}
         data={[{ label: 'Jan', segments: [{ key: 'a', value: 30 }, { key: 'b', value: -10 }] }]}
+        overlay={[{ label: 'Jan', value: 25 }]}
+        overlayLabel="Last year"
       />,
     );
-    fireEvent.mouseMove(rects(container)[0]!.el);
-    const tip = container.querySelector('[data-testid="stacked-tooltip"]')!;
+    fireEvent.pointerEnter(rects(container)[0]!.el);
+    const tip = container.querySelector('[role="status"]')!;
     expect(tip).not.toBeNull();
-    // Header, then each segment as key + signed value (credit shown as -$10), then the net total.
-    expect(tip.textContent).toBe('Jana$30b-$10Total$20');
+    // Header, then each segment as key + signed value (credit shown as -$10), the net total, the overlay.
+    expect(tip.textContent).toBe('Jana: $30b: -$10Total: $20Last year: $25');
+  });
+
+  it('keyboard walks the bars and the data table lists every value (roadmap 2.6 kit frame)', () => {
+    const { container } = render(
+      <StackedBarChart
+        keys={KEYS}
+        valueFormat={(n) => `$${n}`}
+        ariaLabel="Opex"
+        data={[
+          { label: 'Jan', segments: [{ key: 'a', value: 30 }] },
+          { label: 'Feb', segments: [{ key: 'a', value: 20 }, { key: 'b', value: -5 }] },
+        ]}
+      />,
+    );
+    const group = container.querySelector('.ck-chart-focus') as HTMLElement;
+    fireEvent.focus(group);
+    expect(container.querySelector('[role="status"]')!.textContent).toMatch(/^Jan/);
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    expect(container.querySelector('[role="status"]')!.textContent).toMatch(/^Feb.*Total: \$15/);
+    const rows = [...container.querySelectorAll('details.ck-tablefb tbody tr')].map((r) => r.textContent);
+    expect(rows).toEqual(['Jan$30——$30', 'Feb$20-$5—$15']);
   });
 });
 
