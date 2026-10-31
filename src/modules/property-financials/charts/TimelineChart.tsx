@@ -8,6 +8,7 @@
 // scroll inside the chart container.
 import { useId, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useMeasure } from '@/lib/useMeasure';
+import '@/charts/kit/kit.css';
 import { axisUsd, usd } from '@analytics/property-financials/format';
 import { fmtMonth } from '../model';
 import type { TimelineSeries } from '../explorer-model';
@@ -62,10 +63,10 @@ export function TimelineChart({ series, ariaLabel }: { series: TimelineSeries; a
   );
 
   return (
-    <div className="pf-xchart" data-testid="pf-timeline">
-      <div className="pf-chart pf-chart-sx" ref={ref}>
+    <div className="ck-xchart" data-testid="pf-timeline">
+      <div className="ck-chart ck-chart-sx" ref={ref}>
         <div
-          className="pf-cin pf-chart-focus"
+          className="ck-cin ck-chart-focus"
           style={{ width: W }}
           tabIndex={0}
           role="group"
@@ -78,7 +79,7 @@ export function TimelineChart({ series, ariaLabel }: { series: TimelineSeries; a
           <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel} onPointerMove={move} onPointerDown={move} onPointerLeave={() => setActive(null)} style={{ width: W, height: H, maxWidth: 'none', touchAction: 'pan-x pan-y' }}>
             {tickValues(0, top, 4).map((t) => (
               <g key={t}>
-                <line x1={M.l} x2={W - M.r} y1={Y(t)} y2={Y(t)} stroke="var(--pf-grid)" strokeWidth={1} />
+                <line x1={M.l} x2={W - M.r} y1={Y(t)} y2={Y(t)} stroke="var(--border-subtle)" strokeWidth={1} />
                 <text x={M.l - 6} y={Y(t) + 3} textAnchor="end">
                   {axisUsd(t)}
                 </text>
@@ -102,22 +103,22 @@ export function TimelineChart({ series, ariaLabel }: { series: TimelineSeries; a
                   data-marker={mk.row.dir}
                   d={markerPath(X(mk.index), Y(y), mk.row.dir, 7)}
                   fill={mk.row.dir === 'up' ? 'var(--pf-good)' : 'var(--pf-crit)'}
-                  stroke="var(--pf-surface)"
+                  stroke="var(--surface-raised)"
                   strokeWidth={1.5}
                 />
               );
             })}
-            {active !== null && <line x1={X(active)} x2={X(active)} y1={M.t} y2={H - M.b} stroke="var(--pf-axis)" strokeWidth={1} />}
+            {active !== null && <line x1={X(active)} x2={X(active)} y1={M.t} y2={H - M.b} stroke="var(--border-strong)" strokeWidth={1} />}
             <rect x={M.l} y={M.t} width={Math.max(0, plotW)} height={H - M.t - M.b} fill="transparent" />
           </svg>
           {active !== null && am && (
-            <div className="pf-tip" role="status" style={{ left: Math.max(0, tipLeft), top: 6, width: TIP_W }}>
+            <div className="ck-tip" role="status" style={{ left: Math.max(0, tipLeft), top: 6, width: TIP_W }}>
               <b>{fmtMonth(am)}</b>
               <div>Base rent {v(series.baseRent[active])}</div>
               <div>Opex excl. tax {v(series.opexExTax[active])}</div>
-              <div className="pf-mut">3-month average</div>
+              <div className="ck-mut">3-month average</div>
               {markerAt.get(active)?.row.tip.map((l, i) => (
-                <div key={i} className={i === 0 ? 'pf-tip-sep' : undefined}>
+                <div key={i} className={i === 0 ? 'ck-tip-sep' : undefined}>
                   {l}
                 </div>
               ))}
@@ -125,7 +126,7 @@ export function TimelineChart({ series, ariaLabel }: { series: TimelineSeries; a
           )}
         </div>
       </div>
-      <div className="pf-legend">
+      <div className="ck-legend">
         <span>
           <i style={{ background: 'var(--pf-c1)' }} aria-hidden />
           Base rent per month
@@ -143,11 +144,11 @@ export function TimelineChart({ series, ariaLabel }: { series: TimelineSeries; a
           Step down
         </span>
       </div>
-      <details className="pf-tablefb" id={tableId}>
+      <details className="ck-tablefb" id={tableId}>
         <summary>Data table</summary>
-        <div className="pf-tbl">
+        <div className="ck-tbl">
           <table>
-            <caption className="pf-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+            <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
               {ariaLabel}
             </caption>
             <thead>
