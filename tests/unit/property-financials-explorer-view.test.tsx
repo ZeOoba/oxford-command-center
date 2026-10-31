@@ -268,7 +268,7 @@ describe('interaction', () => {
   it('timeline: keyboard crosshair tooltip with month and both series', () => {
     renderExplorer(`?view=explorer&p=${encodeURIComponent('1100 Rarig')}`);
     const tl = screen.getByTestId('pf-timeline');
-    const group = tl.querySelector('.pf-chart-focus') as HTMLElement;
+    const group = tl.querySelector('.ck-chart-focus') as HTMLElement;
     fireEvent.focus(group);
     const tip = within(tl).getByRole('status');
     expect(tip.textContent).toMatch(/Sep 2026/);
