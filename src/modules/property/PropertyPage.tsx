@@ -16,6 +16,9 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { AsOfChip } from '@/primitives/AsOfChip';
 import { AreaChart } from '@/charts/AreaChart';
+import { SeriesLegend } from '@/charts/SeriesLegend';
+import { provenanceKinds } from '@/charts/series-provenance';
+import { pointProvenance } from '../portfolio/scenario-spread';
 import { fmtDate, fmtMultiple, fmtPct, fmtSf, fmtUsd, fmtUsdCompact, propertyLtvLabel } from '@analytics/index';
 import { isInvestmentProperty, landlordCostsNotSourced } from '@analytics/property-basis';
 import { useLeaseForecast } from '../leasing/hooks';
@@ -246,13 +249,17 @@ export function PropertyPage() {
           }
         >
           {occupancy && occupancy.points.length > 1 ? (
-            <AreaChart
-              data={occupancy.points.map((m) => ({ date: `${m.month}-01`, value: (1 - m.vacancyPct) * 100 }))}
-              valueFormat={(n) => `${n.toFixed(0)}%`}
-              height={200}
-              color="var(--color-info)"
-              ariaLabel={`${p.name} occupancy by month, lease-SF basis (recorded months where available, else reconstructed from current leases)`}
-            />
+            <div className="flex flex-col gap-2">
+              <AreaChart
+                data={occupancy.points.map((m) => ({ date: `${m.month}-01`, value: (1 - m.vacancyPct) * 100 }))}
+                valueFormat={(n) => `${n.toFixed(0)}%`}
+                height={200}
+                color="var(--color-info)"
+                provenance={pointProvenance(occupancy.points)}
+                ariaLabel={`${p.name} occupancy by month, lease-SF basis (recorded months where available, else reconstructed from current leases)`}
+              />
+              <SeriesLegend kinds={provenanceKinds(pointProvenance(occupancy.points))} color="var(--color-info)" />
+            </div>
           ) : (
             <Muted>No lease-SF occupancy series for this property.</Muted>
           )}
