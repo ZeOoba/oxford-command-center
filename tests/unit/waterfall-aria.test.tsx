@@ -5,7 +5,7 @@
 // "NOI driver waterfall" regardless of what it actually showed. ariaLabel/title are now optional
 // props defaulting to the original NOI strings (existing NOI consumers unchanged).
 import { describe, expect, it } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { Waterfall } from '../../src/charts/Waterfall';
 
 const drivers = [{ category: 'Rev', delta: 10 }];
@@ -44,5 +44,34 @@ describe('Waterfall aria/title', () => {
     // Start/End totals get one too, not just drivers.
     expect(titles).toContain('Start');
     expect(titles).toContain('End');
+  });
+});
+
+// Roadmap 2.6: Waterfall renders in the shared kit's MarkFrame — keyboard walk, a tooltip per step
+// with the signed change and running total, and a data-table fallback.
+describe('Waterfall kit frame', () => {
+  it('arrow keys walk the steps; the tooltip carries the change and the running total', () => {
+    const { container } = render(
+      <Waterfall startValue={100} drivers={[{ category: 'Rev', delta: 30 }, { category: 'Opex', delta: -10 }]} endValue={120} />,
+    );
+    const group = container.querySelector('.ck-chart-focus') as HTMLElement;
+    fireEvent.focus(group);
+    expect(container.querySelector('[role="status"]')!.textContent).toMatch(/^Start/);
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    const tip = container.querySelector('[role="status"]')!.textContent!;
+    expect(tip).toMatch(/^Opex/);
+    expect(tip).toMatch(/Change: −\$10/);
+    expect(tip).toMatch(/Running total: \$120/);
+  });
+
+  it('the data table lists every step with its change and running total', () => {
+    const { container } = render(<Waterfall startValue={100} drivers={[{ category: 'Rev', delta: 30 }]} endValue={130} />);
+    const rows = [...container.querySelectorAll('details.ck-tablefb tbody tr')].map((r) => [...r.children].map((c) => c.textContent));
+    expect(rows).toEqual([
+      ['Start', '—', '$100'],
+      ['Rev', '+$30', '$130'],
+      ['End', '—', '$130'],
+    ]);
   });
 });

@@ -6,9 +6,12 @@
 // + theme tokens (no new deps, lean bundle — pre-mortem #6). `waterfallBars` is the pure
 // layout-prep (unit-tested); the component renders those bars with fmtUsd value labels and
 // a "needs 2 periods" empty state when there are no drivers (pre-mortem #2 sparse data).
-import { useId } from 'react';
+// Frame: the shared kit's MarkFrame (roadmap 2.6) — one tab stop whose arrow keys walk the steps,
+// a tooltip per step (signed change + running total) and a <details> data-table fallback; a chart
+// wider than its container scrolls inside it instead of shrinking its text.
 import { fmtUsd } from '@/analytics/format';
 import { AXIS_TICK } from './theme';
+import { MarkFrame, type TipMark } from './kit/MarkFrame';
 
 export type WaterfallBarKind = 'total' | 'pos' | 'neg';
 
@@ -89,8 +92,6 @@ export function Waterfall({
   ariaLabel = 'NOI driver waterfall',
   title = 'ΔNOI driver bridge',
 }: Props) {
-  const gid = useId().replace(/:/g, '');
-
   // Sparse-data guard (pre-mortem #2): with no drivers there is no bridge to draw.
   if (drivers.length === 0) {
     return (
@@ -121,42 +122,90 @@ export function Waterfall({
 
   const slot = iw / bars.length;
   const barW = Math.min(56, slot * 0.62);
+  const valueText = (b: WaterfallBar): string => (b.kind === 'total' ? fmtUsd(b.value) : `${b.value >= 0 ? '+' : '−'}${fmtUsd(Math.abs(b.value))}`);
+  // Running total after each step: a rise ends on its top edge, a drop on its base; totals are themselves.
+  const runningAfter = (b: WaterfallBar): number => (b.kind === 'total' ? b.value : b.kind === 'pos' ? b.top : b.base);
+  const centerX = (i: number): number => margin.left + slot * i + slot / 2;
+
+  const marks: TipMark[] = bars.map((b, i) => ({
+    x: centerX(i),
+    y: yOf(b.top),
+    lines: b.kind === 'total' ? [b.label, valueText(b)] : [b.label, `Change: ${valueText(b)}`, `Running total: ${fmtUsd(runningAfter(b))}`],
+  }));
+
+  const table = (
+    <table>
+      <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+        {title}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Step</th>
+          <th scope="col">Change</th>
+          <th scope="col">Running total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bars.map((b, i) => (
+          <tr key={`${b.label}-${i}`}>
+            <th scope="row">{b.label}</th>
+            <td>{b.kind === 'total' ? '—' : valueText(b)}</td>
+            <td>{fmtUsd(runningAfter(b))}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   return (
-    <svg width={width} height={height} role="img" aria-label={ariaLabel} style={{ maxWidth: '100%' }}>
-      <title id={`wf-${gid}`}>{title}</title>
-      {bars.map((b, i) => {
-        const cx = margin.left + slot * i + slot / 2;
-        const x = cx - barW / 2;
-        const yTop = yOf(b.top);
-        const yBase = yOf(b.base);
-        const h = Math.max(1, yBase - yTop);
-        const fill = colorFor(b.kind);
-        const labelText = b.kind === 'total' ? fmtUsd(b.value) : `${b.value >= 0 ? '+' : '−'}${fmtUsd(Math.abs(b.value))}`;
-        const labelDisplay = b.label.length > 12 ? `${b.label.slice(0, 11)}…` : b.label;
-        return (
-          <g key={`${b.label}-${i}`}>
-            {/* Full category name — the x-axis label below truncates past 12 chars, so this
-                keeps any future long category (or a longer future label than today's two
-                Rolling off / Re-leased forecast-bridge drivers) readable on hover (I-4). */}
-            <title>{b.label}</title>
-            <rect x={x} y={yTop} width={barW} height={h} rx={3} fill={fill} fillOpacity={b.kind === 'total' ? 0.95 : 0.82} />
-            {/* signed value label above the bar's top edge */}
-            <text
-              x={cx}
-              y={yTop - 6}
-              textAnchor="middle"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600, fill: 'var(--text-secondary)' }}
-            >
-              {labelText}
-            </text>
-            {/* category / total x-axis label */}
-            <text x={cx} y={height - margin.bottom + 16} textAnchor="middle" style={{ ...AXIS_TICK }}>
-              {labelDisplay}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <MarkFrame measureRef={null} width={width} height={height} ariaLabel={ariaLabel} marks={marks} table={table}>
+      {(bind, active) => (
+        <>
+          <title>{title}</title>
+          {bars.map((b, i) => {
+            const cx = centerX(i);
+            const x = cx - barW / 2;
+            const yTop = yOf(b.top);
+            const yBase = yOf(b.base);
+            const h = Math.max(1, yBase - yTop);
+            const fill = colorFor(b.kind);
+            const labelDisplay = b.label.length > 12 ? `${b.label.slice(0, 11)}…` : b.label;
+            return (
+              <g key={`${b.label}-${i}`}>
+                {/* Full category name — the x-axis label below truncates past 12 chars, so this
+                    keeps any future long category (or a longer future label than today's two
+                    Rolling off / Re-leased forecast-bridge drivers) readable on hover (I-4). */}
+                <title>{b.label}</title>
+                <rect
+                  {...bind(i)}
+                  x={x}
+                  y={yTop}
+                  width={barW}
+                  height={h}
+                  rx={3}
+                  fill={fill}
+                  fillOpacity={b.kind === 'total' ? 0.95 : 0.82}
+                  stroke={active === i ? 'var(--text-primary)' : 'none'}
+                  strokeWidth={1}
+                />
+                {/* signed value label above the bar's top edge */}
+                <text
+                  x={cx}
+                  y={yTop - 6}
+                  textAnchor="middle"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600, fill: 'var(--text-secondary)' }}
+                >
+                  {valueText(b)}
+                </text>
+                {/* category / total x-axis label */}
+                <text x={cx} y={height - margin.bottom + 16} textAnchor="middle" style={{ ...AXIS_TICK }}>
+                  {labelDisplay}
+                </text>
+              </g>
+            );
+          })}
+        </>
+      )}
+    </MarkFrame>
   );
 }
