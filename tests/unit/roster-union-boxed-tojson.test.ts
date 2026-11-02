@@ -252,12 +252,6 @@ describe('review finding: boxed / toJSON values next to Map / Error / Date text'
     }
     let v: unknown = [n, new Counted()];
     for (let i = 0; i < 22; i++) v = [v, v];
-    // CHANGED (2026-11-02): dropped the 10s wall-clock assertion. It took 1.6s locally but 11.7-13.2s
-    // on GitHub-hosted runners, so it measured the runner, not the walk. The budget throw is the real
-    // property; the test timeout below still fails a walk that runs away instead of throwing.
-    expect(() => scanTexts(v)).toThrow(/budget/);
-    expect(() => rosterMatchWithTerms(v, ROSTER)).toThrow(/budget/);
-  }, 60_000);
     for (const f of [() => scanTexts(v), () => rosterMatchWithTerms(v, ROSTER)]) {
       calls = 0;
       expect(f).toThrow(ScanBudgetError);
