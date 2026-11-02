@@ -15,7 +15,7 @@ import {
   stackedBarsLayout,
   stackHeights,
   stepChartLayout,
-} from '../../src/modules/property-financials/charts/geometry';
+} from '../../src/charts/kit/geometry';
 
 const PLOT = { left: 52, top: 12, width: 500, height: 222 } as const;
 

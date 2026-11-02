@@ -74,7 +74,7 @@ export function PremiumHistoryCard() {
             <li key={l.lineKey} className="flex items-center justify-between gap-3 text-2xs">
               <span style={{ color: 'var(--text-secondary)' }}>{l.property} · {l.policyType}</span>
               <span className="flex items-center gap-2">
-                <Sparkline data={l.terms.map((t) => t.premium)} width={64} height={20} />
+                <Sparkline data={l.terms.map((t) => t.premium)} label={`${l.property} ${l.policyType} premium by term`} valueFormat={fmtUsdCompact} width={64} height={20} />
                 <span className="num" style={{ color: chg > 0 ? 'var(--text-neg)' : 'var(--text-pos)' }}>
                   {`${chg >= 0 ? '+' : ''}${(chg * 100).toFixed(1)}%`}
                 </span>
