@@ -51,7 +51,7 @@ import {
 import { fmtResult, pct, pctLevel, usd } from '@analytics/property-financials/format';
 import { liveSfUsable, occupancyBasis, type OccupancyBasis, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import { computeLevers, describeLeverRate, LEVERS } from '@analytics/property-financials/levers';
-import type { ScheduleStep } from './charts/geometry';
+import type { ScheduleStep } from '@/charts/kit/geometry';
 import { countWord, fmtMonth, insightsForEntity, leaseForEntity, monthRangeLabel, OPEX_SHORT_LABEL } from './model';
 
 const RE_TAX: OpexCategory = 'Real estate & property tax';
