@@ -137,27 +137,6 @@ describe('G3: document-order stream', () => {
       const chars = meter(() => expect(scan(v)).toBeNull());
       return { chars, reads };
     };
-    time(build(500)); // warm-up
-    // CHANGED (squash, machine-load robustness; was min of 2 runs per size and a 24x bound, which
-    // failed once at 25.3x on a loaded box): the inputs are built once, the two sizes are timed
-    // INTERLEAVED three times and the MIN of each is kept, so a load spike has to hit all three runs
-    // of the small size and none of the large to skew the ratio. 8x the input: linear is ~8x,
-    // quadratic ~64x; the 32x bound is still half the quadratic ratio, so a real quadratic fails.
-    // CHANGED (2026-11-02, GitHub-hosted runners): sizes cut 4x (10k/80k -> 2.5k/20k). The 8x ratio
-    // and the 32x bound are unchanged, so the check is just as strict; the absolute work was what
-    // ran past the 60s timeout on a 2-vCPU hosted runner (13.6s locally). The timeout is now explicit.
-    const smallV = build(2_500);
-    const largeV = build(20_000);
-    const smalls: number[] = [];
-    const larges: number[] = [];
-    for (let r = 0; r < 3; r++) {
-      smalls.push(time(smallV));
-      larges.push(time(largeV));
-    }
-    const small = Math.min(...smalls);
-    const large = Math.min(...larges);
-    expect(large / Math.max(small, 1)).toBeLessThan(32);
-  }, 120_000);
     const small = cost(build(1_000));
     const large = cost(build(8_000));
     // Positive controls: the meter and the accessor both saw the scan's work.
