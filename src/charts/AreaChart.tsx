@@ -33,6 +33,10 @@ interface Props {
 
 /** Time-series area chart with branded gradient, animated draw-in, and hover tooltip. */
 export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat, ariaLabel, provenance, band }: Props) {
+}
+
+/** Time-series area chart with branded gradient, animated draw-in, and hover tooltip. */
+export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat, ariaLabel }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/:/g, '');

@@ -95,7 +95,7 @@ describe('useWorkspaces layout migration', () => {
   const NEW_HIDDEN = ['noi', 'insights'];
   const LEGACY = { order: ['kpis', 'noi', 'actions', 'cash', 'insights'], hidden: ['insights'] };
   const LEGACY_NO_HIDE = { order: LEGACY.order, hidden: [] as string[] }; // saved before 'insights' became default-hidden
-  const MIGRATION = { version: 2, legacyDefaults: [LEGACY, LEGACY_NO_HIDE] };
+  const MIGRATION = { steps: [{ toVersion: 2, defaults: [LEGACY, LEGACY_NO_HIDE] }] };
   const seed = (workspaces: Record<string, { order: string[]; hidden: string[] }>, extra: object = {}) =>
     localStorage.setItem(KEY, JSON.stringify({ workspaces, active: 'Default', ...extra }));
 

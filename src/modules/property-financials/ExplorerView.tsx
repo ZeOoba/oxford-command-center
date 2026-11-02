@@ -21,7 +21,7 @@ import { PropertyPageLink } from '../property/PropertyPageLink';
 import { GroupedBars, StackedBars } from './charts/PeriodBars';
 import { StepChart } from './charts/StepChart';
 import { TimelineChart } from './charts/TimelineChart';
-import { sparklineGeometry } from './charts/geometry';
+import { sparklineGeometry } from '@/charts/kit/geometry';
 import { fmtMonth } from './model';
 import {
   DEFAULT_EXPLORER_ENTITY,
