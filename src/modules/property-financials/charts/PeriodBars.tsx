@@ -9,8 +9,8 @@ import { useMemo } from 'react';
 import { useMeasure } from '@/lib/useMeasure';
 import { axisUsd, usd } from '@analytics/property-financials/format';
 import { stackTotalsData, type BarsData } from '../explorer-model';
-import { barAxis, barY, chartWidth, groupedBarsLayout, stackedBarsLayout, stackHeights, type PlotBox } from './geometry';
-import { Legend, MarkFrame, type TipMark } from './MarkFrame';
+import { barAxis, barY, chartWidth, groupedBarsLayout, stackedBarsLayout, stackHeights, type PlotBox } from '@/charts/kit/geometry';
+import { Legend, MarkFrame, type TipMark } from '@/charts/kit/MarkFrame';
 
 const H = 270;
 const M = { l: 52, r: 10, t: 14, b: 36 } as const;
