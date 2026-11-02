@@ -20,6 +20,7 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
+import { LANDLORD_COSTS_NOT_SOURCED_FIELD } from '../../src/analytics/property-basis';
 import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sources/notion-deals';
 import { loadM365Tasks, m365TasksDegradationFlag, type M365TasksDegradation } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
@@ -2037,6 +2038,9 @@ export interface ParseResult {
    * shipped `tasks` 115 -> 59 at Exit 0.
    */
   m365Degraded: M365TasksDegradation | null;
+  /** Rows removed by excludeNonInvestmentHoldings (the residence), aggregate only. Not on the
+   *  snapshot: only the independent workbook re-read in scripts/reconcile.ts needs it. */
+  excludedHoldings: ExcludedHoldings;
 }
 
 /**
@@ -2087,8 +2091,12 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   }
   const dataAsOf = workbookDataAsOf ?? WORKBOOK_AS_OF;
 
-  const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
-  const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
+  const parsedProperties = parseProperties(get('Property NOI'), flags);
+  // Leases resolve against EVERY workbook row so a rent-roll line keyed to an excluded holding is
+  // dropped by id below, not mis-flagged as an unresolved property.
+  const parsedLeases = parseLeases(rentRollWs, parsedProperties.properties, flags, refIso);
+  const { properties, leases, excludedHoldings, excludedIds, workbookNoiTotal, workbookValueTotal, workbookRentTotal } =
+    excludeNonInvestmentHoldings(parsedProperties, parsedLeases.leases, parsedLeases.workbookRentTotal, flags);
   const loans = parseLoans(get('Loan Index'), flags);
   // OI-092: parseLoans reads only `Loan Index`, so a wrong next-12-month debt-service window in
   // `External Loans Summary` reaches monthlyPmt (and therefore DSCR) with nothing in its path
@@ -2114,6 +2122,7 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     premiumHistoryWs ? parseInsurancePremiumHistory(premiumHistoryWs) : null,
     flags,
   );
+  flags.push(...flagExcludedReferences(loans, insurance, parsedProperties.properties, excludedIds));
   const checklistTasks = parseTasks(get('Monthly Checklist'));
   // live M365 To-Do prepended when Graph is configured, else the workbook checklist alone. A
   // data-losing degradation (token-failed / fetch-failed / empty-result) raises an ERROR-severity
@@ -2139,6 +2148,9 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   for (const f of dealsMergeFlags) flags.push(f);
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
+  // Standing basis disclosures go LAST so they never sit ahead of an actionable warn/error in a
+  // capped list (refute wf_b6010683-4be).
+  flags.push(...flagLandlordCostsNotSourced(properties));
   const snapshot = PortfolioSnapshot.parse({
     meta: {
       schemaVersion: SCHEMA_VERSION,
@@ -2160,5 +2172,158 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     dataQuality: flags,
   });
 
-  return { snapshot, flags, dealsDegraded, m365Degraded };
+  return { snapshot, flags, dealsDegraded, m365Degraded, excludedHoldings };
+}
+
+/** Workbook rows dropped from the snapshot, as a non-identifying aggregate (no name or address) so
+ *  the independent workbook re-read in scripts/reconcile.ts can still tie its Portfolio Totals. */
+export interface ExcludedHoldings {
+  count: number;
+  noi: number;
+  oxfordValue: number;
+  /** Σ annualRent of the rent-roll lines dropped with them (the rent roll's Portfolio Total includes them). */
+  annualRent: number;
+}
+
+/**
+ * Ratified 2026-10-30 (Gabriel): the residence (9510 Persimmon Tree, `type === 'Residence'`) must
+ * not appear anywhere in the command center. This supersedes the 2026-09-23 ruling that reported it
+ * beside investment KPIs as "other holdings": it is removed at the one boundary every surface reads
+ * through, so no table, KPI, chart, alert, AI answer, brief or public mirror can show it.
+ *
+ * Removal is EXACT, never fuzzy (refute wf_305adf92-ca4: a label matcher dropped non-residence rows
+ * and netted them out of the tie-out, invisibly). Removed: the property row, rent-roll lines whose
+ * propertyId resolved to it, and flags on those entities. Anything that cannot be attributed
+ * exactly fails LOUD instead, with an error flag that blocks the persist and does not name the row:
+ *  - an excluded row whose slug or normalized address equals an investment row's (lease
+ *    attribution between them would depend on sheet order);
+ *  - a loan collateral or insurance property label that resolves to an excluded row (the fix is to
+ *    take it off the workbook sheet, not for the parser to guess).
+ *
+ * The workbook's Portfolio Total rows include the residence, so the three totals carried on the
+ * snapshot (NOI, value, rent) are restated net of exactly what was removed. reconcile-runtime ties
+ * them at $1; scripts/reconcile.ts subtracts `excludedHoldings` from its independent re-read.
+ */
+export function excludeNonInvestmentHoldings(
+  parsed: PropertiesParseResult,
+  leases: Lease[],
+  workbookRentTotal: number | null,
+  flags: DataQualityFlag[],
+): {
+  properties: Property[];
+  leases: Lease[];
+  excludedHoldings: ExcludedHoldings;
+  excludedIds: ReadonlySet<string>;
+  workbookNoiTotal: number | null;
+  workbookValueTotal: number | null;
+  workbookRentTotal: number | null;
+} {
+  const excluded = parsed.properties.filter((p) => p.type === 'Residence');
+  const excludedIds = new Set(excluded.map((p) => p.id));
+  const investment = parsed.properties.filter((p) => !excludedIds.has(p.id));
+  // Same equivalences the id builder and lease resolver use (slug strips punctuation; the resolver's
+  // tie-break compares normalizedAddress), so a punctuation-only difference is still a collision.
+  const keysOf = (p: Property) => [slug(p.name), normalizedAddress(p.name)];
+  const investmentKeys = new Set(investment.flatMap(keysOf));
+  if (excluded.some((p) => keysOf(p).some((k) => investmentKeys.has(k)))) {
+    flags.push({
+      entity: 'reconciliation',
+      field: 'properties.excludedHoldings',
+      issue: 'a non-investment (residence) row has the same name or address as an investment row on Property NOI; rename one so the exclusion cannot depend on row order',
+      severity: 'error',
+    });
+  }
+  const isExcludedLease = (l: Lease) => l.propertyId !== null && excludedIds.has(l.propertyId);
+  const droppedLeases = leases.filter(isExcludedLease);
+  // Lease attribution is a token-overlap resolver, not an exact match, so a removal is never
+  // silent: the line stays out of the snapshot (it may be the residence) and the persist and the
+  // mirror bake are blocked until the rent roll is relabelled (refute wf_5ebf32b2-e5d).
+  if (droppedLeases.length > 0) {
+    flags.push({
+      entity: 'reconciliation',
+      field: 'leases.excludedHoldings',
+      issue: `${droppedLeases.length} rent-roll line(s) resolve to a non-investment (residence) holding; remove them from the rent roll, or relabel any that belong to an investment property`,
+      severity: 'error',
+    });
+  }
+  // Lease-level flags carry the LEASE id as their entity, so those are dropped as well.
+  dropFlagsFor(flags, new Set([...excludedIds, ...droppedLeases.map((l) => l.id)]));
+  const sumOf = (pick: (p: Property) => number) => excluded.reduce((a, p) => a + pick(p), 0);
+  const excludedHoldings: ExcludedHoldings = {
+    count: excluded.length,
+    noi: sumOf((p) => p.noi),
+    oxfordValue: sumOf((p) => p.oxfordValue),
+    annualRent: droppedLeases.reduce((a, l) => a + l.annualRent, 0),
+  };
+  const net = (total: number | null, less: number) => (total === null ? null : total - less);
+  return {
+    properties: investment,
+    leases: leases.filter((l) => !isExcludedLease(l)),
+    excludedHoldings,
+    excludedIds,
+    workbookNoiTotal: net(parsed.workbookNoiTotal, excludedHoldings.noi),
+    workbookValueTotal: net(parsed.workbookValueTotal, excludedHoldings.oxfordValue),
+    workbookRentTotal: net(workbookRentTotal, excludedHoldings.annualRent),
+  };
+}
+
+/**
+ * Loans and insurance rows are never dropped by the exclusion. If one RESOLVES (same resolver as
+ * leases, over every workbook row) to an excluded holding, raise one error flag, without naming
+ * it, so the persist is blocked until the workbook row is removed. Live data has none.
+ */
+export function flagExcludedReferences(
+  loans: readonly Loan[],
+  insurance: readonly InsurancePolicy[],
+  allProperties: Property[],
+  excludedIds: ReadonlySet<string>,
+): DataQualityFlag[] {
+  if (excludedIds.size === 0) return [];
+  const hits = (label: string | null) => {
+    const id = label ? resolvePropertyId(label, allProperties) : null;
+    return id !== null && excludedIds.has(id);
+  };
+  const n = loans.filter((l) => hits(l.collateralProperty)).length + insurance.filter((i) => hits(i.property)).length;
+  return n === 0
+    ? []
+    : [{
+        entity: 'reconciliation',
+        field: 'properties.excludedHoldings',
+        issue: `${n} Loan Index / Insurance Renewals row(s) reference a non-investment (residence) holding; remove them from the workbook so they cannot surface it`,
+        severity: 'error',
+      }];
+}
+
+function dropFlagsFor(flags: DataQualityFlag[], entities: ReadonlySet<string>): void {
+  for (let i = flags.length - 1; i >= 0; i--) {
+    if (entities.has(flags[i]!.entity)) flags.splice(i, 1);
+  }
+}
+
+/**
+ * Ratified 2026-10-30 (Gabriel): the income properties whose Property NOI row carries $0 expenses
+ * are NNN, NOT absolute NNN — the landlord still pays roof, structure and paving. Their workbook
+ * NOI is therefore overstated by those costs. Until PCA capex schedules supply them (Wave C), each
+ * such row is flagged (no $/SF reserve is assumed — ruling: PCA-driven, else "not sourced").
+ *
+ * The flag goes on the property AND the snapshot data-quality list, so it renders on the Portfolio
+ * table and the Health surface. Values are not changed: this labels a known understatement, it
+ * does not estimate it.
+ */
+export function flagLandlordCostsNotSourced(properties: Property[]): DataQualityFlag[] {
+  const out: DataQualityFlag[] = [];
+  for (const p of properties) {
+    if (p.expenses !== 0 || p.grossIncome <= 0) continue;
+    const flag: DataQualityFlag = {
+      entity: p.id,
+      field: LANDLORD_COSTS_NOT_SOURCED_FIELD,
+      issue: 'NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced (expenses are $0 or blank), so NOI is overstated by them until a PCA schedule supplies them',
+      // info, not warn: a standing basis disclosure, not a workbook defect to fix; warn would hold
+      // the Health signal on "Warnings" indefinitely (refute wf_4b941bed-52e, signal discipline).
+      severity: 'info',
+    };
+    p.flags.push(flag);
+    out.push(flag);
+  }
+  return out;
 }

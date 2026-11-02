@@ -603,11 +603,15 @@ const notionHeaders = (token: string) => ({
   'content-type': 'application/json',
 });
 
+// A hung Notion call would otherwise block parseWorkbook, and with it the snapshot refresh and the hourly
+// mirror bake. A timeout throws into loadDeals' existing catch, which degrades to the seed deals (degraded: fetch-failed).
+const NOTION_FETCH_TIMEOUT_MS = 15_000;
+
 /** Resolve the deals database's data source id(s). Env override skips the discovery call. */
 async function resolveDataSourceIds(token: string): Promise<string[]> {
   const override = process.env.NOTION_DEALS_DATA_SOURCE;
   if (override) return override.split(',').map((s) => s.trim()).filter(Boolean);
-  const res = await fetch(`${NOTION}/databases/${DEALS_DB_ID}`, { headers: notionHeaders(token) });
+  const res = await fetch(`${NOTION}/databases/${DEALS_DB_ID}`, { headers: notionHeaders(token), signal: AbortSignal.timeout(NOTION_FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Notion db ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
   const db = (await res.json()) as { data_sources?: Array<{ id?: string }> };
   return (db.data_sources ?? []).map((d) => d.id).filter((x): x is string => !!x);
@@ -653,6 +657,7 @@ async function fetchNotionDeals(token: string, stageDrift: Set<string>): Promise
       const res = await fetch(`${NOTION}/data_sources/${dsId}/query`, {
         method: 'POST',
         headers: notionHeaders(token),
+        signal: AbortSignal.timeout(NOTION_FETCH_TIMEOUT_MS),
         body: JSON.stringify(
           cursor
             ? { page_size: QUERY_PAGE_SIZE, start_cursor: cursor }

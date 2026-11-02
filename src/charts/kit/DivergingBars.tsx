@@ -1,4 +1,4 @@
-// src/modules/property-financials/charts/DivergingBars.tsx
+// src/charts/kit/DivergingBars.tsx
 //
 // Horizontal diverging bars around zero on ONE scale (the reference artifact's drawBars, corrected to
 // a single scale — see geometry.divergingLayout). Each bar is a focusable mark with a hover / touch /
@@ -7,6 +7,7 @@
 import { useId, useState } from 'react';
 import { useMeasure } from '@/lib/useMeasure';
 import { divergingLayout } from './geometry';
+import './kit.css';
 
 export interface DivergingItem {
   readonly key: string;
@@ -46,7 +47,7 @@ export function DivergingBars({ items, formatValue, positive, negative, ariaLabe
   const tipLeft = activeBar ? Math.max(0, Math.min(W - TIP_W, activeBar.x + activeBar.width / 2 - TIP_W / 2)) : 0;
 
   return (
-    <div className="pf-chart" ref={ref} style={{ minHeight: 0 }}>
+    <div className="ck-chart" ref={ref} style={{ minHeight: 0 }}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={ariaLabel} aria-describedby={tableId} onPointerLeave={() => setActive(null)}>
         {items.map((it, i) => {
           const b = layout.bars[i]!;
@@ -66,33 +67,33 @@ export function DivergingBars({ items, formatValue, positive, negative, ariaLabe
               onBlur={() => setActive(null)}
             >
               <rect x={0} y={y - 6} width={W} height={rowHeight} fill="transparent" />
-              <text className="pf-bar-label" x={labelW - 8} y={y + 13} textAnchor="end">
+              <text className="ck-bar-label" x={labelW - 8} y={y + 13} textAnchor="end">
                 {it.label}
               </text>
               <rect x={b.x} y={y} width={Math.max(b.width, 1)} height={BAR_H} fill={up ? positive.color : negative.color} />
-              <text className="pf-bar-value" x={valueX} y={y + 12} textAnchor="start">
+              <text className="ck-bar-value" x={valueX} y={y + 12} textAnchor="start">
                 {formatValue(it.value)}
               </text>
             </g>
           );
         })}
-        <line x1={layout.zero} x2={layout.zero} y1={0} y2={H - 16} stroke="var(--pf-axis)" strokeWidth={1} />
+        <line x1={layout.zero} x2={layout.zero} y1={0} y2={H - 16} stroke="var(--border-strong)" strokeWidth={1} />
         <text x={layout.zero} y={H - 3} textAnchor="middle">
           0
         </text>
       </svg>
       {activeItem && (
-        <div className="pf-tip" role="status" style={{ left: tipLeft, top: tipTop, width: TIP_W }}>
+        <div className="ck-tip" role="status" style={{ left: tipLeft, top: tipTop, width: TIP_W }}>
           <b>{activeItem.label}</b>
           <div>{formatValue(activeItem.value)}</div>
           {activeItem.detail?.map((d) => (
-            <div key={d} className="pf-mut">
+            <div key={d} className="ck-mut">
               {d}
             </div>
           ))}
         </div>
       )}
-      <div className="pf-legend">
+      <div className="ck-legend">
         <span>
           <i style={{ background: positive.color }} aria-hidden />
           {positive.label}
@@ -102,11 +103,11 @@ export function DivergingBars({ items, formatValue, positive, negative, ariaLabe
           {negative.label}
         </span>
       </div>
-      <details className="pf-tablefb" id={tableId}>
+      <details className="ck-tablefb" id={tableId}>
         <summary>Data table</summary>
-        <div className="pf-tbl">
+        <div className="ck-tbl">
           <table>
-            <caption className="pf-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+            <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
               {ariaLabel}
             </caption>
             <thead>

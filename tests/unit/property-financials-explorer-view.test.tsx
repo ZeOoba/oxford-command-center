@@ -122,9 +122,9 @@ describe('smoke: cycle all 11 selections', () => {
       expect(within(el).getByTestId('pf-categories')).toBeTruthy();
       expect(within(el).getByTestId('pf-explorer-insights').children.length).toBeGreaterThan(0);
       // every table scrolls inside its own container (phone: no page h-scroll)
-      for (const t of el.querySelectorAll('table')) expect(t.closest('.pf-tbl'), id).not.toBeNull();
+      for (const t of el.querySelectorAll('table')) expect(t.closest('.pf-tbl, .ck-tbl'), id).not.toBeNull();
       // every SVG chart has a <details> data-table fallback
-      for (const svg of el.querySelectorAll('svg[role="img"]')) expect(svg.closest('.pf-xchart')?.querySelector('details.pf-tablefb'), id).toBeTruthy();
+      for (const svg of el.querySelectorAll('svg[role="img"]')) expect(svg.closest('.pf-xchart, .ck-xchart')?.querySelector('details.pf-tablefb, details.ck-tablefb'), id).toBeTruthy();
       // all charts' drawn attributes are finite
       for (const n of el.querySelectorAll('svg [x],svg [y],svg [width],svg [height],svg [d],svg [cx]')) {
         for (const a of ['x', 'y', 'width', 'height', 'd', 'cx', 'cy']) expect(n.getAttribute(a) ?? '', `${id} ${a}`).not.toMatch(/NaN|Infinity/);
@@ -257,7 +257,7 @@ describe('interaction', () => {
     const bar = chart.querySelector('rect[data-mark]')!;
     fireEvent.pointerEnter(bar);
     expect(within(chart).getByRole('status').textContent).toMatch(/Revenue/);
-    const group = chart.querySelector('.pf-chart-focus') as HTMLElement;
+    const group = chart.querySelector('.ck-chart-focus') as HTMLElement;
     fireEvent.focus(group);
     fireEvent.keyDown(group, { key: 'ArrowRight' });
     expect(within(chart).getByRole('status').textContent).toMatch(/Operating expense/);

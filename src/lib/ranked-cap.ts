@@ -7,6 +7,9 @@
 /** Rows a ranked surface shows before the rest is held back. */
 export const MAX_ITEMS = 10;
 
+/** The Overview is the first screen, so it shows fewer rows than a destination (Gabriel, 2026-10-29). */
+export const OVERVIEW_MAX_ITEMS = 7;
+
 /** Each non-empty tier keeps at least this many rows, so a quiet tier never vanishes under a loud one. */
 export const TIER_FLOOR = 2;
 

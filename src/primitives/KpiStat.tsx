@@ -93,7 +93,7 @@ export function KpiStat({
       </div>
       {spark && spark.length > 1 && (
         <div className={cn('shrink-0 pt-1')}>
-          <Sparkline data={spark} color={sparkColor ?? accentColor} />
+          <Sparkline data={spark} label={`${label} trend`} valueFormat={format} color={sparkColor ?? accentColor} />
         </div>
       )}
     </div>
