@@ -6,6 +6,7 @@ import {
   hasM365TasksFailure,
 } from '../../server/sources/m365-tasks';
 import { _resetGraphTokenCache } from '../../server/sources/graph-auth';
+import { hangUntilAborted, installFakeTimeoutClock, settlesWithin } from '../support/fetch-timeout';
 
 const GRAPH_KEYS = ['GRAPH_TOKEN', 'GRAPH_TENANT_ID', 'GRAPH_CLIENT_ID', 'GRAPH_CLIENT_SECRET', 'GRAPH_USER'] as const;
 
@@ -178,5 +179,54 @@ describe('requireLiveM365Source — writer-side gate for the unflagged not-confi
     expect(result.refuse).toBe(false);
     if (result.refuse) throw new Error('expected allow');
     expect(result.warning).toMatch(/not-configured/);
+  });
+});
+
+// #513 follow-up (adversarial review 2026-10-30): the previous assertions only checked that SOME
+// AbortSignal was passed, which an unbounded `new AbortController().signal` also satisfies. These
+// drive a fake clock and a fetch that settles ONLY when its signal aborts, so they fail if the 15 s
+// bound is removed or changed.
+describe('loadM365Tasks — Graph fetches are bounded at 15 s', () => {
+  const CONFIGURED = { GRAPH_TENANT_ID: 't', GRAPH_CLIENT_ID: 'c', GRAPH_CLIENT_SECRET: 's', GRAPH_USER: 'u@x.com' };
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('a hung Graph call degrades to fetch-failed once 15 s elapse, and not before', async () => {
+    const timeoutSpy = installFakeTimeoutClock();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('login.microsoftonline.com')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      }
+      return hangUntilAborted(init);
+    }));
+    await withGraphEnv(CONFIGURED, async () => {
+      const load = loadM365Tasks();
+      expect(await settlesWithin(load, 14_999)).toBe(false);
+      expect(await settlesWithin(load, 2)).toBe(true);
+      const out = await load;
+      expect(out.tasks).toEqual([]);
+      expect(out.degraded?.reason).toBe('fetch-failed');
+      expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+    });
+  });
+
+  it('a hung token endpoint degrades to token-failed once 15 s elapse, and not before', async () => {
+    _resetGraphTokenCache();
+    const timeoutSpy = installFakeTimeoutClock();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('login.microsoftonline.com')) return hangUntilAborted(init);
+      throw new Error('Graph must not be reached without a token');
+    }));
+    await withGraphEnv(CONFIGURED, async () => {
+      const load = loadM365Tasks();
+      expect(await settlesWithin(load, 14_999)).toBe(false);
+      expect(await settlesWithin(load, 2)).toBe(true);
+      const out = await load;
+      expect(out.tasks).toEqual([]);
+      expect(out.degraded?.reason).toBe('token-failed');
+      expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+    });
   });
 });

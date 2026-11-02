@@ -88,6 +88,67 @@ describe('useWorkspaces', () => {
   });
 });
 
+// A new default layout must reach people still on the OLD untouched default, without wiping a layout
+// they arranged themselves. Only a workspace that equals the legacy default is migrated.
+describe('useWorkspaces layout migration', () => {
+  const NEW_IDS = ['actions', 'kpis', 'cash', 'noi', 'insights'];
+  const NEW_HIDDEN = ['noi', 'insights'];
+  const LEGACY = { order: ['kpis', 'noi', 'actions', 'cash', 'insights'], hidden: ['insights'] };
+  const LEGACY_NO_HIDE = { order: LEGACY.order, hidden: [] as string[] }; // saved before 'insights' became default-hidden
+  const MIGRATION = { steps: [{ toVersion: 2, defaults: [LEGACY, LEGACY_NO_HIDE] }] };
+  const seed = (workspaces: Record<string, { order: string[]; hidden: string[] }>, extra: object = {}) =>
+    localStorage.setItem(KEY, JSON.stringify({ workspaces, active: 'Default', ...extra }));
+
+  it('moves an untouched legacy default to the new default', () => {
+    seed({ Default: LEGACY });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(result.current.visibleOrder).toEqual(['actions', 'kpis', 'cash']);
+    expect(result.current.hiddenIds).toEqual(['noi', 'insights']);
+  });
+
+  it('also migrates a default saved under an earlier shipped default (nothing hidden)', () => {
+    seed({ Default: LEGACY_NO_HIDE }, { version: 1 });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(result.current.visibleOrder).toEqual(['actions', 'kpis', 'cash']);
+  });
+
+  it('keeps the old order when the user hid something themselves', () => {
+    seed({ Default: { order: LEGACY.order, hidden: ['cash', 'insights'] } });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(result.current.visibleOrder).toEqual(['kpis', 'noi', 'actions']);
+  });
+
+  it('leaves a layout the user arranged alone', () => {
+    seed({ Default: { order: ['cash', 'kpis', 'noi', 'actions', 'insights'], hidden: ['insights'] } });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(result.current.visibleOrder).toEqual(['cash', 'kpis', 'noi', 'actions']);
+  });
+
+  it('migrates only the workspaces that match, keeping a customised named view', () => {
+    const custom = { order: ['cash', 'kpis', 'noi', 'actions', 'insights'], hidden: ['insights'] };
+    seed({ Default: LEGACY, Mine: custom });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(result.current.visibleOrder).toEqual(['actions', 'kpis', 'cash']);
+    act(() => result.current.setActive('Mine'));
+    expect(result.current.visibleOrder).toEqual(['cash', 'kpis', 'noi', 'actions']);
+  });
+
+  it('runs once: a later customisation that resembles the legacy default is not reset', () => {
+    seed({ Default: LEGACY });
+    const first = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    act(() => first.result.current.reorder('cash', 'actions'));
+    first.unmount();
+    const second = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN, MIGRATION));
+    expect(second.result.current.visibleOrder).toEqual(['cash', 'actions', 'kpis']);
+  });
+
+  it('does nothing without a migration argument (existing callers unchanged)', () => {
+    seed({ Default: LEGACY });
+    const { result } = renderHook(() => useWorkspaces(NEW_IDS, NEW_HIDDEN));
+    expect(result.current.visibleOrder).toEqual(['kpis', 'noi', 'actions', 'cash']);
+  });
+});
+
 describe('useWorkspaces defaultHidden (default-off-but-addable widgets)', () => {
   it('(a) fresh load: a defaultHidden id is in order but hidden, so it is addable via Edit layout', () => {
     const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));

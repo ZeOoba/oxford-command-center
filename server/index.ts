@@ -46,7 +46,7 @@ import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 import { startServer } from './startup';
-import { assessFeeds } from './feed-freshness';
+import { assessFeeds, lastLedgerImportAt } from './feed-freshness';
 import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
@@ -307,10 +307,16 @@ app.get('/api/health', (c) => {
   // existsSync-gated (same precedent as liveGovernors below): getWarehouse() would otherwise
   // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
   let leaseMarketAt: string | null = null;
+  let ledgerAt: string | null = null;
   try {
     leaseMarketAt = existsSync(warehouseDbPath()) ? lastComputedAt(getWarehouse()) : null;
   } catch {
     leaseMarketAt = null;
+  }
+  try {
+    ledgerAt = existsSync(warehouseDbPath()) ? lastLedgerImportAt(getWarehouse()) : null;
+  } catch {
+    ledgerAt = null;
   }
   const feeds = assessFeeds({
     snapshot: snap?.meta.generatedAt ?? null,
@@ -319,6 +325,7 @@ app.get('/api/health', (c) => {
     dailyBrief: briefHealth?.ranAt ?? null,
     leaseMarket: leaseMarketAt,
     docIndex: docIndexBuiltAt(),
+    warehouseLedger: ledgerAt,
   }, Date.now());
   return c.json({
     ok: true,

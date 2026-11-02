@@ -15,7 +15,10 @@ import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause, rankRows } from '../../lib/tier-group';
+import { groupByCause, previewSubjects, signalCount } from '../../lib/tier-group';
+import type { TierItem } from '@/primitives/TierBoard';
+import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
+import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
 
 export interface WidgetDef {
@@ -66,7 +69,7 @@ function NoiByMarketWidget() {
     <Card>
       <CardHeader title="NOI by Market" trailing={<Badge tone="gold">{marketData.length} markets</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <BarChart data={marketData} valueFormat={fmtUsdCompact} height={250} />
+        <BarChart data={marketData} valueFormat={fmtUsdCompact} height={250} ariaLabel="NOI by market (workbook basis, Oxford share)" />
       </div>
     </Card>
   );
@@ -94,7 +97,7 @@ function CashTrendWidget() {
     <Card>
       <CardHeader title="Total Cash — 12-Month Trend" trailing={<Badge tone="neutral">{series.length} mo</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" />
+        <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" ariaLabel="Total cash balance, 12-month trend" />
       </div>
     </Card>
   );
@@ -188,12 +191,47 @@ function ResultsBannerWidget() {
 // presentation-only helper; the merge, row shape (mergedToTierItem), grouping (groupByCause) and
 // per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
 // is new.
-const PRIORITY_ACTIONS_LIMIT = 5;
-
 // Same-cause alerts roll into one row BEFORE the cut to N (twelve lapsed policies are one decision,
-// not twelve slots), and lapsed coverage is pinned first — its impact is unquantified, so a pure
-// dollar sort could never surface it here.
-export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier {
+// not twelve slots), and pinned safety alerts (lapsed coverage, DSCR / LTV breaches, reconciliation
+// failure — see src/brain/alert-cause.ts) rank first: their impact is unquantified, so a pure dollar
+// sort could never surface them here.
+// The cap applies to UNPINNED rows only: a pinned row is never cut, even when pinned rows alone
+// exceed `limit` (a cause collapses only at MIN_GROUP_SIZE, so two-member pinned causes stay separate
+// rows and can outnumber the cap). `heldBack` counts what the cap did cut — rows and the signals they
+// stand for — so an indicator built on it can never go negative or miss a held-back group's members.
+// When a pinned warning / info row shows, no critical row may be held back behind it (#505, C4); the
+// critical rows that do not fit fold into ONE expandable roll-up row (OVERFLOW_ROW_ID), so the board
+// shows <= max(`limit`, pinned rows) + 1 rows — pinned rows are never cut, so they alone can exceed
+// `limit` — and every critical signal is still on it (round 2, 2026-10-30).
+export interface PriorityActionsTier extends Tier {
+  heldBack: { rows: number; signals: number };
+}
+
+/** Id of the roll-up row that carries the critical rows beyond the cap (see buildPriorityActionsTier). */
+export const OVERFLOW_ROW_ID = 'group:critical:overflow';
+
+/** The underlying signal ids a row stands for, through nested roll-ups (the overflow row's members
+ *  can themselves be cause groups). */
+function leafIds(row: TierItem): string[] {
+  return row.members ? row.members.flatMap(leafIds) : [row.id];
+}
+
+function overflowRow(rows: TierItem[]): TierItem {
+  const quantified = rows.filter((r) => r.impactUsd !== null && r.impactUsd !== undefined);
+  return {
+    id: OVERFLOW_ROW_ID,
+    category: 'critical',
+    categoryTone: 'red',
+    impactKind: 'risk',
+    // Unquantified members stay unquantified: never a $0 figure.
+    impactUsd: quantified.length > 0 ? quantified.reduce((n, r) => n + (r.impactUsd as number), 0) : null,
+    title: `${rows.length} more critical`,
+    detail: previewSubjects(rows),
+    members: rows,
+  };
+}
+
+export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): PriorityActionsTier {
   // Ids are unique by construction (conditions.ts / mergeInsightSources); dedupe defensively so the
   // id-keyed subtotal below can never count a row that is not shown, or count one twice.
   const seen = new Set<string>();
@@ -202,7 +240,9 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
   // are critical or warning under one cause, and a cross-severity group would fold a critical lease
   // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
   const sorted = sortByImpactDesc(unique);
-  const rows = (['critical', 'warning', 'info'] as const).flatMap((severity) =>
+  // One ranked list per severity (pinned first, then dollars — groupByCause ranks within the scope),
+  // concatenated critical → warning → info: that concatenation IS the display order.
+  const tiers = (['critical', 'warning', 'info'] as const).map((severity) =>
     groupByCause(
       sorted.filter((m) => m.severity === severity).map((m, index) => mergedToTierItem(m, index + 1)),
       describeAlertCause,
@@ -210,16 +250,48 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  const items = rankRows(rows).slice(0, limit);
-  const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
+  // Selection (adversarial review 2026-10-30, C4; round 2): every pinned row is shown (it may exceed
+  // `limit` on its own). Free slots go to the other rows in display order, so critical rows take them
+  // first. When a pinned row of a LESS severe tier shows, every critical row must stay reachable — a
+  // pinned warning (DSCR covenant watch, LTV ceiling) must never push a critical dollar row (balloon,
+  // arrears) off the surface — so the critical rows left without a slot fold into one roll-up row
+  // instead of being held back. Clamped to the critical tier: an info-severity pinned id can force
+  // critical rows, never the warning tier.
+  const lowestPinnedTier = tiers.reduce((acc, rows, i) => (rows.some((row) => row.pinned) ? i : acc), -1);
+  const forcedTiers = Math.min(lowestPinnedTier, 1); // tiers [0, forcedTiers) must stay reachable
+  const display = tiers.flat();
+  const selected = new Set(display.filter((row) => row.pinned));
+  let free = Math.max(0, limit - selected.size);
+  for (const row of display) {
+    if (free === 0) break;
+    if (selected.has(row)) continue;
+    selected.add(row);
+    free--;
+  }
+  let overflow = tiers.slice(0, Math.max(0, forcedTiers)).flat().filter((row) => !selected.has(row));
+  if (overflow.length === 1) {
+    // A one-row roll-up costs the same slot as the row itself: show the row.
+    selected.add(overflow[0]!);
+    overflow = [];
+  }
+  const inOverflow = new Set(overflow);
+  const rollup = overflow.length > 0 ? [overflowRow(overflow)] : [];
+  const items = [
+    ...tiers[0]!.filter((row) => selected.has(row)),
+    ...rollup,
+    ...tiers.slice(1).flat().filter((row) => selected.has(row)),
+  ].map((row, i) => ({ ...row, rank: i + 1 }));
+  const held = display.filter((row) => !selected.has(row) && !inOverflow.has(row));
+  const shownIds = new Set(items.flatMap(leafIds));
   const top = unique.filter((m) => shownIds.has(m.id));
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Top items by $ impact; lapsed coverage pinned first',
+    subtitle: 'Critical first, safety alerts pinned, then by $ impact',
     tone: 'accent',
     items,
     totalsBySpine: totalsBySpine(top),
+    heldBack: { rows: held.length, signals: held.reduce((n, row) => n + signalCount(row), 0) },
   };
 }
 
@@ -232,11 +304,11 @@ function PriorityActionsWidget() {
 
   const candidates = insightsQuery.data?.candidates ?? [];
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
-  const tier = buildPriorityActionsTier(merged, PRIORITY_ACTIONS_LIMIT);
+  const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
 
   // A single ranked tier — full width, one column, so the card doesn't render half-empty. "See
   // all" is the one link out to the full Insights tier board (Brain › Insights) — the ratified
-  // "one home per attention list" IA (global-constraints.md): Overview stays a compact top-5,
+  // "one home per attention list" IA (global-constraints.md): Overview stays a compact top-7,
   // the full board lives in one place. Navigates via useUi().openTab — the app's existing
   // module+tab nav hook (used by the command palette's "Destination > Tab" entries) — rather than
   // a react-router-dom <Link>, since 'insights' is a legacy-aliased tab id (routing.ts
@@ -246,14 +318,21 @@ function PriorityActionsWidget() {
     <div className="flex flex-col gap-2">
       <TierBoard tiers={[tier]} columns={1} />
       {merged.length > 0 && (
-        <button
-          type="button"
-          onClick={() => ui.openTab('command-brain', 'insights')}
-          className="self-end text-2xs font-semibold"
-          style={{ color: 'var(--accent)' }}
-        >
-          See all {merged.length} insights →
-        </button>
+        <div className="flex items-center justify-end gap-2">
+          {tier.heldBack.signals > 0 && (
+            <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              {tier.heldBack.signals} more held back
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => ui.openTab('command-brain', 'insights')}
+            className="text-2xs font-semibold"
+            style={{ color: 'var(--accent)' }}
+          >
+            See all {merged.length} insights →
+          </button>
+        </div>
       )}
     </div>
   );
@@ -286,17 +365,49 @@ function InsightsWidget() {
   );
 }
 
-/** Overview widget registry — drop a new entry here and it's available to the dashboard. */
+/** Overview widget registry — drop a new entry here and it's available to the dashboard. Registry
+ *  order IS the default layout order: KPIs, then what needs a decision, descriptive charts after (or
+ *  off by default and addable via Edit layout). KPIs stay first until Priority Actions has compact
+ *  rows (design step 4); full-width tall cards would otherwise push them ~1,400px down. */
 export const OVERVIEW_WIDGETS: WidgetDef[] = [
   { id: 'kpis', title: 'Portfolio KPIs', span: 'full', Component: KpiStripWidget },
+  { id: 'priority-actions', title: 'Priority Actions', span: 'full', Component: PriorityActionsWidget },
   { id: 'results-banner', title: 'Results', span: 'full', Component: ResultsBannerWidget },
-  { id: 'noi-market', title: 'NOI by Market', span: 'half', Component: NoiByMarketWidget },
-  { id: 'top-tenants', title: 'Top Tenants', span: 'half', Component: TopTenantsWidget },
-  { id: 'priority-actions', title: 'Priority Actions', span: 'half', Component: PriorityActionsWidget },
   { id: 'cash-trend', title: 'Cash Trend', span: 'half', Component: CashTrendWidget },
   { id: 'lease-rollover', title: 'Lease Rollover', span: 'half', Component: LeaseRolloverWidget },
+  { id: 'noi-market', title: 'NOI by Market', span: 'half', Component: NoiByMarketWidget, defaultOn: false },
+  { id: 'top-tenants', title: 'Top Tenants', span: 'half', Component: TopTenantsWidget, defaultOn: false },
   { id: 'insights', title: 'Insights & Alerts', span: 'full', Component: InsightsWidget, defaultOn: false },
 ];
+
+const LEGACY_ORDER = ['kpis', 'results-banner', 'noi-market', 'top-tenants', 'priority-actions', 'cash-trend', 'lease-rollover', 'insights'];
+
+/** The June 3 – July 6 default, `['kpis','noi-market','top-tenants','cash-trend','lease-rollover',
+ *  'insights']` with nothing hidden, AS NORMALIZED: useWorkspaces compares a saved layout after
+ *  normalize() appends the widgets it has never seen (priority-actions, results-banner; neither is
+ *  default-hidden, so `hidden` stays empty). Listing the raw June order would never match. */
+const JUNE_DEFAULT_ORDER = ['kpis', 'noi-market', 'top-tenants', 'cash-trend', 'lease-rollover', 'insights', 'priority-actions', 'results-banner'];
+
+/** Add a step (with the next `toVersion`) whenever the default layout changes. A saved workspace
+ *  still equal to a previous shipped default (untouched) moves to the new default once; any layout
+ *  the user arranged is kept. Each step lists the previous defaults it migrates, in normalized form,
+ *  and applies only to states stamped below its `toVersion` (adversarial review 2026-10-30, C5): a
+ *  v2 user who deliberately restored the legacy order after #514 is not overwritten by step 3.
+ *  - v2 (#514): the default saved before Insights became default-hidden (nothing hidden) and the one
+ *    with Insights hidden — a stored layout keeps the default it was created under.
+ *  - v3: the June 3 – July 6 default, which v2 missed. */
+export const OVERVIEW_LAYOUT_MIGRATION: LayoutMigration = {
+  steps: [
+    {
+      toVersion: 2,
+      defaults: [
+        { order: LEGACY_ORDER, hidden: ['insights'] },
+        { order: LEGACY_ORDER, hidden: [] },
+      ],
+    },
+    { toVersion: 3, defaults: [{ order: JUNE_DEFAULT_ORDER, hidden: [] }] },
+  ],
+};
 
 /** The subset of widgets a brand-new layout shows VISIBLE out of the box — every widget except
  *  those opted out via `defaultOn: false` (currently just the full Insights tier board, whose

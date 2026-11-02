@@ -42,7 +42,10 @@ import { egressRosterScanner } from '../server/briefing/roster-match';
  * after it would manufacture false refusals. (Catch-up sweep 2026-07-28..08-04, H2.)
  */
 export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string | null {
-  const flags = checkSnapshot(snapshot);
+  // Parse-time reconciliation errors (snapshot.dataQuality, e.g. a rent-roll line or loan that
+  // resolves to an excluded non-investment holding) refuse the bake too, exactly as they refuse
+  // Brain.persist. checkSnapshot alone does not re-derive them (refute wf_5ebf32b2-e5d).
+  const flags = [...snapshot.dataQuality, ...checkSnapshot(snapshot)];
   if (!hasReconciliationError(flags)) return null;
   const which = flags
     .filter((f) => f.severity === 'error' && f.entity === 'reconciliation')

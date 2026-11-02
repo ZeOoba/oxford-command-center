@@ -62,7 +62,7 @@ afterEach(() => {
 function allTablesScrollInside(root: HTMLElement) {
   const tables = root.querySelectorAll('table');
   expect(tables.length).toBeGreaterThan(0);
-  for (const t of tables) expect(t.closest('.pf-tbl'), 'table must scroll inside .pf-tbl').not.toBeNull();
+  for (const t of tables) expect(t.closest('.pf-tbl, .ck-tbl'), 'table must scroll inside .pf-tbl / .ck-tbl').not.toBeNull();
 }
 
 describe('Rent & NOI levers', () => {

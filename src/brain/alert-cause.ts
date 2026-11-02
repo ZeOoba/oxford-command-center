@@ -14,11 +14,25 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^expired-/, 'lease-expired'],
   [/^escalation-/, 'escalation-passed'],
   [/^ins-lapsed-/, 'insurance-lapsed'],
+  [/^dscr-floor-/, 'dscr-floor'],
+  [/^dscr-(?!floor-)/, 'dscr-covenant'],
+  // `ltv-governor-*` is an informational governor deviation, not a breach: no cause, never pinned.
+  [/^ltv-(?!governor-)/, 'ltv-ceiling'],
+  [/^reconcile-fail$/, 'reconcile-fail'],
 ];
 
 // Causes whose impact is real but cannot be quantified in dollars (a lapsed policy's exposure is
-// not its premium). They rank ahead of dollar-ranked rows rather than sinking under the null sort.
-const PINNED_CAUSES: ReadonlySet<string> = new Set(['insurance-lapsed']);
+// not its premium; a covenant or reconciliation breach has no honest annual figure). They rank ahead
+// of dollar-ranked rows rather than sinking under the null sort and being cut by a surface cap.
+// Hygiene alerts (stale workbook, stale AR) are deliberately NOT pinned: they stay on the alert
+// board but must not outrank a breach.
+const PINNED_CAUSES: ReadonlySet<string> = new Set([
+  'insurance-lapsed',
+  'dscr-floor',
+  'dscr-covenant',
+  'ltv-ceiling',
+  'reconcile-fail',
+]);
 
 export function isPinnedCause(cause: string | undefined): boolean {
   return cause !== undefined && PINNED_CAUSES.has(cause);
