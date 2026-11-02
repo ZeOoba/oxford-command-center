@@ -19,10 +19,13 @@ interface Props {
   height?: number;
   color?: string;
   valueFormat?: (n: number) => string;
+  /** Accessible name for the chart's <svg role="img">. Required (roadmap 2.5): an unnamed chart is
+   *  announced as a bare image. Say what the series is and its basis. */
+  ariaLabel: string;
 }
 
 /** Time-series area chart with branded gradient, animated draw-in, and hover tooltip. */
-export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat }: Props) {
+export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat, ariaLabel }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/:/g, '');
@@ -49,7 +52,7 @@ export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valu
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && data.length > 1 && (
-        <svg width={width} height={height} role="img">
+        <svg width={width} height={height} role="img" aria-label={ariaLabel}>
           <LinearGradient id={`area-${gid}`} from={color} to={color} fromOpacity={0.28} toOpacity={0} />
           <Group left={margin.left} top={margin.top}>
             {ticks.map((t) => (

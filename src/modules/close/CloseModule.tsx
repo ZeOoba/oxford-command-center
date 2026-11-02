@@ -69,7 +69,7 @@ export function CloseModule() {
           <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[1fr_320px]">
             <div>
               {sel.monthly.length > 0 ? (
-                <BarChart data={sel.monthly.map((m) => ({ label: m.month.slice(5), value: m.noi }))} valueFormat={fmtUsdCompact} height={220} color="var(--color-pos)" />
+                <BarChart data={sel.monthly.map((m) => ({ label: m.month.slice(5), value: m.noi }))} valueFormat={fmtUsdCompact} height={220} color="var(--color-pos)" ariaLabel={`${selRow.name} monthly NOI from the close export`} />
               ) : <div className="py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>No monthly detail in the export.</div>}
             </div>
             <div>
