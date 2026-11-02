@@ -221,8 +221,36 @@ describe('review finding: boxed / toJSON values next to Map / Error / Date text'
     const v = ['Unit', new C(new String('AB'))];
     expect(scanTexts(v)).toContain(branchCollectText(v));
   });
+  // CHANGED (2026-11-02, CI determinism): "quickly" was a < 10 s wall-clock budget, which took
+  // 11.6-13.9 s on the loaded self-hosted runner. It is now COUNTED: every leaf carries user code (a
+  // counted valueOf on the boxed Number; a counted accessor and toJSON on the toJSON object), and
+  // the total invocations per call must stay within SCAN_VISIT_BUDGET. Unbudgeted, the 2^22 copies
+  // of the leaf pair across the walks would run ~29M invocations; each one is adjacent to a charged
+  // visit, so a call that stops at the cap cannot exceed it. The 30 s timeout is only an outer hang
+  // guard. That the four walks share the cap (rather than four caps) is pinned by L1 below.
   it('the four walks share ONE budget: a DAG carrying boxed / toJSON leaves still throws quickly', () => {
-    let v: unknown = [new Number(1), new C('x')];
+    let calls = 0;
+    const n = new Number(1);
+    n.valueOf = () => {
+      calls++;
+      return 1;
+    };
+    class Counted {
+      constructor() {
+        Object.defineProperty(this, 'a', {
+          enumerable: true,
+          get: () => {
+            calls++;
+            return 'x';
+          },
+        });
+      }
+      toJSON(): string {
+        calls++;
+        return 'q';
+      }
+    }
+    let v: unknown = [n, new Counted()];
     for (let i = 0; i < 22; i++) v = [v, v];
     expect(() => scanTexts(v)).toThrow(/budget/);
     expect(() => rosterMatchWithTerms(v, ROSTER)).toThrow(/budget/);
@@ -239,6 +267,13 @@ describe('review finding: boxed / toJSON values next to Map / Error / Date text'
     expect(() => collectTextLegacy(w)).not.toThrow();
     expect(() => scanTexts(w)).toThrow(/budget/);
   }, 120_000);
+    for (const f of [() => scanTexts(v), () => rosterMatchWithTerms(v, ROSTER)]) {
+      calls = 0;
+      expect(f).toThrow(ScanBudgetError);
+      expect(calls).toBeGreaterThan(0); // positive control: the walk reached the leaves
+      expect(calls).toBeLessThanOrEqual(SCAN_VISIT_BUDGET);
+    }
+  }, 30_000);
   it('ordinary input still yields only the two original texts (the hardened walks add no text)', () => {
     const v = { a: ['x', { b: 'y' }], m: new Map([['k', 'v']]), d: new Date(0) };
     expect(scanTexts(v)).toEqual([...new Set([mainCollectTextLegacy(v), mainCollectText(v)])].filter(Boolean));
