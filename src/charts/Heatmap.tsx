@@ -1,5 +1,9 @@
-import { useId, useState } from 'react';
+// Frame: the shared kit's MarkFrame (roadmap 2.6) — one tab stop whose arrow keys walk the cells in
+// row-major order, a tooltip per cell (row · column, then the value or "no data") on hover / touch /
+// keyboard, and a <details> data-table fallback with the full grid.
+import { useId } from 'react';
 import { useMeasure } from '@/lib/useMeasure';
+import { MarkFrame, type TipMark } from './kit/MarkFrame';
 
 export interface HeatCell {
   row: string;
@@ -23,13 +27,6 @@ interface Props {
   ariaLabel?: string;
 }
 
-interface HoverState {
-  row: string;
-  col: string;
-  left: number;
-  top: number;
-}
-
 const MARGIN = { top: 22, right: 4, bottom: 4, left: 92 };
 const GAP = 2;
 const MAX_ROW_H = 30;
@@ -41,9 +38,9 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(1,
 /** Diverging variance heatmap. Values above 0 shade toward the negative/alert token (expense
  *  overrun), values below 0 toward the positive token, 0 is neutral. null / missing cells render a
  *  hatched dashed "no data" cell and are never coloured as zero. Duplicate (row, col) cells: last wins. */
-export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueFormat, domain, ariaLabel }: Props) {
-  const [ref, width] = useMeasure<HTMLDivElement>();
-  const [hover, setHover] = useState<HoverState | null>(null);
+export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueFormat, domain, ariaLabel = 'Heatmap' }: Props) {
+  const [ref, measured] = useMeasure<HTMLDivElement>();
+  const width = measured > 0 ? measured : 400;
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const patternId = `hm-nodata-${uid}`;
   const labelOf = (id: string) => rowLabels?.[id] ?? id;
@@ -73,12 +70,52 @@ export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueForma
   const colChars = Math.max(2, Math.floor(cw / 6.5));
   const svgHeight = Math.min(height, MARGIN.top + ch * rows.length + MARGIN.bottom);
 
-  const hoverVal = hover ? (byKey.get(`${hover.row}\u0000${hover.col}`) ?? null) : null;
+  const valueAt = (row: string, col: string): number | null => byKey.get(`${row}\u0000${col}`) ?? null;
+  // One mark per cell, row-major, so the keyboard walk reads the grid row by row.
+  const marks: TipMark[] = rows.flatMap((row, ri) =>
+    cols.map((col, ci) => {
+      const v = valueAt(row, col);
+      return {
+        x: MARGIN.left + ci * cw + cw / 2,
+        y: MARGIN.top + ri * ch + GAP / 2,
+        lines: [`${labelOf(row)} · ${col}`, v === null ? 'no data' : fmt(v)],
+      };
+    }),
+  );
+
+  const table = (
+    <table>
+      <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+        {ariaLabel}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Row</th>
+          {cols.map((col) => (
+            <th scope="col" key={col}>
+              {col}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row}>
+            <th scope="row">{labelOf(row)}</th>
+            {cols.map((col) => {
+              const v = valueAt(row, col);
+              return <td key={col}>{v === null ? 'no data' : fmt(v)}</td>;
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   return (
-    <div ref={ref} style={{ width: '100%', position: 'relative' }}>
-      {width > 0 && (
-        <svg width={width} height={svgHeight} role="img" aria-label={ariaLabel}>
+    <MarkFrame measureRef={ref} width={width} height={svgHeight} ariaLabel={ariaLabel} marks={marks} table={table}>
+      {(bind, active) => (
+        <>
           <defs>
             <pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
               <rect width={6} height={6} fill="var(--surface-raised)" />
@@ -109,11 +146,12 @@ export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueForma
                 {clip(labelOf(row), 14)}
               </text>
               {cols.map((col, ci) => {
-                const v = byKey.get(`${row}\u0000${col}`) ?? null;
+                const v = valueAt(row, col);
+                const i = ri * cols.length + ci;
                 const x = MARGIN.left + ci * cw + GAP / 2;
                 const y = MARGIN.top + ri * ch + GAP / 2;
-                const active = hover?.row === row && hover?.col === col;
                 const common = {
+                  ...bind(i),
                   'data-row': row,
                   'data-col': col,
                   x,
@@ -121,9 +159,7 @@ export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueForma
                   width: rw,
                   height: rh,
                   rx: 2,
-                  style: { cursor: 'pointer', opacity: hover && !active ? 0.7 : 1, transition: 'opacity 120ms' },
-                  onMouseMove: () => setHover({ row, col, left: x + rw / 2, top: y }),
-                  onMouseLeave: () => setHover(null),
+                  style: { cursor: 'pointer', opacity: active !== null && active !== i ? 0.7 : 1, transition: 'opacity 120ms' },
                 };
                 if (v === null) {
                   return (
@@ -147,6 +183,8 @@ export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueForma
                       data-intensity={Math.round(t * 1000) / 1000}
                       fill={v === 0 ? 'var(--border-subtle)' : v > 0 ? 'var(--color-neg)' : 'var(--color-pos)'}
                       fillOpacity={v === 0 ? 0.5 : 0.15 + 0.75 * t}
+                      stroke={active === i ? 'var(--text-primary)' : 'none'}
+                      strokeWidth={1}
                     />
                     {showLabels && (
                       <text
@@ -164,29 +202,8 @@ export function Heatmap({ cells, rows, rowLabels, cols, height = 260, valueForma
               })}
             </g>
           ))}
-        </svg>
+        </>
       )}
-      {hover && (
-        <div
-          data-testid="heatmap-tooltip"
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-[var(--radius-sm)] px-2 py-1 text-2xs"
-          style={{
-            left: hover.left,
-            top: hover.top - 6,
-            background: 'var(--surface-overlay)',
-            border: '1px solid var(--border-strong)',
-            boxShadow: '0 10px 24px -12px rgba(0,0,0,0.7)',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <div style={{ color: 'var(--text-tertiary)' }}>
-            {labelOf(hover.row)} · {hover.col}
-          </div>
-          <div className="num" style={{ color: 'var(--text-primary)' }}>
-            {hoverVal === null ? 'no data' : fmt(hoverVal)}
-          </div>
-        </div>
-      )}
-    </div>
+    </MarkFrame>
   );
 }
