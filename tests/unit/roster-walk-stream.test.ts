@@ -17,6 +17,49 @@ const terms: Record<string, DealTerms> = {
 };
 const scan = (v: unknown) => rosterMatchWithTerms(v, terms)?.dealLabel ?? null;
 
+/**
+ * A deterministic cost meter for `fn` (replaces wall-clock timing, which swings ~3x with machine
+ * load): while `fn` runs, each String.prototype scanning method is wrapped to charge the characters
+ * it is handed (the receiver's length from the start position; a slice's result length), and
+ * Array.prototype.join its result length. A scan whose string work grows quadratically (re-reading
+ * or re-normalising a growing text per piece) charges quadratically. Restored in `finally`.
+ */
+function meter(fn: () => void): number {
+  let chars = 0;
+  const S = String.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const A = Array.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const saved: Array<[Record<string, (...a: unknown[]) => unknown>, string, (...a: unknown[]) => unknown]> = [];
+  const wrap = (
+    proto: Record<string, (...a: unknown[]) => unknown>,
+    name: string,
+    charge: (self: unknown, args: unknown[], out: unknown) => number,
+  ) => {
+    const orig = proto[name]!;
+    saved.push([proto, name, orig]);
+    proto[name] = function (this: unknown, ...args: unknown[]) {
+      const out = orig.apply(this, args);
+      chars += charge(this, args, out);
+      return out;
+    };
+  };
+  const fromPos = (self: unknown, args: unknown[]) => {
+    const len = String(self).length;
+    const p = typeof args[1] === 'number' ? Math.max(0, Math.min(len, args[1])) : 0;
+    return len - p;
+  };
+  const whole = (self: unknown) => String(self).length;
+  for (const m of ['indexOf', 'includes', 'startsWith']) wrap(S, m, fromPos);
+  for (const m of ['lastIndexOf', 'endsWith', 'normalize', 'split', 'toLowerCase', 'toUpperCase', 'replace', 'replaceAll', 'match', 'matchAll', 'search', 'trim']) wrap(S, m, whole);
+  for (const m of ['slice', 'substring']) wrap(S, m, (_s, _a, out) => String(out).length);
+  wrap(A, 'join', (_s, _a, out) => String(out).length);
+  try {
+    fn();
+  } finally {
+    for (const [proto, name, orig] of saved.reverse()) proto[name] = orig;
+  }
+  return chars;
+}
+
 describe('G3: document-order stream', () => {
   it.each<[string, unknown, string]>([
     ['parent / child', ['Kest', ['rel Ridge']], 'K'],
@@ -65,16 +108,34 @@ describe('G3: document-order stream', () => {
     expect(matchRosterTerms(deep, terms)?.dealLabel).toBe('K');
   });
 
+  // CHANGED (2026-11-02, CI determinism): this was a wall-clock ratio (min of 3 interleaved runs at
+  // 10k / 80k rows, < 32x). It took ~28 s idle and hit the 60 s timeout on the loaded self-hosted
+  // runner. Cost is now COUNTED, so the result no longer depends on machine load: `meter` charges
+  // every string primitive the scan calls with the characters it is handed (see below), and every
+  // row's `note` is an accessor that counts its reads (the walk work). 8x the input: linear is 8x,
+  // quadratic ~64x. The meter is validated on a known-quadratic loop in the same test, so a ratio
+  // under the bound means "linear", not "the meter saw nothing".
   it('cost scales linearly with width (no quadratic in the stream)', () => {
+    let reads = 0;
     const build = (n: number) => {
       const rows: Record<string, unknown> = {};
-      for (let i = 0; i < n; i++) rows[`r${i}`] = { note: ['Lease renewal - 22,000 SF', ['clear height 24 ft']], m: new Map([['k', 'v']]) };
+      for (let i = 0; i < n; i++) {
+        const row: Record<string, unknown> = { m: new Map([['k', 'v']]) };
+        Object.defineProperty(row, 'note', {
+          enumerable: true,
+          get: () => {
+            reads++;
+            return ['Lease renewal - 22,000 SF', ['clear height 24 ft']];
+          },
+        });
+        rows[`r${i}`] = row;
+      }
       return rows;
     };
-    const time = (v: unknown) => {
-      const t0 = performance.now();
-      expect(scan(v)).toBeNull();
-      return performance.now() - t0;
+    const cost = (v: unknown) => {
+      reads = 0;
+      const chars = meter(() => expect(scan(v)).toBeNull());
+      return { chars, reads };
     };
     time(build(500)); // warm-up
     // CHANGED (squash, machine-load robustness; was min of 2 runs per size and a 24x bound, which
@@ -97,6 +158,26 @@ describe('G3: document-order stream', () => {
     const large = Math.min(...larges);
     expect(large / Math.max(small, 1)).toBeLessThan(32);
   }, 120_000);
+    const small = cost(build(1_000));
+    const large = cost(build(8_000));
+    // Positive controls: the meter and the accessor both saw the scan's work.
+    expect(small.reads).toBeGreaterThan(0);
+    expect(small.chars).toBeGreaterThan(1_000 * 'clear height 24 ft'.length);
+    // The walk work is EXACTLY linear: every walk reads each row's note the same number of times.
+    expect(large.reads).toBe(8 * small.reads);
+    // The string work is linear (8x, with slack for fixed per-scan cost); a quadratic is ~64x.
+    expect(large.chars / small.chars).toBeLessThan(10);
+    // The meter itself sees a quadratic: re-scanning a growing prefix per row reads ~64x at 8x.
+    const quadratic = (n: number) =>
+      meter(() => {
+        let prefix = '';
+        for (let i = 0; i < n; i++) {
+          prefix += 'ab';
+          prefix.includes('zz');
+        }
+      });
+    expect(quadratic(8_000) / quadratic(1_000)).toBeGreaterThan(32);
+  });
 
   // Final refute, L3: the child list is charged to the budget as it is QUEUED, so a Map whose
   // iterator never ends throws instead of exhausting memory (the branch tip ran out of heap).
