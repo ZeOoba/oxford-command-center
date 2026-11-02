@@ -406,6 +406,14 @@
     "review_detail": null,
     "last_updated": "2026-06-21T00:00:00Z"
   },
+  "wave-b-ui": {
+    "agent_role": "UX Agent (Claude Code) - Gabriel-approved 2026-10-30 via session local_1396c1a7",
+    "phase": "Actionable Intelligence Roadmap Wave B: Track 2 (2.2-2.6; 2.1 after feat/action-list-rows merges) + Track 3.2/3.3 UI on the existing ledger. Worktree upbeat-maxwell-870996. Files: src/charts/*, src/modules/property/* (new), src/modules/property-financials/*, src/modules/alerts/*, src/modules/insights/*, src/brain/EntityDrawer.tsx, src/shell/modules.tsx, src/modules/overview/OverviewModule.tsx. NOT touching src/modules/overview/widgets.tsx or src/primitives/TierBoard.tsx (action-rows WIP).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-30T22:15:00Z"
+  },
   "phase-0-sort-key": {
     "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20",
     "phase": "Phase 0 — Insight sort-key: impactAnnualUsd / spine / provenance fields + fillImpact() + governance extension (Step 9 already shipped in PR #85)",

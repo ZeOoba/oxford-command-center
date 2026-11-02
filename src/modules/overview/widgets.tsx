@@ -69,7 +69,7 @@ function NoiByMarketWidget() {
     <Card>
       <CardHeader title="NOI by Market" trailing={<Badge tone="gold">{marketData.length} markets</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <BarChart data={marketData} valueFormat={fmtUsdCompact} height={250} />
+        <BarChart data={marketData} valueFormat={fmtUsdCompact} height={250} ariaLabel="NOI by market (workbook basis, Oxford share)" />
       </div>
     </Card>
   );
@@ -97,7 +97,7 @@ function CashTrendWidget() {
     <Card>
       <CardHeader title="Total Cash — 12-Month Trend" trailing={<Badge tone="neutral">{series.length} mo</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" />
+        <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" ariaLabel="Total cash balance, 12-month trend" />
       </div>
     </Card>
   );

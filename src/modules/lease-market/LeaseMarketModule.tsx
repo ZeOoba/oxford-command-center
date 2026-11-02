@@ -424,7 +424,7 @@ export function LeaseMarketModule() {
             </Card>
             <Card>
               <CardHeader title={`Days on market — ${marketLabel}`} />
-              <div className="p-4">{dom ? <BarChart data={dom.bins.map((b) => ({ label: b.label, value: b.count }))} /> : <Note>No listings yet.</Note>}</div>
+              <div className="p-4">{dom ? <BarChart data={dom.bins.map((b) => ({ label: b.label, value: b.count }))} ariaLabel={`Listings by days on market, ${marketLabel}`} /> : <Note>No listings yet.</Note>}</div>
             </Card>
             <Card>
               <CardHeader title="Benchmark cells" />
