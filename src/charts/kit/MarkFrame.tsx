@@ -1,12 +1,14 @@
-// src/modules/property-financials/charts/MarkFrame.tsx
+// src/charts/kit/MarkFrame.tsx
 //
-// Shared frame of the Property explorer's hand-built SVG charts (plan T7): a horizontally scrolling
+// Shared frame of the app's hand-built SVG chart kit (built for the Property explorer, plan T7;
+// promoted to src/charts by roadmap 2.6, styled by ./kit.css on app tokens): a horizontally scrolling
 // container (wide charts scroll INSIDE it, never the page), a fixed-pixel SVG (text stays at its CSS
 // size), and a tooltip for EVERY mark on hover, touch (pointer down) and keyboard (the chart is one
 // tab stop; arrow keys walk the marks, Escape clears). The legend and the <details> data table sit
 // outside the scroller. The component draws nothing itself: children render the marks and bind each
 // one with `bind(i)`.
 import { useId, useState, type KeyboardEvent, type ReactNode } from 'react';
+import './kit.css';
 
 export interface TipMark {
   /** Anchor of the tooltip, in SVG pixels. */
@@ -64,10 +66,10 @@ export function MarkFrame({ measureRef, width: W, height: H, ariaLabel, marks, c
   const top = m ? Math.max(0, Math.min(H - 40, m.y - 10)) : 0;
 
   return (
-    <div className="pf-xchart" data-testid={testId}>
-      <div className="pf-chart pf-chart-sx" ref={measureRef}>
+    <div className="ck-xchart" data-testid={testId}>
+      <div className="ck-chart ck-chart-sx" ref={measureRef}>
         <div
-          className="pf-cin pf-chart-focus"
+          className="ck-cin ck-chart-focus"
           style={{ width: W }}
           tabIndex={0}
           role="group"
@@ -81,7 +83,7 @@ export function MarkFrame({ measureRef, width: W, height: H, ariaLabel, marks, c
             {children(bind, active)}
           </svg>
           {m && (
-            <div className="pf-tip" role="status" style={{ left, top, width: TIP_W }}>
+            <div className="ck-tip" role="status" style={{ left, top, width: TIP_W }}>
               <b>{m.lines[0]}</b>
               {m.lines.slice(1).map((l, i) => (
                 <div key={i}>{l}</div>
@@ -91,9 +93,9 @@ export function MarkFrame({ measureRef, width: W, height: H, ariaLabel, marks, c
         </div>
       </div>
       {legend}
-      <details className="pf-tablefb" id={tableId}>
+      <details className="ck-tablefb" id={tableId}>
         <summary>Data table</summary>
-        <div className="pf-tbl">{table}</div>
+        <div className="ck-tbl">{table}</div>
       </details>
     </div>
   );
@@ -103,7 +105,7 @@ export function MarkFrame({ measureRef, width: W, height: H, ariaLabel, marks, c
 export function Legend({ items, extra }: { items: ReadonlyArray<{ readonly label: string; readonly color: string; readonly shape?: ReactNode }>; extra?: ReactNode }) {
   if (items.length < 2 && !extra) return null;
   return (
-    <div className="pf-legend">
+    <div className="ck-legend">
       {items.map((it) => (
         <span key={it.label}>
           {it.shape ?? <i style={{ background: it.color, height: 10, width: 10 }} aria-hidden />}
