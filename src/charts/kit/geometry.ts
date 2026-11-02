@@ -1,8 +1,8 @@
-// src/modules/property-financials/charts/geometry.ts
+// src/charts/kit/geometry.ts
 //
-// Pure geometry for the Property Financials hand-built SVG charts (plan T5). No React, no DOM:
-// the components in this folder are thin renderers over these functions, and T6/T7 (Explorer,
-// Levers, Watchlist) reuse them. Pinned in tests/unit/property-financials-chart-geometry.test.ts.
+// Pure geometry for the shared hand-built SVG chart kit (built for Property Financials, plan T5;
+// promoted to src/charts by roadmap 2.6). No React, no DOM: the kit components and the Property
+// Financials charts not yet migrated are thin renderers over these functions. Pinned in tests/unit/property-financials-chart-geometry.test.ts.
 
 /** Linear map from `domain` onto `range`. A zero-width domain maps to the range midpoint. */
 export function linearScale(domain: readonly [number, number], range: readonly [number, number]): (v: number) => number {

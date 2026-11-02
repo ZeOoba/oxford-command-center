@@ -5,8 +5,8 @@
 // rent, change vs the prior step), a dashed "today" marker, and a data-table fallback.
 import { useMeasure } from '@/lib/useMeasure';
 import { axisUsd, usd } from '@analytics/property-financials/format';
-import { stepChartLayout, tickValues } from './geometry';
-import { MarkFrame, type TipMark } from './MarkFrame';
+import { stepChartLayout, tickValues } from '@/charts/kit/geometry';
+import { MarkFrame, type TipMark } from '@/charts/kit/MarkFrame';
 import type { LeaseStepRow } from '../explorer-model';
 
 const H = 170;

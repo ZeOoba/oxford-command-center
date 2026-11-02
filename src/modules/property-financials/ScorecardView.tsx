@@ -18,7 +18,7 @@ import {
 } from '@contracts/property-financials';
 import { partialReason, periodLabel, type MetricResult } from '@analytics/property-financials/periods';
 import { DASH, pct, pctLevel, usd } from '@analytics/property-financials/format';
-import { linePath, linearScale } from './charts/geometry';
+import { linePath, linearScale } from '@/charts/kit/geometry';
 import { MetricCell, NotMeaningful, SeverityPill } from './components';
 import { PropertyGaps } from './PropertyGaps';
 import { cubeMonths, fmtMonth, insightsForEntity, leaseForEntity, moverComparisonPartial, scorecardRows, sortInsights, toneClass, type ScorecardRow } from './model';

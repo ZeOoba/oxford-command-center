@@ -19,9 +19,9 @@ interface Props {
   /** Fill for bars with a negative value. Defaults to the semantic loss token. */
   negativeColor?: string;
   valueFormat?: (n: number) => string;
-  /** Accessible name for the chart's <svg>. Optional — omitted callers get no aria-label
-   *  (unchanged from before this prop existed), same opt-in pattern as Waterfall's ariaLabel. */
-  ariaLabel?: string;
+  /** Accessible name for the chart's <svg role="img">. Required (roadmap 2.5): an unnamed chart is
+   *  announced as a bare image. Say what the series is and its basis. */
+  ariaLabel: string;
 }
 
 interface HoverState {

@@ -264,7 +264,7 @@ export function LeasesModule() {
           <Card>
             <CardHeader title="Lease Rollover Schedule" trailing={<Badge tone="neutral">rent expiring</Badge>} />
             <div className="px-3 pb-2 pt-3">
-              <BarChart data={analytics.rollover.map((b) => ({ label: b.period, value: b.expiringRent }))} valueFormat={fmtUsdCompact} height={230} color="var(--color-info)" />
+              <BarChart data={analytics.rollover.map((b) => ({ label: b.period, value: b.expiringRent }))} valueFormat={fmtUsdCompact} height={230} color="var(--color-info)" ariaLabel="Lease rollover, annual rent expiring by period" />
             </div>
           </Card>
 
