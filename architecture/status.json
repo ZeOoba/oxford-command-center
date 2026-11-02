@@ -70,6 +70,15 @@
     "last_updated": "2026-10-17T00:00:00Z"
   },
   "_comment":"Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
+  "overview-governor-tiles-10dd3c": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-11-02",
+    "phase": "Design review 2026-10-31 finding 9: DSCR / LTV / cash-vs-floor bullet tiles on the Overview KPI strip + the ratified $1.5M firm cash floor as a code constant.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edits: src/contracts/liquidity-policy.ts (new; the ONE import path for config/liquidity-policy.v1.json, fail-closed zod) + src/contracts/index.ts re-export. The $1.5M firm cash floor (ratified 2026-09-18) added as config with Gabriel's in-turn Invariant-4 approval 2026-11-02; governor-constants.ts / RATIFIED_GOVERNORS (DSCR 1.25 / LTV 0.40) untouched. Firm-cash basis = Oxford Cash Balances entity, interim proxy for the ratified sweepable-cash definition (Gabriel 2026-11-02). Also src/analytics/governor-headroom.ts, src/charts/BulletGraph.tsx, src/modules/overview/GovernorTiles.tsx (new) and src/modules/overview/widgets.tsx (KpiStripWidget only). Branch claude/overview-governor-tiles-10dd3c.",
+    "last_updated": "2026-11-02T00:00:00Z"
+  },
   "pca-474-lows": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-17",
     "phase": "#474 LOW follow-ups (+ contract doc comment on totals, comment-only): STALE current reports excluded from server read-model totals and the figures count; display sorts use code-unit compare. Touches server/warehouse/property-condition.ts, src/analytics/{pca-intelligence,building-specs}.ts, src/modules/property-condition/{SpecsView,PropertyConditionModule,CapexOutlookView}.tsx (copy), src/contracts/property-condition.ts (doc comment only), tests. No migrations, hooks or governor files.",
