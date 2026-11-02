@@ -248,6 +248,7 @@ function MaturitiesView() {
             valueFormat={fmtUsdCompact}
             height={240}
             color="var(--color-warn)"
+            ariaLabel="Loan balance maturing by period"
           />
         </div>
       </Card>

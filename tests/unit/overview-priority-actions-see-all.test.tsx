@@ -2,7 +2,7 @@
 //
 // Verifies PriorityActionsWidget (src/modules/overview/widgets.tsx, registry id
 // 'priority-actions') after Task 18's "one home per attention list" change:
-//   - it shows a top-5 (not top-6) tier — PRIORITY_ACTIONS_LIMIT.
+//   - it shows a top-7 tier — OVERVIEW_MAX_ITEMS (src/lib/ranked-cap.ts); pinned safety rows are never cut.
 //   - its "See all" control navigates to Brain › Insights.
 //
 // Controller-note deviation from the task-18 brief: the brief's Step 3 snippet used a bare

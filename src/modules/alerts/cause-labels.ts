@@ -1,4 +1,6 @@
 import type { TierItem } from '@/primitives/TierBoard';
+import { ALERT_THRESHOLDS } from '@/analytics/conditions';
+import { fmtPct } from '@/analytics/format';
 
 /** Row title for a rolled-up alert cause. Unknown causes still read sensibly. */
 export function describeAlertCause(cause: string, members: TierItem[]): { title: string } {
@@ -25,6 +27,7 @@ export function describeAlertCause(cause: string, members: TierItem[]): { title:
     case 'dscr-covenant':
       return { title: `${n} properties on DSCR covenant watch` };
     case 'ltv-ceiling':
+      return { title: `${n} properties above the ${fmtPct(ALERT_THRESHOLDS.refiLtvCeilingPerProperty, 0)} LTV ceiling` };
       return { title: `${n} properties above the 65% LTV ceiling` };
     default:
       return { title: `${n} related alerts` };

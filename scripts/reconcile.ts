@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { findRentRollColumns, parseWorkbook, rentTotalColumns } from '../server/workbook/parse';
+import { findRentRollColumns, inferType, parseWorkbook, rentTotalColumns } from '../server/workbook/parse';
 import { annualRentGapIsExplainedByAbatement, checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
@@ -32,7 +32,7 @@ interface Check {
 }
 
 async function main() {
-  const { snapshot } = await parseWorkbook(workbookPath());
+  const { snapshot, excludedHoldings } = await parseWorkbook(workbookPath());
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(workbookPath());
 
@@ -75,34 +75,50 @@ async function main() {
   const monthlyX12Sum = sum(snapshot.leases.map((l) => l.monthlyRent * 12));
   const annualRentExplained = annualRentGapIsExplainedByAbatement(snapshot.leases);
 
-  // Persimmon residence is excluded from the workbook's SF subtotal but included in value.
-  const residenceSf = sum(snapshot.properties.filter((p) => p.type === 'Residence').map((p) => p.sf));
+  // The residence is removed from the snapshot at parse (ruling 2026-10-30), but the workbook's
+  // Portfolio Total row still includes it, so the independent re-read is restated net of it.
+  const propertyNoiWs = wb.getWorksheet('Property NOI');
+  let workbookResidenceRows = 0;
+  for (let r = 1; propertyNoiWs && r <= propertyNoiWs.rowCount; r++) {
+    const row = propertyNoiWs.getRow(r);
+    const isPropertyRow = num(cv(row.getCell(1).value)) !== null && String(cv(row.getCell(2).value) ?? '').trim() !== '';
+    // Same classifier as the parser (flex > retail > indust > residen), so a mixed type label such as
+    // "Residential / Flex" cannot make the gate and the parser disagree (refute wf_b6010683-4be).
+    const typeText = cv(row.getCell(3).value);
+    if (isPropertyRow && inferType(typeText == null ? null : String(typeText)) === 'Residence') workbookResidenceRows++;
+  }
+  const excludedNote = excludedHoldings.count ? `net of ${excludedHoldings.count} excluded non-investment row(s)` : undefined;
 
   const checks: Check[] = [
     {
       label: 'Property NOI (Oxford) total',
-      expected: wbNoi,
+      expected: wbNoi - excludedHoldings.noi,
       actual: sum(snapshot.properties.map((p) => p.noi)),
       tol: 1,
+      note: excludedNote,
     },
     {
       label: 'Oxford value total',
-      expected: wbValue,
+      expected: wbValue - excludedHoldings.oxfordValue,
       actual: sum(snapshot.properties.map((p) => p.oxfordValue)),
       tol: 1,
+      note: excludedNote,
     },
     {
       label: 'Annualized rent total',
-      expected: wbRent,
+      expected: wbRent - excludedHoldings.annualRent,
       actual: sum(snapshot.leases.map((l) => l.annualRent)),
       tol: 1,
+      note: excludedNote,
     },
     {
-      label: 'Portfolio SF (workbook excludes residence)',
-      expected: sum(snapshot.properties.map((p) => p.sf)) - residenceSf,
-      actual: sum(snapshot.properties.filter((p) => p.type !== 'Residence').map((p) => p.sf)),
+      // Independent of the parser: count Residence-typed rows on the sheet itself, so a parse that
+      // silently stopped excluding (or excluded the wrong rows) cannot agree with its own output.
+      label: 'Residence rows excluded = residence rows on Property NOI',
+      expected: workbookResidenceRows,
+      actual: excludedHoldings.count,
       tol: 0,
-      note: `residence SF excluded: ${residenceSf.toLocaleString()}`,
+      note: `snapshot carries ${snapshot.properties.filter((p) => p.type === 'Residence').length} residence row(s)`,
     },
     {
       label: 'Cash total = Σ entities',
