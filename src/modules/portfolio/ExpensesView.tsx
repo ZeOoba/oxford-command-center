@@ -363,7 +363,7 @@ export function ExpensesView() {
               </li>
             ))}
           </ul>
-          <StackedBarChart data={stacked} keys={keys} valueFormat={fmtUsdCompact} ariaLabel="Monthly operating expenses by category" overlay={overlay} />
+          <StackedBarChart data={stacked} keys={keys} valueFormat={fmtUsdCompact} ariaLabel="Monthly operating expenses by category" overlay={overlay} overlayLabel="Same month last year" />
         </div>
       </Card>
       <Caption>Last 12 months, top 5 categories by trailing-12 spend; the line is the same month one year earlier.</Caption>
