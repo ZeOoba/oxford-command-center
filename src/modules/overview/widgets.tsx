@@ -20,6 +20,7 @@ import type { TierItem } from '@/primitives/TierBoard';
 import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
+import { GovernorTiles } from './GovernorTiles';
 
 export interface WidgetDef {
   id: string;
@@ -48,6 +49,7 @@ function KpiStripWidget() {
   const cashDelta = prev ? (last - prev) / prev : null;
   const goTo = (id: string) => () => ui.setActiveModule(id);
   return (
+    <div className="flex flex-col gap-3">
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} onPress={goTo('portfolio')} />
       <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} sublabel={`Oxford share · workbook · ${fmtPct(k.weightedCapRate.value)} wtd cap`} accentColor="var(--color-pos)" onPress={goTo('intel')} />
@@ -57,6 +59,8 @@ function KpiStripWidget() {
       <KpiStat label="Total Debt" value={k.totalDebt.value} format={fmtUsdCompact} prov={k.totalDebt.prov} sublabel={overviewTotalDebtSublabel(k)} accentColor="var(--color-warn)" onPress={goTo('debt')} />
       <KpiStat label="Equity Invested" value={k.equityInvested.value} format={fmtUsdCompact} prov={k.equityInvested.prov} accentColor="var(--accent)" />
       <KpiStat label="Total Cash" value={k.totalCash.value} format={fmtUsdCompact} prov={k.totalCash.prov} spark={cashSpark} delta={cashDelta} deltaLabel="MoM" sparkColor="var(--color-pos)" accentColor="var(--color-pos)" onPress={goTo('cash')} />
+    </div>
+    <GovernorTiles snapshot={data.snapshot} kpis={k} />
     </div>
   );
 }
