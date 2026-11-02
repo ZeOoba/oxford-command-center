@@ -13,7 +13,7 @@ import {
   niceStep,
   niceTop,
   tickValues,
-} from '../../src/modules/property-financials/charts/geometry';
+} from '../../src/charts/kit/geometry';
 
 describe('linearScale', () => {
   it('maps the domain onto the range linearly (inverted y works too)', () => {

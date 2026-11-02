@@ -151,7 +151,7 @@ describe('Overview (real dataset)', () => {
     fireEvent.keyDown(group, { key: 'ArrowLeft' });
     const tip = within(group).getByRole('status');
     expect(tip.textContent).toMatch(/^Aug 2026Base rent \$[\d,]+\/mo/);
-    expect(screen.getByTestId('pf-crosshair')).toBeTruthy();
+    expect(screen.getByTestId('ck-crosshair')).toBeTruthy();
     expect(screen.getAllByText('Data table').length).toBeGreaterThanOrEqual(2);
     // diverging bars: every bar is a focusable mark with a tooltip; both directions in the legend
     expect(screen.getByText('Cost up')).toBeTruthy();

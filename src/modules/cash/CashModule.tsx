@@ -55,7 +55,7 @@ export function CashModule() {
       <Card>
         <CardHeader title="Total Cash — 12-Month Trend" trailing={<Badge tone="gold">{series.length} months</Badge>} />
         <div className="px-3 pb-2 pt-3">
-          <AreaChart data={series} valueFormat={fmtUsdCompact} height={250} color="var(--color-pos)" />
+          <AreaChart data={series} valueFormat={fmtUsdCompact} height={250} color="var(--color-pos)" ariaLabel="Total cash balance, 12-month trend" />
         </div>
       </Card>
 

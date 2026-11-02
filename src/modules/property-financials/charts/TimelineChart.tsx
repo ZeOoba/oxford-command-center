@@ -11,7 +11,7 @@ import { useMeasure } from '@/lib/useMeasure';
 import { axisUsd, usd } from '@analytics/property-financials/format';
 import { fmtMonth } from '../model';
 import type { TimelineSeries } from '../explorer-model';
-import { linePath, linearScale, markerPath, nearestIndex, niceTop, tickValues } from './geometry';
+import { linePath, linearScale, markerPath, nearestIndex, niceTop, tickValues } from '@/charts/kit/geometry';
 
 const H = 270;
 const M = { l: 52, r: 12, t: 12, b: 28 } as const;

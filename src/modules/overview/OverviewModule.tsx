@@ -15,10 +15,14 @@ import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useWorkspaces } from '@/brain/useWorkspaces';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Button } from '@/primitives/Button';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { OVERVIEW_WIDGETS, ALL_WIDGET_IDS, DEFAULT_HIDDEN_WIDGET_IDS, OVERVIEW_LAYOUT_MIGRATION, type WidgetDef } from './widgets';
 
 export function OverviewModule() {
-  const { data, isLoading, isError } = useSnapshot();
+  // Shared loading/error gate (roadmap 2.5): same Retry-able Brain Server error as every other
+  // snapshot module, and a fetch error with cached data still renders the cached Overview.
+  const gate = useSnapshotGate();
+  const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   // allIds must be every widget id (insights included) — not the filtered DEFAULT_WIDGET_ORDER —
   // so a saved layout's own choice about 'insights' survives normalize() and it stays reachable
@@ -32,13 +36,8 @@ export function OverviewModule() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  if (isError)
-    return (
-      <div className="grid place-items-center py-24 text-sm" style={{ color: 'var(--text-neg)' }}>
-        Unable to reach the Brain Server. Is it running on :8911?
-      </div>
-    );
-  if (isLoading || !data || !analytics) return <OverviewSkeleton />;
+  if (gate) return gate;
+  if (!data || !analytics) return <OverviewSkeleton />;
 
   const byId = Object.fromEntries(OVERVIEW_WIDGETS.map((w) => [w.id, w])) as Record<string, WidgetDef>;
   const onDragEnd = (e: DragEndEvent) => {
