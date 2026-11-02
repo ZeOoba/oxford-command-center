@@ -224,11 +224,21 @@ describe('review finding: boxed / toJSON values next to Map / Error / Date text'
   it('the four walks share ONE budget: a DAG carrying boxed / toJSON leaves still throws quickly', () => {
     let v: unknown = [new Number(1), new C('x')];
     for (let i = 0; i < 22; i++) v = [v, v];
-    const t0 = performance.now();
     expect(() => scanTexts(v)).toThrow(/budget/);
     expect(() => rosterMatchWithTerms(v, ROSTER)).toThrow(/budget/);
-    expect(performance.now() - t0).toBeLessThan(10_000);
-  }, 30_000);
+    // CHANGED (2026-11-02, CI moved to GitHub-hosted ubuntu-latest): this test was an absolute 10s
+    // wall-clock bound on the two calls above, which the slower hosted runner missed at 11.75s. That
+    // bound never pinned the sharing either: at depth 22 the FIRST walk already exceeds its own cap
+    // and throws, so per-walk budgets cost the same (verified by mutation). Sharing is now pinned
+    // deterministically at depth 19, where each walk alone fits under the cap (a direct collectText /
+    // collectTextLegacy call has its own budget and completes) but the four walks of one scanTexts
+    // call together exceed it. Per-walk budgets would let scanTexts complete here.
+    let w: unknown = [new Number(1), new C('x')];
+    for (let i = 0; i < 19; i++) w = [w, w];
+    expect(() => collectText(w)).not.toThrow();
+    expect(() => collectTextLegacy(w)).not.toThrow();
+    expect(() => scanTexts(w)).toThrow(/budget/);
+  }, 120_000);
   it('ordinary input still yields only the two original texts (the hardened walks add no text)', () => {
     const v = { a: ['x', { b: 'y' }], m: new Map([['k', 'v']]), d: new Date(0) };
     expect(scanTexts(v)).toEqual([...new Set([mainCollectTextLegacy(v), mainCollectText(v)])].filter(Boolean));
