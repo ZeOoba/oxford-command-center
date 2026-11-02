@@ -152,7 +152,12 @@ export function InsightsModule() {
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
           <SpineSplitStat label="Risk Impact" totals={summary.riskImpactBySpine} />
           <SpineSplitStat label="Monitor Impact" totals={summary.monitorImpactBySpine} />
-          <KpiStat label="Open Insights" value={summary.count} format={(n) => (n === null ? '—' : String(n))} />
+          <KpiStat
+            label="Open Insights"
+            value={summary.count}
+            format={(n) => (n === null ? '—' : String(n))}
+            animate={false}
+          />
         </div>
 
         {warehouseUnavailable && (
