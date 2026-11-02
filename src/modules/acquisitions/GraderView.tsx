@@ -187,7 +187,7 @@ function ScorecardPanel({ score }: { score: AcquisitionScore }) {
         )}
 
         {denominatorNotes(score).length > 0 && (
-          <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--warn, #b45309)' }}>
+          <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--text-warn)' }}>
             {denominatorNotes(score).map((n) => <li key={n}>! {n}</li>)}
           </ul>
         )}
