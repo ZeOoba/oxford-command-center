@@ -241,8 +241,11 @@ describe('mergeInsightSources', () => {
       impactAnnualUsd: 10_000,
       title: 'Spine A balloon insight',
     });
+    // A hypothetical actionable CF generator. cf-hurdle-drag is an OBSERVATION and deliberately never
+    // supersedes (overview-signal-integrity.test.ts, review fix A1): a valuation spread replacing this
+    // balloon alert would drop a debt action from every board.
     const candidate = makeCandidate({
-      id: 'cf-hurdle-drag::prop-9',
+      id: 'cf-refi-window::prop-9',
       family: 'CF',
       propertyId: 'prop-9', // same propertyId + family -> same dedup key as the Spine-A insight
       materialityUsd: 25_000,
@@ -254,7 +257,7 @@ describe('mergeInsightSources', () => {
     expect(supersededCount).toBe(1);
     expect(merged).toHaveLength(1);
     expect(merged[0]?.title).toBe('Richer warehouse candidate');
-    expect(merged[0]?.id).toBe('cf-hurdle-drag::prop-9');
+    expect(merged[0]?.id).toBe('cf-refi-window::prop-9');
   });
 
   it('no dedup when property or family differs — both survive', () => {

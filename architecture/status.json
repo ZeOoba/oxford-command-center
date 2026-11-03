@@ -42,6 +42,14 @@
     "review_needed": false,
     "last_updated": "2026-10-27T00:00:00Z"
   },
+  "live-command-center-updates-c085c8": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-31",
+    "phase": "Overview signal integrity (design review 2026-10-31 P1, findings 1-5): valuation (cf-hurdle-drag) rows out of Priority Actions + header totals; Results widget default-off (layout v4); lease-expiring band label from member days, group children numbered 1..n, <=7d expiries un-grouped; noun labels on rail/bell attention counts. Touches src/modules/overview/widgets.tsx (filter + registry only), src/modules/insights/insights.logic.ts, src/lib/tier-group.ts, src/modules/alerts/cause-labels.ts, src/brain/alert-cause.ts, src/primitives/TierBoard.tsx (TierItem type only), src/shell/{tab-types,tab-badges,Sidebar,AlertBell}. No architect-owned files, no conditions.ts, no governor constants.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-31T21:00:00Z"
+  },
   "wave-a-warehouse-freshness": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
     "phase": "Wave A item 1.1 (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md, lands with PR feat/wave-a-residence-nnn-honesty): warehouseLedger feed on /api/health, 45-day budget on the last committed P&L import.",
