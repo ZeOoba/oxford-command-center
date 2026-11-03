@@ -76,6 +76,16 @@ describe('buildPriorityActionsTier', () => {
     expect(new Set(tier.items.map((i) => i.id)).size).toBe(tier.items.length);
   });
 
+  // A warning roll-up sums its members' dollars, so it can out-total a single critical row. Severity
+  // is the primary key: every critical row precedes every warning row regardless of dollars.
+  it('ranks every critical row ahead of warning rows, even a warning roll-up with larger dollars', () => {
+    const warn = (n: number) => m({ id: `escalation-W${n}`, severity: 'warning', impactUsd: 40_000 });
+    const merged = [warn(1), warn(2), warn(3), m({ id: 'debt-note-1', category: 'debt', spine: 'B', impactUsd: 30_000 })];
+    const tier = buildPriorityActionsTier(merged, 5);
+    expect(tier.items.map((i) => i.id)).toEqual(['debt-note-1', 'group:warning:escalation-passed']);
+    expect(tier.items.map((i) => i.rank)).toEqual([1, 2]);
+  });
+
   it('keeps one group row per severity when a cause spans both (unique ids)', () => {
     const exp = (id: string, severity: 'critical' | 'warning') => m({ id: `expiring-${id}`, severity, impactUsd: 5 });
     const tier = buildPriorityActionsTier(
