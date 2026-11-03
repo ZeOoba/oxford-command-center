@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { UiContext, type UiState } from '../../src/brain/ui-context';
@@ -71,7 +72,10 @@ function renderModule(s: PortfolioSnapshot) {
   return render(
     <QueryClientProvider client={seededClient(s)}>
       <UiContext.Provider value={ui}>
-        <PortfolioModule />
+        {/* The property table links into /property/:id (roadmap 2.2), so it needs a router. */}
+        <MemoryRouter>
+          <PortfolioModule />
+        </MemoryRouter>
       </UiContext.Provider>
     </QueryClientProvider>,
   );
