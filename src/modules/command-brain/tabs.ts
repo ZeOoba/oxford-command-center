@@ -21,7 +21,7 @@ export function useBrainFeedbackTabBadge(): TabBadge | undefined {
   const report = useBrainReport();
   if (isWarehouseUnavailable(report.error)) return undefined;
   const count = report.data?.openQuestions.length ?? 0;
-  return count > 0 ? { count, tone: 'neutral' } : undefined;
+  return count > 0 ? { count, tone: 'neutral', noun: 'open questions' } : undefined;
 }
 
 export const BRAIN_TABS: readonly ModuleTabDef[] = [
