@@ -15,7 +15,7 @@ function fmtPct(n: number | null): string {
 
 function ConfidenceBar({ value }: { value: number }) {
   return (
-    <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, width: '100%' }}>
+    <div style={{ height: 4, background: 'var(--border-subtle)', borderRadius: 2, width: '100%' }}>
       <div style={{
         height: '100%',
         width: `${Math.round(value * 100)}%`,
