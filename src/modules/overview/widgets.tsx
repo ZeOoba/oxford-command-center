@@ -206,10 +206,11 @@ function ResultsBannerWidget() {
 
 // ── Priority Actions (top-N across all severities, reusing the same merged feed) ────────────
 //
-// Unlike buildTiers() (which groups by severity into Critical/Priority/Monitor), this widget
-// wants a single cross-severity ranking by $ impact — "what are the N biggest things happening
-// right now, regardless of severity." That ranking isn't something insights.logic.ts exports
-// (its buildTiers groups by severity on purpose), so the sort/group/slice lives here as a small
+// Unlike buildTiers() (which renders Critical/Priority/Monitor as separate columns), this widget
+// is ONE ranked list of the top N rows: severity first (every critical row precedes every warning,
+// then info — #505: a warning roll-up sums its members' dollars and could otherwise out-total a
+// single critical row), then pinned, then $ impact within each severity. That capped single list
+// isn't something insights.logic.ts exports, so the sort/group/slice lives here as a small
 // presentation-only helper; the merge, row shape (mergedToTierItem), grouping (groupByCause) and
 // per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
 // is new.
@@ -224,7 +225,10 @@ function ResultsBannerWidget() {
 // When a pinned warning / info row shows, no critical row may be held back behind it (#505, C4); the
 // critical rows that do not fit fold into ONE expandable roll-up row (OVERFLOW_ROW_ID), so the board
 // shows <= max(`limit`, pinned rows) + 1 rows — pinned rows are never cut, so they alone can exceed
-// `limit` — and every critical signal is still on it (round 2, 2026-10-30).
+// `limit` — and every critical signal is still on it (round 2, 2026-10-30). That guarantee holds only
+// while a pinned warning / info row shows: a pinned CRITICAL row competes in its own tier, so when
+// pinned critical rows fill the cap the cap decides and other critical rows are held back (counted in
+// `heldBack`), exactly as with no pinned row at all.
 export interface PriorityActionsTier extends Tier {
   heldBack: { rows: number; signals: number };
 }
