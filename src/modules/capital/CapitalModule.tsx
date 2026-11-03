@@ -483,7 +483,7 @@ export function CapitalModule() {
             {portfolio.pipeline.map(c => (
               <div key={c.candidateId} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
-                padding: '8px 14px', borderTop: '1px solid var(--border)', fontSize: 13,
+                padding: '8px 14px', borderTop: '1px solid var(--border-subtle)', fontSize: 13,
               }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600 }}>{c.address ?? c.candidateId}</div>
