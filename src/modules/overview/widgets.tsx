@@ -208,8 +208,9 @@ function ResultsBannerWidget() {
 //
 // Unlike buildTiers() (which renders Critical/Priority/Monitor as separate columns), this widget
 // is ONE ranked list of the top N rows: severity first (every critical row precedes every warning,
-// then info — #505: a warning roll-up sums its members' dollars and could otherwise out-total a
-// single critical row), then pinned, then $ impact within each severity. That capped single list
+// then info — a warning roll-up sums its members' dollars and could otherwise out-total a single
+// critical row; landed in #516 (47013622), regression test added by #505, whose commit message
+// describes the ranking change but carries only the test), then pinned, then $ impact within each severity. That capped single list
 // isn't something insights.logic.ts exports, so the sort/group/slice lives here as a small
 // presentation-only helper; the merge, row shape (mergedToTierItem), grouping (groupByCause) and
 // per-spine subtotal (totalsBySpine) are the shared, reused functions — only the top-N selection
