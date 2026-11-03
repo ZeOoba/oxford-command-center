@@ -1,5 +1,6 @@
 import { RATIFIED_GOVERNORS } from './governor-constants';
 export { RATIFIED_GOVERNORS } from './governor-constants';
+export { LIQUIDITY_POLICY, LiquidityPolicy, assertLiquidityPolicy } from './liquidity-policy';
 import { z } from 'zod';
 import { DataQualityFlag, SCHEMA_VERSION } from './common';
 import { Property } from './property';
