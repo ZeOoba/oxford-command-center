@@ -23,7 +23,7 @@ import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
 import { rankByImpact } from '@/lib/impact-score';
 import { groupByCause } from '@/lib/tier-group';
-import { causeOf, isPinnedCause } from '@/brain/alert-cause';
+import { causeAndDays, isPinnedCause } from '@/brain/alert-cause';
 import { describeAlertCause } from '@/modules/alerts/cause-labels';
 
 // ── Merged shape ──────────────────────────────────────────────────────────────────────────
@@ -41,6 +41,19 @@ export interface MergedInsight {
   category: string;
   advisoryOnly: boolean;
   confidence?: number;
+  /** The condition's own metric string (e.g. "61d" on a lease expiry), carried for row ordering. */
+  metric?: string;
+}
+
+// Generators whose rows describe a position rather than ask for an action — a valuation spread is
+// not rent at risk. They stay on the Insights board but never take a Priority Actions slot or enter
+// an action total (design review 2026-10-31, finding 1). Keyed by generator, not family or
+// `advisoryOnly`: every Spine-A row is advisoryOnly, and future CF generators may be actionable.
+const OBSERVATION_GENERATORS: readonly string[] = ['cf-hurdle-drag'];
+
+/** True for a row produced by an observation-only generator (ids are `<generatorId>::<subject>`). */
+export function isObservation(m: { id: string }): boolean {
+  return OBSERVATION_GENERATORS.some((g) => m.id.startsWith(`${g}::`));
 }
 
 export interface MergeResult {
@@ -60,7 +73,10 @@ export interface InsightsSummary {
   riskImpactBySpine: TierTotal[];
   /** Sum of impactUsd for 'info' severity items — monitoring/context framing, not risk. */
   monitorImpactBySpine: TierTotal[];
+  /** Every insight on the board, observations included. */
   count: number;
+  /** Insights that ask for an action — `count` less observations (isObservation). */
+  actionCount: number;
 }
 
 // ── Category (Spine A) <-> Family (Spine B/candidate) correspondence table ─────────────────
@@ -177,7 +193,10 @@ export function mergeInsightSources(
   const candidateKeys = new Set<string>();
 
   for (const c of candidates) {
-    candidateKeys.add(dedupKey(c.propertyId, c.id, c.family));
+    // An observation describes a position, not the same signal as a Spine-A debt/deal alert on that
+    // property: letting it claim the dedup key would drop a pinned DSCR / LTV breach from every board
+    // (adversarial review 2026-10-31, A1).
+    if (!isObservation(c)) candidateKeys.add(dedupKey(c.propertyId, c.id, c.family));
     candidateMerged.push({
       id: c.id,
       spine: c.spine,
@@ -222,6 +241,7 @@ export function mergeInsightSources(
       // treats every Insight surfacing as advisory-only (AlertsModule/insightToDraft actions only
       // open drafts/entities — nothing auto-executes), so this is uniformly true.
       advisoryOnly: true,
+      ...(insight.metric !== undefined ? { metric: insight.metric } : {}),
     });
   }
 
@@ -265,7 +285,7 @@ export function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
 /** One merged insight as a board row. `cause`/`pinned` come from the id (view-layer derivation, see
  *  src/brain/alert-cause.ts) so grouping never widens the refute-gated conditions.ts surface. */
 export function mergedToTierItem(m: MergedInsight, rank: number): TierItem {
-  const cause = causeOf(m);
+  const { cause, daysToAct } = causeAndDays(m);
   return {
     id: m.id,
     rank,
@@ -284,6 +304,7 @@ export function mergedToTierItem(m: MergedInsight, rank: number): TierItem {
     chips: [spineLabel(m.spine)],
     cause,
     pinned: isPinnedCause(cause) || undefined,
+    ...(daysToAct !== null ? { daysToAct } : {}),
   };
 }
 
@@ -304,7 +325,8 @@ export function buildTiers(merged: MergedInsight[]): Tier[] {
       title,
       tone,
       items,
-      totalsBySpine: totalsBySpine(sorted),
+      // Observations stay listed but are not risk, so the tier totals agree with buildSummary's banner.
+      totalsBySpine: totalsBySpine(sorted.filter((m) => !isObservation(m))),
     };
   });
 }
@@ -328,11 +350,14 @@ export function buildCategoryCounts(merged: MergedInsight[]): CategoryCount[] {
 // plain count. This mirrors the per-tier impactKind split in buildTiers (risk vs info) so the
 // banner and the board never disagree about which items count as "risk".
 export function buildSummary(merged: MergedInsight[]): InsightsSummary {
-  const riskItems = merged.filter((m) => m.severity === 'critical' || m.severity === 'warning');
-  const monitorItems = merged.filter((m) => m.severity === 'info');
+  // Observations (a valuation spread) are not risk or open actions — see isObservation.
+  const actions = merged.filter((m) => !isObservation(m));
+  const riskItems = actions.filter((m) => m.severity === 'critical' || m.severity === 'warning');
+  const monitorItems = actions.filter((m) => m.severity === 'info');
   return {
     riskImpactBySpine: totalsBySpine(riskItems),
     monitorImpactBySpine: totalsBySpine(monitorItems),
     count: merged.length,
+    actionCount: actions.length,
   };
 }

@@ -438,7 +438,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
               <div className="num mb-2 text-2xs uppercase" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
                 12-Month Balance
               </div>
-              <Sparkline data={series} width={380} height={56} color={c.trend === 'down' ? 'var(--color-neg)' : 'var(--color-pos)'} />
+              <Sparkline data={series} label={`${c.entity} 12-month cash balance`} valueFormat={fmtUsdCompact} width={380} height={56} color={c.trend === 'down' ? 'var(--color-neg)' : 'var(--color-pos)'} />
             </div>
           ) : undefined,
         rows: [

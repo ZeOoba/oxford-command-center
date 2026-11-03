@@ -89,7 +89,7 @@ export function TrackRecordPanel({ r }: { r: BrainReport }) {
           ) : (
             <div className="flex flex-wrap items-end gap-3">
               {segments.map((seg, i) => (
-                <Sparkline key={i} data={seg} width={Math.max(40, seg.length * 14)} height={40} />
+                <Sparkline key={i} data={seg} label={`Monthly flag accuracy, segment ${i + 1} of ${segments.length}`} width={Math.max(40, seg.length * 14)} height={40} />
               ))}
             </div>
           )}

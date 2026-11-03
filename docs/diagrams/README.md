@@ -1,7 +1,7 @@
 # System diagrams
 
 Sequence- and subsystem-level companions to the architecture diagram in the root `README.md`.
-Each was verified on 2026-10-06 against `034fdf1`; `origin/main` at `0d98bfc` differs only in
+Each was verified on 2026-10-06 against `034fdf1` (the CI diagram was re-checked and corrected on 2026-10-28 against `f642175`); `origin/main` at `0d98bfc` differs only in
 `tests/` (PR #440). The `file:line` evidence comments are a snapshot; re-verify before relying on a
 specific line. Annotations in square brackets (for example "no fetch timeout") mark known gaps
 tracked in the 2026-10-06 improvement plan, not intended behavior.
@@ -221,7 +221,7 @@ flowchart TB
     COMMIT --> LGATE["npm run gate (LOCAL, 11 steps, manual)<br/>governance, typecheck, lint, check:dev-css,<br/>check:schema-drift, test, reconcile:snapshot,<br/>reconcile, reconcile:noi-crosscheck,<br/>warehouse:verify, warehouse:drift"]
     LGATE -. needs .-> DATA[("OneDrive workbook + 32 P&L files<br/>+ live finance.sqlite")]
     COMMIT --> PUSH["git push"]
-    PUSH --> PREPUSH["pre-push hook<br/>confidential-history scan"]
+    PUSH --> PREPUSH["pre-push hook<br/>1) confidential scan (blocking) 2) refute-trailer gate (blocking) 3) NOI cross-check (advisory)"]
 
     PUSH --> TRIG{"event"}
     TRIG -- "PR (any branch)" --> CI
@@ -236,7 +236,7 @@ flowchart TB
 
     CI --> BP["branch protection: required checks 'gate', 'refute-required'"]
     BP --> SQUASH["squash-merge to main<br/>(squash msg must carry UNION of trailers; nothing re-checks on main)"]
-    SQUASH --> MIRRORTASK["hourly mirror task builds origin/main<br/>(see 04-mirror-deploy-and-brief.mmd)"]
+    SQUASH --> MIRRORTASK["hourly mirror task builds origin/main<br/>(see "Mirror deploy and daily brief" above)"]
 
     subgraph notrun["NOT run automatically"]
         E2E["test:e2e (Playwright smoke + a11y)"]

@@ -55,6 +55,15 @@ describe('Sidebar rail badges', () => {
 
   it('names the count for assistive tech and collapsed hover', () => {
     renderRail(true);
-    expect(railItem('Worklist').getAttribute('title')).toBe('Worklist (2)');
+    expect(railItem('Worklist').getAttribute('title')).toBe('Worklist (2 critical alerts)');
+  });
+
+  // Design review 2026-10-31 finding 5: four attention counts sit on screen at once (bell, Worklist,
+  // Overview, Brain) and each counts a different population — the badge must say what it counts.
+  it('says what each rail count counts, in its hover text', () => {
+    renderRail(false);
+    expect(screen.getByTitle('2 critical alerts')).toBeTruthy();
+    expect(screen.getByTitle('2 overdue critical dates')).toBeTruthy();
+    expect(screen.getByTitle('4 open questions')).toBeTruthy();
   });
 });

@@ -118,7 +118,7 @@ function MacroView() {
         <Card>
           <CardHeader title="10-Year Treasury — 12-Month Path" trailing={<Badge tone="neutral">DGS10</Badge>} />
           <div className="px-3 pb-2 pt-3">
-            <AreaChart data={macro.tenYearHistory} valueFormat={(n) => `${n.toFixed(2)}%`} height={250} color="var(--accent)" />
+            <AreaChart data={macro.tenYearHistory} valueFormat={(n) => `${n.toFixed(2)}%`} height={250} color="var(--accent)" ariaLabel="10-year Treasury yield (DGS10), 12-month path" />
           </div>
         </Card>
         <Card>
