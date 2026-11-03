@@ -173,11 +173,11 @@ export function TrendsView() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader title="Monthly in-place rent" trailing={forecastFlag} />
-          <div className="p-3"><AreaChart data={rentSeries(points)} valueFormat={fmtUsdCompact} /></div>
+          <div className="p-3"><AreaChart data={rentSeries(points)} valueFormat={fmtUsdCompact} ariaLabel="Monthly in-place rent (rent roll)" /></div>
         </Card>
         <Card>
           <CardHeader title="Vacancy (lease-SF basis)" trailing={forecastFlag} />
-          <div className="p-3"><AreaChart data={vacancySeries(points)} color="var(--color-neg)" valueFormat={(n) => fmtPct(n / 100)} /></div>
+          <div className="p-3"><AreaChart data={vacancySeries(points)} color="var(--color-neg)" valueFormat={(n) => fmtPct(n / 100)} ariaLabel="Vacancy, lease-SF basis" /></div>
         </Card>
       </div>
 

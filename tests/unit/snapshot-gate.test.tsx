@@ -24,6 +24,7 @@ describe('useSnapshotGate', () => {
   it.each([
     'portfolio/PortfolioModule', 'leases/LeasesModule', 'renewals/RenewalsModule', 'tenants/TenantsModule',
     'close/CloseModule', 'cash/CashModule', 'tasks/TasksModule', 'calendar/CalendarModule',
+    'overview/OverviewModule',
   ])('%s uses the gate (no silent blank screen)', (m) => {
     expect(readFileSync(`src/modules/${m}.tsx`, 'utf8')).toContain('useSnapshotGate()');
   });
