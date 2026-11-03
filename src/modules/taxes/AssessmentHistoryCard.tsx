@@ -42,7 +42,7 @@ export function AssessmentHistoryCard({
           {series.map((s) => (
             <li key={s.propertyId} className="flex items-center justify-between gap-3 text-2xs">
               <span style={{ color: 'var(--text-secondary)' }}>{nameFor(s.propertyId)} · assessed</span>
-              <Sparkline data={s.values} width={72} height={20} />
+              <Sparkline data={s.values} label={`${nameFor(s.propertyId)} assessed value by year`} valueFormat={fmtUsdCompact} width={72} height={20} />
             </li>
           ))}
         </ul>

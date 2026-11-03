@@ -12,13 +12,25 @@ interface Persisted {
   version?: number;
 }
 
+/** One shipped migration: a state stamped below `toVersion` that still equals one of `defaults`
+ *  (an untouched previous default) moves to the current default. */
+export interface LayoutMigrationStep {
+  toVersion: number;
+  defaults: readonly WorkspaceConfig[];
+}
+
 /** Moves workspaces that still equal a PREVIOUS default onto the current default, once. A layout
- *  the user arranged themselves never equals a shipped default, so it is left alone. List every
- *  default that has shipped (a saved layout keeps the default it was created under). Pass a stable
- *  module-level constant. */
+ *  the user arranged themselves never equals a shipped default, so it is left alone. Each step is
+ *  versioned and applies ONLY to states stamped below its `toVersion`: a state that already went
+ *  through a step is never re-checked against that step's defaults, so a layout a user deliberately
+ *  set back to an old default after that step ran is kept. The resulting version is the highest
+ *  `toVersion`. Pass a stable module-level constant. */
 export interface LayoutMigration {
-  version: number;
-  legacyDefaults: readonly WorkspaceConfig[];
+  steps: readonly LayoutMigrationStep[];
+}
+
+export function migrationVersion(m: LayoutMigration): number {
+  return m.steps.reduce((v, s) => Math.max(v, s.toVersion), 0);
 }
 
 const KEY = 'ora-overview-workspaces';
@@ -31,22 +43,25 @@ const EMPTY_HIDDEN: readonly string[] = Object.freeze([]);
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
 
 function migrate(parsed: Persisted, allIds: string[], defaultHidden: readonly string[], m: LayoutMigration): Persisted {
-  if ((parsed.version ?? 0) >= m.version) return parsed;
+  const from = parsed.version ?? 0;
+  const target = migrationVersion(m);
+  if (from >= target) return parsed;
+  const defaults = m.steps.filter((step) => step.toVersion > from).flatMap((step) => step.defaults);
   const workspaces = Object.fromEntries(
     Object.entries(parsed.workspaces).map(([name, cfg]) => {
       const norm = normalize(cfg, allIds, defaultHidden);
-      const untouched = m.legacyDefaults.some((d) => sameList(norm.order, d.order) && sameList(norm.hidden, d.hidden));
+      const untouched = defaults.some((d) => sameList(norm.order, d.order) && sameList(norm.hidden, d.hidden));
       return [name, untouched ? { order: [...allIds], hidden: [...defaultHidden] } : cfg];
     }),
   );
-  return { ...parsed, workspaces, version: m.version };
+  return { ...parsed, workspaces, version: target };
 }
 
 function load(allIds: string[], defaultHidden: readonly string[], m?: LayoutMigration): Persisted {
   const fallback: Persisted = {
     workspaces: { Default: { order: allIds, hidden: [...defaultHidden] } },
     active: 'Default',
-    ...(m ? { version: m.version } : {}),
+    ...(m ? { version: migrationVersion(m) } : {}),
   };
   try {
     const raw = localStorage.getItem(KEY);

@@ -18,6 +18,10 @@ interface Props {
   spark?: number[];
   sparkColor?: string;
   accentColor?: string;
+  /** Default true. Pass false for exact integer counts that must always equal a figure shown
+   *  elsewhere: the count-up shows the previous value until the first animation frame (and
+   *  forever when frames are throttled), so a count that changes after mount can read stale. */
+  animate?: boolean;
   onPress?: () => void;
   href?: string;
 }
@@ -48,11 +52,12 @@ export function KpiStat({
   spark,
   sparkColor,
   accentColor = 'var(--accent)',
+  animate = true,
   onPress,
   href,
 }: Props) {
   const animated = useCountUp(value);
-  const display = value === null ? '—' : format(animated);
+  const display = value === null ? '—' : format(animate ? animated : value);
   const deltaUp = (delta ?? 0) >= 0;
   const interactive = Boolean(onPress || href);
 
@@ -93,7 +98,7 @@ export function KpiStat({
       </div>
       {spark && spark.length > 1 && (
         <div className={cn('shrink-0 pt-1')}>
-          <Sparkline data={spark} color={sparkColor ?? accentColor} />
+          <Sparkline data={spark} label={`${label} trend`} valueFormat={format} color={sparkColor ?? accentColor} />
         </div>
       )}
     </div>

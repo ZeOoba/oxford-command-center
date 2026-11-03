@@ -25,7 +25,7 @@ import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
-import { checkSnapshot } from '../server/reconcile-runtime';
+import { checkSnapshot, withRuntimeFlags } from '../server/reconcile-runtime';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
@@ -673,7 +673,8 @@ async function main() {
   // patchSnapshot(): a crash mid-write must not leave portfolio.json truncated for the next reader
   // (the daily brief's collections section, server/brain.ts's loadFallback() after a server restart).
   const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, JSON.stringify(enriched, null, 2));
+  // Persist the runtime reconciliation flags too, the same shape Brain.persist writes (item 1.6).
+  writeFileSync(tmp, JSON.stringify(withRuntimeFlags(enriched), null, 2));
   // Retried on the Windows AV/indexer transient lock (EPERM/EBUSY/EACCES) -- see server/lib/rename-retry.
   renameSyncWithRetry(tmp, SNAPSHOT_PATH);
 

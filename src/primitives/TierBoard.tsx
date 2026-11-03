@@ -36,6 +36,8 @@ export interface TierItem {
   /** Ranks ahead of every unpinned row regardless of dollars — for items whose impact is real but
    *  unquantified (lapsed coverage). `groupByCause` honors it; it never invents a dollar figure. */
   pinned?: boolean;
+  /** Days until the item falls due (a lease's days to expiry). Orders a group's members. */
+  daysToAct?: number;
 }
 
 export interface TierTotal {
