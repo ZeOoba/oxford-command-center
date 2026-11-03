@@ -23,6 +23,7 @@ import { useUi, type EntityRef } from './ui-context';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Sparkline } from '@/charts/Sparkline';
 import { DealDrawer } from './DealDrawer';
+import { PropertyDrawerTrends } from '@/modules/property/PropertyDrawerTrends';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -289,6 +290,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
         subtitle: `${p.market} · ${p.type}`,
         tone: 'gold',
         badge: p.encumbered ? 'Encumbered' : 'Free & clear',
+        extra: <PropertyDrawerTrends property={p} snapshot={s} />,
         rows: [
           { label: 'Square Feet', value: fmtSf(p.sf) },
           { label: 'Tenants', value: p.tenantCount },
