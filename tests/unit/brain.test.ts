@@ -69,6 +69,13 @@ vi.mock('../../server/overlay', () => ({
     dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {},
   })),
   saveOverlay: vi.fn(),
+  // Write-backs are queued read-modify-writes now (item 1.5, covered for real in
+  // brain-overlay-sync.test.ts); here the "disk" is an empty overlay and the mutation result is
+  // what Brain adopts.
+  mutateOverlay: vi.fn(async (mutate: (o: Record<string, unknown>) => Record<string, unknown>) => mutate({
+    dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {},
+    dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: {},
+  })),
   applyOverlay: vi.fn((s: Record<string, unknown>, o: Record<string, unknown>) => {
     h.lastOverlay = o;
     return { ...s };
@@ -170,7 +177,7 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
 
     // A UI write-back calls rederive() → persist() without re-parsing, so the degradation must be
     // remembered on the instance rather than re-derived from the parse result each time.
-    brain.setDealStage('d1', 'Diligence' as DealStage);
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
 
     expect(existsSync(h.snapshotPath)).toBe(false);
   });
@@ -199,7 +206,7 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
     expect(existsSync(h.snapshotPath)).toBe(false);
 
     // rederive() persists without re-parsing, so the gate must hold on every write-back too.
-    brain.setDealStage('d1', 'Diligence' as DealStage);
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
     expect(existsSync(h.snapshotPath)).toBe(false);
   });
 
@@ -237,7 +244,7 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
     expect(state.source).toBe('snapshot-fallback');
 
     // The retained snapshot's deals are live, so a write-back must still mirror it.
-    brain.setDealStage('d1', 'Diligence' as DealStage);
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
 
     expect(existsSync(h.snapshotPath)).toBe(true);
   });
@@ -301,7 +308,7 @@ describe('Brain.persist — H2/M1: reconciliation gate on the third writer', () 
 
     // The snapshot becomes internally inconsistent. A UI write-back must NOT republish it flagless.
     h.reconcileFlags = [reconErr];
-    brain.setDealStage('d1', 'Diligence' as DealStage);
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
 
     expect(existsSync(h.snapshotPath)).toBe(false);
   });
@@ -310,7 +317,7 @@ describe('Brain.persist — H2/M1: reconciliation gate on the third writer', () 
     h.reconcileFlags = [reconWarn];
     await brain.refresh();
 
-    brain.setDealStage('d1', 'Diligence' as DealStage);
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
 
     const served = brain.getSnapshot()!;
     expect(served.dataQuality.some((f) => f.entity === 'reconciliation')).toBe(true);
@@ -508,55 +515,55 @@ describe('Brain write-backs', () => {
     await brain.refresh(); // establish a base to write against
   });
 
-  it('setDealStage rejects an unknown deal and accepts a known one', () => {
-    expect(brain.setDealStage('nope', 'Closing' as DealStage)).toBe(false);
+  it('setDealStage rejects an unknown deal and accepts a known one', async () => {
+    expect(await brain.setDealStage('nope', 'Closing' as DealStage)).toBe(false);
 
     const events: Array<{ reason: string }> = [];
     brain.on('snapshot', (e) => events.push(e as { reason: string }));
-    expect(brain.setDealStage('d1', 'Closing' as DealStage)).toBe(true);
+    expect(await brain.setDealStage('d1', 'Closing' as DealStage)).toBe(true);
     expect(events.at(-1)!.reason).toBe('action:deal-stage');
     expect((h.lastOverlay!.dealStages as Record<string, string>).d1).toBe('Closing');
   });
 
-  it('setRenewalStage guards on an unknown lease', () => {
-    expect(brain.setRenewalStage('zzz', 'In Negotiation' as RenewalStage)).toBe(false);
-    expect(brain.setRenewalStage('l1', 'In Negotiation' as RenewalStage)).toBe(true);
+  it('setRenewalStage guards on an unknown lease', async () => {
+    expect(await brain.setRenewalStage('zzz', 'In Negotiation' as RenewalStage)).toBe(false);
+    expect(await brain.setRenewalStage('l1', 'In Negotiation' as RenewalStage)).toBe(true);
     expect((h.lastOverlay!.renewalStages as Record<string, string>).l1).toBe('In Negotiation');
   });
 
-  it('setNoiBudget guards on an unknown property', () => {
-    expect(brain.setNoiBudget('zzz', 250000)).toBe(false);
-    expect(brain.setNoiBudget('p1', 250000)).toBe(true);
+  it('setNoiBudget guards on an unknown property', async () => {
+    expect(await brain.setNoiBudget('zzz', 250000)).toBe(false);
+    expect(await brain.setNoiBudget('p1', 250000)).toBe(true);
     expect((h.lastOverlay!.noiBudgets as Record<string, number>).p1).toBe(250000);
   });
 
-  it('setTenantArrears guards on an unknown lease and persists for a known one', () => {
+  it('setTenantArrears guards on an unknown lease and persists for a known one', async () => {
     const ar = { d30: 0, d60: 4000, d90: 0, d90plus: 0 };
-    expect(brain.setTenantArrears('zzz', ar)).toBe(false);
+    expect(await brain.setTenantArrears('zzz', ar)).toBe(false);
     const events: Array<{ reason: string }> = [];
     brain.on('snapshot', (e) => events.push(e as { reason: string }));
-    expect(brain.setTenantArrears('l1', ar)).toBe(true);
+    expect(await brain.setTenantArrears('l1', ar)).toBe(true);
     expect(events.at(-1)!.reason).toBe('action:tenant-arrears');
     expect((h.lastOverlay!.tenantArrears as Record<string, unknown>).l1).toEqual(ar);
   });
 
-  it('setTenantNote sets, then clears, a note for a known tenant', () => {
+  it('setTenantNote sets, then clears, a note for a known tenant', async () => {
     h.tenantIds = ['t1'];
-    expect(brain.setTenantNote('unknown', 'hi')).toBe(false);
-    expect(brain.setTenantNote('t1', '  remodel pending  ')).toBe(true);
+    expect(await brain.setTenantNote('unknown', 'hi')).toBe(false);
+    expect(await brain.setTenantNote('t1', '  remodel pending  ')).toBe(true);
     expect((h.lastOverlay!.tenantNotes as Record<string, string>).t1).toBe('remodel pending');
     // Empty note removes the key.
-    expect(brain.setTenantNote('t1', '   ')).toBe(true);
+    expect(await brain.setTenantNote('t1', '   ')).toBe(true);
     expect((h.lastOverlay!.tenantNotes as Record<string, string>).t1).toBeUndefined();
   });
 
-  it('setAcquisitionInput rejects an unknown deal and persists for a known one', () => {
+  it('setAcquisitionInput rejects an unknown deal and persists for a known one', async () => {
     const input = AcquisitionInput.parse({ dealId: 'd1', clusterTier: 'entry', stabilizedYoc: 0.09 });
-    expect(brain.setAcquisitionInput('nope', input)).toBe(false);
+    expect(await brain.setAcquisitionInput('nope', input)).toBe(false);
 
     const events: Array<{ reason: string }> = [];
     brain.on('snapshot', (e) => events.push(e as { reason: string }));
-    expect(brain.setAcquisitionInput('d1', input)).toBe(true);
+    expect(await brain.setAcquisitionInput('d1', input)).toBe(true);
     expect(events.at(-1)!.reason).toBe('action:acquisition-input');
     const stored = (h.lastOverlay!.acquisitionInputs as Record<string, AcquisitionInput>).d1;
     expect(stored).toBeDefined();
@@ -564,10 +571,10 @@ describe('Brain write-backs', () => {
     expect(stored!.stabilizedYoc).toBeCloseTo(0.09, 9);
   });
 
-  it('addTask prepends a user task and re-derives', () => {
+  it('addTask prepends a user task and re-derives', async () => {
     const events: Array<{ reason: string }> = [];
     brain.on('snapshot', (e) => events.push(e as { reason: string }));
-    brain.addTask({
+    await brain.addTask({
       id: 't-1', label: 'Call lender', section: 'Manual', role: null, type: 'Manual',
       dueDay: null, notes: null, status: 'pending', monthlyPmt: null,
     });

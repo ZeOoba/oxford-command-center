@@ -5,7 +5,7 @@ import { watch, type FSWatcher } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears, type QbActuals, type Property } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
-import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, overlayPath, saveOverlay, type Overlay } from './overlay';
+import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, mutateOverlay, overlayPath, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
@@ -197,96 +197,115 @@ class Brain extends EventEmitter {
     const adopted = this.adoptSnapshot(
       rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged,
     );
-    void saveOverlay(this.overlay);
     this.persist(adopted);
     this.setState({ lastUpdated: new Date().toISOString() });
     this.emit('snapshot', { reason, flags: [] as DataQualityFlag[] });
   }
 
-  /** Write-back: advance/override a deal's stage. Returns false if the deal is unknown. */
-  setDealStage(dealId: string, stage: DealStage): boolean {
+  /**
+   * Every write-back goes through here (roadmap 2026-10-30 item 1.5). The mutation is applied by
+   * mutateOverlay to overlay.json as it is on disk NOW, inside the shared save queue, so a write by
+   * another writer (the headless AR sweep, setLeaseRunAssumptions, a manual edit) is carried forward
+   * instead of overwritten by this process's in-memory copy. Memory changes only after the publish
+   * succeeds; a failed save rejects to the route, which reports it, and memory is left as it was.
+   * `writeSeq` keeps a slower continuation from adopting an older published overlay over a newer one.
+   */
+  private writeSeq = 0;
+  private adoptedSeq = 0;
+  private async writeBack(reason: string, mutate: (o: Overlay) => Overlay): Promise<void> {
+    const seq = ++this.writeSeq;
+    const published = await mutateOverlay(mutate);
+    if (seq < this.adoptedSeq) return;
+    this.adoptedSeq = seq;
+    this.overlay = published;
+    // The save is durable at this point. A rederive failure must not turn it into a reported
+    // failure: the client would retry and, for addTask, duplicate the task (review round 2, C7).
+    try {
+      this.rederive(reason);
+    } catch (err) {
+      console.error(`✗ Brain.writeBack: overlay saved, but rederive failed (${reason}): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Write-back: advance/override a deal's stage. Resolves false if the deal is unknown; rejects if the save fails. */
+  async setDealStage(dealId: string, stage: DealStage): Promise<boolean> {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
-    this.overlay = { ...this.overlay, dealStages: { ...this.overlay.dealStages, [dealId]: stage } };
-    this.rederive('action:deal-stage');
+    await this.writeBack('action:deal-stage', (o) => ({ ...o, dealStages: { ...o.dealStages, [dealId]: stage } }));
     return true;
   }
 
-  /** Write-back: set a lease's renewal stage. Returns false if the lease is unknown. */
-  setRenewalStage(leaseId: string, stage: RenewalStage): boolean {
+  /** Write-back: set a lease's renewal stage. Resolves false if the lease is unknown. */
+  async setRenewalStage(leaseId: string, stage: RenewalStage): Promise<boolean> {
     if (!this.base?.leases.some((l) => l.id === leaseId)) return false;
-    this.overlay = { ...this.overlay, renewalStages: { ...this.overlay.renewalStages, [leaseId]: stage } };
-    this.rederive('action:renewal-stage');
+    await this.writeBack('action:renewal-stage', (o) => ({ ...o, renewalStages: { ...o.renewalStages, [leaseId]: stage } }));
     return true;
   }
 
-  /** Write-back: set (or clear) a tenant's free-text note. Returns false if the tenant is unknown. */
-  setTenantNote(tenantId: string, note: string): boolean {
+  /** Write-back: set (or clear) a tenant's free-text note. Resolves false if the tenant is unknown. */
+  async setTenantNote(tenantId: string, note: string): Promise<boolean> {
     if (!this.base) return false;
     // Only tenant IDs are consumed here, but pass the run date anyway — no call site may rely
     // on tenantScorecards' silent `?? s.meta.asOf` day-count fallback (OI-023 audit).
     const known = new Set(tenantScorecards(this.base, referenceDate()).map((t) => t.id));
     if (!known.has(tenantId)) return false;
-    const notes = { ...this.overlay.tenantNotes };
     const trimmed = note.trim();
-    if (trimmed) notes[tenantId] = trimmed;
-    else delete notes[tenantId];
-    this.overlay = { ...this.overlay, tenantNotes: notes };
-    this.rederive('action:tenant-note');
+    await this.writeBack('action:tenant-note', (o) => {
+      const notes = { ...o.tenantNotes };
+      if (trimmed) notes[tenantId] = trimmed;
+      else delete notes[tenantId];
+      return { ...o, tenantNotes: notes };
+    });
     return true;
   }
 
-  /** Write-back: cache AI-sourced comps for a deal. Returns false if the deal is unknown. */
-  setDealComps(dealId: string, comps: CompSet): boolean {
+  /** Write-back: cache AI-sourced comps for a deal. Resolves false if the deal is unknown. */
+  async setDealComps(dealId: string, comps: CompSet): Promise<boolean> {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
-    this.overlay = { ...this.overlay, dealComps: { ...this.overlay.dealComps, [dealId]: comps } };
-    this.rederive('action:deal-comps');
+    await this.writeBack('action:deal-comps', (o) => ({ ...o, dealComps: { ...o.dealComps, [dealId]: comps } }));
     return true;
   }
 
-  /** Write-back: persist a deal's Acquisition Workbench underwriting inputs. Returns false if unknown. */
-  setAcquisitionInput(dealId: string, input: AcquisitionInput): boolean {
+  /** Write-back: persist a deal's Acquisition Workbench underwriting inputs. Resolves false if unknown. */
+  async setAcquisitionInput(dealId: string, input: AcquisitionInput): Promise<boolean> {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
-    this.overlay = { ...this.overlay, acquisitionInputs: { ...this.overlay.acquisitionInputs, [dealId]: input } };
-    this.rederive('action:acquisition-input');
+    await this.writeBack('action:acquisition-input', (o) => ({ ...o, acquisitionInputs: { ...o.acquisitionInputs, [dealId]: input } }));
     return true;
   }
 
-  /** Write-back: set the annual NOI budget for a property. Returns false if the property is unknown. */
-  setNoiBudget(propertyId: string, amount: number): boolean {
+  /** Write-back: set the annual NOI budget for a property. Resolves false if the property is unknown. */
+  async setNoiBudget(propertyId: string, amount: number): Promise<boolean> {
     if (!this.base?.properties.some((p) => p.id === propertyId)) return false;
-    this.overlay = { ...this.overlay, noiBudgets: { ...this.overlay.noiBudgets, [propertyId]: amount } };
-    this.rederive('action:noi-budget');
+    await this.writeBack('action:noi-budget', (o) => ({ ...o, noiBudgets: { ...o.noiBudgets, [propertyId]: amount } }));
     return true;
   }
 
-  /** Write-back: set a lease's AR aging buckets (audit Fix #2). Returns false if the lease is unknown. */
-  setTenantArrears(leaseId: string, arrears: TenantArrears): boolean {
+  /** Write-back: set a lease's AR aging buckets (audit Fix #2). Resolves false if the lease is unknown. */
+  async setTenantArrears(leaseId: string, arrears: TenantArrears): Promise<boolean> {
     if (!this.base?.leases.some((l) => l.id === leaseId)) return false;
-    this.overlay = { ...this.overlay, tenantArrears: { ...this.overlay.tenantArrears, [leaseId]: arrears } };
-    this.rederive('action:tenant-arrears');
+    await this.writeBack('action:tenant-arrears', (o) => ({ ...o, tenantArrears: { ...o.tenantArrears, [leaseId]: arrears } }));
     return true;
   }
 
   /** Write-back: set a user-supplied market rent for a property key (Phase 3 leasing intelligence). */
-  setMarketRent(key: string, rentPsf: number): boolean {
+  async setMarketRent(key: string, rentPsf: number): Promise<boolean> {
     if (!this.base) return false;
     const knownKeys = new Set(this.base.leases.map((l) => l.propertyKey));
     if (!knownKeys.has(key)) return false;
-    const marketRents = { ...this.overlay.marketRents };
-    if (rentPsf <= 0) {
-      delete marketRents[key];
-    } else {
-      marketRents[key] = rentPsf;
-    }
-    this.overlay = { ...this.overlay, marketRents };
-    this.rederive('action:market-rent');
+    await this.writeBack('action:market-rent', (o) => {
+      const marketRents = { ...o.marketRents };
+      if (rentPsf <= 0) {
+        delete marketRents[key];
+      } else {
+        marketRents[key] = rentPsf;
+      }
+      return { ...o, marketRents };
+    });
     return true;
   }
 
-  /** Write-back: append a user-created task. */
-  addTask(task: Task): void {
-    this.overlay = { ...this.overlay, tasks: [task, ...this.overlay.tasks] };
-    this.rederive('action:add-task');
+  /** Write-back: append a user-created task. Rejects if the save fails. */
+  async addTask(task: Task): Promise<void> {
+    await this.writeBack('action:add-task', (o) => ({ ...o, tasks: [task, ...o.tasks] }));
   }
 
   private persist(snapshot: PortfolioSnapshot) {
