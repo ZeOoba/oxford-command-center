@@ -176,7 +176,7 @@ export function DealDrawer({
                             </div>
                           )}
                           {rc.proxy && (
-                            <div className="text-2xs pt-1" style={{ color: 'var(--warn, #b45309)' }}>
+                            <div className="text-2xs pt-1" style={{ color: 'var(--text-warn)' }}>
                               [PROXY] denominator: this market's replacement cost is a neighbouring-metro stand-in (DENOMINATOR-SENSITIVE).
                               A local insurance comp or GC quote is required before an LOI, regardless of how close to the floor this reads.
                             </div>

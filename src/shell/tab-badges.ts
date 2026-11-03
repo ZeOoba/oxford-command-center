@@ -14,8 +14,8 @@ import type { ModuleTabDef, TabBadge } from './tab-types';
  *  excluded by `buildAlertView`. */
 export function useAlertsTabBadge(): TabBadge | undefined {
   const { counts } = useAlertView();
-  if (counts.critical > 0) return { count: counts.critical, tone: 'red' };
-  if (counts.warning > 0) return { count: counts.warning, tone: 'amber' };
+  if (counts.critical > 0) return { count: counts.critical, tone: 'red', noun: 'critical alerts' };
+  if (counts.warning > 0) return { count: counts.warning, tone: 'amber', noun: 'warning alerts' };
   return undefined;
 }
 
@@ -25,7 +25,7 @@ export function useAlertsTabBadge(): TabBadge | undefined {
 export function useCriticalDatesTabBadge(): TabBadge | undefined {
   const { analytics } = useAnalytics();
   const count = analytics ? analytics.criticalDates.filter((c) => c.daysToDate < 0).length : 0;
-  return count > 0 ? { count, tone: 'red' } : undefined;
+  return count > 0 ? { count, tone: 'red', noun: 'overdue critical dates' } : undefined;
 }
 
 const TONE_SEVERITY: Partial<Record<TabBadge['tone'], number>> = { red: 2, amber: 1 };
