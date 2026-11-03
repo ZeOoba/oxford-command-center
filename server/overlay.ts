@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { z } from 'zod';
 import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contracts/index';
@@ -151,9 +151,33 @@ export function evaluateOverlayPrecondition(
         `create the file containing {} AND set ALLOW_EMPTY_OVERLAY=1 — both, deliberately.`,
     };
   }
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    return {
+      refuse: true,
+      reason: `${path} is corrupt/unparseable — refusing to proceed (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
+  const judged = judgeOverlayText(path, text, opts);
+  return judged.refuse ? judged : { refuse: false };
+}
+
+/**
+ * evaluateOverlayPrecondition's judgement of file TEXT already read, returning the loader's output
+ * alongside the verdict. Split out (roadmap 2026-10-30 item 1.5) so mutateOverlay can read the file
+ * ONCE and judge and parse that same text: a precondition check followed by a separate loadOverlay()
+ * is two reads, and loadOverlay fails OPEN to EMPTY_OVERLAY on any error at the second one.
+ */
+function judgeOverlayText(
+  path: string,
+  text: string,
+  opts: { expectEnriched?: boolean },
+): { refuse: true; reason: string } | { refuse: false; overlay: Overlay; raw: Record<string, unknown> } {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
+    parsed = JSON.parse(text);
   } catch (e) {
     return {
       refuse: true,
@@ -173,7 +197,8 @@ export function evaluateOverlayPrecondition(
   // and still merged as EMPTY_OVERLAY — the same silent zeroing this guard exists to stop, reached
   // through the loader instead of through a missing file.
   const raw = parsed as Record<string, unknown>;
-  const loaded = parseOverlayRaw(parsed as Partial<Overlay>) as unknown as Record<string, unknown>;
+  const overlay = parseOverlayRaw(parsed as Partial<Overlay>);
+  const loaded = overlay as unknown as Record<string, unknown>;
 
   // DATA-LOSS check — applies to EVERY caller, expectEnriched or not. A domain the file visibly
   // carries that survives the loader as empty is a silent loss regardless of what the caller does
@@ -218,7 +243,7 @@ export function evaluateOverlayPrecondition(
       };
     }
   }
-  return { refuse: false };
+  return { refuse: false, overlay, raw };
 }
 
 /** Advance path through the pipeline (Refinance/Dead are off-path — set explicitly). */
@@ -354,7 +379,12 @@ export function parseOverlayRaw(raw: Partial<Overlay>): Overlay {
 export function loadOverlay(): Overlay {
   try {
     if (existsSync(overlayPath())) {
-      return parseOverlayRaw(JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>);
+      const o = parseOverlayRaw(JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>);
+      // Raise only. A read must never LOWER the flag: lowering it here let any in-process reader
+      // (a lease-run GET, the briefing) re-arm an outside truncation as a valid write base
+      // (adversarial review 2026-10-30, C10). Only a publish by mutateOverlay lowers it.
+      if (!isBlank(o)) lastSeenContent.set(overlayPath(), true);
+      return o;
     }
   } catch {
     /* corrupt overlay → start clean */
@@ -362,15 +392,141 @@ export function loadOverlay(): Overlay {
   return { ...EMPTY_OVERLAY };
 }
 
+/** True when the overlay carries nothing at all, leaseRunAssumptions included. */
+function isBlank(o: Overlay): boolean {
+  return hasNoEnrichment(o as unknown as Record<string, unknown>) && domainIsEmpty(o.leaseRunAssumptions);
+}
+
+/**
+ * Per path: whether the overlay this process last loaded or published there carried content. Lets
+ * mutateOverlay tell a deliberately empty overlay (never had content, or this process published the
+ * empty result itself) from one an outside writer truncated or deleted after this process saw data.
+ */
+const lastSeenContent = new Map<string, boolean>();
+/**
+ * What a save would silently erase: top-level keys the Overlay shape does not carry, and per-entry
+ * drops inside a domain (a hand edit with one bad entry). judgeOverlayText only refuses when a WHOLE
+ * domain drops, which is right for the CLI readers; a write-back REWRITES the file, so any dropped
+ * entry is gone for good (adversarial review 2026-10-30, C14). Value coercion that keeps the entry
+ * (money strings, negative buckets to 0) is the loader's documented contract and is not counted.
+ */
+function entryLosses(raw: Record<string, unknown>, loaded: Overlay): string[] {
+  const out: string[] = [];
+  const known = new Set(Object.keys(EMPTY_OVERLAY));
+  for (const k of Object.keys(raw)) if (!known.has(k)) out.push(`unknown key "${k}"`);
+  const count = (v: unknown) => (Array.isArray(v) ? v.length : v && typeof v === 'object' ? Object.keys(v).length : 0);
+  for (const k of known) {
+    const dropped = count(raw[k]) - count((loaded as unknown as Record<string, unknown>)[k]);
+    if (dropped > 0) out.push(`${dropped} ${k} entr${dropped === 1 ? 'y' : 'ies'}`);
+  }
+  return out;
+}
+
+function noteContent(path: string, o: Overlay): void {
+  lastSeenContent.set(path, !isBlank(o));
+}
+
 // Saves run one at a time, in call order. The rename below retries a transient lock for up to
 // ~200 ms; without this queue an older save still retrying could land on top of a newer one and both
 // would report true (refute 2026-09-23). Queued, a retrying save holds the next one back instead.
+// The queue is re-armed with a swallowed copy of each run, so a run that rejects (mutateOverlay)
+// cannot wedge every later save behind it.
 let saveQueue: Promise<unknown> = Promise.resolve();
 
 export function saveOverlay(o: Overlay): Promise<boolean> {
   const run = saveQueue.then(() => writeOverlay(o));
-  saveQueue = run;
+  saveQueue = run.catch(() => undefined);
   return run;
+}
+
+/** How many times mutateOverlay re-reads and re-applies when another writer publishes mid-write. */
+export const MUTATE_MAX_ATTEMPTS = 3;
+
+/**
+ * Queued read-modify-write of overlay.json (roadmap 2026-10-30 item 1.5). Inside the save queue it
+ * reads the file ONCE, judges and parses that same text, applies `mutate` to it, writes a temp file,
+ * re-checks the file's identity just before the rename and starts over (up to MUTATE_MAX_ATTEMPTS)
+ * if another writer published in between. Resolves with the overlay exactly as published.
+ *
+ * REJECTS, writing nothing, on: a read error (a Windows AV/OneDrive lock), unparseable or wrongly
+ * shaped JSON, an entry or key the loader would drop (entryLosses), a file that is empty or missing
+ * after this process last saw content in it (a truncation — ALLOW_EMPTY_OVERLAY is deliberately not
+ * honoured here), a throwing `mutate`, a failed rename, or persistent contention. There is no
+ * fallback to an empty or in-memory base and no retry after the caller is told: a failure is the
+ * caller's to surface.
+ *
+ * Residual windows (writers in ANOTHER process; writers inside this process all queue here): the
+ * identity re-check and each rename attempt are separate syscalls, and renameWithRetry may make up
+ * to RENAME_MAX_ATTEMPTS of them over ~200 ms, so a rename-publish landing in one of those gaps is
+ * overwritten. An editor that rewrites the file IN PLACE keeps its inode, and an equal-size rewrite
+ * inside one NTFS mtime tick does not change the identity at all.
+ */
+export function mutateOverlay(mutate: (o: Overlay) => Overlay): Promise<Overlay> {
+  const run = saveQueue.then(() => readModifyWrite(mutate));
+  saveQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** Like fileIdentity, but only a MISSING file is null — any other stat error is thrown, so a locked
+ *  file is never mistaken for an absent one (which would make an empty overlay the write base). */
+async function strictIdentity(path: string): Promise<string | null> {
+  try {
+    const s = await stat(path, { bigint: true });
+    return `${s.ino}:${s.mtimeNs}:${s.size}`;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+async function readModifyWrite(mutate: (o: Overlay) => Overlay): Promise<Overlay> {
+  const path = overlayPath();
+  await mkdir(dirname(path), { recursive: true });
+  for (let attempt = 1; ; attempt++) {
+    const before = await strictIdentity(path);
+    let base: Overlay;
+    if (before === null) {
+      if (lastSeenContent.get(path)) {
+        throw new Error(`${path} disappeared after this server last saw data in it — refusing to write an empty-based overlay. Restore it first (or restart the server if the reset was deliberate).`);
+      }
+      base = { ...EMPTY_OVERLAY };
+    } else {
+      const judged = judgeOverlayText(path, readFileSync(path, 'utf8'), {});
+      if (judged.refuse) throw new Error(judged.reason);
+      if (isBlank(judged.overlay) && lastSeenContent.get(path)) {
+        throw new Error(`${path} is empty but this server last saw data in it (truncated?) — refusing to write over it. Restore it first (or restart the server if the reset was deliberate).`);
+      }
+      const lost = entryLosses(judged.raw, judged.overlay);
+      if (lost.length > 0) {
+        throw new Error(`${path} has entries the loader would drop on save (${lost.join(', ')}) — refusing to write over them. Fix them in the file first.`);
+      }
+      base = judged.overlay;
+    }
+    const next = mutate(base);
+    // Validate what we are about to PUBLISH with the same loader + entryLosses the next read will
+    // apply. A mutation carrying an entry the loader drops (e.g. an unvalidated task field from a
+    // malformed API call) would otherwise publish, then make every later read refuse — one bad
+    // request locking out every overlay writer (adversarial review 2026-10-30 round 2, N1).
+    const unloadable = entryLosses(next as unknown as Record<string, unknown>, parseOverlayRaw(next));
+    if (unloadable.length > 0) {
+      throw new Error(`refusing to publish an overlay the loader would not read back (${unloadable.join(', ')}).`);
+    }
+    const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${attempt}`;
+    try {
+      await writeFile(tmp, JSON.stringify(next, null, 2));
+      if ((await strictIdentity(path)) !== before) {
+        if (attempt >= MUTATE_MAX_ATTEMPTS) throw new Error(`${path} kept changing under the write (${attempt} attempts) — not saved.`);
+        await rm(tmp, { force: true });
+        continue;
+      }
+      await renameWithRetry(tmp, path, { shouldRetry: async () => (await fileIdentity(path)) === before });
+    } catch (e) {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw e;
+    }
+    noteContent(path, next);
+    return next;
+  }
 }
 
 /** Which file currently sits at `path` (null when absent). A publish by any writer is a rename onto
@@ -424,10 +580,18 @@ export async function setLeaseRunAssumptions(
   propertyId: string,
   patch: Partial<LeaseRunAssumptions>,
 ): Promise<Partial<LeaseRunAssumptions>> {
-  const o = loadOverlay();
-  const merged = { ...(o.leaseRunAssumptions[propertyId] ?? {}), ...patch };
-  const ok = await saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
-  if (!ok) throw new Error(`Failed to persist overlay for property ${propertyId}`);
+  // Through the same queued read-modify-write as Brain's write-backs (item 1.5): the old
+  // loadOverlay()-then-saveOverlay() read outside the queue, so a queued Brain write could land
+  // between the two and be overwritten, and a corrupt file read as EMPTY became the write base.
+  let merged: Partial<LeaseRunAssumptions> = {};
+  try {
+    await mutateOverlay((o) => {
+      merged = { ...(o.leaseRunAssumptions[propertyId] ?? {}), ...patch };
+      return { ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } };
+    });
+  } catch (e) {
+    throw new Error(`Failed to persist overlay for property ${propertyId}: ${e instanceof Error ? e.message : String(e)}`);
+  }
   return merged;
 }
 

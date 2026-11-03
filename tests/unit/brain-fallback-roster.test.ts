@@ -145,7 +145,7 @@ describe('Brain — a roster change AFTER a snapshot is adopted still reaches se
   it('rederive: a UI write-back re-checks the roster instead of re-serving the stale flag', async () => {
     const brain = await adoptCleanSnapshot();
     setRoster(ROSTER);
-    brain.setDealStage('b', 'Diligence' as never);
+    await brain.setDealStage('b', 'Diligence' as never);
     const byId = Object.fromEntries(brain.getSnapshot()!.deals.map((d) => [d.id, d.confidential]));
     expect(byId.a).toBe(true);
     expect(byId.b).toBe(false);

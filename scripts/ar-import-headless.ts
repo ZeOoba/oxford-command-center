@@ -48,21 +48,17 @@
  * (portfolio.json) in place so the daily brief's 4c sees the numbers this morning without waiting
  * for a full Brain refresh.
  *
- * KNOWN ARCHITECTURAL LIMITATION (refute 2026-07-22 round 4/edges — corrects an earlier, understated
- * version of this caveat): Brain (server/brain.ts) loads the overlay file into memory ONCE at
- * construction and NEVER re-reads it — refresh() only re-parses the WORKBOOK (chokidar-watched); it
- * does not re-read overlay.json. So the risk is not "the same instant" — it is the ENTIRE remaining
- * lifetime of a running dev-server process after this script runs. If `npm run dev` is up when this
- * sweep writes to overlay.json on disk, the server's in-memory copy is stale for the rest of that
- * session; ANY subsequent server-mediated overlay write (a deal-stage change, a task, a manual arrears
- * edit, an interactive-script write) calls `saveOverlay(this.overlay)` with that STALE full copy and
- * durably ERASES every field this script wrote (and anything else that changed on disk meanwhile) —
- * not just AR. This is a genuine gap in Brain's overlay lifecycle, not specific to this feature;
- * properly fixing it (re-reading + merging on each mutation, or watching overlay.json for external
- * changes) touches every write-back method Brain exposes and is deliberately OUT OF SCOPE for this
- * PR. Mitigation until then: run this script only while the dev server is stopped (its own design
- * intent — "no running server required"), or restart the server immediately after a sweep before any
- * server-mediated overlay write.
+ * CONCURRENCY WITH A RUNNING SERVER (roadmap 2026-10-30 item 1.5 — supersedes the 2026-07-22
+ * "known architectural limitation" caveat that used to stand here): Brain no longer saves its
+ * startup copy of the overlay. Every server write-back is a queued read-modify-write against
+ * overlay.json as it is on disk (server/overlay.ts mutateOverlay), so a sweep that lands while
+ * `npm run dev` is up is carried forward by the next UI action rather than erased. The remaining
+ * window is THIS script's own: it reads the overlay, computes, then saves the whole object through
+ * saveOverlay, which takes its identity baseline only at save time and does not re-check before the
+ * first rename. A server write-back published anywhere from loadOverlay() below through that rename
+ * is overwritten. It also still reads the file twice (precondition, then loadOverlay, which fails
+ * open to EMPTY on a lock between the two). Moving this script onto mutateOverlay closes both; until
+ * then, stopping the server for a sweep removes the window entirely.
  *
  * If the overlay write itself fails (disk/permissions), the run does NOT patch the snapshot, archive
  * the inbox PDFs, or report success — see main()'s overlayWriteFailed branch.
