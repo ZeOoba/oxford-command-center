@@ -9,6 +9,7 @@ import { PF_SEVERITIES, type PfDataset, type PfEntityId } from '@contracts/prope
 import { periodLabel } from '@analytics/property-financials/periods';
 import { usd } from '@analytics/property-financials/format';
 import { InsightCardList } from './InsightWorkflow';
+import { ExpenseMatrixPanel } from './ExpenseMatrixPanel';
 import { WATCHLIST_ALL, WATCHLIST_MOVER_RULES, filterWatchlist, monthRangeLabel, toneClass, topOpexMovers, watchlistPropertyOptions } from './model';
 
 const RE_TAX = 'Real estate & property tax';
@@ -101,6 +102,8 @@ export function WatchlistView({ dataset: d, onOpenProperty }: { dataset: PfDatas
           <p className="pf-note">Real estate tax lines show large decreases because installments paid later in the year are not yet in the {current.split(' ').pop()} figures.</p>
         )}
       </section>
+
+      <ExpenseMatrixPanel dataset={d} />
     </div>
   );
 }
