@@ -11,6 +11,8 @@ export function AlertBell() {
     <button
       onClick={() => ui.setActiveModule('alerts')}
       aria-label={`Alerts${unread ? ` (${unread} unread)` : ''}`}
+      // Sighted hover says what the "9+" counts: unread notifications, not open actions or alerts.
+      title={unread ? `${unread} unread alert notifications` : 'Alerts'}
       className="relative flex items-center justify-center rounded-[var(--radius-sm)] p-1.5 transition-colors"
       style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
     >

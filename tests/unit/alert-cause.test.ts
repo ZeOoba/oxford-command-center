@@ -126,3 +126,14 @@ describe('insight cause tags', () => {
     expect(isPinnedAlert({ id: 'lease-expiry-x' }, false)).toBe(false);
   });
 });
+
+describe('describeAlertCause — LTV ceiling label', () => {
+  it('builds the ceiling from the per-property threshold constant, not a hard-coded figure', async () => {
+    const { describeAlertCause } = await import('../../src/modules/alerts/cause-labels');
+    const { ALERT_THRESHOLDS } = await import('../../src/analytics/conditions');
+    const { fmtPct } = await import('../../src/analytics/format');
+    const title = describeAlertCause('ltv-ceiling', [{ id: 'a' }, { id: 'b' }] as never).title;
+    expect(title).toBe(`2 properties above the ${fmtPct(ALERT_THRESHOLDS.refiLtvCeilingPerProperty, 0)} LTV ceiling`);
+    expect(title).toBe('2 properties above the 65% LTV ceiling');
+  });
+});

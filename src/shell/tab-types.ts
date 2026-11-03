@@ -14,6 +14,9 @@ export const MAX_TABS_PER_DESTINATION = 5;
 export interface TabBadge {
   count: number;
   tone: BadgeTone;
+  /** What the count counts ("critical alerts"), for hover and assistive text. Several attention counts
+   *  share the screen and each counts a different population (design review 2026-10-31, finding 5). */
+  noun?: string;
 }
 
 export interface ModuleTabDef {
