@@ -6,6 +6,7 @@
 // ltvCleared is always null at screen time (no loan amount in AcquisitionInput — indeterminate);
 // the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
 import type { RankedCandidate } from '@contracts/acquisition';
+import { rankedSortValue } from './ranked-sort';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useSetCandidateStatus } from './hooks';
@@ -19,9 +20,14 @@ const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> 
   KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',         color: 'var(--text-on-accent)' },
 };
 
+const UNSCORED_STYLE = { label: '—', bg: 'var(--surface-overlay)', color: 'var(--text-tertiary)' };
+const TIER_FOR_VERDICT: Record<string, string> = { PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', KILLED: 'KILLED' };
+
+// Keyed on the VERDICT, the same field the sort ranks by (ranked-sort.ts): a legacy governor-demoted row
+// persisted tier T1 with verdict PASS, and must read PASS, not "T1 · PURSUE". No score ⇒ "—", not a fake PASS.
 function TierBadge({ tier, verdict }: { tier: string | null; verdict: string | null }) {
-  const key = tier ?? verdict ?? 'PASS';
-  const style = TIER_STYLES[key] ?? TIER_STYLES['PASS']!;
+  const key = (verdict ? TIER_FOR_VERDICT[verdict] : undefined) ?? tier;
+  const style = key ? (TIER_STYLES[key] ?? TIER_STYLES['PASS']!) : UNSCORED_STYLE;
   return (
     <span style={{
       display: 'inline-block',
@@ -119,7 +125,7 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled, edgeEn
           )}
         </>
       ),
-      sortValue: (item) => item.latestScore?.tier ?? item.latestScore?.verdict ?? 'PASS',
+      sortValue: rankedSortValue,
     },
     {
       key: 'address',
