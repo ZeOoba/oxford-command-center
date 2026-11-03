@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataQualityFlag, Task, TaskStatus } from '../../src/contracts/index';
 import { getGraphToken } from './graph-auth';
 import { htmlToText } from './html-to-text';
+import { redactNotesText } from '../../src/lib/redact-pii';
 
 /**
  * Microsoft 365 To-Do → Tasks (Phase 6). Pulls open To-Do tasks via Microsoft Graph and prepends
@@ -42,6 +43,44 @@ export function isTaskList(list: { wellknownListName?: string }): boolean {
   return list.wellknownListName !== 'flaggedEmails';
 }
 
+const NOTE_MAX_CHARS = 200;
+/** Input cap before the full redaction (round 2): the rules are quadratic on one long token (a 50K-char
+ *  run took seconds), and only the first NOTE_MAX_CHARS of the result are stored. */
+const NOTE_INPUT_MAX_CHARS = 4000;
+
+/** Cut+redact rounds before the hard fallback; real notes settle in 1-2 (each round only shortens). */
+const NOTE_BOUND_ROUNDS = 4;
+
+/** Cut to NOTE_MAX_CHARS on a token boundary: a cut that lands mid-token drops that partial token,
+ *  and any half-written placeholder at the cut ("... [phone", "... [email red") with its spacing. */
+function cutToBound(red: string): string {
+  let cut = red.slice(0, NOTE_MAX_CHARS);
+  if (/\S/.test(red.charAt(NOTE_MAX_CHARS))) cut = cut.replace(/\S+$/, '');
+  return cut.replace(/\s*\[[a-z ]*$/, '').trimEnd();
+}
+
+/** Redact, THEN bound to NOTE_MAX_CHARS (adversarial review 2026-10-30, C1): slicing first left a
+ *  partial local part or 7 of 10 phone digits at the cut, which no rule recognises. The cut text is
+ *  redacted again, and that can grow it past the bound (a raw token -> a longer placeholder) or leave
+ *  it short of a fixed point, so cut+redact repeats until the note is <= NOTE_MAX_CHARS AND a fixed
+ *  point (round 3; the snapshot guard re-runs redactNotesText). If NOTE_BOUND_ROUNDS do not settle
+ *  it, the length bound wins (a final token-boundary cut). */
+function boundedRedactedNote(note: string): string {
+  let out = redactNotesText(note.slice(0, NOTE_INPUT_MAX_CHARS));
+  for (let round = 0; round < NOTE_BOUND_ROUNDS; round += 1) {
+    const next = redactNotesText(out.length > NOTE_MAX_CHARS ? cutToBound(out) : out);
+    if (next === out && out.length <= NOTE_MAX_CHARS) return out;
+    out = next;
+  }
+  return out.length > NOTE_MAX_CHARS ? cutToBound(out) : out;
+}
+
+/** A literal `<jdoe@example.com>` in a body is an address, not a tag: htmlToText would strip it, and
+ *  the redactor would lose the marker that ties the name in front of it to a contact (round 2). */
+function escapeAddressTags(html: string): string {
+  return html.replace(/<([^<>\s]+@[^<>\s]+)>/g, '&lt;$1&gt;');
+}
+
 /** Map a Graph To-Do task to our Task contract. Pure (exported for tests). */
 export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const label = (t.title ?? '').trim();
@@ -49,7 +88,7 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const due = t.dueDateTime?.dateTime ?? null;
   const overdue = !!due && new Date(due).getTime() < Date.now();
   const status: TaskStatus = t.status === 'completed' ? 'done' : overdue ? 'overdue' : 'pending';
-  const note = htmlToText(t.body?.content ?? '') || null;
+  const note = htmlToText(escapeAddressTags(t.body?.content ?? '')) || null;
   return {
     id: `m365-${hashId(t.id ?? label)}`,
     label,
@@ -57,7 +96,9 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
     role: null,
     type: 'M365 To-Do',
     dueDay: due ? due.slice(0, 10) : null,
-    notes: note ? note.slice(0, 200) : null,
+    // Redacted HERE so every consumer (Brain.persist, the snapshot writers, bake-mirror) gets the
+    // scrubbed text: To-Do bodies are pasted email threads carrying third-party contact data.
+    notes: note ? boundedRedactedNote(note) : null,
     status,
     monthlyPmt: null,
   };
