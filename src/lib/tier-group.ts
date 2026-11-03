@@ -67,7 +67,8 @@ export function groupByCause(
     }
     if (emitted.has(item.cause)) continue;
     emitted.add(item.cause);
-    const text = describe(item.cause, members);
+    const ordered = orderMembers(members);
+    const text = describe(item.cause, ordered);
     rows.push({
       id: `group:${scope ? `${scope}:` : ''}${item.cause}`,
       category: item.category,
@@ -75,15 +76,32 @@ export function groupByCause(
       impactKind: item.impactKind,
       impactUsd: sumUsd(members),
       title: text.title,
-      detail: text.detail ?? previewSubjects(members),
+      detail: text.detail ?? previewSubjects(ordered),
       chips: item.chips,
       cause: item.cause,
-      members,
+      members: ordered,
       pinned: members.some((m) => m.pinned) || undefined,
     });
   }
 
   return rankRows(rows);
+}
+
+/**
+ * A group's children, numbered 1..n within the group (not their rank in the flat list, which read as a
+ * broken sequence: #2, #4, #5 inside a parent ranked #4). When every child carries a day count they
+ * are ordered soonest first — inside one decision, the next deadline matters more than the dollars;
+ * otherwise they keep their incoming (dollar) order.
+ */
+function orderMembers(members: TierItem[]): TierItem[] {
+  const timed = members.every((m) => m.daysToAct !== undefined);
+  const ordered = timed
+    ? members
+        .map((m, i) => ({ m, i }))
+        .sort((a, b) => (a.m.daysToAct as number) - (b.m.daysToAct as number) || a.i - b.i)
+        .map(({ m }) => m)
+    : members;
+  return ordered.map((m, i) => ({ ...m, rank: i + 1 }));
 }
 
 /**

@@ -1,4 +1,4 @@
-// src/modules/property-financials/charts/LineChartCrosshair.tsx
+// src/charts/kit/LineChartCrosshair.tsx
 //
 // Multi-series line chart with a hover/touch/keyboard crosshair (the reference artifact's drawLine).
 // Hand-built SVG over ./geometry: 2px lines, hairline grid, ONE y axis, last-point dots, a legend for
@@ -8,11 +8,12 @@
 import { useId, useMemo, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useMeasure } from '@/lib/useMeasure';
 import { linePath, linearScale, nearestIndex, niceTop, tickValues } from './geometry';
+import './kit.css';
 
 export interface LineSeries {
   readonly id: string;
   readonly label: string;
-  /** CSS colour, e.g. `var(--pf-s1)`. */
+  /** CSS colour, e.g. `var(--color-info)`. */
   readonly color: string;
   readonly values: ReadonlyArray<number | null>;
 }
@@ -81,9 +82,9 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
   const tipLeft = active === null ? 0 : geo.xs(active) + 12 + TIP_W > W ? geo.xs(active) - TIP_W : geo.xs(active) + 12;
 
   return (
-    <div className="pf-chart" ref={ref}>
+    <div className="ck-chart" ref={ref}>
       <div
-        className="pf-chart-focus"
+        className="ck-chart-focus"
         tabIndex={0}
         role="group"
         aria-label={`${ariaLabel}. Use the left and right arrow keys to read values; the data table below lists every point.`}
@@ -103,7 +104,7 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
         >
           {tickValues(0, geo.top, 4).map((v) => (
             <g key={v}>
-              <line x1={M.l} x2={W - M.r} y1={geo.ys(v)} y2={geo.ys(v)} stroke="var(--pf-grid)" strokeWidth={1} />
+              <line x1={M.l} x2={W - M.r} y1={geo.ys(v)} y2={geo.ys(v)} stroke="var(--border-subtle)" strokeWidth={1} />
               <text x={M.l - 6} y={geo.ys(v) + 3} textAnchor="end">
                 {formatAxis(v)}
               </text>
@@ -123,16 +124,16 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
           {series.map((s) => {
             const v = s.values[last];
             return v === null || v === undefined ? null : (
-              <circle key={`${s.id}-end`} cx={geo.xs(last)} cy={geo.ys(v)} r={4} fill={s.color} stroke="var(--pf-surface)" strokeWidth={2} />
+              <circle key={`${s.id}-end`} cx={geo.xs(last)} cy={geo.ys(v)} r={4} fill={s.color} stroke="var(--surface-raised)" strokeWidth={2} />
             );
           })}
           {active !== null && (
-            <line data-testid="pf-crosshair" x1={geo.xs(active)} x2={geo.xs(active)} y1={M.t} y2={H - M.b} stroke="var(--pf-axis)" strokeWidth={1} />
+            <line data-testid="ck-crosshair" x1={geo.xs(active)} x2={geo.xs(active)} y1={M.t} y2={H - M.b} stroke="var(--border-strong)" strokeWidth={1} />
           )}
           <rect x={M.l} y={M.t} width={Math.max(0, plotW)} height={H - M.t - M.b} fill="transparent" />
         </svg>
         {active !== null && x[active] !== undefined && (
-          <div className="pf-tip" role="status" style={{ left: tipLeft, top: 8 }}>
+          <div className="ck-tip" role="status" style={{ left: tipLeft, top: 8 }}>
             <b>{xTitle(x[active]!, active)}</b>
             {series.map((s) => {
               const v = s.values[active];
@@ -142,12 +143,12 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
                 </div>
               );
             })}
-            {tooltipNote && <div className="pf-mut">{tooltipNote}</div>}
+            {tooltipNote && <div className="ck-mut">{tooltipNote}</div>}
           </div>
         )}
       </div>
       {series.length >= 2 && (
-        <div className="pf-legend">
+        <div className="ck-legend">
           {series.map((s) => (
             <span key={s.id}>
               <i style={{ background: s.color }} aria-hidden />
@@ -156,11 +157,11 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
           ))}
         </div>
       )}
-      <details className="pf-tablefb" id={tableId}>
+      <details className="ck-tablefb" id={tableId}>
         <summary>Data table</summary>
-        <div className="pf-tbl">
+        <div className="ck-tbl">
           <table>
-            <caption className="pf-note" style={{ textAlign: 'left', captionSide: 'top' }}>
+            <caption className="ck-note" style={{ textAlign: 'left', captionSide: 'top' }}>
               {ariaLabel}
             </caption>
             <thead>
@@ -177,7 +178,7 @@ export function LineChartCrosshair({ series, x, xTick, xTitle, formatAxis, forma
               {x.map((k, i) =>
                 series.every((s) => s.values[i] === null || s.values[i] === undefined) ? null : (
                   <tr key={k}>
-                    <th scope="row" style={{ textAlign: 'left', borderBottom: '1px solid var(--pf-rule)' }}>
+                    <th scope="row" style={{ textAlign: 'left', borderBottom: '1px solid var(--border-subtle)' }}>
                       {xTitle(k, i)}
                     </th>
                     {series.map((s) => {

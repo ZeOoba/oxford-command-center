@@ -78,8 +78,8 @@ export function AdminOnboardView() {
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '6px 8px', fontSize: 13,
-    border: '1px solid var(--border)', borderRadius: 4,
-    background: 'var(--surface)', color: 'var(--text)',
+    border: '1px solid var(--border-subtle)', borderRadius: 4,
+    background: 'var(--surface-raised)', color: 'var(--text-primary)',
   };
 
   return (
