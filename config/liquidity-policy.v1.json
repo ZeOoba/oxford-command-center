@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "ratifiedOn": "2026-09-18",
+  "ratifiedBy": "Gabriel Goldberg",
+  "firmCashFloorUsd": 1500000,
+  "notes": "Firm cash floor held above all property-level reserves (ratified 2026-09-18; added as code with Gabriel's in-turn Invariant-4 approval 2026-11-02, design review 2026-10-31 finding 9). Single home for liquidity-policy constants per docs/superpowers/plans/2026-09-18-capital-deployable-capacity.md; the other ratified reserve inputs land here with that plan. NEVER change a value without Gabriel's permission."
+}
