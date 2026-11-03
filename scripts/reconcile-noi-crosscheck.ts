@@ -40,6 +40,13 @@ async function main() {
   const warehousePath = process.env['WAREHOUSE_DB'] ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 
   if (!existsSync(warehousePath)) {
+    // Same opt-in as warehouse:drift (roadmap 2026-10-30, item 1.7): where the warehouse is served, a
+    // missing DB must fail the Spine A vs Spine B tie-out instead of skipping it silently.
+    if (process.env.REQUIRE_LIVE_WAREHOUSE === '1') {
+      console.error(`✗ reconcile:noi-crosscheck FAILED — REQUIRE_LIVE_WAREHOUSE=1 but there is no warehouse DB at ${warehousePath}.`);
+      process.exitCode = 1;
+      return;
+    }
     console.warn(
       `reconcile:noi-crosscheck — skipped: no warehouse DB at ${warehousePath}. ` +
         `Run 'npm run warehouse:backfill' first, or this is a fresh worktree with no local warehouse yet.`,
