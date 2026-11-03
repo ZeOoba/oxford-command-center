@@ -86,6 +86,38 @@ describe('buildPriorityActionsTier', () => {
     expect(tier.items.map((i) => i.rank)).toEqual([1, 2]);
   });
 
+  // Code review 2026-11-03 (finding 4): the case above fits both rows under the cap, so a selection that
+  // fell back to dollars when slots are scarce would still pass. One slot: the critical row takes it.
+  it('gives the last slot to the critical row, not a larger warning roll-up, under a tight cap', () => {
+    const warn = (n: number) => m({ id: `escalation-W${n}`, severity: 'warning', impactUsd: 40_000 });
+    const merged = [warn(1), warn(2), warn(3), m({ id: 'debt-note-1', category: 'debt', spine: 'B', impactUsd: 30_000 })];
+    const tier = buildPriorityActionsTier(merged, 1);
+    expect(tier.items.map((i) => i.id)).toEqual(['debt-note-1']);
+    expect(tier.heldBack).toEqual({ rows: 1, signals: 3 });
+  });
+
+  it('with a pinned warning, folds critical overflow into the roll-up and holds back the larger warning roll-up', () => {
+    const warn = (n: number) => m({ id: `escalation-W${n}`, severity: 'warning', impactUsd: 40_000 });
+    const crit = (n: number) => m({ id: `debt-note-${n}`, category: 'debt', spine: 'B', impactUsd: 30_000 - n });
+    const merged = [
+      warn(1),
+      warn(2),
+      warn(3),
+      crit(1),
+      crit(2),
+      crit(3),
+      m({ id: 'dscr-P9', category: 'debt', spine: 'B', severity: 'warning' }),
+    ];
+    const tier = buildPriorityActionsTier(merged, 2);
+    expect(tier.items.map((i) => i.id)).toEqual(['debt-note-1', 'group:critical:overflow', 'dscr-P9']);
+    expect(tier.items.find((i) => i.id === 'group:critical:overflow')?.members?.map((x) => x.id)).toEqual([
+      'debt-note-2',
+      'debt-note-3',
+    ]);
+    expect(tier.items.map((i) => i.rank)).toEqual([1, 2, 3]);
+    expect(tier.heldBack).toEqual({ rows: 1, signals: 3 });
+  });
+
   it('keeps one group row per severity when a cause spans both (unique ids)', () => {
     const exp = (id: string, severity: 'critical' | 'warning') => m({ id: `expiring-${id}`, severity, impactUsd: 5 });
     const tier = buildPriorityActionsTier(
