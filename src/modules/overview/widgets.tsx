@@ -4,6 +4,7 @@ import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
+import { AsOfChip } from '@/primitives/AsOfChip';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { BarChart } from '@/charts/BarChart';
@@ -14,14 +15,13 @@ import { TierBoard, type Tier, type TierTotal } from '@/primitives/TierBoard';
 import { investmentPropertiesSublabel } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
-import { mergeInsightSources, buildSummary, buildTiers, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
-import { groupByCause } from '../../lib/tier-group';
-import { groupByCause, rankRows } from '../../lib/tier-group';
+import { mergeInsightSources, buildSummary, buildTiers, isObservation, mergedToTierItem, sortByImpactDesc, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 import { groupByCause, previewSubjects, signalCount } from '../../lib/tier-group';
 import type { TierItem } from '@/primitives/TierBoard';
 import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
+import { GovernorTiles } from './GovernorTiles';
 
 export interface WidgetDef {
   id: string;
@@ -50,6 +50,7 @@ function KpiStripWidget() {
   const cashDelta = prev ? (last - prev) / prev : null;
   const goTo = (id: string) => () => ui.setActiveModule(id);
   return (
+    <div className="flex flex-col gap-3">
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} onPress={goTo('portfolio')} />
       <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} sublabel={`Oxford share · workbook · ${fmtPct(k.weightedCapRate.value)} wtd cap`} accentColor="var(--color-pos)" onPress={goTo('intel')} />
@@ -59,6 +60,8 @@ function KpiStripWidget() {
       <KpiStat label="Total Debt" value={k.totalDebt.value} format={fmtUsdCompact} prov={k.totalDebt.prov} sublabel={overviewTotalDebtSublabel(k)} accentColor="var(--color-warn)" onPress={goTo('debt')} />
       <KpiStat label="Equity Invested" value={k.equityInvested.value} format={fmtUsdCompact} prov={k.equityInvested.prov} accentColor="var(--accent)" />
       <KpiStat label="Total Cash" value={k.totalCash.value} format={fmtUsdCompact} prov={k.totalCash.prov} spark={cashSpark} delta={cashDelta} deltaLabel="MoM" sparkColor="var(--color-pos)" accentColor="var(--color-pos)" onPress={goTo('cash')} />
+    </div>
+    <GovernorTiles snapshot={data.snapshot} kpis={k} />
     </div>
   );
 }
@@ -97,7 +100,15 @@ function CashTrendWidget() {
   const series = data.snapshot.cash.history.map((h) => ({ date: h.date, value: h.total }));
   return (
     <Card>
-      <CardHeader title="Total Cash — 12-Month Trend" trailing={<Badge tone="neutral">{series.length} mo</Badge>} />
+      <CardHeader
+        title="Total Cash — 12-Month Trend"
+        trailing={
+          <span className="inline-flex items-center gap-2">
+            <AsOfChip asOf={data.snapshot.cash.asOf} source="Cash Balances" />
+            <Badge tone="neutral">{series.length} mo</Badge>
+          </span>
+        }
+      />
       <div className="px-3 pb-2 pt-3">
         <AreaChart data={series} valueFormat={fmtUsdCompact} height={230} color="var(--color-pos)" ariaLabel="Total cash balance, 12-month trend" />
       </div>
@@ -158,12 +169,16 @@ function ResultsBannerWidget() {
   const candidates = insightsQuery.data?.candidates ?? [];
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
   const summary = buildSummary(merged);
+  // Repurposed (design review 2026-10-31, finding 2; Gabriel chose "repurpose" over hiding): the
+  // Priority Actions header already carries the shown rows' dollars, so this card says what the
+  // 7-row cap holds back instead of repeating them.
+  const { heldBack } = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
 
   return (
     <Card accent>
       <CardHeader
         title="Results"
-        trailing={<Badge tone={summary.count > 0 ? 'amber' : 'neutral'}>{summary.count} open</Badge>}
+        trailing={<Badge tone={summary.actionCount > 0 ? 'amber' : 'neutral'}>{summary.actionCount} open</Badge>}
       />
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
         <SpineSplitCell label="Risk Impact" totals={summary.riskImpactBySpine} accentColor="var(--text-neg)" />
@@ -173,10 +188,15 @@ function ResultsBannerWidget() {
           style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}
         >
           <div className="num text-2xl font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
-            {summary.count}
+            {summary.actionCount}
           </div>
           <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
             Open Actions
+          </div>
+          <div className="num text-2xs" style={{ color: 'var(--text-secondary)' }} data-testid="results-held-back">
+            {heldBack.signals > 0
+              ? `${heldBack.signals} held back by the ${OVERVIEW_MAX_ITEMS}-row cap`
+              : `All shown in Priority Actions`}
           </div>
         </div>
       </div>
@@ -236,13 +256,14 @@ function overflowRow(rows: TierItem[]): TierItem {
 export function buildPriorityActionsTier(merged: MergedInsight[], limit: number): PriorityActionsTier {
   // Ids are unique by construction (conditions.ts / mergeInsightSources); dedupe defensively so the
   // id-keyed subtotal below can never count a row that is not shown, or count one twice.
+  // Observations (a valuation spread) are not actions: they never take a slot, count as held back, or
+  // enter the header dollars, which would otherwise add a yield gap to rent at risk (design review
+  // 2026-10-31, finding 1). They stay on the full Insights board.
   const seen = new Set<string>();
-  const unique = merged.filter((m) => !seen.has(m.id) && seen.add(m.id));
-  // Group WITHIN each severity (as buildTiers does): `expiring-*` ids are critical or warning under
-  // one cause, and a cross-severity group would fold a critical lease into a warning roll-up and
-  // hide it from the top N (refute wf_42182077-678). Severity is also the primary rank key. A
-  // roll-up sums its members' dollars, so ranking all rows together let a warning roll-up outrank a
-  // smaller single critical row; groupByCause already ranks each severity (pinned, then dollars).
+  const unique = merged.filter((m) => !isObservation(m) && !seen.has(m.id) && seen.add(m.id));
+  // Group WITHIN each severity (as buildTiers does), then rank the rows together: `expiring-*` ids
+  // are critical or warning under one cause, and a cross-severity group would fold a critical lease
+  // into a warning roll-up and hide it from the top N (refute wf_42182077-678).
   const sorted = sortByImpactDesc(unique);
   // One ranked list per severity (pinned first, then dollars — groupByCause ranks within the scope),
   // concatenated critical → warning → info: that concatenation IS the display order.
@@ -254,8 +275,6 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
       severity,
     ),
   );
-  const items = rows.slice(0, limit).map((row, i) => ({ ...row, rank: i + 1 }));
-  const shownIds = new Set(items.flatMap((row) => (row.members ?? [row]).map((r) => r.id)));
   // Selection (adversarial review 2026-10-30, C4; round 2): every pinned row is shown (it may exceed
   // `limit` on its own). Free slots go to the other rows in display order, so critical rows take them
   // first. When a pinned row of a LESS severe tier shows, every critical row must stay reachable — a
@@ -293,7 +312,6 @@ export function buildPriorityActionsTier(merged: MergedInsight[], limit: number)
   return {
     key: 'priority-actions',
     title: 'Priority Actions',
-    subtitle: 'Critical first, lapsed coverage pinned, then by $ impact',
     subtitle: 'Critical first, safety alerts pinned, then by $ impact',
     tone: 'accent',
     items,

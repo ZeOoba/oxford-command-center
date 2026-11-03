@@ -7,7 +7,7 @@ import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../
 import { spineLabel } from '../../lib/spine-label';
 import { MAX_ITEMS } from '../../lib/ranked-cap';
 import { groupByCause } from '../../lib/tier-group';
-import { causeOf, isPinnedAlert } from '../../brain/alert-cause';
+import { causeAndDays, isPinnedAlert } from '../../brain/alert-cause';
 import { describeAlertCause } from './cause-labels';
 
 const SEV_COLOR: Record<InsightSeverity, string> = {
@@ -55,6 +55,8 @@ function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: 
   actions.push({ label: 'Snooze 7d', onPress: () => onSnooze(7) });
   actions.push({ label: 'Snooze 30d', onPress: () => onSnooze(30) });
   actions.push({ label: item.read ? 'Unread' : 'Mark read', onPress: onRead });
+  // Same cause/day derivation as the Overview and Insights boards (a lease ending today splits out).
+  const { cause, daysToAct } = causeAndDays(insight);
 
   return {
     id: insight.id,
@@ -67,8 +69,9 @@ function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: 
     actions,
     chips: [spineLabel(insight.spine)],
     muted: item.read,
-    cause: causeOf(insight),
+    cause,
     pinned: isPinnedAlert(insight, item.read) || undefined,
+    ...(daysToAct !== null ? { daysToAct } : {}),
   };
 }
 

@@ -139,6 +139,8 @@ function NavItem({ module, active, collapsed, onSelect }: { module: ModuleDef; a
   // `module.tabs` is a module-level constant per destination, so the hook order inside is stable.
   const badge = pickRailBadge(useTabBadges(module.tabs ?? NO_TABS));
   const badgeLabel = badge ? formatBadgeCount(badge.count) : null;
+  // The pill shows the short count; hover and assistive text say what it counts (exact, never "9+").
+  const badgeText = badge ? (badge.noun ? `${badge.count} ${badge.noun}` : badgeLabel) : null;
   return (
     <li className="relative">
       {active && (
@@ -151,15 +153,15 @@ function NavItem({ module, active, collapsed, onSelect }: { module: ModuleDef; a
       )}
       <button
         onClick={onSelect}
-        title={collapsed ? (badgeLabel ? `${module.label} (${badgeLabel})` : module.label) : undefined}
-        aria-label={badgeLabel ? `${module.label} (${badgeLabel})` : undefined}
+        title={collapsed ? (badgeText ? `${module.label} (${badgeText})` : module.label) : undefined}
+        aria-label={badgeText ? `${module.label} (${badgeText})` : undefined}
         className={cn('relative z-10 flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-2 text-sm transition-colors')}
         style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}
       >
         <Icon size={17} style={{ color: active ? 'var(--accent)' : 'currentColor', flexShrink: 0 }} />
         {!collapsed && <span className="truncate font-medium">{module.label}</span>}
         {badge && badgeLabel && (
-          <span className={collapsed ? 'absolute right-0.5 top-0.5' : 'ml-auto'}>
+          <span className={collapsed ? 'absolute right-0.5 top-0.5' : 'ml-auto'} title={collapsed ? undefined : (badgeText ?? undefined)}>
             <Badge tone={badge.tone}>{badgeLabel}</Badge>
           </span>
         )}
