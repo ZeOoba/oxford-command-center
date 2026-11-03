@@ -1,7 +1,8 @@
 import { BarChart } from '@/charts/BarChart';
-import { useAnalytics } from '@/data/queries';
+import { useAnalytics, useSnapshot } from '@/data/queries';
 import { fmtUsdCompact } from '@/analytics/format';
 import { Card, CardHeader } from '@/primitives/Card';
+import { AsOfChip } from '@/primitives/AsOfChip';
 import { Badge } from '@/primitives/Badge';
 import { rolloverChartData } from './rollover-chart-data';
 
@@ -11,10 +12,19 @@ import { rolloverChartData } from './rollover-chart-data';
 
 export function RolloverChart({ height = 230 }: { height?: number }) {
   const { analytics } = useAnalytics();
+  const { data } = useSnapshot();
   if (!analytics) return null;
   return (
     <Card>
-      <CardHeader title="Lease Rollover" trailing={<Badge tone="neutral">rent expiring by period</Badge>} />
+      <CardHeader
+        title="Lease Rollover"
+        trailing={
+          <span className="inline-flex items-center gap-2">
+            <AsOfChip asOf={data?.snapshot.meta?.asOf} source="Rent roll" />
+            <Badge tone="neutral">rent expiring by period</Badge>
+          </span>
+        }
+      />
       <div className="px-3 pb-2 pt-3">
         <BarChart
           data={rolloverChartData(analytics.rollover)}

@@ -77,6 +77,15 @@
     "review_detail": "Gabriel approved the plan and all four placement/source/engine/current decisions in-turn 2026-10-07 and approved the architect-edit-ok sentinel in-turn (AskUserQuestion). Architect-owned files touched: server/warehouse/migrations/035_property_condition.sql (new), src/contracts/property-condition.ts (new) + one export line in src/contracts/index.ts, package.json (one script), server/warehouse/sub-routers.ts (one mount line). Registry change: new standalone destination 'property-condition' in the Capital rail group (Capital is at the 5-tab cap, so not a 6th tab); tests/unit/ia-registry.test.ts updated 13→14 destinations, Capital group 2→3. No governor/model files touched. Needs architect acknowledgment at PR review.",
     "last_updated": "2026-10-07T00:00:00Z"
   },
+  "wave-a-freshness-honesty": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
+    "phase": "Wave A items 1.2, 1.6, 1.7 (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md, PR #522): as-of chips; CLI writers persist runtime flags; REQUIRE_LIVE_WAREHOUSE fail-loud. Item 1.5 (overlay write-back sync) split out after three adversarial reviews; needs a design ruling.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Branch feat/wave-a-freshness-honesty-2. Files: server/reconcile-runtime.ts, scripts/extract-workbook.ts, scripts/lease-snapshot-drift-check.ts, scripts/warehouse-live-drift-check.ts, scripts/reconcile-noi-crosscheck.ts, src/primitives/AsOfChip.tsx, src/modules/overview/widgets.tsx, src/modules/leasing/RolloverChart.tsx, src/modules/portfolio/TrendsView.tsx, tests. No architect-owned source.",
+    "last_updated": "2026-10-30T21:00:00Z"
+  },
   "pca-intelligence": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
     "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts, plus module 10 (cost segregation property data: src/analytics/cost-seg.ts, data/cost-seg, Cost seg view). Display only; no contracts, migrations, server, hooks or governor files touched.",
