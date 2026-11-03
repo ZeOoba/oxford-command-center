@@ -9,7 +9,9 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import { investmentPropertiesSublabel } from '@/modules/overview/other-holdings';
+import { landlordCostsNotSourced } from '@analytics/property-basis';
 import type { Property } from '@contracts/index';
+import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 
 export function PortfolioModule() {
   const { data } = useSnapshot();
@@ -24,7 +26,9 @@ export function PortfolioModule() {
       render: (p) => (
         <div>
           <div style={{ fontWeight: 600 }}>{p.name}</div>
-          <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{p.market}</div>
+          <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            {p.market} · <PropertyPageLink propertyId={p.id}>Page →</PropertyPageLink>
+          </div>
         </div>
       ),
       sortValue: (p) => p.name,
@@ -32,7 +36,20 @@ export function PortfolioModule() {
     { key: 'type', header: 'Type', render: (p) => <Badge tone="neutral">{p.type}</Badge>, sortValue: (p) => p.type },
     { key: 'sf', header: 'SF', align: 'right', render: (p) => fmtNum(p.sf), sortValue: (p) => p.sf },
     { key: 'occ', header: 'Occ', align: 'right', render: (p) => fmtPct(p.occPct), sortValue: (p) => p.occPct },
-    { key: 'noi', header: 'NOI', align: 'right', render: (p) => fmtUsdCompact(p.noi), sortValue: (p) => p.noi },
+    {
+      key: 'noi',
+      header: 'NOI',
+      align: 'right',
+      render: (p) =>
+        landlordCostsNotSourced(p) ? (
+          <span title="NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced yet, so this NOI is overstated by them.">
+            {fmtUsdCompact(p.noi)} <Badge tone="amber">LL costs not sourced</Badge>
+          </span>
+        ) : (
+          fmtUsdCompact(p.noi)
+        ),
+      sortValue: (p) => p.noi,
+    },
     { key: 'cap', header: 'Cap', align: 'right', render: (p) => fmtPct(p.capRate), sortValue: (p) => p.capRate ?? 0 },
     { key: 'dscr', header: 'DSCR', align: 'right', render: (p) => (p.dscr !== null ? fmtMultiple(p.dscr) : '—'), sortValue: (p) => p.dscr ?? 0 },
     { key: 'ltv', header: 'LTV', align: 'right', render: (p) => propertyLtvLabel(p), sortValue: (p) => investmentLtv(p) ?? 0 },
@@ -53,8 +70,8 @@ export function PortfolioModule() {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {/* Same sublabel as the Overview KPI strip (ratified 2026-09-23): the residence is excluded from the
-            investment value and reported beside it as other holdings — never silently dropped. */}
+        {/* Same sublabel as the Overview KPI strip. Since 2026-10-30 the residence never reaches the
+            snapshot (excluded at parse), so the other-holdings clause is empty on live data. */}
         <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} />
         <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} accentColor="var(--color-pos)" />
         <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} accentColor="var(--color-info)" />

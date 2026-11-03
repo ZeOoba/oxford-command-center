@@ -127,6 +127,7 @@ export function LeaseRunView({ propertyId }: Props) {
           <AreaChart
             data={points.map((p) => ({ date: p.label, value: p.value }))}
             valueFormat={(n) => fmtUsdCompact(n)}
+            ariaLabel="Forward NOI trajectory (projected from the lease run)"
           />
           <div className="px-2 pb-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
             Rollover / option boundaries:{' '}
@@ -274,7 +275,7 @@ function AssumptionsPanel({
               <span className="flex items-center gap-2">
                 <input
                   className="num w-20 rounded border px-2 py-1 text-right text-sm"
-                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface, transparent)' }}
+                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-raised)' }}
                   value={draft}
                   autoFocus
                   onChange={(e) => setDraft(e.target.value)}

@@ -540,7 +540,7 @@ function TrendsRow({
             Annual NOI
           </div>
           {noiBars.length > 0 ? (
-            <BarChart data={noiBars} valueFormat={fmtUsdCompact} height={220} color="var(--color-pos)" />
+            <BarChart data={noiBars} valueFormat={fmtUsdCompact} height={220} color="var(--color-pos)" ariaLabel="Annual NOI by period (P&L ledger basis)" />
           ) : (
             <div className="py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>No annual NOI yet.</div>
           )}

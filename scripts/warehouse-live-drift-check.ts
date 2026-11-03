@@ -29,6 +29,12 @@ const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-1
 
 async function main(): Promise<number> {
   if (!existsSync(LIVE_DB)) {
+    // On the machine that SERVES the warehouse a missing DB is a broken setup, not "nothing to check":
+    // REQUIRE_LIVE_WAREHOUSE=1 there turns this skip into a failure (roadmap 2026-10-30, item 1.7).
+    if (process.env.REQUIRE_LIVE_WAREHOUSE === '1') {
+      console.error(`✗ warehouse:drift FAILED — REQUIRE_LIVE_WAREHOUSE=1 but there is no live DB at ${LIVE_DB}.`);
+      return 1;
+    }
     // No served DB yet ⇒ nothing can be stale. Skip (pass) so the gate is safe on a fresh checkout;
     // warehouse:verify still validates the data via its own fresh build. The drift check is meaningful
     // only once a live DB exists (local dev / production).

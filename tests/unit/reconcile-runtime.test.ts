@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
 import { evaluateConditions } from '../../src/analytics/conditions';
-import { annualRentGapIsExplainedByAbatement, checkSnapshot, checkStaleLeaseRows, checkDebtBasis } from '../../server/reconcile-runtime';
+import { annualRentGapIsExplainedByAbatement, checkSnapshot, checkStaleLeaseRows, checkDebtBasis, withRuntimeFlags } from '../../server/reconcile-runtime';
 import { isDebtBasisFlag } from '../../src/analytics/debt-basis';
 
 const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
@@ -757,5 +757,19 @@ describe('checkDebtBasis — affiliate totals cross-spine disclosure (2026-09-26
     const [f] = checkDebtBasis(debtSnap([RARIG], [LOAN_3883]));
     expect(f!.severity).toBe('warn');
     expect(isDebtBasisFlag(f!)).toBe(true);
+  });
+});
+
+describe('withRuntimeFlags (roadmap 2026-10-30, item 1.6)', () => {
+  it('appends the runtime flags after the parse flags, so CLI writers persist what Brain.persist does', () => {
+    const parseFlag = { entity: 'meta', field: 'asOf', issue: 'parse flag', severity: 'warn' as const };
+    const s = base({ dataQuality: [parseFlag], cash: { totalCash: 999, entities: [{ id: 'e1', currentBalance: 500 }] } });
+    const rt = checkSnapshot(s);
+    expect(rt.length).toBeGreaterThan(0);
+    expect(withRuntimeFlags(s).dataQuality).toEqual([parseFlag, ...rt]);
+  });
+  it('returns the same object when there is nothing to add', () => {
+    const s = base();
+    expect(withRuntimeFlags(s)).toBe(s);
   });
 });

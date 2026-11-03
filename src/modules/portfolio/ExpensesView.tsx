@@ -393,7 +393,7 @@ export function ExpensesView() {
                           {c.latestMonth ? monthLabel(c.latestMonth) : '—'} · YoY {fmtSigned(c.yoy)}
                         </div>
                       </div>
-                      <div className="shrink-0"><Sparkline data={c.spark} width={110} color="var(--color-neg)" /></div>
+                      <div className="shrink-0"><Sparkline data={c.spark} label={`${c.name} monthly opex`} valueFormat={fmtUsdCompact} width={110} color="var(--color-neg)" /></div>
                     </div>
                   )}
                 </div>

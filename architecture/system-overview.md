@@ -2,7 +2,7 @@
 
 **Status:** Architecture lock file — no implementation agent may silently diverge from this document. If implementation conflicts with this file, update this file first (Lead Architect approval required), then implement.
 
-**Last verified:** 2026-10-03 against `origin/main` (6a6b186) — sections 2-6 refreshed from the code; section 7 (build state) and section 8 (roadmap) are historical snapshots, see their notes.
+**Last verified:** 2026-10-28 against `origin/main` (f642175) — migration counts and the module map (section 5) re-checked against the code; remaining sections last refreshed 2026-10-03 (6a6b186); section 7 (build state) and section 8 (roadmap) are historical snapshots, see their notes.
 
 ---
 
@@ -27,7 +27,7 @@ Master Workbook .xlsx (OneDrive/SharePoint)
   → reconcile (scripts/reconcile.ts)  $0-tolerance self-totals check
   → /api/snapshot + /sse              Push to client
   → src/analytics/engine.ts           buildAnalytics() → AnalyticsBundle
-  → 12 registered destinations        UI rendering (src/shell/modules.tsx)
+  → 14 rail destinations        UI rendering (src/shell/modules.tsx)
 
 Supplemental live sources (appended to Spine A):
   Notion deals/tenants → server/sources/notion-*.ts
@@ -45,7 +45,7 @@ Property Financials folder (32 P&L .xlsx/.xlsm files, OneDrive)
   → server/warehouse/raw-store.ts     SHA-256 immutable raw copy
   → server/warehouse/mapping.ts       Account → classification (manual>seed>learned)
   → server/warehouse/ingest.ts        Transactional commit pipeline
-  → better-sqlite3 (WAL)             SQLite warehouse, 33 numbered migrations (see database-schema.md)
+  → better-sqlite3 (WAL)             SQLite warehouse, 38 numbered migrations (001–037; two share 017) (see database-schema.md)
   → server/warehouse/metrics.ts       Pure in-memory computation layer
   → server/warehouse/growth.ts        NOI trend / CAGR / since-acquisition
   → server/warehouse/drivers.ts       ΔNOI decomposition
@@ -80,7 +80,7 @@ server/index.ts         Hono 4 app, 127.0.0.1:8911 (BRAIN_SERVER_PORT), request 
   server/warehouse/     SQLite financial warehouse (Spine B)
     db.ts               open + migrate (WAREHOUSE_DB env var)
     migrate.ts          Migration runner -- numbered SQL files applied in order
-    migrations/         001_initial.sql ... 033_portfolio_month_snapshot.sql
+    migrations/         001_initial.sql ... 037_acq_current_scored_at.sql
     ingest.ts           Full pipeline: detect->parse->map->foot->commit
     api.ts              /api/warehouse Hono router (injected db getter)
     sub-routers.ts      Sub-router mount list (debt, insurance, tax, capital, lease-market, brain, ...)
@@ -125,7 +125,7 @@ src/
   data/               TanStack Query hooks + SSE listener + brain context
   brain/              App-wide UI state (drawer, AI panel, command palette)
   shell/              AppShell, Sidebar, TopBar, ScenarioSwitch, module registry (modules.tsx)
-  modules/            28 folders: 12 registered destinations + their per-tab panels (see section 5)
+  modules/            30 folders: 14 rail destinations + their per-tab panels (see section 5)
   primitives/         StatusPill + other presentation atoms
   charts/             visx chart components (Waterfall, etc.)
   tokens/ lib/        Theme tokens; shared client helpers
@@ -138,7 +138,7 @@ src/
 
 ---
 
-## 5. Module Map (12 registered destinations)
+## 5. Module Map (14 rail destinations + off-rail System Health)
 
 Destinations are entries in the `MODULES` array in `src/shell/modules.tsx` (`ModuleDef.id` drives the URL segment). Each lazily loads one code-split chunk and declares up to five tabs (`?tab=<id>`). The `ID` column differs from the display label in a few cases (**Acquisitions** is `pipeline`, **Brain** is `command-brain`, **Financials** is `intel`). Earlier standalone modules (Principal Home, Tasks, Alerts, Calendar, Renewals, Calibration, Debt, Cash, Monthly Close, Insurance, Taxes, Documents) now live as tab panels inside these destinations. Overlay components (AI Panel, Command Palette, Entity/Deal Drawers) live in `src/brain/` and are not destinations.
 
@@ -149,9 +149,11 @@ Destinations are entries in the `MODULES` array in `src/shell/modules.tsx` (`Mod
 | Command | Worklist | `worklist` | `src/modules/worklist/` | today, alerts, calendar, renewals |
 | Command | Brain | `command-brain` | `src/modules/command-brain/` | digest, insights, track-record, feedback, memory |
 | Assets | Portfolio | `portfolio` | `src/modules/portfolio/` | properties, trends, expenses |
+| Assets | Property Financials | `property-financials` | `src/modules/property-financials/` | none in registry; six in-module views via `?view=` |
 | Assets | Financials | `intel` | `src/modules/intel/` | ownership, property, lease-run, benchmarks, managers |
 | Assets | Leasing | `leasing` | `src/modules/leasing/` | rollover, rent-roll, forecast, market-rents, tenants |
 | Capital | Capital | `capital` | `src/modules/capital/` | allocation, pipeline, debt, cash, close |
+| Capital | Property Condition | `property-condition` | `src/modules/property-condition/` | none in registry; five in-module views via `?view=` |
 | Capital | Obligations | `obligations` | `src/modules/obligations/` | insurance, taxes |
 | Market | Market | `market` | `src/modules/market/` | macro, scorecards, comps, demand |
 | Market | Lease Market | `lease-market` | `src/modules/lease-market/` | portfolio, market-rents, radar, changes, data-quality |
@@ -176,7 +178,7 @@ Not tracked in this file (it went stale within days of being written). Current s
 |------|--------|
 | Gate steps | `package.json` scripts `gate` (11 steps, local) and `gate:ci` (CI subset); description in `CLAUDE.md` section 6 |
 | CI | `.github/workflows/ci.yml`, `order-fragility.yml`, `full-gate-selfhosted.yml` |
-| Warehouse schema | `server/warehouse/migrations/` (001 through 033) and `architecture/database-schema.md` |
+| Warehouse schema | `server/warehouse/migrations/` (001 through 037) and `architecture/database-schema.md` |
 | Phase status | `CLAUDE.md` section 3 |
 | Merge history | `git log` |
 

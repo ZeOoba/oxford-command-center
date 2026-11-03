@@ -3,11 +3,12 @@ import { motion } from 'framer-motion';
 import { Group } from '@visx/group';
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom } from '@visx/axis';
-import { LinePath, AreaClosed } from '@visx/shape';
+import { LinePath, AreaClosed, Area } from '@visx/shape';
 import { LinearGradient } from '@visx/gradient';
 import { curveMonotoneX } from '@visx/curve';
 import { useMeasure } from '@/lib/useMeasure';
 import { AXIS_TICK, GRID_STROKE } from './theme';
+import { PROVENANCE_DASH, PROVENANCE_LABEL, provenanceRuns, type Provenance, type SpreadPoint } from './series-provenance';
 
 export interface TimePoint {
   date: string;
@@ -19,10 +20,19 @@ interface Props {
   height?: number;
   color?: string;
   valueFormat?: (n: number) => string;
+  /** Accessible name for the chart's <svg role="img">. Required (roadmap 2.5): an unnamed chart is
+   *  announced as a bare image. Say what the series is and its basis. */
+  ariaLabel: string;
+  /** Per-point provenance (same length as data). Draws recorded solid, reconstructed dotted and
+   *  forecast dashed, and fills only under non-forecast points. Pair with <SeriesLegend>. */
+  provenance?: readonly Provenance[];
+  /** Per-point scenario spread (same length as data; null where none), shaded between lo and hi.
+   *  A range between two named scenarios — never a confidence interval. */
+  band?: readonly (SpreadPoint | null)[];
 }
 
 /** Time-series area chart with branded gradient, animated draw-in, and hover tooltip. */
-export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat }: Props) {
+export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat, ariaLabel, provenance, band }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const gid = useId().replace(/:/g, '');
@@ -33,8 +43,13 @@ export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valu
   const xs = data.map((_, i) => i);
   const ys = data.map((d) => d.value);
   const x = scaleLinear({ domain: [0, Math.max(1, data.length - 1)], range: [0, iw] });
-  const min = Math.min(...ys);
-  const max = Math.max(...ys);
+  const bandPts = band ? data.map((_, i) => ({ i, b: band[i] ?? null })).filter((d): d is { i: number; b: SpreadPoint } => d.b !== null) : [];
+  const min = Math.min(...ys, ...bandPts.map((d) => d.b.lo));
+  const max = Math.max(...ys, ...bandPts.map((d) => d.b.hi));
+  const runs = provenance && provenance.length === data.length ? provenanceRuns(provenance) : [{ kind: 'recorded' as Provenance, from: 0, to: data.length - 1 }];
+  // The gradient fill sits under history only; a forecast is a line, not a filled actual.
+  const fillTo = provenance && provenance.length === data.length ? provenance.reduce((last, k, i) => (k === 'forecast' ? last : i), -1) : data.length - 1;
+  const fillXs = xs.slice(0, fillTo + 1);
   const pad = (max - min) * 0.12 || 1;
   const y = scaleLinear({ domain: [min - pad, max + pad], range: [ih, 0] });
   const ticks = y.ticks(4);
@@ -49,7 +64,7 @@ export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valu
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && data.length > 1 && (
-        <svg width={width} height={height} role="img">
+        <svg width={width} height={height} role="img" aria-label={ariaLabel}>
           <LinearGradient id={`area-${gid}`} from={color} to={color} fromOpacity={0.28} toOpacity={0} />
           <Group left={margin.left} top={margin.top}>
             {ticks.map((t) => (
@@ -60,9 +75,36 @@ export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valu
                 </text>
               </g>
             ))}
-            <AreaClosed data={xs} x={(i) => x(i)} y={(i) => y(ys[i]!)} yScale={y} curve={curveMonotoneX} fill={`url(#area-${gid})`} />
+            {bandPts.length > 1 && (
+              <Area
+                data={bandPts}
+                x={(d) => x(d.i)}
+                y0={(d) => y(d.b.lo)}
+                y1={(d) => y(d.b.hi)}
+                curve={curveMonotoneX}
+                fill={color}
+                fillOpacity={0.16}
+                data-testid="area-band"
+              />
+            )}
+            {fillXs.length > 1 && (
+              <AreaClosed data={fillXs} x={(i) => x(i)} y={(i) => y(ys[i]!)} yScale={y} curve={curveMonotoneX} fill={`url(#area-${gid})`} />
+            )}
             <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
-              <LinePath data={xs} x={(i) => x(i)} y={(i) => y(ys[i]!)} stroke={color} strokeWidth={2} curve={curveMonotoneX} />
+              {runs.map((r) => (
+                <LinePath
+                  key={`${r.kind}-${r.from}`}
+                  data={xs.slice(r.from, r.to + 1)}
+                  x={(i) => x(i)}
+                  y={(i) => y(ys[i]!)}
+                  stroke={color}
+                  strokeWidth={2}
+                  strokeDasharray={PROVENANCE_DASH[r.kind]}
+                  strokeLinecap="round"
+                  curve={curveMonotoneX}
+                  data-provenance={r.kind}
+                />
+              ))}
             </motion.g>
             {hover !== null && (
               <g>
@@ -105,6 +147,12 @@ export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valu
           <span className="num ml-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
             {valueFormat ? valueFormat(ys[hover]!) : ys[hover]}
           </span>
+          {provenance?.[hover] && <span className="ml-2" style={{ color: 'var(--text-tertiary)' }}>{PROVENANCE_LABEL[provenance[hover]!]}</span>}
+          {band?.[hover] && (
+            <span className="num ml-2" style={{ color: 'var(--text-tertiary)' }}>
+              range {valueFormat ? valueFormat(band[hover]!.lo) : band[hover]!.lo}–{valueFormat ? valueFormat(band[hover]!.hi) : band[hover]!.hi}
+            </span>
+          )}
         </div>
       )}
     </div>

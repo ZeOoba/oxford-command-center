@@ -8,6 +8,24 @@
     "review_detail": "Architect-owned edits: scripts/check-refute-required.ts (trailerRejection qualifier parse), architecture/coding-standards.md (trailer convention + reword recipe). Also tests/unit/check-refute-required.test.ts. Branch claude/refute-check-clean-effort-d750f8. Not pushed or merged.",
     "last_updated": "2026-10-28T00:00:00Z"
   },
+  "css-token-fixes-1912f7": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed 2026-11-02",
+    "phase": "Design-review finding 13 (P4): map 6 undefined CSS custom properties to theme.css tokens; add check:css-tokens guard + unit test.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edit pending Gabriel's answer: package.json (wire check:css-tokens into gate/gate:ci). Branch claude/css-token-fixes-1912f7.",
+    "last_updated": "2026-11-02T00:00:00Z"
+  },
+  "wave-a-residence-nnn-honesty": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
+    "phase": "Wave A (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md) items 1.9 + 1.3: residence excluded from the snapshot at parse; NNN-not-absolute $0-expense properties flagged landlord-costs-not-sourced (rulings 2026-10-30).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Branch feat/wave-a-residence-nnn-honesty. Files: server/workbook/parse.ts, scripts/reconcile.ts, src/analytics/property-basis.ts, src/modules/portfolio/PortfolioModule.tsx, tests/unit/parse-workbook-exclusions.test.ts. No architect-owned source touched.",
+    "last_updated": "2026-10-30T18:45:00Z"
+  },
   "acq-current-score-pointer": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
     "phase": "Fix: history-independent current acq score (refute wf_f5f45202-de8 on PR #456). Add acq_candidates.current_score_id, set by every persistAndLogScore call incl. the idempotent no-op path; capital-allocation.ts loadPipelineCandidates, api.ts /acq/candidates, brain-report.ts floor-indeterminate join on it.",
@@ -33,6 +51,14 @@
     "review_needed": false,
     "last_updated": "2026-10-27T00:00:00Z"
   },
+  "live-command-center-updates-c085c8": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-31",
+    "phase": "Overview signal integrity (design review 2026-10-31 P1, findings 1-5): valuation (cf-hurdle-drag) rows out of Priority Actions + header totals; Results widget default-off (layout v4); lease-expiring band label from member days, group children numbered 1..n, <=7d expiries un-grouped; noun labels on rail/bell attention counts. Touches src/modules/overview/widgets.tsx (filter + registry only), src/modules/insights/insights.logic.ts, src/lib/tier-group.ts, src/modules/alerts/cause-labels.ts, src/brain/alert-cause.ts, src/primitives/TierBoard.tsx (TierItem type only), src/shell/{tab-types,tab-badges,Sidebar,AlertBell}. No architect-owned files, no conditions.ts, no governor constants.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-31T21:00:00Z"
+  },
   "wave-a-warehouse-freshness": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
     "phase": "Wave A item 1.1 (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md, lands with PR feat/wave-a-residence-nnn-honesty): warehouseLedger feed on /api/health, 45-day budget on the last committed P&L import.",
@@ -51,6 +77,15 @@
     "review_detail": "Gabriel approved the plan and all four placement/source/engine/current decisions in-turn 2026-10-07 and approved the architect-edit-ok sentinel in-turn (AskUserQuestion). Architect-owned files touched: server/warehouse/migrations/035_property_condition.sql (new), src/contracts/property-condition.ts (new) + one export line in src/contracts/index.ts, package.json (one script), server/warehouse/sub-routers.ts (one mount line). Registry change: new standalone destination 'property-condition' in the Capital rail group (Capital is at the 5-tab cap, so not a 6th tab); tests/unit/ia-registry.test.ts updated 13→14 destinations, Capital group 2→3. No governor/model files touched. Needs architect acknowledgment at PR review.",
     "last_updated": "2026-10-07T00:00:00Z"
   },
+  "wave-a-freshness-honesty": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-30",
+    "phase": "Wave A items 1.2, 1.6, 1.7 (docs/superpowers/plans/2026-10-30-actionable-intelligence-roadmap.md, PR #522): as-of chips; CLI writers persist runtime flags; REQUIRE_LIVE_WAREHOUSE fail-loud. Item 1.5 (overlay write-back sync) split out after three adversarial reviews; needs a design ruling.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Branch feat/wave-a-freshness-honesty-2. Files: server/reconcile-runtime.ts, scripts/extract-workbook.ts, scripts/lease-snapshot-drift-check.ts, scripts/warehouse-live-drift-check.ts, scripts/reconcile-noi-crosscheck.ts, src/primitives/AsOfChip.tsx, src/modules/overview/widgets.tsx, src/modules/leasing/RolloverChart.tsx, src/modules/portfolio/TrendsView.tsx, tests. No architect-owned source.",
+    "last_updated": "2026-10-30T21:00:00Z"
+  },
   "pca-intelligence": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-13",
     "phase": "PCA intelligence on the existing Property Condition destination: src/analytics/{pca-intelligence,calibration-ledger,building-specs}.ts (+ tests), src/modules/property-condition overlay/alerts/issues/29000 drill-down/warranty clock/calibration ledger view/Building specs view, data/calibration + data/building-specs, scripts/calibration-{propose,promote}.ts, plus module 10 (cost segregation property data: src/analytics/cost-seg.ts, data/cost-seg, Cost seg view). Display only; no contracts, migrations, server, hooks or governor files touched.",
@@ -61,6 +96,15 @@
     "last_updated": "2026-10-17T00:00:00Z"
   },
   "_comment":"Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
+  "overview-governor-tiles-10dd3c": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-11-02",
+    "phase": "Design review 2026-10-31 finding 9: DSCR / LTV / cash-vs-floor bullet tiles on the Overview KPI strip + the ratified $1.5M firm cash floor as a code constant.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edits: src/contracts/liquidity-policy.ts (new; the ONE import path for config/liquidity-policy.v1.json, fail-closed zod) + src/contracts/index.ts re-export. The $1.5M firm cash floor (ratified 2026-09-18) added as config with Gabriel's in-turn Invariant-4 approval 2026-11-02; governor-constants.ts / RATIFIED_GOVERNORS (DSCR 1.25 / LTV 0.40) untouched. Firm-cash basis = Oxford Cash Balances entity, interim proxy for the ratified sweepable-cash definition (Gabriel 2026-11-02). Also src/analytics/governor-headroom.ts, src/charts/BulletGraph.tsx, src/modules/overview/GovernorTiles.tsx (new) and src/modules/overview/widgets.tsx (KpiStripWidget only). Branch claude/overview-governor-tiles-10dd3c.",
+    "last_updated": "2026-11-02T00:00:00Z"
+  },
   "pca-474-lows": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-17",
     "phase": "#474 LOW follow-ups (+ contract doc comment on totals, comment-only): STALE current reports excluded from server read-model totals and the figures count; display sorts use code-unit compare. Touches server/warehouse/property-condition.ts, src/analytics/{pca-intelligence,building-specs}.ts, src/modules/property-condition/{SpecsView,PropertyConditionModule,CapexOutlookView}.tsx (copy), src/contracts/property-condition.ts (doc comment only), tests. No migrations, hooks or governor files.",
@@ -396,6 +440,14 @@
     "review_needed": false,
     "review_detail": null,
     "last_updated": "2026-06-21T00:00:00Z"
+  },
+  "wave-b-ui": {
+    "agent_role": "UX Agent (Claude Code) - Gabriel-approved 2026-10-30 via session local_1396c1a7",
+    "phase": "Actionable Intelligence Roadmap Wave B: Track 2 (2.2-2.6; 2.1 after feat/action-list-rows merges) + Track 3.2/3.3 UI on the existing ledger. Worktree upbeat-maxwell-870996. Files: src/charts/*, src/modules/property/* (new), src/modules/property-financials/*, src/modules/alerts/*, src/modules/insights/*, src/brain/EntityDrawer.tsx, src/shell/modules.tsx, src/modules/overview/OverviewModule.tsx. NOT touching src/modules/overview/widgets.tsx or src/primitives/TierBoard.tsx (action-rows WIP).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "last_updated": "2026-10-30T22:15:00Z"
   },
   "phase-0-sort-key": {
     "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20",

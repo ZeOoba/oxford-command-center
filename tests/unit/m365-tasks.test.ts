@@ -70,3 +70,122 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     expect(isTaskList({})).toBe(true);
   });
 });
+
+describe('mapGraphTask — notes redaction (#511 follow-up)', () => {
+  it('redacts third-party contact data in the task body before it reaches the snapshot', () => {
+    const t = mapGraphTask(
+      { id: 'pii-1', title: 'Roof quote', body: { content: '<p>Send COI to jane.roe@example.com or call 555-010-0123</p>' } },
+      'To Do',
+    );
+    expect(t!.notes).not.toMatch(/jane\.roe@example\.com|555-010-0123/);
+    expect(t!.notes).toContain('[email redacted]');
+    expect(t!.notes).toContain('[phone redacted]');
+  });
+});
+
+// Adversarial review 2026-10-30: htmlToText collapses whitespace, so a Graph body never carries '\n'
+// and a line-start-only sign-off rule never fires (C3); and slicing to 200 BEFORE redacting left a
+// partial address / phone at the cut (C1). All fixtures synthetic (example domains, 555-01xx).
+describe('mapGraphTask — notes redaction (adversarial review 2026-10-30)', () => {
+  const at = (n: number, tail: string) => {
+    const base = 'Roof quote follow up for the tenant. ';
+    return `${base.repeat(Math.ceil(n / base.length)).slice(0, n)}${tail}`;
+  };
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-cut', title: 'Cut', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('C3: cuts a signature from an HTML body (no newlines survive htmlToText)', () => {
+    const notes = notesOf('Approved the quote.</p><p>Regards,</p><p>Jane Doe</p><p>Property Manager</p><p>Acme Realty</p><p>1 Main St Testville');
+    expect(notes).toBe('Approved the quote. [signature redacted]');
+  });
+
+  it('C1: an email whose local part straddles the 200-char cut leaves no partial local part', () => {
+    const notes = notesOf(at(195, 'jane.roe@example.com please'));
+    expect(notes.length).toBeLessThanOrEqual(200);
+    expect(notes).not.toMatch(/jane/);
+  });
+
+  it('C1: a phone number straddling the 200-char cut leaves no partial digits', () => {
+    for (const start of [191, 192, 193, 194, 195, 196]) {
+      const notes = notesOf(at(start, '555-010-0123 call back'));
+      expect(notes.length).toBeLessThanOrEqual(200);
+      expect(notes).not.toMatch(/555|010-0/);
+    }
+  });
+
+  it('C1: the stored note is a redaction fixed point (snapshot guard stays a no-op)', async () => {
+    const { redactNotesText } = await import('../../src/lib/redact-pii');
+    for (const start of [185, 190, 195, 199]) {
+      const notes = notesOf(at(start, 'jane.roe@example.com 555-010-0123'));
+      expect(redactNotesText(notes)).toBe(notes);
+    }
+  });
+});
+
+// Round 2 adversarial review (2026-10-30). Synthetic fixtures only.
+describe('mapGraphTask — notes redaction (round 2)', () => {
+  const at = (n: number, tail: string) => {
+    const base = 'Roof quote follow up for the tenant. ';
+    return `${base.repeat(Math.ceil(n / base.length)).slice(0, n)}${tail}`;
+  };
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-r2', title: 'R2', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('a literal <addr> in the body is not stripped as an HTML tag before redaction', () => {
+    const notes = notesOf('From: Jane Doe, Acme Realty <jdoe@example.com> re lease');
+    expect(notes).not.toMatch(/Jane|Doe|jdoe/);
+    expect(notes).toContain('re lease');
+  });
+
+  it('a weak sign-off flattened onto one line is cut when its tail carries contact data', () => {
+    const notes = notesOf(
+      'Please review the bid.</p><p>Thanks,</p><p>Robert Jones</p><p>Senior Project Manager</p><p>Allied Mechanical</p><p>614-555-0123</p><p>rjones@example.com',
+    );
+    expect(notes).toBe('Please review the bid. [signature redacted]');
+  });
+
+  it('C1: a placeholder straddling the 200-char cut leaves no half placeholder', () => {
+    for (let start = 180; start <= 200; start += 1) {
+      const notes = notesOf(at(start, '555-010-0123 call back'));
+      expect(notes.length).toBeLessThanOrEqual(200);
+      expect(notes).not.toMatch(/\[[a-z ]*$/);
+    }
+  });
+
+  it('caps the input before the full redaction (a 50K-char token stays fast)', () => {
+    for (const unit of ['A', 'A.', 'Aa-']) {
+      const t0 = Date.now();
+      const notes = notesOf(unit.repeat(Math.ceil(50_000 / unit.length)));
+      expect(Date.now() - t0).toBeLessThan(1_500);
+      expect(notes.length).toBeLessThanOrEqual(200);
+    }
+  });
+});
+
+// Round 3 review (2026-10-30). Synthetic fixtures only.
+describe('mapGraphTask — notes redaction (round 3)', () => {
+  const notesOf = (content: string) =>
+    mapGraphTask({ id: 'pii-r3', title: 'R3', body: { content: `<p>${content}</p>` } }, 'To Do')!.notes!;
+
+  it('an adjacent-phone run leaves no raw number (it used to outrun the 8-pass cap at x9)', () => {
+    for (const n of [9, 10, 12]) {
+      const notes = notesOf('(614) 555-0142'.repeat(n));
+      expect(notes).not.toMatch(/555-0142|\(614\)/);
+    }
+  });
+
+  it('the stored note is <= 200 chars and a redaction fixed point after the post-cut re-redaction', async () => {
+    const { redactNotesText } = await import('../../src/lib/redact-pii');
+    const units = ['(614) 555-0142', '614-555-0142 ', 'a@b.c ', 'a@b ', 'x <y ', 'Jo <a@b.c> ', 'Regards, Jo ', 'Jo Do 614-555-0142 '];
+    for (const u of units) {
+      for (let pre = 0; pre <= 200; pre += 7) {
+        for (const n of [1, 3, 9, 20, 40]) {
+          const notes = notesOf(`${'k'.repeat(pre)} ${u.repeat(n)}`);
+          expect(notes.length, `${u} pre=${pre} n=${n}`).toBeLessThanOrEqual(200);
+          expect(redactNotesText(notes), `${u} pre=${pre} n=${n}`).toBe(notes);
+          expect(notes).not.toMatch(/555-0142|@b/);
+        }
+      }
+    }
+  });
+});
