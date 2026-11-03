@@ -11,7 +11,7 @@ interface Props { signal: MarketSignal }
 
 function ConfidenceBar({ value }: { value: number }) {
   return (
-    <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, width: '100%' }}>
+    <div style={{ height: 4, background: 'var(--border-subtle)', borderRadius: 2, width: '100%' }}>
       <div style={{
         height: '100%',
         width: `${Math.round(value * 100)}%`,
@@ -30,8 +30,8 @@ function SourceTag({ source, stale }: { source: string; stale: boolean }) {
       title={label}
       style={{
         fontSize: 10, padding: '1px 5px', borderRadius: 3,
-        background: 'var(--surface-alt, var(--surface))',
-        border: '1px solid var(--border)',
+        background: 'var(--surface-overlay)',
+        border: '1px solid var(--border-subtle)',
         color: stale ? 'var(--text-tertiary)' : 'var(--text-secondary)',
         textDecoration: stale ? 'line-through' : 'none',
       }}

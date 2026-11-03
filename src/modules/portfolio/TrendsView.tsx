@@ -2,6 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useSnapshot } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { Card, CardHeader } from '@/primitives/Card';
+import { AsOfChip } from '@/primitives/AsOfChip';
+import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { AreaChart } from '@/charts/AreaChart';
@@ -11,6 +13,9 @@ import { buildPortfolioTrend } from '@analytics/portfolio-trends';
 import { kpiAt, rentSeries, vacancySeries } from './trends-chart-data';
 import { mergeRecorded, mergedRentChangeBars, recordedYoY, useTrendsHistory, type SourcedMonthPoint } from './trends-history';
 import type { TrendsHistoryPoint } from '@contracts/trends';
+import { SeriesLegend } from '@/charts/SeriesLegend';
+import { provenanceKinds } from '@/charts/series-provenance';
+import { SPREAD_LABEL, pointProvenance, renewAllLeases, spreadBand } from './scenario-spread';
 
 const ALL = '__portfolio__';
 
@@ -47,6 +52,15 @@ export function TrendsView() {
 
   const trend = useMemo(
     () => (data ? buildPortfolioTrend(data.snapshot.leases, data.snapshot.properties, { asOf: data.snapshot.meta.asOf }) : null),
+    [data],
+  );
+
+  // The other bound of the forward scenario range (roadmap 3.3): every in-effect lease renews on current terms.
+  const renewAll = useMemo(
+    () =>
+      data
+        ? buildPortfolioTrend(renewAllLeases(data.snapshot.leases, data.snapshot.meta.asOf), data.snapshot.properties, { asOf: data.snapshot.meta.asOf })
+        : null,
     [data],
   );
 
@@ -91,9 +105,20 @@ export function TrendsView() {
       : histBars.some((b) => b.source === 'reconstructed')
         ? `Bars before ${firstRecordedBar} reconstructed from current leases; recorded from ${firstRecordedBar}`
         : 'Recorded months';
-  const forecastFlag = <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>;
+  const forecastFlag = (
+    <span className="inline-flex items-center gap-2">
+      <AsOfChip asOf={data.snapshot.meta.asOf} source="Rent roll" />
+      <Badge tone="amber">Contractual roll-off after {trend.asOfMonth} · no renewals assumed</Badge>
+    </span>
+  );
   // Sparklines show history + as-of only; forward months are roll-off, not a trend.
   const histPoints = points.filter((p) => !p.isForecast);
+  const provenance = pointProvenance(points);
+  const legendKinds = provenanceKinds(provenance);
+  const altPoints = renewAll ? (effectiveScope === ALL ? renewAll.portfolio : renewAll.byProperty[effectiveScope]) : undefined;
+  const rentBand = altPoints ? spreadBand(points, altPoints, (p) => p.inPlaceRent, trend.asOfMonth) : undefined;
+  const vacancyBand = altPoints ? spreadBand(points, altPoints, (p) => p.vacancyPct * 100, trend.asOfMonth) : undefined;
+  const hasBand = (b: typeof rentBand) => !!b && b.some((x) => x !== null && x.hi > x.lo);
 
   const recordedMonths = histPoints.filter((p) => p.source === 'recorded');
   const reconstructedLeft = histPoints.some((p) => p.source === 'reconstructed');
@@ -124,6 +149,7 @@ export function TrendsView() {
           <option value={ALL}>Entire portfolio</option>
           {names.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+        {effectiveScope !== ALL && <PropertyPageLink propertyId={effectiveScope} />}
         {recordedMonths.length > 0 && (
           <Badge tone="neutral">
             Recorded: {recordedMonths.length} {recordedMonths.length === 1 ? 'month' : 'months'} (since {recordedMonths[0]!.month})
@@ -167,6 +193,30 @@ export function TrendsView() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader title="Monthly in-place rent" trailing={forecastFlag} />
+          <div className="flex flex-col gap-2 p-3">
+            <AreaChart
+              data={rentSeries(points)}
+              valueFormat={fmtUsdCompact}
+              provenance={provenance}
+              band={rentBand}
+              ariaLabel={`Monthly in-place rent (rent roll): ${legendKinds.join(', ')} months${hasBand(rentBand) ? '; forward months shaded between no renewals and every lease renewing on current terms' : ''}`}
+            />
+            <SeriesLegend kinds={legendKinds} bandLabel={hasBand(rentBand) ? SPREAD_LABEL : undefined} />
+          </div>
+        </Card>
+        <Card>
+          <CardHeader title="Vacancy (lease-SF basis)" trailing={forecastFlag} />
+          <div className="flex flex-col gap-2 p-3">
+            <AreaChart
+              data={vacancySeries(points)}
+              color="var(--color-neg)"
+              valueFormat={(n) => fmtPct(n / 100)}
+              provenance={provenance}
+              band={vacancyBand}
+              ariaLabel={`Vacancy, lease-SF basis: ${legendKinds.join(', ')} months${hasBand(vacancyBand) ? '; forward months shaded between no renewals and every lease renewing on current terms' : ''}`}
+            />
+            <SeriesLegend kinds={legendKinds} color="var(--color-neg)" bandLabel={hasBand(vacancyBand) ? SPREAD_LABEL : undefined} />
+          </div>
           <div className="p-3"><AreaChart data={rentSeries(points)} valueFormat={fmtUsdCompact} ariaLabel="Monthly in-place rent (rent roll)" /></div>
         </Card>
         <Card>
@@ -179,7 +229,14 @@ export function TrendsView() {
         <Card>
           <CardHeader title="Month-over-month rent change (escalations + new leases − expirations)" trailing={forecastFlag} />
           {barNote !== undefined && <p className="num px-3 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{barNote}</p>}
-          <div className="p-3"><BarChart data={bars.map(({ label, value }) => ({ label, value }))} valueFormat={fmtUsdCompact} ariaLabel="Monthly rent change" /></div>
+          <div className="flex flex-col gap-2 p-3">
+            <BarChart
+              data={bars.map(({ label, value, source }) => ({ label, value, provenance: label > trend.asOfMonth ? 'forecast' : source }))}
+              valueFormat={fmtUsdCompact}
+              ariaLabel="Monthly rent change"
+            />
+            <SeriesLegend kinds={provenanceKinds(bars.map((b) => (b.label > trend.asOfMonth ? 'forecast' : b.source)))} color="var(--accent)" />
+          </div>
         </Card>
       )}
     </div>

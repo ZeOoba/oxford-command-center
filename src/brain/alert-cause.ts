@@ -46,6 +46,31 @@ export function isPinnedAlert(insight: { id: string }, read: boolean): boolean {
   return !read && isPinnedCause(causeOf(insight));
 }
 
+/** A no-signal expiry this close is its own decision, not one of a batch (design review 2026-10-31). */
+export const IMMINENT_EXPIRY_DAYS = 7;
+
+/** Splits no-signal expiries within IMMINENT_EXPIRY_DAYS onto their own cause, so a lease ending
+ *  today is never folded into a collapsed "expiring ≤90d" group. Every other cause passes through. */
+export function imminentCause(cause: string | undefined, daysToAct: number | null): string | undefined {
+  return cause === 'lease-expiry-no-signal' && daysToAct !== null && daysToAct <= IMMINENT_EXPIRY_DAYS
+    ? 'lease-expiry-imminent'
+    : cause;
+}
+
+/** "61d" → 61. Any other metric (a ratio, a percentage) is not a day count. */
+function daysFromMetric(metric: string | undefined): number | null {
+  const match = metric ? /^(-?\d+)d$/.exec(metric) : null;
+  return match ? Number(match[1]) : null;
+}
+
+/** Cause and days-to-act for one alert row. The single derivation every board uses (Overview,
+ *  Insights, Alerts), so a lease ending today is split out — and a band labelled — the same way
+ *  everywhere. */
+export function causeAndDays(insight: { id: string; metric?: string }): { cause: string | undefined; daysToAct: number | null } {
+  const daysToAct = daysFromMetric(insight.metric);
+  return { cause: imminentCause(causeOf(insight), daysToAct), daysToAct };
+}
+
 export function causeOf(insight: { id: string }): string | undefined {
   for (const [pattern, cause] of RULES) if (pattern.test(insight.id)) return cause;
   return undefined;
