@@ -4,7 +4,9 @@ import './tokens/theme.css';
 import { App } from './App';
 import { applyTheme, getInitialTheme } from './lib/theme';
 import { applyDensity, getInitialDensity } from './lib/density';
+import { installStaleChunkReload } from './shell/stale-chunk';
 
+installStaleChunkReload();
 applyTheme(getInitialTheme());
 applyDensity(getInitialDensity());
 
