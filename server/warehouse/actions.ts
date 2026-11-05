@@ -15,7 +15,7 @@ import { scoreProperties } from './scores';
 
 export type ApproveResult =
   | { ok: true }
-  | { ok: false; unmapped: string[]; error?: string; reason?: 'sign-undecidable' | 'newer-version-committed' };
+  | { ok: false; unmapped: string[]; error?: string; reason?: 'property-unresolved' | 'sign-undecidable' | 'newer-version-committed' };
 
 /** Options for approveImport. `forceCalibrationError` (tests only) poisons the post-commit emit
  *  hook to prove the fail-open guarantee — the commit still returns {ok:true}. */
@@ -41,6 +41,10 @@ interface BatchRow {
  *
  * Refusals (all leave the batch pending-review and every ledger row untouched):
  *  - not found / not pending-review / no ledger rows;
+ *  - reason 'property-unresolved': the batch's property never resolved (property_id NULL, blank or the ledger's
+ *    'unknown' sentinel). Committing it would key NOI to no property: the supersede below matches nothing on a NULL
+ *    id (silent double count) and every such batch merges into one 'unknown' pseudo-property. Checked first, before
+ *    the supersede guard and unmapped re-resolution, so the reviewer is never asked to map a batch that cannot commit;
  *  - reason 'newer-version-committed': a NEWER ARRIVAL (higher import id) for the same property and period is
  *    already committed, so approving this older one would supersede it and serve older data (reject it instead);
  *  - unmapped accounts remain (`unmapped` lists them);
@@ -74,6 +78,22 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
   if (!batch) return { ok: false, unmapped: [], error: `import ${importId} not found` };
   if (batch.status !== 'pending-review') {
     return { ok: false, unmapped: [], error: `import is ${batch.status}, not pending-review` };
+  }
+
+  // Property gate (fail closed). An unresolved property ('unknown' is the ledger's stand-in for NULL) can never be
+  // committed safely, so refuse before the supersede guard (whose NULL key matches nothing) and before asking the
+  // reviewer to map accounts. Reject stays available. The unblock path is in the error text because an identical
+  // re-drop is deduplicated by content hash (raw-store registerImport).
+  if (batch.property_id === null || batch.property_id.trim() === '' || batch.property_id === 'unknown') {
+    return {
+      ok: false,
+      unmapped: [],
+      reason: 'property-unresolved',
+      error:
+        `import #${importId} has no resolved property (its filename token matched no property alias), so approving it would ` +
+        `commit NOI under no property. Reject it, then re-drop a re-exported copy of the statement whose filename carries a ` +
+        `recognized property token (an identical file is deduplicated by content hash), or add the missing alias to detection first.`,
+    };
   }
 
   // Supersede guard. Approving commits this batch and supersedes EVERY committed version of the same period. If a
