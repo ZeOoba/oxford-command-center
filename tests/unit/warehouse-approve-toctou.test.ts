@@ -16,8 +16,10 @@
 // what ingest.ts would. A re-derive that cannot get the write lock (SQLITE_BUSY) is serialized behind approve, which is
 // what a real backfill does (it waits on busy_timeout), so approve's result is judged on the state it leaves.
 //
-// GOOD = approve refused and v1 still served unchanged, or approve committed v2 with its 3 rows under the batch's own
-// property. Anything else is BAD: the period emptied, NOI served under another key, or ok:true with zero rows.
+// GOOD = exactly one committed version of the period (v1, or v2 if approve or a committing re-derive committed it)
+// serving its 3 rows under the batch's own property, and the action's ok matches what it did. Anything else is BAD:
+// the period emptied, NOI served under another key, ok:true with zero rows, or a rejected batch left serving.
+// rejectImport and resolveIssue are probed the same way (same check-then-write shape, refute wf_f8901854-484).
 // Fixtures are synthetic (amounts and statement text are made up; the property ids are canonical seed ids the
 // ledger's foreign key needs).
 import ExcelJS from 'exceljs';
@@ -25,7 +27,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { approveImport } from '../../server/warehouse/actions';
+import { approveImport, rejectImport, resolveIssue } from '../../server/warehouse/actions';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { ingestFile } from '../../server/warehouse/ingest';
@@ -35,6 +37,7 @@ import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { sha256File } from '../../server/warehouse/raw-store';
 
 const RARIG = '1100-rarig-ave-columbus-oh';
+const COMMITTING = 'C commits (qualifies at the default threshold)' as const;
 const FIFTH = '3540-e-5th-ave-columbus-oh';
 const SERVED_NOI = 95_000; // 100,000 rent - 5,000 HVAC; the distribution is excluded from NOI
 
@@ -69,7 +72,12 @@ async function writeFixture(path: string, propertyLine: string, valued = true): 
   await wb.xlsx.writeFile(path);
 }
 
-type Kind = 'R1 same property' | "R2 re-keyed 'unknown'" | 'R2b re-keyed to another property' | 'R3 parsed to 0 rows';
+type Kind =
+  | 'R1 same property'
+  | "R2 re-keyed 'unknown'"
+  | 'R2b re-keyed to another property'
+  | 'R3 parsed to 0 rows'
+  | 'C commits (qualifies at the default threshold)';
 const KINDS: Array<{ kind: Kind; redropName: string; valued: boolean }> = [
   { kind: 'R1 same property', redropName: 'P&L 2025 -- 1100 Rarig.xlsx', valued: true },
   { kind: "R2 re-keyed 'unknown'", redropName: 'P&L 2025 -- Zorvane Flex Park.xlsx', valued: true },
@@ -83,6 +91,8 @@ interface WriteSet {
   ledger: LedgerWrite[];
   issues: IssueWrite[];
   batch: Record<string, unknown>;
+  /** Other batches the re-derive superseded (a committing re-derive only): their ledger rows go inactive. */
+  superseded: Array<[number, number]>;
 }
 
 const BATCH_COLS = ['basis', 'source_system', 'period_start', 'period_end', 'period_grain', 'confidence', 'detect_notes', 'parser_version', 'status'];
@@ -127,8 +137,13 @@ beforeAll(async () => {
   // Capture each kind's write set from a REAL ingest re-derive of v2 on a copy. registerImport matches on file hash,
   // so the copy's v2 is pointed at the re-drop's hash (identical bytes for R1/R2/R2b; for R3, bytes that parse to 0
   // rows, which is what a parser change yields on the same file).
-  for (const { kind, redropName, valued } of KINDS) {
-    const dir = join(root, `capture-${KINDS.findIndex((k) => k.kind === kind)}`);
+  // C: the same re-derive at ingest's default threshold, so it qualifies and COMMITS v2 (superseding v1) itself.
+  const captures = [
+    ...KINDS.map((k) => ({ ...k, threshold: 0.99, expectStatus: 'pending-review' })),
+    { kind: COMMITTING, redropName: 'P&L 2025 -- 1100 Rarig.xlsx', valued: true, threshold: 0.85, expectStatus: 'committed' },
+  ];
+  for (const [i, { kind, redropName, valued, threshold, expectStatus }] of captures.entries()) {
+    const dir = join(root, `capture-${i}`);
     mkdirSync(join(dir, 'redrop'), { recursive: true });
     const redrop = join(dir, 'redrop', redropName);
     if (valued) copyFileSync(v2File, redrop);
@@ -137,8 +152,8 @@ beforeAll(async () => {
     copyFileSync(basePath, p);
     const cdb = openWarehouse(p);
     cdb.prepare('UPDATE import_batches SET file_hash = ? WHERE id = ?').run(sha256File(redrop), v2);
-    const r = await ingestFile(cdb, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z', autoCommitThreshold: 0.99 });
-    expect(r).toMatchObject({ status: 'pending-review', importId: v2 }); // re-derived in place, still held
+    const r = await ingestFile(cdb, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z', autoCommitThreshold: threshold });
+    expect(r).toMatchObject({ status: expectStatus, importId: v2 }); // re-derived in place
     writeSets.set(kind, {
       ledger: cdb
         .prepare(`SELECT property_id, period, raw_account, gl_code, amount, normalized_category, classification, mapping_id, is_active
@@ -150,6 +165,10 @@ beforeAll(async () => {
         .raw()
         .all(v2) as IssueWrite[],
       batch: cdb.prepare(`SELECT ${BATCH_COLS.join(', ')} FROM import_batches WHERE id = ?`).get(v2) as Record<string, unknown>,
+      superseded: cdb
+        .prepare("SELECT id, superseded_by FROM import_batches WHERE status = 'superseded' AND id != ?")
+        .raw()
+        .all(v2) as Array<[number, number]>,
     });
     cdb.close();
   }
@@ -178,6 +197,10 @@ function replayReDerive(b: WarehouseDb, ws: WriteSet): void {
     for (const row of ws.ledger) ins.run(v2, ...row);
     const iss = b.prepare('INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, ?, ?, ?, ?)');
     for (const row of ws.issues) iss.run(v2, ...row);
+    for (const [id, by] of ws.superseded) {
+      b.prepare('UPDATE ledger_entries SET is_active = 0 WHERE import_id = ?').run(id);
+      b.prepare("UPDATE import_batches SET status = 'superseded', superseded_by = ? WHERE id = ?").run(by, id);
+    }
   })();
 }
 
@@ -213,28 +236,48 @@ interface Outcome {
   bad: string | null;
 }
 
-function judge(a: WarehouseDb, ok: boolean | 'threw'): string | null {
+/** The served state the warehouse must always be in, whoever wrote last: exactly one committed version of the period
+ *  serving its 3 rows under the batch's own property, with the expected NOI. `v1Serving` / `v2Serving` say which. */
+function servedState(a: WarehouseDb): { bad: string | null; v1Serving: boolean; v2Serving: boolean; status: (id: number) => string } {
   const status = (id: number) => (a.prepare('SELECT status FROM import_batches WHERE id=?').get(id) as { status: string }).status;
   const active = a
     .prepare('SELECT import_id AS importId, property_id AS propertyId FROM ledger_entries WHERE is_active = 1')
     .all() as Array<{ importId: number; propertyId: string }>;
-  const v2Active = active.filter((r) => r.importId === v2).length;
   const offKey = active.filter((r) => r.propertyId !== RARIG);
   const noi = propertyPeriodMetrics(a).find((m) => m.propertyId === RARIG && m.period === '2025')?.noi;
-  if (ok === true && v2Active === 0) return 'approve returned ok:true but committed zero active rows';
-  if (offKey.length > 0) return `NOI served under another key: ${[...new Set(offKey.map((r) => r.propertyId))].join(', ')}`;
-  if (noi === undefined) return 'served NOI for the property-period disappeared';
-  if (noi !== SERVED_NOI) return `served NOI changed to ${noi}`;
-  const refusedGood = ok !== true && status(v1) === 'committed' && active.length === 3 && active.every((r) => r.importId === v1);
-  const committedGood =
-    ok === true && status(v2) === 'committed' && status(v1) === 'superseded' && active.length === 3 && v2Active === 3;
-  return refusedGood || committedGood ? null : `inconsistent end state (v1 ${status(v1)}, v2 ${status(v2)}, active ${active.length})`;
+  const v1Serving = status(v1) === 'committed' && active.length === 3 && active.every((r) => r.importId === v1);
+  const v2Serving =
+    status(v2) === 'committed' && status(v1) === 'superseded' && active.length === 3 && active.every((r) => r.importId === v2);
+  let bad: string | null = null;
+  if (offKey.length > 0) bad = `NOI served under another key: ${[...new Set(offKey.map((r) => r.propertyId))].join(', ')}`;
+  else if (noi === undefined) bad = 'served NOI for the property-period disappeared';
+  else if (noi !== SERVED_NOI) bad = `served NOI changed to ${noi}`;
+  else if (!v1Serving && !v2Serving) bad = `inconsistent end state (v1 ${status(v1)}, v2 ${status(v2)}, active ${active.length})`;
+  return { bad, v1Serving, v2Serving, status };
 }
 
-/** One run: inject the re-derive before approve's k-th statement (k = 0: no injection, to count the boundaries). */
-function runAt(kind: Kind, k: number): { outcome: Outcome; boundaries: number } {
-  const p = freshCopy(`${kind.slice(0, 3).trim()}-${k}`);
+/** approve: never ok:true unless v2 is what is served; otherwise the served state must hold. */
+function judge(a: WarehouseDb, ok: boolean | 'threw'): string | null {
+  const s = servedState(a);
+  if (ok === true && !s.v2Serving) return `approve returned ok:true but v2 is not served (${s.bad ?? 'v1 still serving'})`;
+  return s.bad;
+}
+
+type Act = (a: WarehouseDb) => boolean;
+const approveAct: Act = (a) => approveImport(a, v2).ok;
+
+/** One run: inject the re-derive before the action's k-th statement (k = 0: no injection, to count the boundaries).
+ *  `prep` runs on A before the hook is installed; `judgeFn` judges the state the action leaves. */
+function runAt(
+  kind: Kind,
+  k: number,
+  act: Act = approveAct,
+  judgeFn: (a: WarehouseDb, ok: boolean | 'threw') => string | null = judge,
+  prep?: (a: WarehouseDb) => void,
+): { outcome: Outcome; boundaries: number } {
+  const p = freshCopy(`${kind.slice(0, 3).trim()}-${k}-${Math.random().toString(36).slice(2, 8)}`);
   const a = openWarehouse(p);
+  prep?.(a);
   const b = openWarehouse(p);
   b.pragma('busy_timeout = 0'); // a single thread cannot wait out A's lock: BUSY means "serialized behind approve"
   let injected: Outcome['injected'] = 'blocked';
@@ -250,13 +293,13 @@ function runAt(kind: Kind, k: number): { outcome: Outcome; boundaries: number } 
   });
   let ok: boolean | 'threw';
   try {
-    ok = approveImport(a, v2).ok;
+    ok = act(a);
   } catch {
     ok = 'threw';
   } finally {
     hook.restore();
   }
-  const outcome: Outcome = { k, injected, ok, bad: judge(a, ok) };
+  const outcome: Outcome = { k, injected, ok, bad: judgeFn(a, ok) };
   const boundaries = hook.boundaries();
   a.close();
   b.close();
@@ -283,7 +326,7 @@ describe('approveImport check-then-write race (TOCTOU) against a real concurrent
     expect(boundaries).toBe(8); // batch, newer-version, ledger read, 3 x resolveMapping, sign gate, then the first write
   });
 
-  for (const { kind } of KINDS) {
+  for (const kind of [...KINDS.map((k) => k.kind), COMMITTING]) {
     it(`${kind}: 0 of 8 statement boundaries lose served NOI or return ok while committing zero rows`, () => {
       const { boundaries } = runAt(kind, 0);
       const outcomes: Outcome[] = [];
@@ -311,4 +354,58 @@ describe('approveImport check-then-write race (TOCTOU) against a real concurrent
     expect(judge(a, 'threw')).toBeNull(); // v1 still served, nothing of v2 active
     a.close();
   });
+
+  it('the committing write set is a real committing re-derive: v2 active and committed, v1 superseded', () => {
+    const ws = writeSets.get(COMMITTING)!;
+    expect(ws.batch.status).toBe('committed');
+    expect(ws.ledger.every((r) => r[0] === RARIG && r[8] === 1)).toBe(true);
+    expect(ws.superseded).toEqual([[v1, v2]]);
+  });
+});
+
+describe('rejectImport and resolveIssue check-then-write race (TOCTOU) against a real concurrent re-derive', () => {
+  const rejectAct: Act = (a) => rejectImport(a, v2).ok;
+  /** reject: never ok:true unless v2 ends rejected; a rejected batch never serves; the served state must hold. */
+  const judgeReject = (a: WarehouseDb, ok: boolean | 'threw'): string | null => {
+    const s = servedState(a);
+    if (ok === true && s.status(v2) !== 'rejected') return `reject returned ok:true but v2 is ${s.status(v2)}`;
+    return s.bad;
+  };
+
+  for (const kind of [...KINDS.map((k) => k.kind), COMMITTING]) {
+    it(`reject, ${kind}: 0 of 2 statement boundaries leave a rejected batch serving or the period emptied`, () => {
+      const { outcome: control, boundaries } = runAt(kind, 0, rejectAct, judgeReject);
+      expect(control).toMatchObject({ ok: true, bad: null });
+      expect(boundaries).toBe(2); // status read, then the status flip
+      const outcomes: Outcome[] = [];
+      for (let k = 1; k <= boundaries; k++) outcomes.push(runAt(kind, k, rejectAct, judgeReject).outcome);
+      expect(outcomes.filter((o) => o.bad !== null)).toEqual([]);
+      expect(outcomes.every((o) => o.injected === 'blocked')).toBe(true); // serialized behind the reject
+    });
+  }
+
+  it('resolve: 0 of 2 statement boundaries return ok:true without resolving the issue a re-derive deleted and re-created', () => {
+    let issueId = 0;
+    const prep = (a: WarehouseDb) => {
+      issueId = Number(
+        a
+          .prepare("INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, ?, 'foot-mismatch', 'synthetic', 'warn')")
+          .run(v2, RARIG).lastInsertRowid,
+      );
+    };
+    const resolveAct: Act = (a) => resolveIssue(a, issueId).ok;
+    const judgeResolve = (a: WarehouseDb, ok: boolean | 'threw'): string | null => {
+      const row = a.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId) as { status: string } | undefined;
+      if (ok === true && row?.status !== 'resolved') return `resolve returned ok:true but issue #${issueId} is ${row?.status ?? 'gone'}`;
+      return null;
+    };
+    const { outcome: control, boundaries } = runAt('R1 same property', 0, resolveAct, judgeResolve, prep);
+    expect(control).toMatchObject({ ok: true, bad: null });
+    expect(boundaries).toBe(2);
+    const outcomes: Outcome[] = [];
+    for (let k = 1; k <= boundaries; k++) outcomes.push(runAt('R1 same property', k, resolveAct, judgeResolve, prep).outcome);
+    expect(outcomes.filter((o) => o.bad !== null)).toEqual([]);
+    expect(outcomes.every((o) => o.injected === 'blocked')).toBe(true);
+  });
+
 });
