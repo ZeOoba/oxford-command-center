@@ -782,6 +782,9 @@ describe('warehouse actions', () => {
         // parser re-derives in place instead (x6c), so the text must not say a rename can never unblock it.
         expect(refusal.error).toMatch(/once this import is rejected, a file with identical bytes is a duplicate under any name/i);
         expect(refusal.error).not.toMatch(/does not unblock/i);
+        // detect.ts needs the WHOLE filename token to equal an alias key; "carries" would wrongly suggest a substring match.
+        expect(refusal.error).toMatch(/is exactly the property's PROPERTY_ALIASES key/);
+        expect(refusal.error).not.toMatch(/carries/);
       }
       expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
       expect(activeRows(db, importId)).toBe(0);
@@ -888,7 +891,8 @@ describe('warehouse actions', () => {
     });
 
     it('(x8) an EMPTY import is refused as empty (the documented 404 shape), even when its property is unresolved', async () => {
-      // The empty-import refusal runs before the property gates, as it did on main: no ledger rows, nothing to key.
+      // The empty-import refusal runs before the property gates, as it did before #554 (9485736f): no ledger rows,
+      // nothing to key.
       const dir = mkdtempSync(join(tmpdir(), 'wha-unres-empty-'));
       const db = openWarehouse(join(dir, 'f.sqlite'));
       seedPropertyMaster(db);
@@ -1028,6 +1032,8 @@ describe('warehouse actions', () => {
         expect(refusal.error).toMatch(/fresh export/i);
         expect(refusal.error).toMatch(/no PROPERTY_ALIASES entry yet, one must be added first/);
         expect(refusal.error).toMatch(/once this import is rejected, a file with identical bytes is a duplicate under any name/i);
+        expect(refusal.error).toMatch(/is exactly the PROPERTY_ALIASES key of the property it belongs to/);
+        expect(refusal.error).not.toMatch(/carries/);
       }
       expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['committed', 'pending-review']);
       expect(activeFor(db, RARIG)).toBe(3); // v1 still served
@@ -1058,9 +1064,10 @@ describe('warehouse actions', () => {
       expect(activeFor(db, RARIG)).toBe(3);
     });
 
-    it('(y4) precedence: when a newer version of the period is already committed, newer-version-committed is reported, not property-mismatch', async () => {
-      // On main this batch was refused 'newer-version-committed' (reject it; the newer version stays). The property gates
-      // run after that guard, so their re-drop advice never masks the simpler, documented one.
+    /** v1 = an export of 1100 Rarig 2025 held for review; v2 = a later export of the same period, committed (served).
+     *  v1 then goes stale and its IDENTICAL bytes are re-dropped as `redropName`, so v1 is BOTH older than a committed
+     *  version of its period and diverged (ledger re-keyed to that filename's detection, batch still 1100 Rarig). */
+    async function newerCommittedAndDiverged(redropName: string): Promise<{ db: WarehouseDb; v1: number; v2: number }> {
       const dir = mkdtempSync(join(tmpdir(), 'wha-div-newer-'));
       const db = openWarehouse(':memory:');
       seedPropertyMaster(db);
@@ -1075,18 +1082,76 @@ describe('warehouse actions', () => {
       const v2 = await ingestFile(db, v2File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T01:00:00Z' });
       expect(v2.status).toBe('committed'); // the newer arrival is served
       db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(v1.importId);
-      const redrop = join(dir, 'redrop', 'P&L 2025 -- Zorvane Flex Park.xlsx');
+      const redrop = join(dir, 'redrop', redropName);
       copyFileSync(v1File, redrop);
       const r = await ingestFile(db, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z', autoCommitThreshold: 0.99 });
       expect(r).toMatchObject({ status: 'pending-review', importId: v1.importId });
-      expect(ledgerKeys(db, v1.importId!)).toEqual(['unknown']); // diverged too: the mismatch gate would also refuse it
-      const refusal = approveImport(db, v1.importId!);
+      return { db, v1: v1.importId!, v2: v2.importId! };
+    }
+
+    it('(y4) precedence: when a newer version of the period is already committed, newer-version-committed is reported, not property-mismatch', async () => {
+      // Before #554 (9485736f) this batch was refused 'newer-version-committed' (reject it; the newer version stays). The
+      // property gates run after that guard, so their re-drop advice never replaces the simpler, documented one.
+      const { db, v1, v2 } = await newerCommittedAndDiverged('P&L 2025 -- Zorvane Flex Park.xlsx');
+      expect(ledgerKeys(db, v1)).toEqual(['unknown']); // diverged too: the mismatch gate would also refuse it
+      const refusal = approveImport(db, v1);
       expect(refusal.ok).toBe(false);
       if (!refusal.ok) {
         expect(refusal.reason).toBe('newer-version-committed');
         expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toMatch(/the newer version stays/);
+        expect(refusal.error).toContain("'unknown'"); // ...and the co-occurring mismatch is named, not hidden (y6)
       }
-      expect([statusOf(db, v1.importId!), statusOf(db, v2.importId!)]).toEqual(['pending-review', 'committed']);
+      expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['pending-review', 'committed']);
+    });
+
+    it('(y6) a co-occurring mismatch to ANOTHER real property is never masked: whatever the arrival order, the refusal names the ledger key and its unblock', async () => {
+      // Older diverged batch, newer version committed: the reason stays newer-version-committed (round-2 precedence), and
+      // the text also says the rows are keyed to 3540 E 5th with the re-drop path, so rejecting it never silently loses a
+      // statement that belongs to another property.
+      const older = await newerCommittedAndDiverged('P&L 2025 -- 3540 E 5th.xlsx');
+      expect(ledgerKeys(older.db, older.v1)).toEqual([FIFTH]);
+      const first = approveImport(older.db, older.v1);
+      const again = approveImport(older.db, older.v1);
+      expect(again).toEqual(first); // deterministic for a given state
+      expect(first.ok).toBe(false);
+      if (!first.ok) {
+        expect(first.reason).toBe('newer-version-committed');
+        expect(first.error).toMatch(/the newer version stays/);
+        expect(first.error).toContain(`'${FIFTH}'`);
+        expect(first.error).toMatch(/re-drop a fresh export/);
+        expect(first.error).toMatch(/no PROPERTY_ALIASES entry yet, one must be added first/);
+      }
+      expect(activeFor(older.db, FIFTH)).toBe(0);
+      // Newer diverged batch, older version committed (the y2 shape): no newer version, so property-mismatch itself.
+      const newer = await divergedPending('P&L 2025 -- 3540 E 5th.xlsx');
+      const refusal = approveImport(newer.db, newer.v2);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('property-mismatch');
+        expect(refusal.error).toContain(`'${FIFTH}'`);
+      }
+    });
+
+    it('(z1) one ledger read drives the empty, unresolved and mismatch gates: approve reads ledger_entries exactly once before its first write', async () => {
+      // Refute wf_2e74b57b-da3: each statement between approve's ledger read and its write transaction widens the
+      // check-then-write window (TOCTOU, Window B) that a concurrent re-derive can land in. A single process cannot show
+      // the race, so this pins the statement shape instead: one read of the import's ledger rows, then the transaction.
+      const { db, v2 } = await divergedPending('P&L 2025 -- 1100 Rarig.xlsx'); // approvable (the y3 shape)
+      const beforeFirstWrite: string[] = [];
+      const prepare = db.prepare.bind(db);
+      let wrote = false;
+      (db as unknown as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+        if (/^\s*(UPDATE|INSERT|DELETE)\b/i.test(sql)) wrote = true;
+        if (!wrote) beforeFirstWrite.push(sql);
+        return prepare(sql);
+      };
+      try {
+        expect(approveImport(db, v2).ok).toBe(true);
+      } finally {
+        (db as unknown as { prepare: unknown }).prepare = prepare;
+      }
+      expect(beforeFirstWrite.filter((sql) => /\bFROM ledger_entries\b/i.test(sql))).toHaveLength(1);
     });
 
     it('(y5) unblock path: reject the mismatched batch, then a fresh export under the alias filename of the property it belongs to commits and supersedes v1', async () => {
