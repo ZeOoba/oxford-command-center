@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '../../server/warehouse/actions';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
+import { PROPERTY_ALIASES } from '../../server/warehouse/detect';
 import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { propertyPeriodMetrics } from '../../server/warehouse/metrics';
+import { onboardProperty } from '../../server/warehouse/property-onboarding';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 
 // Local copy of the ingest-test fixture writer (tests never import across test files).
@@ -768,12 +770,17 @@ describe('warehouse actions', () => {
       if (!refusal.ok) {
         expect(refusal.reason).toBe('property-unresolved');
         expect(refusal.unmapped).toEqual([]);
-        // The error names the supported unblock path (reject + re-drop a re-exported file with a recognized token).
-        expect(refusal.error).toMatch(/reject/i);
-        expect(refusal.error).toMatch(/re-export/i);
+        // The error names the unblock path: reject, then a fresh export under the property's alias filename (x6)...
+        expect(refusal.error).toMatch(/reject it/i);
+        expect(refusal.error).toMatch(/fresh export/i);
+        // ...including the reachable case where no filename can resolve yet: a property with no PROPERTY_ALIASES entry
+        // needs one added first (onboarding aliases are not read), and a property not in property_master must be
+        // onboarded first (x9, x9b)...
+        expect(refusal.error).toMatch(/no PROPERTY_ALIASES entry yet, one must be added first/);
+        expect(refusal.error).toMatch(/onboarded first/i);
         // ...and claims dedup only where it holds: once the import is rejected (x6b). A still-pending import from an older
         // parser re-derives in place instead (x6c), so the text must not say a rename can never unblock it.
-        expect(refusal.error).toMatch(/once this import is rejected, re-dropping the identical file is deduplicated/i);
+        expect(refusal.error).toMatch(/once this import is rejected, a file with identical bytes is a duplicate under any name/i);
         expect(refusal.error).not.toMatch(/does not unblock/i);
       }
       expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
@@ -880,6 +887,76 @@ describe('warehouse actions', () => {
       expect(committedCount(db)).toBe(0);
     });
 
+    it('(x8) an EMPTY import is refused as empty (the documented 404 shape), even when its property is unresolved', async () => {
+      // The empty-import refusal runs before the property gates, as it did on main: no ledger rows, nothing to key.
+      const dir = mkdtempSync(join(tmpdir(), 'wha-unres-empty-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      const file = join(dir, UNRESOLVED_FILE);
+      const wb = new ExcelJS.Workbook();
+      wb.addWorksheet('QuickBooks Desktop Export Tips').addRow(['QuickBooks Desktop Export Tips']);
+      await wb.xlsx.writeFile(file);
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' });
+      expect(r.status).toBe('pending-review');
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ property_id: null });
+      const refusal = approveImport(db, r.importId!);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBeUndefined();
+        expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toContain('no ledger rows');
+      }
+    });
+
+    it('(x9) a property with no PROPERTY_ALIASES entry: no filename resolves until the detect.ts entry exists (onboarding aliases are not read); then a fresh export commits', async () => {
+      const { db, dir, importId } = await unresolvedPending();
+      expect(rejectImport(db, importId).ok).toBe(true);
+      const freshExport = async (sub: string, propertyLine: string) => {
+        mkdirSync(join(dir, sub));
+        const file = join(dir, sub, UNRESOLVED_FILE);
+        await writeFixture(file, propertyLine); // a fresh export: different bytes every time
+        return ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T05:00:00Z' });
+      };
+      // 1. A fresh export under the property's own, unaliased name: still unresolved, still refused.
+      const r1 = await freshExport('fresh-1', 'Property: Zorvane Flex Park (export 2)');
+      expect(r1.status).toBe('pending-review');
+      const refusal = approveImport(db, r1.importId!);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) expect(refusal.reason).toBe('property-unresolved');
+      expect(rejectImport(db, r1.importId!).ok).toBe(true);
+      // 2. Onboarding records the property and its aliases, but filename detection does not read onboarding aliases.
+      const onboarded = onboardProperty(db, {
+        id: 'zorvane-flex-park', name: 'Zorvane Flex Park', aliases: ['zorvane flex park'], sfTotal: 12000,
+        ownershipPct: 1, pmSystem: 'quickbooks', authoritativeSource: 'pm-exports',
+      });
+      expect(onboarded.ok).toBe(true);
+      const r2 = await freshExport('fresh-2', 'Property: Zorvane Flex Park (export 3)');
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r2.importId)).toMatchObject({ property_id: null });
+      expect(rejectImport(db, r2.importId!).ok).toBe(true);
+      // 3. The detect.ts PROPERTY_ALIASES entry (a code change, simulated here) resolves the next fresh export, which commits.
+      PROPERTY_ALIASES['zorvane flex park'] = 'zorvane-flex-park';
+      try {
+        const r3 = await freshExport('fresh-3', 'Property: Zorvane Flex Park (export 4)');
+        expect(r3.status).toBe('committed');
+        expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r3.importId)).toMatchObject({ property_id: 'zorvane-flex-park' });
+      } finally {
+        delete PROPERTY_ALIASES['zorvane flex park'];
+      }
+    });
+
+    it('(x9b) a detect.ts alias for a property that is not in property_master cannot ingest: the property must be onboarded first', async () => {
+      const { db, dir } = await unresolvedPending();
+      PROPERTY_ALIASES['zorvane yard'] = 'zorvane-yard';
+      try {
+        const file = join(dir, 'P&L 2025 -- Zorvane Yard.xlsx');
+        await writeFixture(file, 'Property: Zorvane Yard');
+        await expect(ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T06:00:00Z' })).rejects.toThrow(/FOREIGN KEY/i);
+      } finally {
+        delete PROPERTY_ALIASES['zorvane yard'];
+      }
+    });
+
     it('(x7) control: a resolved-property pending batch still approves', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'wha-unres-ctl-'));
       const db = openWarehouse(join(dir, 'f.sqlite'));
@@ -949,6 +1026,8 @@ describe('warehouse actions', () => {
         expect(refusal.error).toContain("'unknown'");
         expect(refusal.error).toContain(RARIG);
         expect(refusal.error).toMatch(/fresh export/i);
+        expect(refusal.error).toMatch(/no PROPERTY_ALIASES entry yet, one must be added first/);
+        expect(refusal.error).toMatch(/once this import is rejected, a file with identical bytes is a duplicate under any name/i);
       }
       expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['committed', 'pending-review']);
       expect(activeFor(db, RARIG)).toBe(3); // v1 still served
@@ -977,6 +1056,52 @@ describe('warehouse actions', () => {
       expect(approveImport(db, v2).ok).toBe(true);
       expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['superseded', 'committed']);
       expect(activeFor(db, RARIG)).toBe(3);
+    });
+
+    it('(y4) precedence: when a newer version of the period is already committed, newer-version-committed is reported, not property-mismatch', async () => {
+      // On main this batch was refused 'newer-version-committed' (reject it; the newer version stays). The property gates
+      // run after that guard, so their re-drop advice never masks the simpler, documented one.
+      const dir = mkdtempSync(join(tmpdir(), 'wha-div-newer-'));
+      const db = openWarehouse(':memory:');
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      for (const sub of ['v1', 'v2', 'redrop']) mkdirSync(join(dir, sub));
+      const v1File = join(dir, 'v1', 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(v1File, 'Property: 1100 Rarig Ave (first export)');
+      const v1 = await ingestFile(db, v1File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z', autoCommitThreshold: 0.99 });
+      expect(v1.status).toBe('pending-review'); // held for review
+      const v2File = join(dir, 'v2', 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(v2File, 'Property: 1100 Rarig Ave (corrected export)');
+      const v2 = await ingestFile(db, v2File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T01:00:00Z' });
+      expect(v2.status).toBe('committed'); // the newer arrival is served
+      db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(v1.importId);
+      const redrop = join(dir, 'redrop', 'P&L 2025 -- Zorvane Flex Park.xlsx');
+      copyFileSync(v1File, redrop);
+      const r = await ingestFile(db, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z', autoCommitThreshold: 0.99 });
+      expect(r).toMatchObject({ status: 'pending-review', importId: v1.importId });
+      expect(ledgerKeys(db, v1.importId!)).toEqual(['unknown']); // diverged too: the mismatch gate would also refuse it
+      const refusal = approveImport(db, v1.importId!);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('newer-version-committed');
+        expect(refusal.unmapped).toEqual([]);
+      }
+      expect([statusOf(db, v1.importId!), statusOf(db, v2.importId!)]).toEqual(['pending-review', 'committed']);
+    });
+
+    it('(y5) unblock path: reject the mismatched batch, then a fresh export under the alias filename of the property it belongs to commits and supersedes v1', async () => {
+      const { db, v1, v2 } = await divergedPending('P&L 2025 -- Zorvane Flex Park.xlsx');
+      expect(approveImport(db, v2).ok).toBe(false);
+      expect(rejectImport(db, v2).ok).toBe(true);
+      const dir = mkdtempSync(join(tmpdir(), 'wha-div-unblock-'));
+      const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(file, 'Property: 1100 Rarig Ave (fresh export)');
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T03:00:00Z' });
+      expect(r.status).toBe('committed');
+      expect([statusOf(db, v1), statusOf(db, v2), statusOf(db, r.importId!)]).toEqual(['superseded', 'rejected', 'committed']);
+      expect(ledgerKeys(db, r.importId!)).toEqual([RARIG]);
+      expect(activeFor(db, RARIG)).toBe(3);
+      expect(activeFor(db, 'unknown')).toBe(0);
     });
   });
 });
