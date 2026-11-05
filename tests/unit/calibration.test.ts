@@ -5,7 +5,7 @@
 // deterministic inputs_version, idempotent logging, fail-open emit, Zod refusal,
 // and byte-identical determinism of (scores, iv) → verdict rows.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -60,13 +60,33 @@ afterEach(() => {
   /* tmpdirs are OS-cleaned; nothing to unwind. */
 });
 
+/** Fixture property label -> the EXACT detect.ts PROPERTY_ALIASES token, so the filename resolves to a real
+ *  property_master id. approveImport refuses a batch whose property did not resolve ('property-unresolved'),
+ *  so the former rent-suffixed filenames (which ingested with a NULL property, ledger 'unknown') can no
+ *  longer be committed through approve. */
+const ALIAS_TOKEN: Record<string, string> = {
+  '1100 Rarig Ave': '1100 rarig',
+  '9620 E State Route 350': '9620 state 350',
+  '3540 E. 5th Ave': '3540 e 5th',
+};
+
+/** A per-call subdirectory + alias filename: rent/repair vary the path's directory (and the bytes), never
+ *  the filename token. */
+function fixturePath(dir: string, opts: { property: string; year: number; rent: number; repair: number }): string {
+  const token = ALIAS_TOKEN[opts.property];
+  if (!token) throw new Error(`no alias token for fixture property ${opts.property}`);
+  const sub = join(dir, `r${opts.rent}-${opts.repair}`);
+  mkdirSync(sub, { recursive: true });
+  return join(sub, `P&L ${opts.year} -- ${token}.xlsx`);
+}
+
 /** Ingest+commit one full-year P&L for one property, returning the committed importId. */
 async function commitYear(
   db: WarehouseDb,
   rawDir: string,
   opts: { property: string; year: number; rent: number; repair: number; at: string },
 ): Promise<number> {
-  const file = join(rawDir, `P&L ${opts.year} -- ${opts.property} ${opts.rent}.xlsx`);
+  const file = fixturePath(rawDir, opts);
   await writeFixture(file, opts);
   const r = await ingestFile(db, file, { rawDir: join(rawDir, 'raw'), importedAt: opts.at, autoCommitThreshold: 0.99 });
   // High threshold forces the review queue; approve to commit so rows go active.
@@ -217,8 +237,9 @@ describe('calibration — logVerdicts idempotency + fail-open (§7)', () => {
     await commitYear(db, dir, { property: '1100 Rarig Ave', year: 2024, rent: 100000, repair: 8000, at: '2026-06-12T00:00:00Z' });
 
     // Ingest 2025 to pending-review, then approve with the emit hook forced to fail.
-    const file = join(dir, 'P&L 2025 -- 1100 Rarig 112000.xlsx');
-    await writeFixture(file, { property: '1100 Rarig Ave', year: 2025, rent: 112000, repair: 9000 });
+    const fx = { property: '1100 Rarig Ave', year: 2025, rent: 112000, repair: 9000 };
+    const file = fixturePath(dir, fx);
+    await writeFixture(file, fx);
     const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z', autoCommitThreshold: 0.99 });
     expect(r.status).toBe('pending-review');
 
@@ -286,8 +307,10 @@ describe('calibration — Zod boundary (§2) + determinism (§7)', () => {
 // These repros use filename tokens that RESOLVE to real property_master ids (detect.ts
 // PROPERTY_ALIASES) so the ledger carries a concrete property_id (with rentableSf, cash basis)
 // — not the 'unknown' aggregate. That gives real per-property quartiles + a real same-basis
-// cohort, which D1/D2/D4 need. (The pre-existing tests above deliberately use rent-suffixed
-// tokens → a single 'unknown' subject; that path stays exercised, untouched.)
+// cohort, which D1/D2/D4 need. (The tests above formerly used rent-suffixed tokens -> a single
+// 'unknown' subject. That path is retired: approveImport refuses a NULL-property batch with
+// 'property-unresolved', so an 'unknown' subject can no longer be committed via approve. They now
+// resolve to real properties through ALIAS_TOKEN.)
 
 /** Commit one full-year P&L whose filename token is an EXACT detect.ts alias (→ resolves to a
  *  real property_master id). `repair` grows faster than `rent` across years so reclassifying the

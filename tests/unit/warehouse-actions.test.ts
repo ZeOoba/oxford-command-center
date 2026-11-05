@@ -709,7 +709,9 @@ describe('warehouse actions', () => {
       // Import A: fully mapped CLEAN-ish pending (unmapped accounts mapped below). Import B: undecidable, in the SAME db.
       const a = await pendingWarehouse();
       seedMappings(a.db, UNDECIDABLE_SEED); // Insurance Expense etc. (idempotent; A's own accounts are mapped via overrides below)
-      const b = await undecidablePending({ db: a.db, dir: a.dir }, '1900 N Broadway', '1900 N Broadway');
+      // fileLabel is the EXACT detect.ts alias token so B resolves a property (an unresolved batch would be
+      // refused 'property-unresolved' before the sign gate this case is about).
+      const b = await undecidablePending({ db: a.db, dir: a.dir }, '1900 N Broadway', '1900 Broadway');
       expect(b.importId).not.toBe(a.importId);
       expect(openUndecidable(a.db, b.importId)).toHaveLength(1);
       expect(openUndecidable(a.db, a.importId)).toHaveLength(0);
