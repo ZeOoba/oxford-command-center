@@ -49,9 +49,12 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
         <h1 className="display truncate text-lg leading-none" style={{ color: 'var(--text-primary)' }}>
           {title}
         </h1>
+        {/* Design review 2026-10-31 finding 7: this is the workbook's own data date, not the Brain
+            Server's last read (that is the StatusPill's "updated … ago"). Name it so the two
+            timestamps beside each other cannot be mistaken for one another. */}
         {asOf && (
           <span className="num hidden min-w-0 shrink-[100] truncate text-2xs uppercase min-[1400px]:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
-            As of {fmtDate(asOf)}
+            Workbook as of {fmtDate(asOf)}
           </span>
         )}
       </div>
