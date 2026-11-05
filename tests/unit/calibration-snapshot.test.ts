@@ -51,8 +51,8 @@ async function writeFixture(path: string, opts: { token: string; year: number; r
 
 async function commitYear(db: WarehouseDb, dir: string, opts: { token: string; year: number; rent: number; repair: number; at: string }): Promise<void> {
   // Rent goes in a per-call SUBDIRECTORY, not the filename: detect.ts resolves a property only on an EXACT
-  // PROPERTY_ALIASES token, so a rent-suffixed filename ingested with a NULL property, which approveImport
-  // now refuses ('property-unresolved').
+  // PROPERTY_ALIASES token, so a rent-suffixed filename resolves no property, and approveImport refuses to
+  // commit such a batch ('property-unresolved').
   const sub = join(dir, `r${opts.rent}-${opts.repair}`);
   mkdirSync(sub, { recursive: true });
   const file = join(sub, `P&L ${opts.year} -- ${opts.token}.xlsx`);
