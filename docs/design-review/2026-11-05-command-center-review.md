@@ -9,10 +9,10 @@
 ## 1. Bottom line
 
 1. **The system makes predictions but never grades them.** It has logged 68 verdicts with 0 resolved outcomes. Renewal bands, rent forecasts, insight rankings and alert responses are not persisted or graded at all. No outcome changes any weight or threshold; that is by design, and every step needs a human.
-2. **The acquisition engine has never scored a live deal.** There are 23 pipeline deals (11 dead) and 13 synced candidates, but `acquisitionInputs` is empty and there are 0 acquisition verdicts. Underwriting happens in the Cowork `acquisition-underwriting` skill, and nothing carries its inputs into the command center. Priority #1 (acquisition velocity) therefore gets no ranking or calibration from the engine built for it.
+2. **The acquisition engine has never scored a live deal.** There are 23 pipeline deals (11 dead) and 26 synced candidates in `acq_candidates` (13 active, 13 passed), but `acquisitionInputs` is empty and there are 0 acquisition verdicts. The 13 passed candidates carry no outcome, because none was ever scored. Underwriting happens in the Cowork `acquisition-underwriting` skill, and nothing carries its inputs into the command center. Priority #1 (acquisition velocity) therefore gets no ranking or calibration from the engine built for it.
 3. **The learning bottleneck is data supply, not code.**
    - **P&L ledger:** no source file is newer than 2026-06-12, so the annual-horizon verdicts cannot resolve until FY2026 is ingested.
-   - **PCA register:** the file exists and imports cleanly, but it was never loaded into the live warehouse.
+   - **PCA register:** the file existed and imported cleanly, but it had never been loaded into the live warehouse. **Imported 2026-11-05** (see §2b item 1).
 
 ## 2. Evidence
 
@@ -38,7 +38,13 @@
 
 ### 2b. Data flows still leaking (verified in code)
 
-1. **The PCA register was never imported.** `2026-10-06_PCA-Extraction_Register_v01_2.xlsx` dry-ran clean into a scratch DB: 17 reports, 50 components, 13 quotes, 20 asset facts, 5 calibration pairs, 16 open items, 0 rejected. Property Condition shows "not loaded". Ruling 2026-10-30 makes PCA the only allowed source for the landlord structural costs of the 6 NNN-not-absolute properties.
+1. **The PCA register had never been imported. Resolved 2026-11-05** (on Gabriel's go-ahead).
+   - `2026-10-06_PCA-Extraction_Register_v01_2.xlsx` was imported into the live warehouse in one transaction: 17 reports, 50 components, 13 quotes, 20 asset facts, 5 calibration pairs, 16 open items.
+   - 13 of the 17 reports mapped to the property master. The 4 unmapped (E. Fulton, St. Michaels, Muirkirk, Sheriff Rd) are not in it.
+   - The six target tables were empty beforehand, no other table changed, and `quick_check` passed.
+   - The Property Condition page now shows immediate repairs of $52K, short-term $625K and capex reserves of $1.75M (uninflated), with 8 of 16 properties carrying dollar figures and 6 report-currency alerts.
+   - Those page totals are the register plus the curated correction overlay (`src/modules/property-condition/pca-overlay.ts`, from the 2026-10-13 PCA Command Center report). The raw register totals from `/api/warehouse/property-condition/report` are $105K, $641K and $1.68M. Both exclude stale reports.
+   - Ruling 2026-10-30 makes PCA the only allowed source for the landlord structural costs of the 6 NNN-not-absolute properties. Two of them, 55 New Plant and 9050 Red Branch, hold only pre-2024 reports, which are excluded from totals as stale.
 2. **The P&L ledger is frozen.** The Property Financials folder holds only 2026-06-12 exports. A scheduled backfill (roadmap 1.8) would be a no-op until Track 0.2 exports exist.
 3. **Capital allocation mislabels live macro.** `capital-allocation.ts:1331` maps `source: 'live-fred'` to `'mock'`. The live server returns `live-fred`, so the allocation report's macro context reads "mock" today. In the same function, the comment "FRED down = null DGS5 = refi signal suppressed" (`:978`) is false: `getMacro()` never returns null. It falls back to June-2026 seeded rates, while `debt-api.ts` does suppress. So during a FRED outage the two refi surfaces disagree.
 4. **`market-intel.ts:76-84` hard-codes the FRED source as `stale:false` at confidence 1.0, including the seeded fallback.** Census and comps are always stale because `market_series` has no writer, so the market score rests on FRED alone.
@@ -74,7 +80,7 @@ New tests: `overview-landlord-cost-caveat`, `basis-chip`. Surface coverage was a
 
 ### Do now (data supply; you or one command)
 
-1. **Import the PCA register into the live warehouse.** Run `npm run warehouse:import-pca -- "<…>/2026-10-06_PCA-Extraction_Register_v01_2.xlsx"` from the main checkout. It is one transactional refresh and idempotent. It fills Property Condition, and gives roadmap 4.1 and the NNN landlord-cost ruling their only allowed source. Note: the register's property keys (`red-branch`, `new-plant`, …) are kept unmapped by `property_key` unless the crosswalk resolves them.
+1. ~~Import the PCA register into the live warehouse.~~ **Done 2026-11-05** (§2b item 1). A corrected register can be re-run the same way: the import is one transactional refresh and idempotent.
 2. **Export the 2026 YTD (through Oct) P&L set (Track 0.2), then run `warehouse:backfill`.** This one action unfreezes trends, the ledger feed, roadmap Wave C and the first calibration resolutions.
 3. **Resolve the 2 open insurance-rebid verdicts** in Data › Calibration (manual resolve). These are the first graded outcomes the system would hold.
 
@@ -99,7 +105,7 @@ New tests: `overview-landlord-cost-caveat`, `basis-chip`. Surface coverage was a
 
 ## 5. Decisions needed
 
-1. Run the PCA import against the live warehouse (item 1)?
+1. ~~Run the PCA import against the live warehouse (item 1)?~~ Approved and done 2026-11-05.
 2. Authorize the `refute-financial-change` workflow for the macro honesty bundle (item 4)?
 3. Approve a learning-loops track (items 5–6) as a roadmap addition, with item 5 (acquisition screen packets) first?
 4. `architecture/status.json` claims are blocked by the file guard without your architect sentinel. Its stale `wave-b-ui` entry still names this worktree. Flip it to merged?
