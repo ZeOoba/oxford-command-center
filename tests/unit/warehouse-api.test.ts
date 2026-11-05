@@ -257,6 +257,23 @@ describe('warehouse api routes', () => {
     expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'committed' });
   });
 
+  it('POST approve on an unresolved-property pending import -> 409 {ok:false, unmapped:[], reason:"property-unresolved"}; the batch stays pending', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whapi-unres-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- Zorvane Flex Park.xlsx'); // synthetic token: not a detect.ts alias
+    await writeFixture(file, 'Property: Zorvane Flex Park');
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' });
+    expect(r.status).toBe('pending-review');
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/imports/${r.importId}/action`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action: 'approve' }) });
+    expect(res.status).toBe(409); // a policy refusal, not the 404 not-found / not-pending status
+    const body = (await res.json()) as { ok: boolean; unmapped: string[]; reason?: string; error?: string };
+    expect(body).toMatchObject({ ok: false, unmapped: [], reason: 'property-unresolved' });
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ status: 'pending-review' });
+  });
+
   it('POST /mappings then approve: 200 {mappingId, rederived}; approve → 200 {ok:true}', async () => {
     const { db, importId } = await pendingWarehouse();
     const app = warehouseRoutes(() => db);
