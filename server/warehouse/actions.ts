@@ -44,7 +44,7 @@ const aliasFilename = (key: string): string =>
   'case-insensitively; containing it is not enough)';
 
 /** The one ledger read that drives the empty, unresolved and mismatch gates and the re-resolution. */
-const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=?';
+const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=? ORDER BY id';
 type LedgerRow = { id: number; raw_account: string; classification: string; property_id: string };
 
 /** The rows NOT keyed to the batch's own property ('unknown', or another property), with their distinct keys sorted
@@ -130,6 +130,8 @@ interface BatchRow {
  * the busy handler (see debt-snapshot.ts). As defense in depth the activating UPDATE is keyed on (id, import_id) and its
  * total change count must equal the rows read, and the batch's status flip must hit exactly one pending-review row;
  * otherwise approve throws and the transaction rolls back, leaving the served version and the batch untouched.
+ * Not covered here: the reverse order (a re-derive that read its prior status before this approve committed, then runs
+ * after it) is ingest.ts's own check-then-write (it reads priorStatus outside its transaction); its fix belongs there.
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
   const result = db.transaction(() => checkAndCommit(db, importId)).immediate();
@@ -331,26 +333,42 @@ function checkAndCommit(db: WarehouseDb, importId: number): ApproveResult {
   return { ok: true };
 }
 
-/** Reject a pending-review import. Rows are left inactive (never deleted); the batch is auditable. */
+/** Reject a pending-review import. Rows are left inactive (never deleted); the batch is auditable.
+ *  The status read and the flip run in one IMMEDIATE transaction, and the flip is guarded on 'pending-review' and must
+ *  change exactly one row: a concurrent backfill re-derive that commits this import between the two must never leave a
+ *  'rejected' batch serving its ledger rows (refute wf_f8901854-484; tests/unit/warehouse-approve-toctou.test.ts). */
 export function rejectImport(db: WarehouseDb, importId: number): SimpleResult {
-  const batch = db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId) as
-    | { status: string }
-    | undefined;
-  if (!batch) return { ok: false, error: `import ${importId} not found` };
-  if (batch.status !== 'pending-review') return { ok: false, error: `import is ${batch.status}, not pending-review` };
-  db.prepare("UPDATE import_batches SET status='rejected' WHERE id=?").run(importId);
-  return { ok: true };
+  return db
+    .transaction((): SimpleResult => {
+      const batch = db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId) as
+        | { status: string }
+        | undefined;
+      if (!batch) return { ok: false, error: `import ${importId} not found` };
+      if (batch.status !== 'pending-review') return { ok: false, error: `import is ${batch.status}, not pending-review` };
+      const changed = db.prepare("UPDATE import_batches SET status='rejected' WHERE id=? AND status='pending-review'").run(importId).changes;
+      if (changed !== 1) throw new Error(`rejectImport: import #${importId} was no longer pending-review at the flip; rolled back.`);
+      return { ok: true };
+    })
+    .immediate();
 }
 
-/** Mark an open data-quality issue resolved. */
+/** Mark an open data-quality issue resolved. Read and flip run in one IMMEDIATE transaction, guarded on 'open' with
+ *  a one-row change count, so a re-derive that deletes and re-creates the issue never yields ok:true for nothing. */
 export function resolveIssue(db: WarehouseDb, issueId: number): SimpleResult {
-  const issue = db.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId) as
-    | { status: string }
-    | undefined;
-  if (!issue) return { ok: false, error: `issue ${issueId} not found` };
-  if (issue.status !== 'open') return { ok: false, error: `issue is ${issue.status}, not open` };
-  db.prepare("UPDATE data_quality_issues SET status='resolved', resolved_at=datetime('now') WHERE id=?").run(issueId);
-  return { ok: true };
+  return db
+    .transaction((): SimpleResult => {
+      const issue = db.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId) as
+        | { status: string }
+        | undefined;
+      if (!issue) return { ok: false, error: `issue ${issueId} not found` };
+      if (issue.status !== 'open') return { ok: false, error: `issue is ${issue.status}, not open` };
+      const changed = db
+        .prepare("UPDATE data_quality_issues SET status='resolved', resolved_at=datetime('now') WHERE id=? AND status='open'")
+        .run(issueId).changes;
+      if (changed !== 1) throw new Error(`resolveIssue: issue #${issueId} was no longer open at the flip; rolled back.`);
+      return { ok: true };
+    })
+    .immediate();
 }
 
 export interface AddMappingInput {
