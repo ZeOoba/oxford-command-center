@@ -32,9 +32,9 @@ const summary: ImportSummary = {
 const issue = (id: number, kind: string, status: string) => ({
   id, kind, detail: `${kind} detail`, severity: 'warn', status, createdAt: '2026-10-15T00:00:00Z', resolvedAt: null,
 });
-function open(status: string, issues: ReturnType<typeof issue>[]) {
-  detail.data = { ...summary, status, rows: [], issues } as ImportDetail;
-  render(<ImportsView imports={[{ ...summary, status }]} />);
+function open(status: string, issues: ReturnType<typeof issue>[], propertyId: string | null = summary.propertyId) {
+  detail.data = { ...summary, propertyId, status, rows: [], issues } as ImportDetail;
+  render(<ImportsView imports={[{ ...summary, propertyId, status }]} />);
   fireEvent.click(screen.getByText(summary.fileName));
 }
 
@@ -58,6 +58,20 @@ describe('ImportsView — sign-undecidable verification control', () => {
   it('no control once the import is no longer pending-review', () => {
     open('committed', [issue(41, 'sign-undecidable', 'open')]);
     expect(screen.queryByRole('button', { name: 'Mark sign verified' })).toBeNull();
+  });
+
+  it('an import whose property is unresolved: "Mark sign verified" is disabled with the reason (approve refuses it whatever the sign)', () => {
+    // approveImport refuses a batch with no resolved property (property-unresolved) before the sign gate, so verifying
+    // the sign would not unlock Approve. Same predicate as the server gate: null, blank or 'unknown'.
+    for (const unresolved of [null, '  ', 'unknown']) {
+      open('pending-review', [issue(41, 'sign-undecidable', 'open')], unresolved);
+      const btn = screen.getByRole('button', { name: 'Mark sign verified' });
+      expect(btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true').toBe(true);
+      fireEvent.click(btn);
+      expect(resolveMutate).not.toHaveBeenCalled();
+      expect(screen.getByText(/property is unresolved/i)).toBeTruthy();
+      cleanup();
+    }
   });
 
   const REFUSAL = 'sign convention undecidable for 1 statement side(s): no sign flip was applied';
