@@ -1,6 +1,6 @@
 // tests/unit/warehouse-actions.test.ts
 import ExcelJS from 'exceljs';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -771,6 +771,8 @@ describe('warehouse actions', () => {
         // The error names the supported unblock path (reject + re-drop a re-exported file with a recognized token).
         expect(refusal.error).toMatch(/reject/i);
         expect(refusal.error).toMatch(/re-export/i);
+        // ...and does not point at a dead end: an identical re-drop (renamed, or after adding an alias) dedups by hash.
+        expect(refusal.error).toMatch(/identical file is deduplicated/i);
       }
       expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
       expect(activeRows(db, importId)).toBe(0);
@@ -839,6 +841,18 @@ describe('warehouse actions', () => {
       expect(r.status).toBe('committed');
       expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ property_id: '1100-rarig-ave-columbus-oh' });
       expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'rejected' });
+    });
+
+    it('(x6b) an IDENTICAL re-drop under a recognized filename is a duplicate (why the error requires a fresh export)', async () => {
+      const { db, dir, importId } = await unresolvedPending();
+      expect(rejectImport(db, importId).ok).toBe(true);
+      const sub = join(dir, 'renamed');
+      mkdirSync(sub);
+      const file = join(sub, 'P&L 2025 -- 1100 Rarig.xlsx');
+      copyFileSync(join(dir, UNRESOLVED_FILE), file); // same bytes, recognized name
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T03:00:00Z' });
+      expect(r.status).toBe('duplicate');
+      expect(committedCount(db)).toBe(0);
     });
 
     it('(x7) control: a resolved-property pending batch still approves', async () => {
