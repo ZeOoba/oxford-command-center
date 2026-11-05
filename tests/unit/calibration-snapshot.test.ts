@@ -12,7 +12,7 @@
 // CENTRAL PHASE-2 CAVEAT pinned here: an empty / no-outcome warehouse is the NORMAL state — runSnapshot
 // returns a zeroed summary, writes nothing scoreable, and NEVER throws or divides by zero.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -50,7 +50,12 @@ async function writeFixture(path: string, opts: { token: string; year: number; r
 }
 
 async function commitYear(db: WarehouseDb, dir: string, opts: { token: string; year: number; rent: number; repair: number; at: string }): Promise<void> {
-  const file = join(dir, `P&L ${opts.year} -- ${opts.token} ${opts.rent}.xlsx`);
+  // Rent goes in a per-call SUBDIRECTORY, not the filename: detect.ts resolves a property only on an EXACT
+  // PROPERTY_ALIASES token, so a rent-suffixed filename resolves no property, and approveImport refuses to
+  // commit such a batch ('property-unresolved').
+  const sub = join(dir, `r${opts.rent}-${opts.repair}`);
+  mkdirSync(sub, { recursive: true });
+  const file = join(sub, `P&L ${opts.year} -- ${opts.token}.xlsx`);
   await writeFixture(file, opts);
   const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: opts.at, autoCommitThreshold: 0.99 });
   if (r.status === 'pending-review') expect(approveImport(db, r.importId!).ok).toBe(true);

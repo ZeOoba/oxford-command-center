@@ -10,7 +10,7 @@
 //
 // DB-backed via tmpdir sqlite, synthetic data only.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,7 +66,12 @@ async function commitYear(
   rawDir: string,
   opts: { token: string; year: number; rent: number; repair: number; at: string },
 ): Promise<number> {
-  const file = join(rawDir, `P&L ${opts.year} -- ${opts.token} ${opts.rent}.xlsx`);
+  // Rent goes in a per-call SUBDIRECTORY, not the filename: detect.ts resolves a property only on an EXACT
+  // PROPERTY_ALIASES token, so a rent-suffixed filename resolves no property, and approveImport refuses to
+  // commit such a batch ('property-unresolved').
+  const sub = join(rawDir, `r${opts.rent}-${opts.repair}`);
+  mkdirSync(sub, { recursive: true });
+  const file = join(sub, `P&L ${opts.year} -- ${opts.token}.xlsx`);
   await writeFixture(file, opts);
   const r = await ingestFile(db, file, { rawDir: join(rawDir, 'raw'), importedAt: opts.at, autoCommitThreshold: 0.99 });
   if (r.status === 'pending-review') {
