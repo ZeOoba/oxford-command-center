@@ -61,9 +61,8 @@ afterEach(() => {
 });
 
 /** Fixture property label -> the EXACT detect.ts PROPERTY_ALIASES token, so the filename resolves to a real
- *  property_master id. approveImport refuses a batch whose property did not resolve ('property-unresolved'),
- *  so the former rent-suffixed filenames (which ingested with a NULL property, ledger 'unknown') can no
- *  longer be committed through approve. */
+ *  property_master id. The former rent-suffixed filenames resolved no property (batch property NULL, ledger rows
+ *  'unknown'), and approveImport refuses to commit such a batch ('property-unresolved'). */
 const ALIAS_TOKEN: Record<string, string> = {
   '1100 Rarig Ave': '1100 rarig',
   '9620 E State Route 350': '9620 state 350',
@@ -307,10 +306,11 @@ describe('calibration — Zod boundary (§2) + determinism (§7)', () => {
 // These repros use filename tokens that RESOLVE to real property_master ids (detect.ts
 // PROPERTY_ALIASES) so the ledger carries a concrete property_id (with rentableSf, cash basis)
 // — not the 'unknown' aggregate. That gives real per-property quartiles + a real same-basis
-// cohort, which D1/D2/D4 need. (The tests above formerly used rent-suffixed tokens -> a single
-// 'unknown' subject. That path is retired: approveImport refuses a NULL-property batch with
-// 'property-unresolved', so an 'unknown' subject can no longer be committed via approve. They now
-// resolve to real properties through ALIAS_TOKEN.)
+// cohort, which D1/D2/D4 need. (The tests above formerly used rent-suffixed tokens that resolved no
+// property, so approve committed each batch under one 'unknown' subject. approveImport now refuses to
+// commit any ledger row that is not keyed to the batch's own resolved property ('property-unresolved',
+// 'property-mismatch'), so those tests resolve real properties through ALIAS_TOKEN and this file no
+// longer exercises an 'unknown' subject.)
 
 /** Commit one full-year P&L whose filename token is an EXACT detect.ts alias (→ resolves to a
  *  real property_master id). `repair` grows faster than `rent` across years so reclassifying the
