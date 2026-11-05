@@ -1018,6 +1018,15 @@
     "review_detail": "Architect-owned edit: CLAUDE.md (section 2 Gate row, section 6 step list/paragraph, header note). Also tests/unit/gate-scripts.test.ts. Reviewed (task review Approved; CI gate + refute-required green) and merge approved by Gabriel in-turn 2026-11-05 as PR 552 (branch chore/gate-list-test).",
     "last_updated": "2026-11-05T00:00:00Z"
   },
+  "gate-list-test-followup": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-11-05 (maintenance-reduction bundle 1, follow-up to #552)",
+    "phase": "Follow-up to #552: gate-scripts test checks CLAUDE.md section 6 both ways (describedSteps helper + stale-step test); README gate rows de-counted. No package.json, financial or config change.",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Follow-up to #552. Architect-owned edit: CLAUDE.md (section 6 closing paragraph, one clause). Also README.md (gate/gate:ci rows) and tests/unit/gate-scripts.test.ts. Reviewed (task review Approved; CI gate + refute-required green) and merge approved by Gabriel in-turn 2026-11-05 as PR 557.",
+    "last_updated": "2026-11-05T00:00:00Z"
+  },
   "approve-import-property-gates": {
     "agent_role": "Engineering (Claude Code) - Tier-A TA-2 follow-up to merged PR 554, coordinator-directed 2026-11-05 (PR 556, branch fix/ta2-approve-gate-refute-round2)",
     "phase": "Follow-up to PR 554 (approveImport property gates), fixing refute rounds wf_c051a2ee-9c1 and wf_2e74b57b-da3: check order (newer-version, empty, property gates), one ledger read driving the empty/unresolved/mismatch gates, refusal texts with the exact-token filename rule and reachable unblock paths, a co-occurring mismatch named under newer-version-committed, and UI parity for the sign-verify control. Files: server/warehouse/actions.ts, server/warehouse/api.ts (comment), src/modules/intel/approve-blockers.ts (new), src/modules/intel/ImportsView.tsx, src/modules/intel/DataQualityView.tsx, src/modules/intel/AdminOnboardView.tsx (label), src/modules/data/DataModule.tsx (one prop), scripts/warehouse-verify.ts (message and docs only), architecture/api-contracts.md, tests. No migration, schema, parse, package.json, API payload or governor change.",
