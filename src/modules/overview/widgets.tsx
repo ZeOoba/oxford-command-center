@@ -22,6 +22,8 @@ import { OVERVIEW_MAX_ITEMS } from '../../lib/ranked-cap';
 import type { LayoutMigration } from '@/brain/useWorkspaces';
 import { describeAlertCause } from '../alerts/cause-labels';
 import { GovernorTiles } from './GovernorTiles';
+import { landlordCostCaveat } from './landlord-cost-caveat';
+import { LandlordCostChip } from './LandlordCostChip';
 
 export interface WidgetDef {
   id: string;
@@ -49,11 +51,23 @@ function KpiStripWidget() {
   const prev = cashSpark.at(-2) ?? last;
   const cashDelta = prev ? (last - prev) / prev : null;
   const goTo = (id: string) => () => ui.setActiveModule(id);
+  // Design review 2026-10-31 finding 6: the weighted cap rate is built on the same NOI, so one caveat
+  // covers both. Labels only (ruling 2026-10-30); the figures are not restated.
+  const llCaveat = landlordCostCaveat(data.snapshot.properties, { measure: 'this NOI and the weighted cap rate', plural: true });
   return (
     <div className="flex flex-col gap-3">
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} onPress={goTo('portfolio')} />
-      <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} sublabel={`Oxford share · workbook · ${fmtPct(k.weightedCapRate.value)} wtd cap`} accentColor="var(--color-pos)" onPress={goTo('intel')} />
+      <KpiStat
+        label="Net Operating Income"
+        value={k.noi.value}
+        format={fmtUsdCompact}
+        prov={k.noi.prov}
+        sublabel={`Oxford share · workbook · ${fmtPct(k.weightedCapRate.value)} wtd cap`}
+        caveat={llCaveat ? <LandlordCostChip caveat={llCaveat} /> : undefined}
+        accentColor="var(--color-pos)"
+        onPress={goTo('intel')}
+      />
       <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} sublabel={`${fmtNum(k.tenantCount.value)} tenants`} accentColor="var(--color-info)" onPress={goTo('portfolio')} />
       <KpiStat label="Occupancy" value={k.occupancy.value === null ? null : k.occupancy.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} prov={k.occupancy.prov} sublabel="weighted by SF" accentColor="var(--color-pos)" onPress={goTo('leases')} />
       <KpiStat label="WALT" value={k.walt.value} format={fmtYears} prov={k.walt.prov} sublabel="rent-weighted" accentColor="var(--color-accent2)" onPress={goTo('leases')} />

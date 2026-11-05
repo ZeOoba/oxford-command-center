@@ -14,7 +14,8 @@ describe('TopBar title', () => {
   });
 
   it('the as-of dateline yields first and only shows where it fits', () => {
-    const asOf = /<span className="([^"]+)"[^>]*>\s*As of/.exec(src)?.[1] ?? '';
+    // Labelled as the workbook's data date (design review 2026-10-31 finding 7).
+    const asOf = /<span className="([^"]+)"[^>]*>\s*Workbook as of/.exec(src)?.[1] ?? '';
     expect(asOf).toContain('shrink-[100]');
     expect(asOf).toContain('truncate');
     expect(asOf).toContain('min-[1400px]:inline');
