@@ -3,7 +3,7 @@
 > **IF YOU ARE AN AGENT: READ THIS ENTIRE FILE BEFORE TOUCHING ANY FILE IN THIS REPO.**
 > This is not optional. This is not a formality. Skipping this file is the root cause of every architectural collision this project has experienced.
 
-**Maintained by:** Lead Architect · **Last verified:** 2026-10-08 (§2 merge-history table and §3 merged-phase table collapsed to pointers; §6 gate list last checked against `package.json` 2026-09-27)
+**Maintained by:** Lead Architect · **Last verified:** 2026-10-08 (§2 merge-history table and §3 merged-phase table collapsed to pointers; §6 gate list drift-checked by tests/unit/gate-scripts.test.ts since 2026-11-05)
 
 ---
 
@@ -49,7 +49,7 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
 | Merge history / open PRs / test count | Not tracked here (they go stale within days). Run `git log origin/main --oneline` and `gh pr list`. |
-| Gate | governance + typecheck + lint + check:dev-css + check:schema-drift + test + reconcile:snapshot + reconcile + reconcile:noi-crosscheck + warehouse:verify + warehouse:drift (11 steps — see §6; a separate `gate:ci` script runs a different subset for CI) |
+| Gate | `npm run gate` — steps listed in §6 (source of truth: `package.json`; drift-checked by `tests/unit/gate-scripts.test.ts`). CI runs `gate:ci`. |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -156,6 +156,8 @@ typecheck    → tsc --noEmit (strict + noUncheckedIndexedAccess)
 lint         → eslint --max-warnings 0
 check:dev-css → boots the real dev-mode (vite dev) CSS pipeline against theme.css to catch
                 parse errors that production's Lightning CSS optimize() pass silently masks
+check:css-tokens → every var(--name) under src/ has a definition under src/ (an undefined
+                custom property fails silently in the browser; scripts/check-css-tokens.ts)
 check:schema-drift → cross-references migration columns, a route's Zod request schema, and
                 the values actually bound into its INSERT/UPDATE, so a renamed/reordered field
                 that Zod silently strips or a column bound to the wrong field is caught directly
@@ -163,14 +165,14 @@ test         → vitest run (all unit tests)
 reconcile:snapshot → validates the live snapshot against its own self-totals
 reconcile    → $0-tolerance workbook self-totals check
 reconcile:noi-crosscheck → Spine A vs Spine B NOI tie-out (server/warehouse/reconcile-noi.ts)
-warehouse:verify → fresh SQLite in tmpdir + 32 file ingest + assertions
+warehouse:verify → fresh SQLite in tmpdir + full file ingest + assertions
 warehouse:drift  → compares the live warehouse against a fresh re-ingest, flags silent drift
 ```
 
-(This is the true 11-step `package.json` `gate` script as of 2026-09-27 — verify against it
-directly if this list and `package.json` ever disagree; this file is documentation, not the
-source of truth. A separate `gate:ci` script exists with a different step set — typecheck, lint,
-check:dev-css, test, reconcile:snapshot, build, check:bundle — used for CI, not local commits.)
+(`package.json` is the source of truth for both scripts. `tests/unit/gate-scripts.test.ts`
+fails if this list omits a `gate` step, or if `gate:ci` stops being exactly `gate` minus the
+four local-only steps (reconcile, reconcile:noi-crosscheck, warehouse:verify, warehouse:drift)
+plus build and check:bundle — so neither this list nor that relationship can drift silently.)
 
 `warehouse:verify` uses `os.tmpdir()` — it never touches `data/warehouse/finance.sqlite`. Safe to run in any worktree.
 

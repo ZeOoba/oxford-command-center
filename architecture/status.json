@@ -1008,5 +1008,14 @@
     "blocked_by": null,
     "review_needed": false,
     "last_updated": "2026-10-29T17:50:00Z"
+  },
+  "gate-list-test": {
+    "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-11-05 (maintenance-reduction bundle 1, Task 5)",
+    "phase": "Gate-list drift test + CLAUDE.md de-count (bundle 1): adds tests/unit/gate-scripts.test.ts; CLAUDE.md section 6 gains check:css-tokens and drops hand-typed counts. No package.json, financial or config change.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edit: CLAUDE.md (section 2 Gate row, section 6 step list/paragraph, header note). Also tests/unit/gate-scripts.test.ts. Branch chore/gate-list-test. Not merged.",
+    "last_updated": "2026-11-05T00:00:00Z"
   }
 }
