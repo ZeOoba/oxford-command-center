@@ -32,9 +32,14 @@ const summary: ImportSummary = {
 const issue = (id: number, kind: string, status: string) => ({
   id, kind, detail: `${kind} detail`, severity: 'warn', status, createdAt: '2026-10-15T00:00:00Z', resolvedAt: null,
 });
-function open(status: string, issues: ReturnType<typeof issue>[], propertyId: string | null = summary.propertyId) {
+function open(
+  status: string,
+  issues: ReturnType<typeof issue>[],
+  propertyId: string | null = summary.propertyId,
+  others: ImportSummary[] = [],
+) {
   detail.data = { ...summary, propertyId, status, rows: [], issues } as ImportDetail;
-  render(<ImportsView imports={[{ ...summary, propertyId, status }]} />);
+  render(<ImportsView imports={[{ ...summary, propertyId, status }, ...others]} />);
   fireEvent.click(screen.getByText(summary.fileName));
 }
 
@@ -72,6 +77,23 @@ describe('ImportsView — sign-undecidable verification control', () => {
       expect(screen.getByText(/property is unresolved/i)).toBeTruthy();
       cleanup();
     }
+  });
+
+  it('a NEWER committed version of the same property and period: "Mark sign verified" is disabled with the reason; an older one does not block', () => {
+    // approveImport refuses an older import while a later arrival of its period is committed (newer-version-committed),
+    // before the sign gate. The view mirrors that from the imports list it already holds.
+    const newer: ImportSummary = { ...summary, id: 9, fileName: 'P&L 2025 -- 1100 Rarig (corrected).xlsx', status: 'committed', version: 2 };
+    open('pending-review', [issue(41, 'sign-undecidable', 'open')], summary.propertyId, [newer]);
+    const btn = screen.getByRole('button', { name: 'Mark sign verified' });
+    expect(btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true').toBe(true);
+    fireEvent.click(btn);
+    expect(resolveMutate).not.toHaveBeenCalled();
+    expect(screen.getByText(/newer version of this period is already committed/i)).toBeTruthy();
+    cleanup();
+    const older: ImportSummary = { ...summary, id: 3, fileName: 'P&L 2025 -- 1100 Rarig (first).xlsx', status: 'committed', version: 0 };
+    open('pending-review', [issue(41, 'sign-undecidable', 'open')], summary.propertyId, [older]);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark sign verified' }));
+    expect(resolveMutate).toHaveBeenCalledTimes(1);
   });
 
   const REFUSAL = 'sign convention undecidable for 1 statement side(s): no sign flip was applied';

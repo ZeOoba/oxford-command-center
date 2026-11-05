@@ -76,3 +76,14 @@ describe('AdminOnboardView', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('AdminOnboardView — alias field label', () => {
+  it('does not claim onboarding aliases drive file detection: detect.ts reads only its PROPERTY_ALIASES map', () => {
+    // server/warehouse/detect.ts resolves a filename token through the static PROPERTY_ALIASES map only; the aliases
+    // stored by onboarding (property_onboarding.aliases_json) are not read by detection (property-onboarding.ts header).
+    render(<AdminOnboardView />);
+    expect(screen.getByText(/not read by filename detection/i)).toBeTruthy();
+    expect(screen.getByText(/PROPERTY_ALIASES/)).toBeTruthy();
+    expect(screen.queryByText(/for file detection\)/i)).toBeNull();
+  });
+});
