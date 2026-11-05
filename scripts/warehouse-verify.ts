@@ -661,7 +661,19 @@ async function main(): Promise<number> {
 
         const ok = approveImport(adb, r.importId);
         if (!ok.ok) {
-          failures.push(`approve-path: approveImport refused a fully-mapped real import (${f}): unmapped=[${ok.unmapped.join('; ')}]${ok.error ? ` error=${ok.error}` : ''}`);
+          // The property refusals' error text is the LIVE-warehouse fix (reject, re-drop a fresh export). This throwaway
+          // warehouse holds ONE fresh ingest of each real file and re-derives nothing, so there is nothing to reject:
+          // a property refusal here means detection or ingest regressed for this file. Name that fix instead. Message
+          // only: every refusal is still a failure.
+          const detail =
+            ok.reason === 'property-unresolved'
+              ? ' reason=property-unresolved: this filename no longer resolves a property; fix detection for its token (server/warehouse/detect.ts PROPERTY_ALIASES)'
+              : ok.reason === 'property-mismatch'
+                ? ' reason=property-mismatch: one fresh ingest keyed its ledger rows to a different property than its import batch; fix that ingest regression (server/warehouse/ingest.ts)'
+                : ok.error
+                  ? ` error=${ok.error}`
+                  : '';
+          failures.push(`approve-path: approveImport refused a fully-mapped real import (${f}): unmapped=[${ok.unmapped.join('; ')}]${detail}`);
           continue;
         }
         approved += 1;

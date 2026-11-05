@@ -1,6 +1,6 @@
 // tests/unit/warehouse-actions.test.ts
 import ExcelJS from 'exceljs';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -709,7 +709,9 @@ describe('warehouse actions', () => {
       // Import A: fully mapped CLEAN-ish pending (unmapped accounts mapped below). Import B: undecidable, in the SAME db.
       const a = await pendingWarehouse();
       seedMappings(a.db, UNDECIDABLE_SEED); // Insurance Expense etc. (idempotent; A's own accounts are mapped via overrides below)
-      const b = await undecidablePending({ db: a.db, dir: a.dir }, '1900 N Broadway', '1900 N Broadway');
+      // fileLabel is the EXACT detect.ts alias token so B resolves a property (an unresolved batch would be
+      // refused 'property-unresolved' before the sign gate this case is about).
+      const b = await undecidablePending({ db: a.db, dir: a.dir }, '1900 N Broadway', '1900 Broadway');
       expect(b.importId).not.toBe(a.importId);
       expect(openUndecidable(a.db, b.importId)).toHaveLength(1);
       expect(openUndecidable(a.db, a.importId)).toHaveLength(0);
@@ -730,6 +732,251 @@ describe('warehouse actions', () => {
       const { db, importId } = await undecidablePending();
       expect(rejectImport(db, importId).ok).toBe(true);
       expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'rejected' });
+    });
+  });
+
+  describe('unresolved-property approve gate', () => {
+    // A filename whose token is NOT an exact detect.ts PROPERTY_ALIASES key ingests with
+    // import_batches.property_id NULL (ledger rows 'unknown') and confidence 0.4, so it always lands in
+    // pending-review. Approving it would commit NOI under no property: the supersede keyed on a NULL
+    // property matches nothing (silent double count) and every such batch merges into one 'unknown'
+    // pseudo-property. approveImport must refuse it. Synthetic property name only.
+    const UNRESOLVED_FILE = 'P&L 2025 -- Zorvane Flex Park.xlsx';
+    async function unresolvedPending(seed = SEED): Promise<{ db: WarehouseDb; dir: string; importId: number }> {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-unres-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, seed);
+      const file = join(dir, UNRESOLVED_FILE);
+      await writeFixture(file, 'Property: Zorvane Flex Park');
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' });
+      expect(r.status).toBe('pending-review');
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ property_id: null });
+      return { db, dir, importId: r.importId! };
+    }
+    const activeRows = (db: WarehouseDb, importId: number) =>
+      (db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE import_id=? AND is_active=1').get(importId) as { c: number }).c;
+    const committedCount = (db: WarehouseDb) =>
+      (db.prepare("SELECT COUNT(*) AS c FROM import_batches WHERE status='committed'").get() as { c: number }).c;
+    const verdictCount = (db: WarehouseDb) =>
+      (db.prepare('SELECT COUNT(*) AS c FROM calibration_verdict').get() as { c: number }).c;
+
+    it('(x1) refuses a fully-mapped NULL-property batch: reason property-unresolved, nothing activated or committed', async () => {
+      const { db, importId } = await unresolvedPending();
+      const refusal = approveImport(db, importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('property-unresolved');
+        expect(refusal.unmapped).toEqual([]);
+        // The error names the supported unblock path (reject + re-drop a re-exported file with a recognized token).
+        expect(refusal.error).toMatch(/reject/i);
+        expect(refusal.error).toMatch(/re-export/i);
+        // ...and claims dedup only where it holds: once the import is rejected (x6b). A still-pending import from an older
+        // parser re-derives in place instead (x6c), so the text must not say a rename can never unblock it.
+        expect(refusal.error).toMatch(/once this import is rejected, re-dropping the identical file is deduplicated/i);
+        expect(refusal.error).not.toMatch(/does not unblock/i);
+      }
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
+      expect(activeRows(db, importId)).toBe(0);
+      expect(committedCount(db)).toBe(0);
+    });
+
+    it('(x2) the gate fires BEFORE the unmapped check: unmapped is [] even while accounts are unmapped', async () => {
+      const { db, importId } = await unresolvedPending(SEED.slice(0, 1));
+      const refusal = approveImport(db, importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('property-unresolved');
+        expect(refusal.unmapped).toEqual([]);
+      }
+      expect(activeRows(db, importId)).toBe(0);
+    });
+
+    it.each([
+      ['empty string', ''],
+      ['whitespace', '   '],
+      ["the 'unknown' ledger sentinel", 'unknown'],
+    ])('(x3) defense in depth: also refuses a batch whose stored property_id is %s', async (_label, value) => {
+      // import_batches.property_id is FK-bound to property_master, so ingest can only write NULL or a real id. These
+      // values are reachable only with foreign keys off (a legacy or hand-edited file); the gate still fails closed.
+      const { db, importId } = await unresolvedPending();
+      db.pragma('foreign_keys = OFF');
+      db.prepare('UPDATE import_batches SET property_id=? WHERE id=?').run(value, importId);
+      db.pragma('foreign_keys = ON');
+      const refusal = approveImport(db, importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) expect(refusal.reason).toBe('property-unresolved');
+      expect(activeRows(db, importId)).toBe(0);
+      expect(committedCount(db)).toBe(0);
+    });
+
+    it('(x4) the calibration emit hook does not fire on the refusal', async () => {
+      const { db, importId } = await unresolvedPending();
+      const before = verdictCount(db);
+      expect(approveImport(db, importId).ok).toBe(false);
+      expect(verdictCount(db)).toBe(before);
+      const emitFailed = (db.prepare("SELECT COUNT(*) AS c FROM data_quality_issues WHERE kind='calibration-emit-failed'").get() as { c: number }).c;
+      expect(emitFailed).toBe(0);
+    });
+
+    it('(x5) a second NULL-property batch cannot be committed alongside the first (no unknown-keyed double count)', async () => {
+      const { db, dir, importId } = await unresolvedPending();
+      const other = join(dir, 'P&L 2025 -- Zorvane Yard.xlsx');
+      await writeFixture(other, 'Property: Zorvane Yard');
+      const r2 = await ingestFile(db, other, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T01:00:00Z' });
+      expect(r2.status).toBe('pending-review');
+      expect(approveImport(db, importId).ok).toBe(false);
+      expect(approveImport(db, r2.importId!).ok).toBe(false);
+      expect(committedCount(db)).toBe(0);
+      expect((db.prepare("SELECT COUNT(*) AS c FROM ledger_entries WHERE property_id='unknown' AND is_active=1").get() as { c: number }).c).toBe(0);
+    });
+
+    it('(x6) unblock path: reject the refused batch, re-drop a re-exported copy whose filename carries a recognized token; it commits under the real property', async () => {
+      const { db, dir, importId } = await unresolvedPending();
+      expect(approveImport(db, importId).ok).toBe(false);
+      expect(rejectImport(db, importId).ok).toBe(true);
+      const sub = join(dir, 're-export');
+      mkdirSync(sub);
+      const file = join(sub, 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(file, 'Property: 1100 Rarig Ave (re-export)'); // new bytes: after reject an identical file is a duplicate (x6b)
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z' });
+      expect(r.status).toBe('committed');
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ property_id: '1100-rarig-ave-columbus-oh' });
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'rejected' });
+    });
+
+    it('(x6b) once rejected, an IDENTICAL re-drop is a duplicate even under a recognized filename, so the unblock needs a fresh export', async () => {
+      // registerImport re-derives a same-hash file only while its import is committed or pending-review AND from an
+      // older parser; a rejected import is never re-derived, so its identical bytes are a duplicate under any name.
+      const { db, dir, importId } = await unresolvedPending();
+      expect(rejectImport(db, importId).ok).toBe(true);
+      db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(importId); // even from an older parser
+      const sub = join(dir, 'renamed');
+      mkdirSync(sub);
+      const file = join(sub, 'P&L 2025 -- 1100 Rarig.xlsx');
+      copyFileSync(join(dir, UNRESOLVED_FILE), file); // same bytes, recognized name
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T03:00:00Z' });
+      expect(r).toMatchObject({ status: 'duplicate', importId });
+      expect(committedCount(db)).toBe(0);
+    });
+
+    it('(x6c) while still pending from an older parser, an identical re-drop is NOT a duplicate: it re-derives the same import in place, and approve still refuses it', async () => {
+      // Why the refusal text promises dedup only once the import is rejected. The re-derive re-keys the ledger rows to the
+      // new filename's property but leaves the batch's property NULL (ingest.ts re-derive; ING-2). Held here with a 0.99
+      // threshold. With the default threshold that re-derive can commit through ingest itself while the batch's property
+      // stays NULL: the ING-2 re-derive defect, outside approveImport.
+      const { db, dir, importId } = await unresolvedPending();
+      db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(importId); // simulate a parser bump
+      const sub = join(dir, 'renamed-stale');
+      mkdirSync(sub);
+      const file = join(sub, 'P&L 2025 -- 1100 Rarig.xlsx');
+      copyFileSync(join(dir, UNRESOLVED_FILE), file); // same bytes, recognized name
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T04:00:00Z', autoCommitThreshold: 0.99 });
+      expect(r).toMatchObject({ status: 'pending-review', importId });
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(importId)).toMatchObject({ property_id: null });
+      const refusal = approveImport(db, importId);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) expect(refusal.reason).toBe('property-unresolved');
+      expect(committedCount(db)).toBe(0);
+    });
+
+    it('(x7) control: a resolved-property pending batch still approves', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-unres-ctl-'));
+      const db = openWarehouse(join(dir, 'f.sqlite'));
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(file);
+      const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z', autoCommitThreshold: 0.99 });
+      expect(r.status).toBe('pending-review');
+      expect(approveImport(db, r.importId!).ok).toBe(true);
+      expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ status: 'committed' });
+    });
+  });
+
+  describe('ledger/batch property divergence approve gate', () => {
+    // import_batches.property_id is written once, at first detection. A stale-parser RE-DERIVE (ingest.ts) rebuilds the
+    // ledger rows from the re-drop's filename but never rewrites the batch's property, so the two can diverge (the root
+    // fix is ING-2's). NOI keys on ledger_entries.property_id; approve's supersede keys on the batch's. Approving a
+    // diverged batch supersedes the batch property's served version and serves the statement under the ledger's key.
+    // In-memory warehouse, synthetic statements; a parser bump is simulated by zeroing parser_version.
+    const RARIG = '1100-rarig-ave-columbus-oh';
+    const FIFTH = '3540-e-5th-ave-columbus-oh';
+    const statusOf = (db: WarehouseDb, id: number) =>
+      (db.prepare('SELECT status FROM import_batches WHERE id=?').get(id) as { status: string }).status;
+    const ledgerKeys = (db: WarehouseDb, id: number) =>
+      (db.prepare('SELECT DISTINCT property_id AS p FROM ledger_entries WHERE import_id=? ORDER BY p').all(id) as Array<{ p: string }>).map((k) => k.p);
+    const activeFor = (db: WarehouseDb, propertyId: string) =>
+      (db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE property_id=? AND is_active=1').get(propertyId) as { c: number }).c;
+    const verdictCount = (db: WarehouseDb) =>
+      (db.prepare('SELECT COUNT(*) AS c FROM calibration_verdict').get() as { c: number }).c;
+
+    /** v1 = committed 1100 Rarig 2025 (served). v2 = a later export of the same property and period (new bytes), held for
+     *  review. v2 then goes stale (parser bump) and its IDENTICAL bytes are re-dropped as `redropName`: ingest re-derives
+     *  v2 in place, re-keying its ledger rows to that filename's detection while v2's batch stays 1100 Rarig. */
+    async function divergedPending(redropName: string): Promise<{ db: WarehouseDb; v1: number; v2: number }> {
+      const dir = mkdtempSync(join(tmpdir(), 'wha-div-'));
+      const db = openWarehouse(':memory:');
+      seedPropertyMaster(db);
+      seedMappings(db, SEED);
+      for (const sub of ['v1', 'v2', 'redrop']) mkdirSync(join(dir, sub));
+      const v1File = join(dir, 'v1', 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(v1File);
+      const v1 = await ingestFile(db, v1File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' });
+      expect(v1.status).toBe('committed');
+      const v2File = join(dir, 'v2', 'P&L 2025 -- 1100 Rarig.xlsx');
+      await writeFixture(v2File, 'Property: 1100 Rarig Ave (corrected export)');
+      const v2 = await ingestFile(db, v2File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T01:00:00Z', autoCommitThreshold: 0.99 });
+      expect(v2.status).toBe('pending-review');
+      db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(v2.importId);
+      const redrop = join(dir, 'redrop', redropName);
+      copyFileSync(v2File, redrop);
+      const r = await ingestFile(db, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z', autoCommitThreshold: 0.99 });
+      expect(r).toMatchObject({ status: 'pending-review', importId: v2.importId }); // re-derived in place, still held
+      expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ property_id: RARIG });
+      return { db, v1: v1.importId!, v2: v2.importId! };
+    }
+
+    it("(y1) S2: a batch whose ledger rows were re-derived to 'unknown' is refused (property-mismatch); 1100 Rarig 2025 keeps serving v1", async () => {
+      const { db, v1, v2 } = await divergedPending('P&L 2025 -- Zorvane Flex Park.xlsx');
+      expect(ledgerKeys(db, v2)).toEqual(['unknown']);
+      const verdictsBefore = verdictCount(db);
+      const refusal = approveImport(db, v2);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('property-mismatch');
+        expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toContain("'unknown'");
+        expect(refusal.error).toContain(RARIG);
+        expect(refusal.error).toMatch(/fresh export/i);
+      }
+      expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['committed', 'pending-review']);
+      expect(activeFor(db, RARIG)).toBe(3); // v1 still served
+      expect(activeFor(db, 'unknown')).toBe(0);
+      expect(verdictCount(db)).toBe(verdictsBefore); // no calibration emit on the refusal
+    });
+
+    it('(y2) S2b: a batch whose ledger rows were re-derived to ANOTHER property is refused; 3540 E 5th never serves 1100 Rarig figures', async () => {
+      const { db, v1, v2 } = await divergedPending('P&L 2025 -- 3540 E 5th.xlsx');
+      expect(ledgerKeys(db, v2)).toEqual([FIFTH]);
+      const refusal = approveImport(db, v2);
+      expect(refusal.ok).toBe(false);
+      if (!refusal.ok) {
+        expect(refusal.reason).toBe('property-mismatch');
+        expect(refusal.unmapped).toEqual([]);
+        expect(refusal.error).toContain(FIFTH);
+      }
+      expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['committed', 'pending-review']);
+      expect(activeFor(db, RARIG)).toBe(3);
+      expect(activeFor(db, FIFTH)).toBe(0);
+    });
+
+    it('(y3) control: a stale re-derive under the SAME property filename still approves and supersedes v1', async () => {
+      const { db, v1, v2 } = await divergedPending('P&L 2025 -- 1100 Rarig.xlsx');
+      expect(ledgerKeys(db, v2)).toEqual([RARIG]);
+      expect(approveImport(db, v2).ok).toBe(true);
+      expect([statusOf(db, v1), statusOf(db, v2)]).toEqual(['superseded', 'committed']);
+      expect(activeFor(db, RARIG)).toBe(3);
     });
   });
 });
