@@ -5,7 +5,7 @@
 // boundary (every route .parse()s its envelope), query validation (bad kind → 400), the 503 guard,
 // and that a resolved verdict surfaces in the log + report.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -44,7 +44,12 @@ async function writeFixture(path: string, opts: { token: string; year: number; r
 }
 
 async function commitYear(db: WarehouseDb, dir: string, opts: { token: string; year: number; rent: number; repair: number; at: string }): Promise<void> {
-  const file = join(dir, `P&L ${opts.year} -- ${opts.token} ${opts.rent}.xlsx`);
+  // Rent goes in a per-call SUBDIRECTORY, not the filename: detect.ts resolves a property only on an EXACT
+  // PROPERTY_ALIASES token, so a rent-suffixed filename ingested with a NULL property, which approveImport
+  // now refuses ('property-unresolved').
+  const sub = join(dir, `r${opts.rent}-${opts.repair}`);
+  mkdirSync(sub, { recursive: true });
+  const file = join(sub, `P&L ${opts.year} -- ${opts.token}.xlsx`);
   await writeFixture(file, opts);
   const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: opts.at, autoCommitThreshold: 0.99 });
   if (r.status === 'pending-review') expect(approveImport(db, r.importId!).ok).toBe(true);
