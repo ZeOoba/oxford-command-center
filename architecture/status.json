@@ -1017,5 +1017,14 @@
     "review_needed": false,
     "review_detail": "Architect-owned edit: CLAUDE.md (section 2 Gate row, section 6 step list/paragraph, header note). Also tests/unit/gate-scripts.test.ts. Reviewed (task review Approved; CI gate + refute-required green) and merge approved by Gabriel in-turn 2026-11-05 as PR 552 (branch chore/gate-list-test).",
     "last_updated": "2026-11-05T00:00:00Z"
+  },
+  "approve-import-property-gates": {
+    "agent_role": "Engineering (Claude Code) - Tier-A TA-2 implementation, coordinator-directed 2026-11-05 (follow-up to merged PR 554, branch fix/ta2-approve-gate-refute-round2)",
+    "phase": "approveImport property gates on the financial-ingest approve path (409 property-unresolved / property-mismatch, merged in PR 554): the follow-up that fixes the refute round 2 findings (wf_c051a2ee-9c1). Code: server/warehouse/actions.ts, server/warehouse/api.ts (comment), src/modules/intel/hooks.ts and ImportsView.tsx, scripts/warehouse-verify.ts (message and docs only), tests. No migration, schema, parse, package.json or governor change.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edit: architecture/api-contracts.md, the POST /api/warehouse/imports/:id/action approve-responses paragraph only. Adds 409 reason property-unresolved and 409 reason property-mismatch with their unblock path, states that an empty import (no ledger rows) still returns 404 even when its property is unresolved, and records the check order. Why: the contract must list every refusal the approve route returns. Needs architect acknowledgment before merge, in addition to the refute-financial-change attestation and Gabriel review (financial ingest).",
+    "last_updated": "2026-11-05T18:57:28Z"
   }
 }
