@@ -18,6 +18,19 @@ const LOCAL_ONLY = ['reconcile', 'reconcile:noi-crosscheck', 'warehouse:verify',
 // CI builds and size-checks the bundle; the local gate does not.
 const CI_ONLY = ['build', 'check:bundle'];
 
+// Step names described by CLAUDE.md §6's first fenced block. Only lines containing the arrow
+// count as step lines (first token before it is the step name); continuation lines are ignored.
+const describedSteps = (md: string): string[] => {
+  const section = md.slice(md.indexOf('## 6. Gate Requirements'));
+  const open = section.indexOf('```') + 3;
+  const block = section.slice(open, section.indexOf('```', open));
+  return block
+    .split('\n')
+    .filter((l) => l.includes('→'))
+    .map((l) => l.split('→')[0]!.trim().split(/\s+/)[0]!)
+    .filter(Boolean);
+};
+
 describe('gate scripts', () => {
   it('gate:ci is exactly gate minus LOCAL_ONLY plus CI_ONLY, in order', () => {
     const expected = [...steps('gate').filter((s) => !LOCAL_ONLY.includes(s)), ...CI_ONLY];
@@ -28,11 +41,32 @@ describe('gate scripts', () => {
     for (const s of LOCAL_ONLY) expect(steps('gate')).toContain(s);
   });
 
-  it('CLAUDE.md §6 describes every gate step', () => {
+  it('CLAUDE.md §6 describes every gate step and nothing else', () => {
     const md = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-    const section = md.slice(md.indexOf('## 6. Gate Requirements'));
-    const block = section.slice(section.indexOf('```') + 3, section.indexOf('```', section.indexOf('```') + 3));
-    const described = block.split('\n').map((l) => l.trim().split(/\s+/)[0]).filter(Boolean);
-    for (const s of steps('gate')) expect(described, `CLAUDE.md §6 is missing "${s}"`).toContain(s);
+    const described = describedSteps(md);
+    const gate = steps('gate');
+    for (const s of gate) expect(described, `CLAUDE.md §6 is missing "${s}"`).toContain(s);
+    for (const s of described) expect(gate, `CLAUDE.md §6 describes "${s}", which is not in gate`).toContain(s);
+  });
+});
+
+describe('describedSteps', () => {
+  const fixture = [
+    '## 6. Gate Requirements',
+    '```',
+    'governance   → validates things',
+    'check:dev-css → boots the pipeline',
+    '                continuation line, no arrow, ignored',
+    'fake:step → x',
+    '```',
+  ].join('\n');
+
+  it('takes the first token of each arrow line and ignores continuation lines', () => {
+    expect(describedSteps(fixture)).toEqual(['governance', 'check:dev-css', 'fake:step']);
+  });
+
+  it('exposes a stale step (in §6 but not in gate)', () => {
+    const gate = ['governance', 'check:dev-css'];
+    expect(describedSteps(fixture).filter((s) => !gate.includes(s))).toEqual(['fake:step']);
   });
 });

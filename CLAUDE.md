@@ -170,7 +170,7 @@ warehouse:drift  → compares the live warehouse against a fresh re-ingest, flag
 ```
 
 (`package.json` is the source of truth for both scripts. `tests/unit/gate-scripts.test.ts`
-fails if this list omits a `gate` step, or if `gate:ci` stops being exactly `gate` minus the
+fails if this list omits a `gate` step or describes one `gate` no longer has, or if `gate:ci` stops being exactly `gate` minus the
 four local-only steps (reconcile, reconcile:noi-crosscheck, warehouse:verify, warehouse:drift)
 plus build and check:bundle — so neither this list nor that relationship can drift silently.)
 
