@@ -92,7 +92,8 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
       error:
         `import #${importId} has no resolved property (its filename token matched no property alias), so approving it would ` +
         `commit NOI under no property. Reject it, then re-drop a re-exported copy of the statement whose filename carries a ` +
-        `recognized property token (an identical file is deduplicated by content hash), or add the missing alias to detection first.`,
+        `recognized property token. The re-drop must be a fresh export: an identical file is deduplicated by content hash, so ` +
+        `renaming it or adding a detection alias alone does not unblock this import.`,
     };
   }
 
