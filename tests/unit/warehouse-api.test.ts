@@ -6,7 +6,7 @@
 // seeded → HVAC Repair + Distribution come back unmapped). The fixture writer + SEED
 // are copied locally — tests never import across test files.
 import ExcelJS from 'exceljs';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -255,6 +255,32 @@ describe('warehouse api routes', () => {
     expect(body).toMatchObject({ ok: false, unmapped: [], reason: 'newer-version-committed' });
     expect(body.error).toContain('v2');
     expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'committed' });
+  });
+
+  it('POST approve on an import whose ledger rows were re-derived to another property -> 409 {ok:false, unmapped:[], reason:"property-mismatch"}', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whapi-div-'));
+    const db = openWarehouse(':memory:');
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    for (const sub of ['v1', 'v2', 'redrop']) mkdirSync(join(dir, sub));
+    const v1File = join(dir, 'v1', 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(v1File);
+    expect((await ingestFile(db, v1File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' })).status).toBe('committed');
+    const v2File = join(dir, 'v2', 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(v2File, 'Property: 1100 Rarig Ave (corrected export)');
+    const v2 = await ingestFile(db, v2File, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T01:00:00Z', autoCommitThreshold: 0.99 });
+    expect(v2.status).toBe('pending-review');
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(v2.importId); // simulate a parser bump
+    const redrop = join(dir, 'redrop', 'P&L 2025 -- Zorvane Flex Park.xlsx'); // identical bytes, unrecognized name
+    copyFileSync(v2File, redrop);
+    const re = await ingestFile(db, redrop, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T02:00:00Z' });
+    expect(re).toMatchObject({ status: 'pending-review', importId: v2.importId }); // re-derived in place: ledger now 'unknown'
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/imports/${v2.importId}/action`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action: 'approve' }) });
+    expect(res.status).toBe(409); // a policy refusal, not the 404 not-found / not-pending status
+    const body = (await res.json()) as { ok: boolean; unmapped: string[]; reason?: string; error?: string };
+    expect(body).toMatchObject({ ok: false, unmapped: [], reason: 'property-mismatch' });
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'pending-review' });
   });
 
   it('POST approve on an unresolved-property pending import -> 409 {ok:false, unmapped:[], reason:"property-unresolved"}; the batch stays pending', async () => {
