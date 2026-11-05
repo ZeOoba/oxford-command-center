@@ -1021,10 +1021,10 @@
   "gate-list-test-followup": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-11-05 (maintenance-reduction bundle 1, follow-up to #552)",
     "phase": "Follow-up to #552: gate-scripts test checks CLAUDE.md section 6 both ways (describedSteps helper + stale-step test); README gate rows de-counted. No package.json, financial or config change.",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Follow-up to #552. Architect-owned edit: CLAUDE.md (section 6 closing paragraph, one clause). Also README.md (gate/gate:ci rows) and tests/unit/gate-scripts.test.ts.",
+    "review_needed": false,
+    "review_detail": "Follow-up to #552. Architect-owned edit: CLAUDE.md (section 6 closing paragraph, one clause). Also README.md (gate/gate:ci rows) and tests/unit/gate-scripts.test.ts. Reviewed (task review Approved; CI gate + refute-required green) and merge approved by Gabriel in-turn 2026-11-05 as PR 557.",
     "last_updated": "2026-11-05T00:00:00Z"
   }
 }
