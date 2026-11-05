@@ -95,7 +95,7 @@ export function AdminOnboardView() {
           <input required value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="123 Main St, Columbus OH" />
         </label>
         <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-          Aliases (comma-separated, for file detection)
+          Aliases (comma-separated; recorded with the property, not read by filename detection: a filename resolves only through the PROPERTY_ALIASES map in server/warehouse/detect.ts)
           <input value={aliases} onChange={e => setAliases(e.target.value)} style={inputStyle} placeholder="Main St, main_st_columbus" />
         </label>
         <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>

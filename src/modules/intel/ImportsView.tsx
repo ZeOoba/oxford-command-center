@@ -22,6 +22,7 @@ import {
   type SimpleResult,
 } from './hooks';
 import { NORMALIZED_CATEGORIES, CLASSIFICATIONS, statusTone, severityTone } from './constants';
+import { SIGN_VERIFY_BLOCKED_REASON, signVerifyBlocker } from './approve-blockers';
 import type { Classification } from '@contracts/warehouse';
 
 export function ImportsView({ imports }: { imports: ImportSummary[] }) {
@@ -53,12 +54,12 @@ export function ImportsView({ imports }: { imports: ImportSummary[] }) {
           initialSort={{ key: 'importedAt', dir: 'desc' }}
         />
       </Card>
-      {selectedId !== null && <ImportDetailPanel id={selectedId} onClose={() => setSelectedId(null)} />}
+      {selectedId !== null && <ImportDetailPanel id={selectedId} imports={imports} onClose={() => setSelectedId(null)} />}
     </div>
   );
 }
 
-function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void }) {
+function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: ImportSummary[]; onClose: () => void }) {
   const detail = useImportDetail(id);
   const action = useImportAction();
   const resolveIssue = useResolveIssue();
@@ -82,8 +83,10 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
 
   const d = detail.data;
   const isPending = d.status === 'pending-review';
-  // Same predicate as approveImport's property-unresolved gate: such a batch is refused whatever its sign.
-  const propertyUnresolved = d.propertyId === null || d.propertyId.trim() === '' || d.propertyId === 'unknown';
+  // A refusal approveImport returns before its sign gate (newer-version-committed, property-unresolved), mirrored from
+  // the imports list this view holds: verifying the sign cannot unlock Approve there. property-mismatch is not knowable
+  // here (the import-detail payload carries no ledger property), so the server still refuses it on Approve.
+  const signBlocker = signVerifyBlocker(d, imports);
 
   const runApprove = () => {
     setActionError(null);
@@ -158,14 +161,13 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
                             onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
                           });
                         }}
-                        isDisabled={resolveIssue.isPending || propertyUnresolved}
+                        isDisabled={resolveIssue.isPending || signBlocker !== null}
                       >
                         Mark sign verified
                       </Button>
-                      {propertyUnresolved && (
+                      {signBlocker !== null && (
                         <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                          This import&apos;s property is unresolved, so Approve refuses it whatever the sign (property-unresolved):
-                          verifying would not unlock it. Approve shows the re-drop steps; Reject is available.
+                          {SIGN_VERIFY_BLOCKED_REASON[signBlocker]}
                         </span>
                       )}
                     </>
