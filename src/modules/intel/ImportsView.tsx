@@ -82,6 +82,8 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
 
   const d = detail.data;
   const isPending = d.status === 'pending-review';
+  // Same predicate as approveImport's property-unresolved gate: such a batch is refused whatever its sign.
+  const propertyUnresolved = d.propertyId === null || d.propertyId.trim() === '' || d.propertyId === 'unknown';
 
   const runApprove = () => {
     setActionError(null);
@@ -145,20 +147,28 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
                   {/* Approve is refused while a sign-undecidable issue is open: the reviewer verifies the flagged
                       side's sign against the source statement, then marks it verified (reject if the sign is wrong). */}
                   {i.kind === 'sign-undecidable' && i.status === 'open' && isPending && (
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      onPress={() => {
-                        setActionError(null); // drop the stale approve refusal once the reviewer acts on it
-                        resolveIssue.mutate(i.id, {
-                          onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
-                          onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
-                        });
-                      }}
-                      isDisabled={resolveIssue.isPending}
-                    >
-                      Mark sign verified
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        onPress={() => {
+                          setActionError(null); // drop the stale approve refusal once the reviewer acts on it
+                          resolveIssue.mutate(i.id, {
+                            onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
+                            onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
+                          });
+                        }}
+                        isDisabled={resolveIssue.isPending || propertyUnresolved}
+                      >
+                        Mark sign verified
+                      </Button>
+                      {propertyUnresolved && (
+                        <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                          This import&apos;s property is unresolved, so Approve refuses it whatever the sign (property-unresolved):
+                          verifying would not unlock it. Approve shows the re-drop steps; Reject is available.
+                        </span>
+                      )}
+                    </>
                   )}
                   {i.kind === 'sign-undecidable' && i.status === 'resolved' && <Badge tone="neutral">sign verified</Badge>}
                 </div>
