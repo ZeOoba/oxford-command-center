@@ -637,6 +637,19 @@ async function main(): Promise<number> {
     //     income-side and opex side-sums for each such key must be IDENTICAL pre vs post approve. A
     //     future approve-path regression on ANY dual-side account — not just the one Gas unit fixture —
     //     trips here against the real seed.
+    //
+    //     Every approve refusal fails this step, the property gates included. A real file whose filename
+    //     token does not equal a detect.ts PROPERTY_ALIASES key (the whole token must equal the key,
+    //     case-insensitively) ingests with no property (confidence 0.4, so it is held for review at any
+    //     threshold) and approve refuses it 'property-unresolved'. That covers a property that never had an
+    //     alias (a new acquisition) as well as a token that stopped matching. The fix is in code, never in
+    //     this throwaway DB: add the token to PROPERTY_ALIASES and, for a property this DB does not know, its
+    //     row to CANON_PROPERTIES (server/warehouse/property-master.ts). This DB is seeded only from
+    //     CANON_PROPERTIES, so onboarding the property in the live warehouse does not reach it, and an alias
+    //     to a property missing there fails this ingest on the property_master foreign key, which stops
+    //     verify. Or rename the file in FINANCIALS_DIR so its token equals an existing key.
+    //     'property-mismatch' cannot come from one fresh ingest (this DB re-derives nothing), so it means an
+    //     ingest regression.
     {
       const adb = openWarehouse(join(tmp, 'approve-verify.sqlite'));
       seedPropertyMaster(adb);
@@ -663,17 +676,28 @@ async function main(): Promise<number> {
         if (!ok.ok) {
           // The property refusals' error text is the LIVE-warehouse fix (reject, re-drop a fresh export). This throwaway
           // warehouse holds ONE fresh ingest of each real file and re-derives nothing, so there is nothing to reject:
-          // a property refusal here means detection or ingest regressed for this file. Name that fix instead. Message
-          // only: every refusal is still a failure.
-          const detail =
-            ok.reason === 'property-unresolved'
-              ? ' reason=property-unresolved: this filename no longer resolves a property; fix detection for its token (server/warehouse/detect.ts PROPERTY_ALIASES)'
-              : ok.reason === 'property-mismatch'
-                ? ' reason=property-mismatch: one fresh ingest keyed its ledger rows to a different property than its import batch; fix that ingest regression (server/warehouse/ingest.ts)'
-                : ok.error
-                  ? ` error=${ok.error}`
-                  : '';
-          failures.push(`approve-path: approveImport refused a fully-mapped real import (${f}): unmapped=[${ok.unmapped.join('; ')}]${detail}`);
+          // name the fix that applies here instead (see the step docs above). Message only: every refusal is still a
+          // failure.
+          if (ok.reason === 'property-unresolved') {
+            failures.push(
+              `approve-path: ${f} has no resolved property (approve refused property-unresolved): its filename token does not ` +
+                `equal any PROPERTY_ALIASES key (the whole token must equal the key, case-insensitively). Whether the property ` +
+                `never had an entry (a new acquisition) or its token stopped matching, fix it in code, not in this temp DB: add ` +
+                `the token to server/warehouse/detect.ts PROPERTY_ALIASES and, for a property not in CANON_PROPERTIES ` +
+                `(server/warehouse/property-master.ts), its row there too. This DB is seeded only from CANON_PROPERTIES, so ` +
+                `onboarding the property in the live warehouse does not reach it, and an alias without that row fails ingest ` +
+                `on the property_master foreign key and stops verify. Or rename the file in FINANCIALS_DIR so its token ` +
+                `equals an existing key.`,
+            );
+          } else if (ok.reason === 'property-mismatch') {
+            failures.push(
+              `approve-path: ${f}: approve refused property-mismatch: one fresh ingest keyed its ledger rows to a different ` +
+                `property than its import batch. This temp DB re-derives nothing, so that is an ingest regression ` +
+                `(server/warehouse/ingest.ts).`,
+            );
+          } else {
+            failures.push(`approve-path: approveImport refused a fully-mapped real import (${f}): unmapped=[${ok.unmapped.join('; ')}]${ok.error ? ` error=${ok.error}` : ''}`);
+          }
           continue;
         }
         approved += 1;

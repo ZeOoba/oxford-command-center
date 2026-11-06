@@ -126,7 +126,7 @@ export function DataModule() {
                 <PfDataHealthPanel />
               </Suspense>
             ) : (
-              warehousePanel('Data quality', () => <DataQualityView issues={issues.data ?? []} />)
+              warehousePanel('Data quality', () => <DataQualityView issues={issues.data ?? []} imports={imports.data ?? []} />)
             )}
           </div>
         </TabPanel>

@@ -266,10 +266,10 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const r = rejectImport(db, id);
         return c.json(r, r.ok ? 200 : 404);
       }
-      // approve: a refusal carrying an unmapped list or a policy `reason` (property-unresolved / property-mismatch
-      // gates, sign-undecidable gate, a newer version already committed) is a 409 (the client resolves the mappings /
-      // verifies the sign, or rejects the import and re-drops a fresh export); any other failure (not found / not
-      // pending) is a 404.
+      // approve: a refusal carrying an unmapped list or a policy `reason` (a newer version already committed,
+      // property-unresolved / property-mismatch gates, sign-undecidable gate) is a 409 (the client resolves the
+      // mappings / verifies the sign, or rejects the import and re-drops a fresh export); any other failure (not found /
+      // not pending / no ledger rows, including an empty import whose property is unresolved) is a 404.
       const r = approveImport(db, id);
       if (r.ok) return c.json(r, 200);
       return c.json(r, r.unmapped.length > 0 || r.reason !== undefined ? 409 : 404);

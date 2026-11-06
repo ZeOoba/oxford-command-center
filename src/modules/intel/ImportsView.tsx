@@ -22,6 +22,7 @@ import {
   type SimpleResult,
 } from './hooks';
 import { NORMALIZED_CATEGORIES, CLASSIFICATIONS, statusTone, severityTone } from './constants';
+import { SIGN_VERIFY_BLOCKED_REASON, signVerifyBlocker } from './approve-blockers';
 import type { Classification } from '@contracts/warehouse';
 
 export function ImportsView({ imports }: { imports: ImportSummary[] }) {
@@ -53,12 +54,12 @@ export function ImportsView({ imports }: { imports: ImportSummary[] }) {
           initialSort={{ key: 'importedAt', dir: 'desc' }}
         />
       </Card>
-      {selectedId !== null && <ImportDetailPanel id={selectedId} onClose={() => setSelectedId(null)} />}
+      {selectedId !== null && <ImportDetailPanel id={selectedId} imports={imports} onClose={() => setSelectedId(null)} />}
     </div>
   );
 }
 
-function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void }) {
+function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: ImportSummary[]; onClose: () => void }) {
   const detail = useImportDetail(id);
   const action = useImportAction();
   const resolveIssue = useResolveIssue();
@@ -82,6 +83,10 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
 
   const d = detail.data;
   const isPending = d.status === 'pending-review';
+  // A refusal approveImport returns before its sign gate (newer-version-committed, property-unresolved), mirrored from
+  // the imports list this view holds: verifying the sign cannot unlock Approve there. property-mismatch is not knowable
+  // here (the import-detail payload carries no ledger property), so the server still refuses it on Approve.
+  const signBlocker = signVerifyBlocker(d, imports);
 
   const runApprove = () => {
     setActionError(null);
@@ -145,20 +150,27 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
                   {/* Approve is refused while a sign-undecidable issue is open: the reviewer verifies the flagged
                       side's sign against the source statement, then marks it verified (reject if the sign is wrong). */}
                   {i.kind === 'sign-undecidable' && i.status === 'open' && isPending && (
-                    <Button
-                      size="sm"
-                      variant="subtle"
-                      onPress={() => {
-                        setActionError(null); // drop the stale approve refusal once the reviewer acts on it
-                        resolveIssue.mutate(i.id, {
-                          onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
-                          onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
-                        });
-                      }}
-                      isDisabled={resolveIssue.isPending}
-                    >
-                      Mark sign verified
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        onPress={() => {
+                          setActionError(null); // drop the stale approve refusal once the reviewer acts on it
+                          resolveIssue.mutate(i.id, {
+                            onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
+                            onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
+                          });
+                        }}
+                        isDisabled={resolveIssue.isPending || signBlocker !== null}
+                      >
+                        Mark sign verified
+                      </Button>
+                      {signBlocker !== null && (
+                        <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                          {SIGN_VERIFY_BLOCKED_REASON[signBlocker]}
+                        </span>
+                      )}
+                    </>
                   )}
                   {i.kind === 'sign-undecidable' && i.status === 'resolved' && <Badge tone="neutral">sign verified</Badge>}
                 </div>

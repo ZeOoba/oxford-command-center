@@ -283,6 +283,26 @@ describe('warehouse api routes', () => {
     expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'pending-review' });
   });
 
+  it('POST approve on an EMPTY import with an unresolved property -> 404 (the empty-import contract), not a property 409', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whapi-empty-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- Zorvane Flex Park.xlsx'); // synthetic token: not a detect.ts alias
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('QuickBooks Desktop Export Tips').addRow(['QuickBooks Desktop Export Tips']);
+    await wb.xlsx.writeFile(file);
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-11-05T00:00:00Z' });
+    expect(r.status).toBe('pending-review');
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/imports/${r.importId}/action`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action: 'approve' }) });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { ok: boolean; unmapped: string[]; reason?: string; error?: string };
+    expect(body).toMatchObject({ ok: false, unmapped: [] });
+    expect(body.reason).toBeUndefined();
+    expect(body.error).toContain('no ledger rows');
+  });
+
   it('POST approve on an unresolved-property pending import -> 409 {ok:false, unmapped:[], reason:"property-unresolved"}; the batch stays pending', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'whapi-unres-'));
     const db = openWarehouse(join(dir, 'f.sqlite'));
