@@ -44,7 +44,7 @@ const aliasFilename = (key: string): string =>
   'case-insensitively; containing it is not enough)';
 
 /** The one ledger read that drives the empty, unresolved and mismatch gates and the re-resolution. */
-const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=?';
+const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=? ORDER BY id';
 type LedgerRow = { id: number; raw_account: string; classification: string; property_id: string };
 
 /** The rows NOT keyed to the batch's own property ('unknown', or another property), with their distinct keys sorted
@@ -118,8 +118,59 @@ interface BatchRow {
  * manual and seed/learned rows bind to the side. A genuine cross-side reclassification must therefore
  * be scoped to its property; a global override only re-resolves rows already on its own side.
  * Amounts are never touched (sign-normalization already applied at ingest stays intact).
+ *
+ * Concurrency. Every read, gate and write runs in ONE `BEGIN IMMEDIATE` transaction (checkAndCommit), so the state
+ * the gates judge is the state the writes act on. `npm run warehouse:backfill` writes the same WAL file (db.ts), and its
+ * stale-parser re-derive (ingest.ts) deletes an import's ledger rows and re-inserts them under new ids. When the gates
+ * ran as autocommit statements ahead of a later DEFERRED write transaction, a re-derive landing between them made
+ * approve return {ok:true}, supersede the served version and commit the import with zero active ledger rows, so the
+ * property-period's NOI disappeared (TOCTOU; 5 of 8 statement boundaries, tests/unit/warehouse-approve-toctou.test.ts).
+ * IMMEDIATE takes the write lock before the first read, so a concurrent writer waits (busy_timeout) until approve
+ * commits or refuses; a DEFERRED read-then-write would also fail its lock upgrade with SQLITE_BUSY_SNAPSHOT, which skips
+ * the busy handler (see debt-snapshot.ts). As defense in depth the activating UPDATE is keyed on (id, import_id) and its
+ * total change count must equal the rows read, and the batch's status flip must hit exactly one pending-review row;
+ * otherwise approve throws and the transaction rolls back, leaving the served version and the batch untouched.
+ * Not covered here: the reverse order (a re-derive that read its prior status before this approve committed, then runs
+ * after it) is ingest.ts's own check-then-write (it reads priorStatus outside its transaction); its fix belongs there.
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
+  const result = db.transaction(() => checkAndCommit(db, importId)).immediate();
+  if (!result.ok) return result;
+
+  // ── Calibration emit hook (spec §7 item 3) — AFTER the transaction commits ─────────────────
+  // A new statement just changed the ledger: the inputs_version is fresh and the verdict reflects
+  // the newest data. Re-score the warehouse and log the verdicts. STRICTLY fail-open: any failure
+  // here writes a data_quality_issues row (via logVerdicts) and MUST NOT change the {ok:true}
+  // return above. Calibration logging is observational; it never blocks a commit.
+  try {
+    const iv = computeInputsVersion(db);
+    const metrics = propertyPeriodMetrics(db);
+    logVerdicts(
+      db,
+      [
+        ...verdictsFromScores(scoreProperties(db, metrics), iv, `commit:${importId}`),
+        ...verdictsFromAnomalies(detectAnomalies(metrics), iv, `commit:${importId}`),
+      ],
+      { forceError: opts.forceCalibrationError },
+    );
+  } catch {
+    // logVerdicts is itself fail-open (it never throws), but computeInputsVersion / scoring could
+    // in principle throw on a malformed db — swallow here too so the commit result is never affected.
+    try {
+      db.prepare(
+        "INSERT INTO data_quality_issues (kind, detail, severity) VALUES ('calibration-emit-failed', 'emit hook threw before logVerdicts', 'warn')",
+      ).run();
+    } catch {
+      /* observational machinery must never block the warehouse */
+    }
+  }
+
+  return { ok: true };
+}
+
+/** approveImport's reads, gates and writes. Runs only inside approveImport's IMMEDIATE transaction: a refusal returns
+ *  having written nothing; a thrown error rolls every write back. */
+function checkAndCommit(db: WarehouseDb, importId: number): ApproveResult {
   const batch = db
     .prepare('SELECT id, property_id, period_start, period_end, status, version FROM import_batches WHERE id=?')
     .get(importId) as BatchRow | undefined;
@@ -159,9 +210,8 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
     };
   }
 
-  // ONE ledger read drives the empty, unresolved and mismatch gates and the re-resolution below. A separate gate query
-  // here would add a statement between this read and the write transaction, the window a concurrent re-derive can land
-  // in (TOCTOU Window B, refute wf_2e74b57b-da3). The root fix (re-check inside an IMMEDIATE transaction) is deferred.
+  // ONE ledger read drives the empty, unresolved and mismatch gates, the re-resolution and the activation count below.
+  // It runs under approveImport's write lock, so no re-derive can replace these rows before they are activated.
   const rows = db.prepare(LEDGER_ROWS_SQL).all(importId) as LedgerRow[];
   if (rows.length === 0) return { ok: false, unmapped: [], error: 'import has no ledger rows' };
 
@@ -249,80 +299,76 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
     };
   }
 
-  db.transaction(() => {
-    const upd = db.prepare(
-      'UPDATE ledger_entries SET normalized_category=?, classification=?, mapping_id=?, is_active=1 WHERE id=?',
+  // Writes. Still inside the IMMEDIATE transaction approveImport opened, so a throw below rolls every write back.
+  const upd = db.prepare(
+    'UPDATE ledger_entries SET normalized_category=?, classification=?, mapping_id=?, is_active=1 WHERE id=? AND import_id=?',
+  );
+  let activated = 0;
+  for (const r of resolved) activated += upd.run(r.m.normalizedCategory, r.m.classification, r.m.mappingId, r.id, importId).changes;
+  if (activated !== rows.length) {
+    throw new Error(
+      `approveImport: activated ${activated} of ${rows.length} ledger rows of import #${importId}; the ledger changed under ` +
+        'the approve, so it was rolled back and nothing was committed. Retry the approve.',
     );
-    for (const r of resolved) upd.run(r.m.normalizedCategory, r.m.classification, r.m.mappingId, r.id);
-
-    // Supersede prior committed versions for the same (property, period span) — mirrors
-    // the block in ingest.ts. `IS ?` is null-safe equality (period_end is null for some YTD).
-    const priors = db
-      .prepare(`
-        SELECT id FROM import_batches
-        WHERE property_id = ? AND period_start IS ? AND period_end IS ? AND id != ? AND status = 'committed'
-      `)
-      .all(batch.property_id, batch.period_start, batch.period_end, importId) as Array<{ id: number }>;
-    const deact = db.prepare('UPDATE ledger_entries SET is_active=0 WHERE import_id=?');
-    const supersede = db.prepare("UPDATE import_batches SET status='superseded', superseded_by=? WHERE id=?");
-    for (const p of priors) {
-      deact.run(p.id);
-      supersede.run(importId, p.id);
-    }
-    db.prepare("UPDATE import_batches SET status='committed' WHERE id=?").run(importId);
-  })();
-
-  // ── Calibration emit hook (spec §7 item 3) — AFTER the transaction commits ─────────────────
-  // A new statement just changed the ledger: the inputs_version is fresh and the verdict reflects
-  // the newest data. Re-score the warehouse and log the verdicts. STRICTLY fail-open: any failure
-  // here writes a data_quality_issues row (via logVerdicts) and MUST NOT change the {ok:true}
-  // return above. Calibration logging is observational; it never blocks a commit.
-  try {
-    const iv = computeInputsVersion(db);
-    const metrics = propertyPeriodMetrics(db);
-    logVerdicts(
-      db,
-      [
-        ...verdictsFromScores(scoreProperties(db, metrics), iv, `commit:${importId}`),
-        ...verdictsFromAnomalies(detectAnomalies(metrics), iv, `commit:${importId}`),
-      ],
-      { forceError: opts.forceCalibrationError },
-    );
-  } catch {
-    // logVerdicts is itself fail-open (it never throws), but computeInputsVersion / scoring could
-    // in principle throw on a malformed db — swallow here too so the commit result is never affected.
-    try {
-      db.prepare(
-        "INSERT INTO data_quality_issues (kind, detail, severity) VALUES ('calibration-emit-failed', 'emit hook threw before logVerdicts', 'warn')",
-      ).run();
-    } catch {
-      /* observational machinery must never block the warehouse */
-    }
   }
 
+  // Supersede prior committed versions for the same (property, period span) — mirrors
+  // the block in ingest.ts. `IS ?` is null-safe equality (period_end is null for some YTD).
+  const priors = db
+    .prepare(`
+      SELECT id FROM import_batches
+      WHERE property_id = ? AND period_start IS ? AND period_end IS ? AND id != ? AND status = 'committed'
+    `)
+    .all(batch.property_id, batch.period_start, batch.period_end, importId) as Array<{ id: number }>;
+  const deact = db.prepare('UPDATE ledger_entries SET is_active=0 WHERE import_id=?');
+  const supersede = db.prepare("UPDATE import_batches SET status='superseded', superseded_by=? WHERE id=?");
+  for (const p of priors) {
+    deact.run(p.id);
+    supersede.run(importId, p.id);
+  }
+  const flipped = db.prepare("UPDATE import_batches SET status='committed' WHERE id=? AND status='pending-review'").run(importId).changes;
+  if (flipped !== 1) {
+    throw new Error(`approveImport: import #${importId} was no longer pending-review at commit; rolled back, nothing was committed.`);
+  }
   return { ok: true };
 }
 
-/** Reject a pending-review import. Rows are left inactive (never deleted); the batch is auditable. */
+/** Reject a pending-review import. Rows are left inactive (never deleted); the batch is auditable.
+ *  The status read and the flip run in one IMMEDIATE transaction, and the flip is guarded on 'pending-review' and must
+ *  change exactly one row: a concurrent backfill re-derive that commits this import between the two must never leave a
+ *  'rejected' batch serving its ledger rows (refute wf_f8901854-484; tests/unit/warehouse-approve-toctou.test.ts). */
 export function rejectImport(db: WarehouseDb, importId: number): SimpleResult {
-  const batch = db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId) as
-    | { status: string }
-    | undefined;
-  if (!batch) return { ok: false, error: `import ${importId} not found` };
-  if (batch.status !== 'pending-review') return { ok: false, error: `import is ${batch.status}, not pending-review` };
-  db.prepare("UPDATE import_batches SET status='rejected' WHERE id=?").run(importId);
-  return { ok: true };
+  return db
+    .transaction((): SimpleResult => {
+      const batch = db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId) as
+        | { status: string }
+        | undefined;
+      if (!batch) return { ok: false, error: `import ${importId} not found` };
+      if (batch.status !== 'pending-review') return { ok: false, error: `import is ${batch.status}, not pending-review` };
+      const changed = db.prepare("UPDATE import_batches SET status='rejected' WHERE id=? AND status='pending-review'").run(importId).changes;
+      if (changed !== 1) throw new Error(`rejectImport: import #${importId} was no longer pending-review at the flip; rolled back.`);
+      return { ok: true };
+    })
+    .immediate();
 }
 
-/** Mark an open data-quality issue resolved. */
+/** Mark an open data-quality issue resolved. Read and flip run in one IMMEDIATE transaction, guarded on 'open' with
+ *  a one-row change count, so a re-derive that deletes and re-creates the issue never yields ok:true for nothing. */
 export function resolveIssue(db: WarehouseDb, issueId: number): SimpleResult {
-  const issue = db.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId) as
-    | { status: string }
-    | undefined;
-  if (!issue) return { ok: false, error: `issue ${issueId} not found` };
-  if (issue.status !== 'open') return { ok: false, error: `issue is ${issue.status}, not open` };
-  db.prepare("UPDATE data_quality_issues SET status='resolved', resolved_at=datetime('now') WHERE id=?").run(issueId);
-  return { ok: true };
+  return db
+    .transaction((): SimpleResult => {
+      const issue = db.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId) as
+        | { status: string }
+        | undefined;
+      if (!issue) return { ok: false, error: `issue ${issueId} not found` };
+      if (issue.status !== 'open') return { ok: false, error: `issue is ${issue.status}, not open` };
+      const changed = db
+        .prepare("UPDATE data_quality_issues SET status='resolved', resolved_at=datetime('now') WHERE id=? AND status='open'")
+        .run(issueId).changes;
+      if (changed !== 1) throw new Error(`resolveIssue: issue #${issueId} was no longer open at the flip; rolled back.`);
+      return { ok: true };
+    })
+    .immediate();
 }
 
 export interface AddMappingInput {
