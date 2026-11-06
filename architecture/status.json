@@ -1035,5 +1035,14 @@
     "review_needed": false,
     "review_detail": "Architect-owned edit: architecture/api-contracts.md, the POST /api/warehouse/imports/:id/action approve-responses paragraph only. Adds 409 reason property-unresolved and 409 reason property-mismatch with their unblock path (a fresh export whose filename token equals the owning property PROPERTY_ALIASES key; add the entry first if there is none; onboard the property first if it is not in property_master; the file must differ byte-for-byte), states that an empty import (no ledger rows) still returns 404 even when its property is unresolved, that newer-version-committed also names a co-occurring property mismatch, and the check order. Why: the contract must list every refusal the approve route returns. Needs architect acknowledgment before merge, in addition to the refute-financial-change attestation and Gabriel review (financial ingest). Note: architect acknowledgement: Gabriel Goldberg, 2026-11-06, in-session.",
     "last_updated": "2026-11-05T20:03:19Z"
+  },
+  "approve-immediate-txn": {
+    "agent_role": "Engineering (Claude Code) - TA-2 TOCTOU follow-up to merged PR 556, coordinator-directed 2026-11-05/06 (squashed replacement of PR 558, branch fix/approve-immediate-txn-squash)",
+    "phase": "Close the check-then-write races (TOCTOU) in approveImport, rejectImport and resolveIssue against a concurrent warehouse:backfill re-derive: each runs its reads, gates and writes in one BEGIN IMMEDIATE transaction with change-count-guarded writes (rollback otherwise); LEDGER_ROWS_SQL ORDER BY id; SQLITE_BUSY on these routes answers 503 Retry-After. Refute wf_f8901854-484 (HIGH folded in) and wf_a59594bc-fff (clean, scoped). Files: server/warehouse/actions.ts, server/warehouse/api.ts, architecture/api-contracts.md (one sentence), tests/unit/warehouse-approve-toctou.test.ts (new), tests/unit/warehouse-actions.test.ts (comment), tests/unit/warehouse-api.test.ts. No migration, schema, parse, package.json, API payload or governor change.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edit: architecture/api-contracts.md, ONE sentence appended to the POST /api/warehouse/imports/:id/action approve-responses paragraph: approve and reject run their checks and writes in one write-locked transaction, so a concurrent backfill re-derive is serialized behind them; while another writer holds the lock past the busy timeout they answer 503 {error} with Retry-After (nothing written; retry), and POST /api/warehouse/issues/:id/resolve does the same. Why: the contract must list every response these routes return. Not covered by the 2026-11-06 acknowledgement recorded on approve-import-property-gates; needs its own architect acknowledgment.",
+    "last_updated": "2026-11-06T19:31:20Z"
   }
 }
