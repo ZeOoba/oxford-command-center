@@ -292,6 +292,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         if (r.ok) return c.json(r, 200);
         return c.json(r, r.unmapped.length > 0 || r.reason !== undefined ? 409 : 404);
       });
+      const r = approveImport(db, id);
+      if (r.ok) return c.json(r, 200);
+      return c.json(r, r.unmapped.length > 0 || r.reason !== undefined ? 409 : 404);
     }),
   );
 

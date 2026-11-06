@@ -45,6 +45,7 @@ const aliasFilename = (key: string): string =>
 
 /** The one ledger read that drives the empty, unresolved and mismatch gates and the re-resolution. */
 const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=? ORDER BY id';
+const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=?';
 type LedgerRow = { id: number; raw_account: string; classification: string; property_id: string };
 
 /** The rows NOT keyed to the batch's own property ('unknown', or another property), with their distinct keys sorted
@@ -212,6 +213,9 @@ function checkAndCommit(db: WarehouseDb, importId: number): ApproveResult {
 
   // ONE ledger read drives the empty, unresolved and mismatch gates, the re-resolution and the activation count below.
   // It runs under approveImport's write lock, so no re-derive can replace these rows before they are activated.
+  // ONE ledger read drives the empty, unresolved and mismatch gates and the re-resolution below. A separate gate query
+  // here would add a statement between this read and the write transaction, the window a concurrent re-derive can land
+  // in (TOCTOU Window B, refute wf_2e74b57b-da3). The root fix (re-check inside an IMMEDIATE transaction) is deferred.
   const rows = db.prepare(LEDGER_ROWS_SQL).all(importId) as LedgerRow[];
   if (rows.length === 0) return { ok: false, unmapped: [], error: 'import has no ledger rows' };
 

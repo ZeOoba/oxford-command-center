@@ -49,6 +49,7 @@ import {
   rootCauseLine,
 } from './property-intel';
 import { CapexIrrCalc } from './CapexIrrCalc';
+import { BasisSublabel } from '@/primitives/BasisChip';
 
 // ---------------------------------------------------------------------------
 // Tone maps (engine band → Badge tone).
@@ -393,7 +394,7 @@ function KpiRow({
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-pos)"
         spark={noiSeries}
-        sublabel={noiSublabel}
+        sublabel={<BasisSublabel basis="ledger">{noiSublabel}</BasisSublabel>}
       />
       <KpiStat
         label="NOI Margin"

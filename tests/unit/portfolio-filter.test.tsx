@@ -232,6 +232,16 @@ describe('PortfolioFilterBar', () => {
     expect(stored).toEqual({ market: 'Toledo OH', propertyType: 'all', manager: 'CRC' });
   });
 
+  it('names the basis of the slice NOI readout once a filter is active (design review 2026-10-31 #8)', () => {
+    render(
+      <PortfolioFilterProvider>
+        <PortfolioFilterBar managers={['CRC']} slice={{ shown: 2, total: 13, noiUsd: 1_200_000 }} />
+      </PortfolioFilterProvider>,
+    );
+    fireEvent.change(screen.getByLabelText(/filter by market/i), { target: { value: 'Toledo OH' } });
+    expect(screen.getByText(/2 of 13 assets · \$1\.2M workbook NOI/)).toBeTruthy();
+  });
+
   it('shows a Clear control only once a filter is active, and it resets all three selects', () => {
     render(
       <PortfolioFilterProvider>
