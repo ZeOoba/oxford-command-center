@@ -98,6 +98,30 @@ describe('PortfolioModule — Portfolio Value sublabel reports other holdings', 
   });
 });
 
+describe('PortfolioModule — NOI basis and landlord-cost caveats (design review 2026-10-31 #6/#8)', () => {
+  const flagged: Property = {
+    ...investment,
+    flags: [{ entity: 'p1', field: 'landlordCosts', issue: 'NNN, not absolute: landlord-paid costs not sourced', severity: 'info' }],
+  } as Property;
+
+  it('names the workbook basis on the NOI tile, the cap-rate tile and the NOI column', () => {
+    const { container } = renderModule(snapshot([investment]));
+    expect(screen.getByText('Oxford share')).toBeTruthy();
+    expect(container.querySelectorAll('[data-basis="workbook"]')).toHaveLength(2);
+    expect(screen.getByText('NOI · workbook')).toBeTruthy();
+    expect(screen.queryByText(/LL costs not sourced ·/)).toBeNull();
+  });
+
+  it('gives the NOI tile and the cap-rate tile each their own caveat when a property carries unsourced landlord costs', () => {
+    renderModule(snapshot([flagged]));
+    const chips = screen.getAllByText('LL costs not sourced · 1 of 1');
+    expect(chips).toHaveLength(2);
+    const titles = chips.map((c) => c.closest('[title]')?.getAttribute('title') ?? '');
+    expect(titles.some((t) => /this NOI is overstated by them/.test(t))).toBe(true);
+    expect(titles.some((t) => /this weighted cap rate is overstated by them/.test(t))).toBe(true);
+  });
+});
+
 describe('PortfolioModule — roadmap 2.4 trend cells', () => {
   const months = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}`).slice(0, 9);
   const ledger = [...['2025-10', '2025-11', '2025-12'], ...months];

@@ -16,6 +16,9 @@ import { Sparkline } from '@/charts/Sparkline';
 import { usePfDataset } from '@/modules/property-financials/hooks';
 import { useTrendsHistory } from './trends-history';
 import { fmtPp, ledgerSparkFor, recordedOccDelta, type LedgerSpark, type RecordedOccDelta } from './table-trends';
+import { BasisSublabel } from '@/primitives/BasisChip';
+import { landlordCostCaveat } from '@/modules/overview/landlord-cost-caveat';
+import { LandlordCostChip } from '@/modules/overview/LandlordCostChip';
 
 export function PortfolioModule() {
   const { data } = useSnapshot();
@@ -82,7 +85,8 @@ export function PortfolioModule() {
     },
     {
       key: 'noi',
-      header: 'NOI',
+      // Basis named beside its ledger neighbour ("NOI 12m · ledger"): two NOIs, two bases, never compared.
+      header: 'NOI · workbook',
       align: 'right',
       render: (p) =>
         landlordCostsNotSourced(p) ? (
@@ -125,6 +129,10 @@ export function PortfolioModule() {
   if (!data || !analytics) return null;
   const props = data.snapshot.properties;
   const k = analytics.kpis;
+  // Separate tiles here (on Overview the cap rate sits in the NOI tile's sublabel), so each figure
+  // carries its own caveat: a reader of either tile alone still sees it.
+  const llCaveat = landlordCostCaveat(props, { measure: 'this NOI' });
+  const llCapCaveat = landlordCostCaveat(props, { measure: 'this weighted cap rate' });
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,9 +140,17 @@ export function PortfolioModule() {
         {/* Same sublabel as the Overview KPI strip. Since 2026-10-30 the residence never reaches the
             snapshot (excluded at parse), so the other-holdings clause is empty on live data. */}
         <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} />
-        <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} accentColor="var(--color-pos)" />
+        <KpiStat
+          label="Net Operating Income"
+          value={k.noi.value}
+          format={fmtUsdCompact}
+          prov={k.noi.prov}
+          sublabel={<BasisSublabel basis="workbook">Oxford share</BasisSublabel>}
+          caveat={llCaveat ? <LandlordCostChip caveat={llCaveat} /> : undefined}
+          accentColor="var(--color-pos)"
+        />
         <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} accentColor="var(--color-info)" />
-        <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} accentColor="var(--color-accent2)" />
+        <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} sublabel={<BasisSublabel basis="workbook" />} caveat={llCapCaveat ? <LandlordCostChip caveat={llCapCaveat} /> : undefined} accentColor="var(--color-accent2)" />
       </div>
 
       <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>

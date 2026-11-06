@@ -10,10 +10,11 @@
 // cache with NO network and NO module mocking — `vitest.config.ts` sets `isolate: false`, under
 // which `vi.mock` can bleed across the suite, so cache-seeding is the safe pattern. OwnershipView
 // uses only jsdom-friendly primitives (no @visx charts), so it mounts cleanly.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { OwnershipView } from '../../src/modules/intel/OwnershipView';
+import { PropertyIntelView } from '../../src/modules/intel/PropertyIntelView';
 import {
   ANALYTICS_KEYS,
   type PropertyScore,
@@ -125,5 +126,60 @@ describe('OwnershipView (render smoke)', () => {
     expect(screen.getAllByText('1851 Solar').length).toBeGreaterThan(0);
     // The since-acq leaderboard excluded the incomparable property with a note.
     expect(screen.getByText(/excluded — insufficient history/i)).toBeTruthy();
+  });
+});
+
+// Design review 2026-10-31 finding 8: ledger NOI names its basis so it is never read against the
+// Overview's workbook NOI; a YTD level says it is a partial year.
+describe('OwnershipView — NOI basis labels', () => {
+  it('labels both band NOI tiles as ledger, entity 100% for the portfolio level', () => {
+    const { container } = render(
+      <QueryClientProvider client={seededClient()}>
+        <OwnershipView onOpenProperty={() => {}} period={null} periodLabel={null} />
+      </QueryClientProvider>,
+    );
+    expect(container.querySelectorAll('[data-basis="ledger"]').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('latest full year · entity 100%')).toBeTruthy();
+    expect(screen.getByText('ownership-weighted')).toBeTruthy();
+  });
+
+  it('marks a YTD level as partial (the flag IntelModule derives with isYtdPeriod)', () => {
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <OwnershipView onOpenProperty={() => {}} period="2026" periodLabel="2026 YTD" periodIsYtd />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('2026 YTD · partial · entity 100%')).toBeTruthy();
+  });
+
+  it('adds no partial cue to a full-year level', () => {
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <OwnershipView onOpenProperty={() => {}} period="2025" periodLabel="FY2025" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('FY2025 · entity 100%')).toBeTruthy();
+  });
+});
+
+describe('PropertyIntelView — NOI basis label', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    // The view's charts measure their container (src/lib/useMeasure.ts); jsdom has no ResizeObserver.
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('labels the property NOI tile as ledger', () => {
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <PropertyIntelView propertyId="red-branch" onSelectProperty={() => {}} period={null} periodLabel={null} />
+      </QueryClientProvider>,
+    );
+    const tile = screen.getByText(/^NOI \(latest FY\)$/).closest('div.min-w-0');
+    expect(tile).not.toBeNull();
+    expect(tile!.querySelector('[data-basis="ledger"]')).not.toBeNull();
   });
 });

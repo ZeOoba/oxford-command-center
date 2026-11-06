@@ -612,9 +612,13 @@ export function LeaseForecastModule() {
           <Card>
             <CardHeader title="Leasing Velocity" />
             {velocity.length === 0 ? (
-              <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                No leasing velocity yet. Median days-to-lease needs vacancy-to-lease history (when each suite went
-                vacant and when it was leased), which the Master Workbook does not carry.
+              // Design review 2026-10-31 finding 12: no empty panel on a default tab. One line that says
+              // the source is missing and that no feed exists: nothing writes lease_events today (its
+              // only code path is the reader in server/warehouse/lease-velocity.ts).
+              <div role="note" className="px-4 py-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Not yet sourced.</span>{' '}
+                Days-to-lease needs the date each suite went vacant and the date it was re-leased. The Master Workbook
+                carries only current leases, and no lease-history feed exists yet.
               </div>
             ) : (
               <DataTable
