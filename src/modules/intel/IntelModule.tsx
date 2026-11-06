@@ -166,7 +166,7 @@ export function IntelModule() {
         // strip shouldn't fan out queries (plan R9).
         <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as IntelTab)} keyboardActivation="manual" aria-label="Property Financial Intelligence views">
           <TabPanel id="ownership">
-            <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
+            <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} periodIsYtd={showYtdBanner} />
           </TabPanel>
           <TabPanel id="property">
             <PropertyIntelView

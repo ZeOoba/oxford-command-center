@@ -12,6 +12,7 @@ import { Card } from '@/primitives/Card';
 import { Provenance } from '@/primitives/Provenance';
 import { BulletGraph, type BulletState } from '@/charts/BulletGraph';
 import { useUi } from '@/brain/ui-context';
+import { landlordCostCaveat } from './landlord-cost-caveat';
 
 const fmtX = (n: number) => `${n.toFixed(2)}x`;
 // A breaching value is rounded TOWARD the breach side at display precision, so it can never print as
@@ -48,7 +49,8 @@ function GovernorTile({
   prov?: ProvenanceData;
   state: BulletState | 'unknown';
   bullet: ReactNode;
-  lines: { text: string; abnormal?: boolean }[];
+  /** `title` overrides the hover text when the line is a short form of a longer explanation. */
+  lines: { text: string; abnormal?: boolean; title?: string }[];
 }) {
   return (
     <Card className="overflow-hidden">
@@ -61,7 +63,7 @@ function GovernorTile({
         </div>
         {bullet}
         {lines.map((l) => (
-          <div key={l.text} className="truncate text-2xs" title={l.text} style={{ color: l.abnormal ? 'var(--text-warn)' : 'var(--text-tertiary)' }}>
+          <div key={l.text} className="truncate text-2xs" title={l.title ?? l.text} style={{ color: l.abnormal ? 'var(--text-warn)' : 'var(--text-tertiary)' }}>
             {l.text}
           </div>
         ))}
@@ -90,6 +92,18 @@ export function GovernorTiles({ snapshot, kpis }: { snapshot: PortfolioSnapshot;
   const n = dscr.leveredCount;
   const dscrBasis = `${n} levered propert${n === 1 ? 'y' : 'ies'} · affiliate notes included · Σ NOI / Σ debt service · ${dscrSource}`;
   const weakestText = dscr.weakest ? `weakest ${dscr.weakest.name} ${fmtDscr(dscr.weakest.dscr, dscr.floor)}` : null;
+  // Design review 2026-10-31 finding 6: a levered property whose expenses read $0 (NNN, not absolute)
+  // has its DSCR overstated by the unsourced landlord-paid costs. Same population as dscrHeadroom's
+  // levered set (investment, finite debt service > 0, finite NOI), so `of` equals dscr.leveredCount.
+  const llDscr = landlordCostCaveat(
+    properties.filter((p) => Number.isFinite(p.debtService) && p.debtService > 0 && Number.isFinite(p.noi)),
+    { measure: 'this DSCR' },
+  );
+  // Neutral, not warn: on these tiles colour means a governor state (breach / weakest below floor),
+  // and a data caveat is not one. The words carry it.
+  const llDscrLine = llDscr
+    ? { text: `LL costs not sourced on ${llDscr.flagged.length} of ${llDscr.of} levered`, title: llDscr.title }
+    : null;
   const dscrSummary = dscr.portfolio === null
     ? `DSCR not available — no levered properties. Floor ${fmtX(dscr.floor)}.`
     : `DSCR ${fmtDscr(dscr.portfolio, dscr.floor)} against the ${fmtX(dscr.floor)} floor, ${dscr.breached ? 'below floor' : 'within governor'}.` +
@@ -117,7 +131,11 @@ export function GovernorTiles({ snapshot, kpis }: { snapshot: PortfolioSnapshot;
         display={dscr.portfolio === null ? '—' : fmtDscr(dscr.portfolio, dscr.floor)}
         state={dscrState}
         bullet={<BulletGraph value={dscr.portfolio} target={dscr.floor} kind="floor" max={dscrMax} state={dscrState === 'unknown' ? 'ok' : dscrState} secondary={dscr.weakest?.dscr ?? null} summary={dscrSummary} />}
-        lines={[{ text: dscrBasis }, ...(weakestText ? [{ text: weakestText, abnormal: dscr.weakestBelowFloor }] : [])]}
+        lines={[
+          { text: dscrBasis },
+          ...(weakestText ? [{ text: weakestText, abnormal: dscr.weakestBelowFloor }] : []),
+          ...(llDscrLine ? [llDscrLine] : []),
+        ]}
       />
       <GovernorTile
         name="LTV vs governor"
