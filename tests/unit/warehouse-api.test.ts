@@ -561,4 +561,36 @@ describe('warehouse analytics routes', () => {
     };
     expect(Array.isArray(body.scorecards)).toBe(true);
   });
+  it('approve / reject / resolve while another writer holds the warehouse write lock past busy_timeout → 503 retry, nothing written', async () => {
+    // They take the write lock before their first read (BEGIN IMMEDIATE, the TOCTOU fix), so a long backfill transaction
+    // can outlast busy_timeout even on a request that would be refused. That is a retryable 503, never an unhandled 500.
+    const { db, importId } = await pendingWarehouse();
+    const issueId = Number(
+      db
+        .prepare("INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, '1100-rarig-ave-columbus-oh', 'foot-mismatch', 'synthetic', 'warn')")
+        .run(importId).lastInsertRowid,
+    );
+    db.pragma('busy_timeout = 0');
+    const peer = openWarehouse(db.name);
+    peer.exec('BEGIN IMMEDIATE');
+    try {
+      const app = warehouseRoutes(() => db);
+      const post = (path: string, body?: unknown) =>
+        app.request(path, { method: 'POST', headers: JSON_HEADERS, body: body === undefined ? undefined : JSON.stringify(body) });
+      for (const res of [
+        await post(`/imports/${importId}/action`, { action: 'approve' }),
+        await post(`/imports/${importId}/action`, { action: 'reject' }),
+        await post(`/issues/${issueId}/resolve`),
+      ]) {
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toMatch(/busy.*nothing was written.*retry/i);
+      }
+    } finally {
+      peer.exec('ROLLBACK');
+      peer.close();
+    }
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
+    expect(db.prepare('SELECT status FROM data_quality_issues WHERE id=?').get(issueId)).toMatchObject({ status: 'open' });
+  });
 });
+
