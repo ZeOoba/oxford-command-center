@@ -239,6 +239,21 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     return handler(db);
   };
 
+  // approve / reject / resolve take the write lock before their first read (BEGIN IMMEDIATE, actions.ts), so a
+  // backfill transaction that outlasts busy_timeout surfaces as SQLITE_BUSY even on a request that would be refused.
+  // Nothing was written (the transaction never began), so answer a retryable 503 rather than the generic 500.
+  const busyAs503 = (run: () => Response): Response => {
+    try {
+      return run();
+    } catch (e) {
+      if (!String((e as { code?: unknown }).code ?? '').startsWith('SQLITE_BUSY')) throw e;
+      return new Response(
+        JSON.stringify({ error: 'warehouse busy (another writer, e.g. a backfill, holds the write lock); nothing was written; retry' }),
+        { status: 503, headers: { 'content-type': 'application/json', 'retry-after': '5' } },
+      );
+    }
+  };
+
   app.get('/imports', (c) => withDb((db) => c.json({ imports: listImports(db) })));
 
   app.get('/imports/:id', (c) =>
@@ -263,16 +278,20 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       if (!parsed.success) return c.json({ error: 'invalid action' }, 400);
 
       if (parsed.data.action === 'reject') {
-        const r = rejectImport(db, id);
-        return c.json(r, r.ok ? 200 : 404);
+        return busyAs503(() => {
+          const r = rejectImport(db, id);
+          return c.json(r, r.ok ? 200 : 404);
+        });
       }
       // approve: a refusal carrying an unmapped list or a policy `reason` (a newer version already committed,
       // property-unresolved / property-mismatch gates, sign-undecidable gate) is a 409 (the client resolves the
       // mappings / verifies the sign, or rejects the import and re-drops a fresh export); any other failure (not found /
       // not pending / no ledger rows, including an empty import whose property is unresolved) is a 404.
-      const r = approveImport(db, id);
-      if (r.ok) return c.json(r, 200);
-      return c.json(r, r.unmapped.length > 0 || r.reason !== undefined ? 409 : 404);
+      return busyAs503(() => {
+        const r = approveImport(db, id);
+        if (r.ok) return c.json(r, 200);
+        return c.json(r, r.unmapped.length > 0 || r.reason !== undefined ? 409 : 404);
+      });
     }),
   );
 
@@ -288,8 +307,10 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       const id = parseId(c.req.param('id'));
       if (id === null) return c.json({ error: 'not found' }, 404);
-      const r = resolveIssue(db, id);
-      return c.json(r, r.ok ? 200 : 404);
+      return busyAs503(() => {
+        const r = resolveIssue(db, id);
+        return c.json(r, r.ok ? 200 : 404);
+      });
     }),
   );
 
