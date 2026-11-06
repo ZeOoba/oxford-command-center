@@ -306,11 +306,11 @@ describe('calibration — Zod boundary (§2) + determinism (§7)', () => {
 // These repros use filename tokens that RESOLVE to real property_master ids (detect.ts
 // PROPERTY_ALIASES) so the ledger carries a concrete property_id (with rentableSf, cash basis)
 // — not the 'unknown' aggregate. That gives real per-property quartiles + a real same-basis
-// cohort, which D1/D2/D4 need. (The tests above formerly used rent-suffixed tokens that resolved no
-// property, so approve committed each batch under one 'unknown' subject. approveImport now refuses to
-// commit any ledger row that is not keyed to the batch's own resolved property ('property-unresolved',
-// 'property-mismatch'), so those tests resolve real properties through ALIAS_TOKEN and this file no
-// longer exercises an 'unknown' subject.)
+// cohort, which D1/D2/D4 need. (Before #554 (9485736f) the tests above used rent-suffixed tokens that
+// resolved no property, so approve committed each batch under one 'unknown' subject. approveImport now
+// refuses to commit any ledger row that is not keyed to the batch's own resolved property
+// ('property-unresolved', 'property-mismatch'), so those tests resolve real properties through ALIAS_TOKEN.
+// The 'unknown' subject is still exercised on purpose, in the block at the end of this file.)
 
 /** Commit one full-year P&L whose filename token is an EXACT detect.ts alias (→ resolves to a
  *  real property_master id). `repair` grows faster than `rent` across years so reclassifying the
@@ -493,5 +493,68 @@ describe('calibration — D4: small-cohort confidence cap at n<3 (§2.3)', () =>
       expect(v.confidence).not.toBeNull();
       expect(v.confidence!).toBeLessThanOrEqual(0.6); // n=2 < 3 → capped
     }
+  });
+});
+
+// ── The 'unknown' subject ───────────────────────────────────────────────────────────────────
+// Before #554 (9485736f) the tests at the top of this file drove an 'unknown' subject on purpose: their rent-suffixed filenames
+// resolved no property, so approve committed each batch under the ledger's 'unknown' key. approveImport now refuses
+// that ('property-unresolved') and those tests resolve real properties (ALIAS_TOKEN). The path is kept on purpose here,
+// both ways: the refusal itself, and the calibration score/emit path driven directly over 'unknown' rows committed the
+// way approve did before the gate (data a live warehouse can still hold from before it).
+describe("calibration — the 'unknown' subject (rent-suffixed fixtures, pre-gate data)", () => {
+  function freshDb(): { db: WarehouseDb; dir: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'cal-unknown-'));
+    dirs.push(dir);
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    return { db, dir };
+  }
+  /** Ingest the rent-suffixed full-year fixture used before #554 (9485736f): the filename resolves no property, so the batch is held for review
+   *  with property NULL and its ledger rows keyed 'unknown'. */
+  async function ingestRentSuffixed(
+    db: WarehouseDb,
+    dir: string,
+    opts: { year: number; rent: number; repair: number; at: string },
+  ): Promise<number> {
+    const file = join(dir, `P&L ${opts.year} -- 1100 Rarig Ave ${opts.rent}.xlsx`);
+    await writeFixture(file, { property: '1100 Rarig Ave', year: opts.year, rent: opts.rent, repair: opts.repair });
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: opts.at, autoCommitThreshold: 0.99 });
+    expect(r.status).toBe('pending-review');
+    expect(db.prepare('SELECT property_id FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ property_id: null });
+    return r.importId!;
+  }
+  /** Commit a fully-mapped batch the way approveImport did before #554 (9485736f) added the property gates: activate its rows and
+   *  flip it to committed (its NULL-keyed supersede matched nothing). */
+  function commitAsPreGateApprove(db: WarehouseDb, importId: number): void {
+    db.prepare('UPDATE ledger_entries SET is_active = 1 WHERE import_id = ?').run(importId);
+    db.prepare("UPDATE import_batches SET status = 'committed' WHERE id = ?").run(importId);
+  }
+
+  it("approve now refuses the pre-#554 rent-suffixed fixture (property-unresolved) and emits no 'unknown' verdict", async () => {
+    const { db, dir } = freshDb();
+    const id = await ingestRentSuffixed(db, dir, { year: 2025, rent: 112000, repair: 9000, at: '2026-06-12T01:00:00Z' });
+    const refusal = approveImport(db, id);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) expect(refusal.reason).toBe('property-unresolved');
+    expect((db.prepare('SELECT COUNT(*) AS c FROM calibration_verdict').get() as { c: number }).c).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS c FROM ledger_entries WHERE property_id = 'unknown' AND is_active = 1").get() as { c: number }).c).toBe(0);
+  });
+
+  it("scores and logs an 'unknown' subject from pre-gate committed rows, driven directly", async () => {
+    const { db, dir } = freshDb();
+    commitAsPreGateApprove(db, await ingestRentSuffixed(db, dir, { year: 2024, rent: 100000, repair: 8000, at: '2026-06-12T00:00:00Z' }));
+    commitAsPreGateApprove(db, await ingestRentSuffixed(db, dir, { year: 2025, rent: 112000, repair: 9000, at: '2026-06-12T01:00:00Z' }));
+    const metrics = propertyPeriodMetrics(db);
+    expect([...new Set(metrics.map((m) => m.propertyId))]).toEqual(['unknown']);
+    const iv = computeInputsVersion(db);
+    const verdicts = verdictsFromScores(scoreProperties(db, metrics), iv, 'commit:pre-gate-unknown');
+    expect(verdicts.length).toBeGreaterThan(0);
+    expect(verdicts.every((v) => v.subjectKind === 'property' && v.subjectId === 'unknown')).toBe(true);
+    expect(verdicts.map((v) => v.verdictKind)).toEqual(expect.arrayContaining(['attention', 'capital-action', 'health-band']));
+    for (const v of verdicts) expect(CalibrationVerdictSchema.safeParse(v).success).toBe(true);
+    logVerdicts(db, verdicts);
+    expect(db.prepare('SELECT DISTINCT subject_id FROM calibration_verdict').all()).toEqual([{ subject_id: 'unknown' }]);
   });
 });

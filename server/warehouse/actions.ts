@@ -22,14 +22,37 @@ export type ApproveResult =
       reason?: 'property-unresolved' | 'property-mismatch' | 'sign-undecidable' | 'newer-version-committed';
     };
 
-/** Shared tail of the property refusals' error text. registerImport re-derives a same-hash file in place only while its
- *  import is committed or pending-review and came from an older parser; once rejected, the identical file is a
- *  duplicate under any name. So the dependable unblock is reject + a fresh export. */
+/** Shared tails of the property refusals' error text, so the unblock path each states works in every reachable case.
+ *  ALIAS_NOTE covers the case where no filename can resolve yet: detect.ts resolves a property only through its static
+ *  PROPERTY_ALIASES map (aliases entered at property onboarding are not read), and an alias for a property that is not
+ *  in property_master fails ingest on the foreign key. REDROP_NOTE: registerImport re-derives a same-hash file in place
+ *  only while its import is committed or pending-review and came from an older parser, so once this import is rejected
+ *  a file with identical bytes is a duplicate under any name. */
+const ALIAS_NOTE =
+  'If the property has no PROPERTY_ALIASES entry yet, one must be added first in server/warehouse/detect.ts (a code change: ' +
+  'aliases entered at property onboarding are not read by filename detection), and a property not yet in property_master ' +
+  'must be onboarded first.';
 const REDROP_NOTE =
-  'Once this import is rejected, re-dropping the identical file is deduplicated by content hash, so the re-drop must be a fresh export.';
+  'The re-dropped file must differ byte-for-byte from this one: once this import is rejected, a file with identical bytes ' +
+  'is a duplicate under any name.';
 
-/** Ledger rows of an import NOT keyed to the import's own (resolved) property: bound to (importId, batch.property_id). */
-const LEDGER_PROPERTY_MISMATCH = "import_id = ? AND (property_id = 'unknown' OR property_id IS NOT ?)";
+/** detect.ts's filename rule for the refusal texts: 'P&L <year> -- <token>.xlsx' (or '<year> P&L -- ...', optional
+ *  ' YTD'), where the WHOLE token, lowercased with spaces around hyphens collapsed, must equal a PROPERTY_ALIASES key.
+ *  A token that merely contains a key does not resolve. `key` names whose key it is. */
+const aliasFilename = (key: string): string =>
+  `named 'P&L <year> -- <token>.xlsx', where <token> is exactly ${key} (the whole token must equal the key, ` +
+  'case-insensitively; containing it is not enough)';
+
+/** The one ledger read that drives the empty, unresolved and mismatch gates and the re-resolution. */
+const LEDGER_ROWS_SQL = 'SELECT id, raw_account, classification, property_id FROM ledger_entries WHERE import_id=?';
+type LedgerRow = { id: number; raw_account: string; classification: string; property_id: string };
+
+/** The rows NOT keyed to the batch's own property ('unknown', or another property), with their distinct keys sorted
+ *  and quoted for the refusal text. */
+function rowsOffProperty(rows: readonly LedgerRow[], propertyId: string | null): { count: number; keys: string } {
+  const bad = rows.filter((r) => r.property_id === 'unknown' || r.property_id !== propertyId);
+  return { count: bad.length, keys: [...new Set(bad.map((r) => r.property_id))].sort().map((k) => `'${k}'`).join(', ') };
+}
 
 /** Options for approveImport. `forceCalibrationError` (tests only) poisons the post-commit emit
  *  hook to prove the fail-open guarantee — the commit still returns {ok:true}. */
@@ -53,20 +76,25 @@ interface BatchRow {
  * still unmapped. On success the rows are activated, prior committed versions of the same
  * logical period are superseded, and the batch flips to 'committed'.
  *
- * Refusals (all leave the batch pending-review and every ledger row untouched):
- *  - not found / not pending-review / no ledger rows;
+ * Refusals, in the order they are checked (all leave the batch pending-review and every ledger row untouched):
+ *  - not found / not pending-review;
+ *  - reason 'newer-version-committed': a NEWER ARRIVAL (higher import id) for the same property and period is
+ *    already committed, so approving this older one would supersede it and serve older data (reject it instead).
+ *    If the batch's ledger rows are also keyed off its property, the text names those keys and their re-drop path,
+ *    so rejecting it never silently loses a statement that belongs to another property;
+ *  - no ledger rows: an empty import (the API answers 404, whatever the batch's property);
  *  - reason 'property-unresolved': the batch's property never resolved (property_id NULL, blank or the ledger's
  *    'unknown' sentinel). Committing it would key NOI to no property: the supersede below matches nothing on a NULL
- *    id (silent double count) and every such batch merges into one 'unknown' pseudo-property. Checked first, before
- *    the supersede guard and unmapped re-resolution, so the reviewer is never asked to map a batch that cannot commit;
+ *    id (silent double count) and every such batch merges into one 'unknown' pseudo-property;
  *  - reason 'property-mismatch': the batch's property resolved, but some of its ledger rows are keyed to a different
  *    property or to 'unknown'. NOI keys on ledger_entries.property_id while the supersede keys on the batch's, so
  *    committing would supersede the batch property's served version and serve the rows under the ledger's key. A
  *    stale-parser re-derive produces this (ingest.ts rebuilds the ledger from a re-drop's filename but never rewrites
- *    the batch's property; ING-2). Checked right after 'property-unresolved'. Together the two guarantee that approve
- *    never commits a ledger row that is not keyed to the batch's own resolved property;
- *  - reason 'newer-version-committed': a NEWER ARRIVAL (higher import id) for the same property and period is
- *    already committed, so approving this older one would supersede it and serve older data (reject it instead);
+ *    the batch's property; ING-2). Together the two property gates guarantee that approve never commits a ledger row
+ *    that is not keyed to the batch's own resolved property. They run after the newer-version and empty checks, which
+ *    keep the answers they gave before #554 (9485736f: reject the stale import; 404), and before the unmapped and sign
+ *    checks, so the reviewer is never asked to map accounts or verify a sign for a batch that cannot commit. The empty,
+ *    unresolved and mismatch checks all read ONE ledger read, which the re-resolution reuses;
  *  - unmapped accounts remain (`unmapped` lists them);
  *  - reason 'sign-undecidable': ingest held the batch with no sign flip applied and the reviewer has not yet
  *    marked the sign-undecidable issue verified.
@@ -100,48 +128,6 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
     return { ok: false, unmapped: [], error: `import is ${batch.status}, not pending-review` };
   }
 
-  // Property gate (fail closed). An unresolved property ('unknown' is the ledger's stand-in for NULL) can never be
-  // committed safely, so refuse before the supersede guard (whose NULL key matches nothing) and before asking the
-  // reviewer to map accounts. Reject stays available; the error text carries the unblock path (REDROP_NOTE).
-  if (batch.property_id === null || batch.property_id.trim() === '' || batch.property_id === 'unknown') {
-    return {
-      ok: false,
-      unmapped: [],
-      reason: 'property-unresolved',
-      error:
-        `import #${importId} has no resolved property (its filename token matched no property alias), so approving it would ` +
-        `commit NOI under no property. Reject it, then re-drop a re-exported copy of the statement whose filename carries a ` +
-        `recognized property token. ${REDROP_NOTE}`,
-    };
-  }
-
-  // Ledger-side property gate (fail closed). NOI keys on ledger_entries.property_id; the supersede below keys on the
-  // batch's. A stale-parser re-derive (ingest.ts) rebuilds the ledger rows from a re-drop's filename but never rewrites
-  // the batch's property, so the two can disagree. Approving such a batch would supersede the batch property's served
-  // version and serve this statement under the ledger's key ('unknown' or another property). Refuse any row not keyed
-  // to the batch's own property, before any write.
-  const mismatched = db
-    .prepare(`SELECT COUNT(*) AS c FROM ledger_entries WHERE ${LEDGER_PROPERTY_MISMATCH}`)
-    .get(importId, batch.property_id) as { c: number };
-  if (mismatched.c > 0) {
-    const keys = (
-      db
-        .prepare(`SELECT DISTINCT property_id AS p FROM ledger_entries WHERE ${LEDGER_PROPERTY_MISMATCH} ORDER BY p`)
-        .all(importId, batch.property_id) as Array<{ p: string }>
-    ).map((k) => `'${k.p}'`);
-    return {
-      ok: false,
-      unmapped: [],
-      reason: 'property-mismatch',
-      error:
-        `import #${importId} is filed under '${batch.property_id}', but ${mismatched.c} of its ledger rows are keyed to ` +
-        `${keys.join(', ')} (a re-derive rebuilt them from a differently named re-drop of the same file). Approving it would ` +
-        `supersede any committed version of this period filed under '${batch.property_id}' and serve this statement under ` +
-        `the wrong property. Reject it, then re-drop a re-exported copy of the statement under its own property's filename. ` +
-        REDROP_NOTE,
-    };
-  }
-
   // Supersede guard. Approving commits this batch and supersedes EVERY committed version of the same period. If a
   // NEWER arrival is already committed, that would replace newer data with older data, so refuse before asking the
   // reviewer to map accounts or verify signs for a batch that can never be approved. Reject it instead; the newer
@@ -153,20 +139,69 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
     periodEnd: batch.period_end,
   });
   if (newerCommitted !== null) {
+    // Refusal path only: also name a co-occurring property mismatch, so rejecting this import never silently loses a
+    // statement that belongs to another property (refute wf_2e74b57b-da3). Read only after this guard fired, so the
+    // statements on the commit path are unchanged.
+    const off = rowsOffProperty(db.prepare(LEDGER_ROWS_SQL).all(importId) as LedgerRow[], batch.property_id);
     return {
       ok: false,
       unmapped: [],
       reason: 'newer-version-committed',
       error:
         `a newer version (v${newerCommitted.version}, import #${newerCommitted.id}) of this period is already committed; approving this older ` +
-        `import (v${batch.version}, #${importId}) would supersede it and serve older data. Reject this import — the newer version stays.`,
+        `import (v${batch.version}, #${importId}) would supersede it and serve older data. Reject this import — the newer version stays.` +
+        (off.count > 0
+          ? ` Its ledger rows are also keyed to ${off.keys} rather than '${batch.property_id}' (a re-derive rebuilt them from a ` +
+            `differently named re-drop of the same file), so the statement may belong to another property: if it does, after ` +
+            `rejecting this import re-drop a fresh export of the statement ${aliasFilename("that property's PROPERTY_ALIASES key")}. ` +
+            `${ALIAS_NOTE} ${REDROP_NOTE}`
+          : ''),
     };
   }
 
-  const rows = db
-    .prepare('SELECT id, raw_account, classification FROM ledger_entries WHERE import_id=?')
-    .all(importId) as Array<{ id: number; raw_account: string; classification: string }>;
+  // ONE ledger read drives the empty, unresolved and mismatch gates and the re-resolution below. A separate gate query
+  // here would add a statement between this read and the write transaction, the window a concurrent re-derive can land
+  // in (TOCTOU Window B, refute wf_2e74b57b-da3). The root fix (re-check inside an IMMEDIATE transaction) is deferred.
+  const rows = db.prepare(LEDGER_ROWS_SQL).all(importId) as LedgerRow[];
   if (rows.length === 0) return { ok: false, unmapped: [], error: 'import has no ledger rows' };
+
+  // Property gates (fail closed). They run after the newer-version guard and the empty-import check, which keep the
+  // answers they gave before #554 (9485736f), and before any mapping re-resolution, so the reviewer is never asked to map
+  // accounts or verify a sign for a batch that cannot commit. Reject stays available, and each error text carries an
+  // unblock path that works in every reachable case (aliasFilename, ALIAS_NOTE, REDROP_NOTE).
+  //
+  // 1. Unresolved property ('unknown' is the ledger's stand-in for NULL): it can never be committed safely, and the
+  //    supersede below would match nothing on a NULL key.
+  if (batch.property_id === null || batch.property_id.trim() === '' || batch.property_id === 'unknown') {
+    return {
+      ok: false,
+      unmapped: [],
+      reason: 'property-unresolved',
+      error:
+        `import #${importId} has no resolved property: its filename token does not equal any PROPERTY_ALIASES key, so ` +
+        `approving it would commit NOI under no property. Reject it, then re-drop a fresh export of the statement ` +
+        `${aliasFilename("the property's PROPERTY_ALIASES key")}. ${ALIAS_NOTE} ${REDROP_NOTE}`,
+    };
+  }
+
+  // 2. Ledger rows not keyed to the batch's property. NOI keys on ledger_entries.property_id; the supersede below keys
+  //    on the batch's. A stale-parser re-derive (ingest.ts) rebuilds the ledger rows from a re-drop's filename but never
+  //    rewrites the batch's property, so the two can disagree, and approving would supersede the batch property's
+  //    served version and serve this statement under the ledger's key ('unknown' or another property).
+  const off = rowsOffProperty(rows, batch.property_id);
+  if (off.count > 0) {
+    return {
+      ok: false,
+      unmapped: [],
+      reason: 'property-mismatch',
+      error:
+        `import #${importId} is filed under '${batch.property_id}', but ${off.count} of its ledger rows are keyed to ` +
+        `${off.keys} (a re-derive rebuilt them from a differently named re-drop of the same file). Approving it would ` +
+        `supersede any committed version of this period filed under '${batch.property_id}' and serve this statement under ` +
+        `the wrong property. Reject it, then re-drop a fresh export of the statement ` +
+        `${aliasFilename('the PROPERTY_ALIASES key of the property it belongs to')}. ${ALIAS_NOTE} ${REDROP_NOTE}`,
+    };
+  }
 
   // Derive the year period for this import so period-scoped mapping rows (e.g. the H4 FVC 2025
   // easement exclusion) fire correctly during re-resolution. period_start is '2025-01-01' for an
