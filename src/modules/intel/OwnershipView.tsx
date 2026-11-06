@@ -54,6 +54,7 @@ import {
 } from './synthesis';
 import { portfolioTotals, portfolioTotalsForPeriod, attentionCounts, portfolioVerdict } from './ownership-intel';
 import { periodLabel } from './property-intel';
+import { BasisSublabel } from '@/primitives/BasisChip';
 
 // ---------------------------------------------------------------------------
 // Tone maps (engine band → Badge tone) — identical mapping to PropertyIntelView so the
@@ -114,9 +115,12 @@ interface Props {
   period: string | null;
   /** Display label for the selected period ('FY2025' / '2026 YTD'); null → "latest full year". */
   periodLabel: string | null;
+  /** True when the selected period is YTD/partial (IntelModule's isYtdPeriod, the same flag that
+   *  raises its YTD banner). The band's NOI level then says "partial". */
+  periodIsYtd?: boolean;
 }
 
-export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }: Props) {
+export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel, periodIsYtd = false }: Props) {
   const scores = useScores();
   const metrics = useMetrics();
   const growth = useGrowth();
@@ -221,7 +225,7 @@ export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }
         onOpenProperty={onOpenProperty}
       />
 
-      <PortfolioBand totals={bandTotals} counts={counts} periodLabel={bandLabel} />
+      <PortfolioBand totals={bandTotals} counts={counts} periodLabel={bandLabel} partial={periodIsYtd} />
 
       <ActionList actions={actions} onOpenProperty={onOpenProperty} />
 
@@ -382,11 +386,15 @@ function PortfolioBand({
   totals,
   counts,
   periodLabel,
+  partial,
 }: {
   totals: ReturnType<typeof portfolioTotals>;
   counts: ReturnType<typeof attentionCounts>;
   /** Period label for the NOI level sublabel ('FY2025' / '2026 YTD'); null → "latest full year". */
   periodLabel: string | null;
+  /** A YTD period is a partial-year ledger total; say so beside the level so it is not read against a
+   *  full-year figure. */
+  partial: boolean;
 }) {
   const levelLabel = periodLabel ?? 'latest full year';
   return (
@@ -402,14 +410,14 @@ function PortfolioBand({
         value={totals.portfolioNoi}
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-pos)"
-        sublabel={levelLabel}
+        sublabel={<BasisSublabel basis="ledger">{`${levelLabel} · ${partial ? 'partial · ' : ''}entity 100%`}</BasisSublabel>}
       />
       <KpiStat
         label="Oxford-Share NOI"
         value={totals.oxfordNoi}
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-info)"
-        sublabel="ownership-weighted"
+        sublabel={<BasisSublabel basis="ledger">ownership-weighted</BasisSublabel>}
       />
       <KpiStat
         label="Needing Attention"

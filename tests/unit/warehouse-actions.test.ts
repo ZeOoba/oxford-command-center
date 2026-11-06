@@ -1137,6 +1137,9 @@ describe('warehouse actions', () => {
       // Refute wf_2e74b57b-da3 pinned this shape while the gates still ran outside the write transaction. approveImport
       // now runs the read, the gates and the writes under one IMMEDIATE write lock, and the race itself is probed with a
       // real second writer in warehouse-approve-toctou.test.ts; this stays as defense in depth: one ledger read.
+      // Refute wf_2e74b57b-da3: each statement between approve's ledger read and its write transaction widens the
+      // check-then-write window (TOCTOU, Window B) that a concurrent re-derive can land in. A single process cannot show
+      // the race, so this pins the statement shape instead: one read of the import's ledger rows, then the transaction.
       const { db, v2 } = await divergedPending('P&L 2025 -- 1100 Rarig.xlsx'); // approvable (the y3 shape)
       const beforeFirstWrite: string[] = [];
       const prepare = db.prepare.bind(db);

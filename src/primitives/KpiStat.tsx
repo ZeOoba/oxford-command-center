@@ -13,6 +13,10 @@ interface Props {
   format: (n: number | null) => string;
   prov?: ProvenanceData;
   sublabel?: ReactNode;
+  /** A data-quality caveat on its own line under the sublabel, e.g. a "not sourced" chip. It labels
+   *  the figure; it never restates it. Its own line keeps it out of the truncating sublabel; the card
+   *  still hides overflow, so caveat content must wrap at narrow widths (see LandlordCostChip). */
+  caveat?: ReactNode;
   delta?: number | null;
   deltaLabel?: string;
   spark?: number[];
@@ -47,6 +51,7 @@ export function KpiStat({
   format,
   prov,
   sublabel,
+  caveat,
   delta,
   deltaLabel,
   spark,
@@ -95,6 +100,7 @@ export function KpiStat({
             )}
           </div>
         )}
+        {caveat && <div className="mt-1.5 flex min-w-0">{caveat}</div>}
       </div>
       {spark && spark.length > 1 && (
         <div className={cn('shrink-0 pt-1')}>
