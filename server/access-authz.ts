@@ -22,6 +22,7 @@
 // rather than pulling a JWT library into a repo that gates install scripts.
 import { createPublicKey, createVerify } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
+import { extraAllowedHostsFromEnv } from './host-guard';
 
 /** An RSA public key in JWK form, as published at /cdn-cgi/access/certs. */
 export interface Jwk {
@@ -240,13 +241,31 @@ export function cloudflareJwksFetcher(issuer: string): () => Promise<readonly Jw
 /**
  * Build options from the environment.
  *
- * REQUIRE_ACCESS must be exactly '1' to enable — same strictness as shouldBakeWarehouse, so '0'
- * genuinely disables rather than reading as a truthy string. When enabled, the issuer/audience/
- * roster are REQUIRED: a misconfigured deployment must refuse to start rather than boot with
- * authorization silently inert, which is the failure mode that would look fine in every log.
+ * ACCESS_REQUIRE mirrors the edge rule (functions/_shared/access-identity.ts): unset, '' or '0' is
+ * inert (local dev), exactly '1' enables, and ANY other value ('true', '1 ', 'yes', a typo) refuses
+ * to start. It used to read `=== '1'`, so a malformed value booted with authorization silently inert
+ * while the edge failed closed on the same input (audit 2026-11-08, brain-authz-fail-open-tunnel).
+ *
+ * A tunnelled deployment (BRAIN_ALLOWED_HOSTS non-empty — same parse as host-guard.ts
+ * extraAllowedHostsFromEnv) must run with ACCESS_REQUIRE=1: once a non-loopback Host is admitted,
+ * loopback binding is no longer the boundary and the Access assertion is the only identity check.
+ *
+ * When enabled, the issuer/audience/roster are REQUIRED. Every misconfiguration refuses to start
+ * rather than booting with authorization silently inert — the failure mode that looks fine in every log.
  */
 export function accessAuthzOptionsFromEnv(env: Record<string, string | undefined>): AccessAuthzOptions {
-  const enabled = env.ACCESS_REQUIRE === '1';
+  const raw = env.ACCESS_REQUIRE;
+  if (raw !== undefined && raw !== '' && raw !== '0' && raw !== '1') {
+    throw new Error(
+      `ACCESS_REQUIRE is set but is neither "1" nor "0" — refusing to start rather than guess (authorization would be inert).`,
+    );
+  }
+  const enabled = raw === '1';
+  if (extraAllowedHostsFromEnv(env).length > 0 && !enabled) {
+    throw new Error(
+      'BRAIN_ALLOWED_HOSTS admits non-loopback hosts but ACCESS_REQUIRE is not "1" — refusing to start with the tunnel unauthenticated.',
+    );
+  }
   const issuer = env.ACCESS_ISSUER?.trim() ?? '';
   const audience = env.ACCESS_AUD?.trim() ?? '';
   const allowlist = (env.ACCESS_ALLOWLIST ?? '')
