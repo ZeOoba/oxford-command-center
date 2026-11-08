@@ -753,6 +753,86 @@ describe('parser-version re-ingest (self-healing backfill)', () => {
   });
 });
 
+// Audit 2026-11-08 ing2-restale-autocommit-no-property-gate (ING-2 on the ingest path). A stale-parser re-derive keeps
+// the batch's STORED property_id but rebuilds every ledger row under the property DETECTED from the re-dropped filename.
+// A byte-identical re-drop under another property's filename (or an alias change) therefore produced ledger rows keyed
+// to a different property than the batch, and ingest auto-committed them: NOI moved to the wrong property while the
+// supersede keyed on the detected one. #554 closed this on approve (property-unresolved / property-mismatch); ingest
+// must apply the same gate and route to review (or keep the prior committed version) instead of committing.
+describe('stale re-derive property gate (ING-2, ingest path)', () => {
+  const RARIG = '1100-rarig-ave-columbus-oh';
+  const WESTERVILLE = '3034-westerville-rd-columbus-oh';
+
+  async function setup(threshold?: number) {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-ing2-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileRarig = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileRarig);
+    mkdirSync(join(dir, 'redrop'));
+    const fileOther = join(dir, 'redrop', 'P&L 2025 -- 3034 Westerville.xlsx');
+    copyFileSync(fileRarig, fileOther); // byte-identical => same hash => restale of the Rarig batch
+    const r1 = await ingestFile(db, fileRarig, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: threshold });
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(r1.importId);
+    return { db, dir, fileOther, importId: r1.importId!, first: r1 };
+  }
+
+  it('pending-review batch re-derived under a different detected property stays pending-review, flagged property-mismatch; approve refuses', async () => {
+    const { db, dir, fileOther, importId, first } = await setup(0.99);
+    expect(first.status).toBe('pending-review');
+    const r = await ingestFile(db, fileOther, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r.importId).toBe(importId);
+    expect(r.status).toBe('pending-review'); // NOT auto-committed under the wrong property
+    expect(db.prepare('SELECT status, property_id FROM import_batches WHERE id = ?').get(importId)).toMatchObject({ status: 'pending-review', property_id: RARIG });
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(importId) as { c: number }).c).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) c FROM ledger_entries WHERE is_active = 1 AND property_id = ?").get(WESTERVILLE) as { c: number }).c).toBe(0);
+    const dq = db.prepare("SELECT severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'property-mismatch'").all(importId) as Array<{ severity: string; detail: string }>;
+    expect(dq).toHaveLength(1);
+    expect(dq[0]!.detail).toContain(WESTERVILLE);
+    expect(dq[0]!.detail).toContain(RARIG);
+    const refusal = approveImport(db, importId);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) expect((refusal as { reason?: string }).reason).toBe('property-mismatch');
+  });
+
+  it('committed batch re-derived under a different detected property keeps the prior committed ledger (restale-skipped names the mismatch)', async () => {
+    const { db, dir, fileOther, importId, first } = await setup();
+    expect(first.status).toBe('committed');
+    const r = await ingestFile(db, fileOther, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r).toMatchObject({ importId, status: 'committed', reason: 'restale-skipped' });
+    expect(db.prepare('SELECT status, parser_version FROM import_batches WHERE id = ?').get(importId)).toMatchObject({ status: 'committed', parser_version: 0 });
+    // prior ledger retained, still keyed to the batch's own property; nothing served under the detected one
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1 AND property_id = ?').get(importId, RARIG) as { c: number }).c).toBe(3);
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE property_id = ?').get(WESTERVILLE) as { c: number }).c).toBe(0);
+    const skip = db.prepare("SELECT detail FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped'").all(importId) as Array<{ detail: string }>;
+    expect(skip).toHaveLength(1);
+    expect(skip[0]!.detail).toContain('property-mismatch');
+  });
+
+  it('pending-review batch whose stored property is unresolved (NULL) is not auto-committed by a re-derive that now detects one', async () => {
+    const { db, dir, importId } = await setup(0.99);
+    db.prepare('UPDATE import_batches SET property_id = NULL WHERE id = ?').run(importId);
+    const fileRarig = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    const r = await ingestFile(db, fileRarig, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r.importId).toBe(importId);
+    expect(r.status).toBe('pending-review');
+    expect(db.prepare('SELECT status FROM import_batches WHERE id = ?').get(importId)).toMatchObject({ status: 'pending-review' });
+    expect((db.prepare("SELECT COUNT(*) c FROM data_quality_issues WHERE import_id = ? AND kind = 'property-unresolved'").get(importId) as { c: number }).c).toBe(1);
+    const refusal = approveImport(db, importId);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) expect((refusal as { reason?: string }).reason).toBe('property-unresolved');
+  });
+
+  it('same-property re-derive still commits (no regression)', async () => {
+    const { db, dir, importId } = await setup();
+    const r = await ingestFile(db, join(dir, 'P&L 2025 -- 1100 Rarig.xlsx'), { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r).toMatchObject({ importId, status: 'committed' });
+    expect(r.reason).toBeUndefined();
+    expect((db.prepare("SELECT COUNT(*) c FROM data_quality_issues WHERE import_id = ? AND kind IN ('property-mismatch','property-unresolved')").get(importId) as { c: number }).c).toBe(0);
+  });
+});
+
 const MIXED_SIGN_SEED = [
   { account: 'Rent', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
   { account: 'HVAC Repair', code: null, normalized_category: 'Repairs & Maintenance', classification: 'opex' },
