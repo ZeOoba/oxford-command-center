@@ -309,20 +309,46 @@ export function scoreAcquisition(
     gates.push({ id: 'flood', passed, detail });
   }
   // other-use
+  // An UNKNOWN other-use input is not a confirmed pass (audit 2026-11-08, other-use-gate-unfed-fail-open): it used to
+  // pass silently and never reached gateIndeterminate, so a deal nobody had screened for a ground lease, environmental
+  // remediation or an automotive/child-related use could reach PURSUE. Same rule as every other gate: unknown never
+  // KILLs, it caps at T2 via gateIndeterminate below. Mechanism only — the ratified thresholds are unchanged.
+  // Tenure is tri-state: a supplied term is always tested; with no term, only a CONFIRMED fee simple
+  // (groundLeased === false) is determinate.
+  const groundLeaseTerm = input.groundLeaseYearsRemaining;
+  const otherUseUnknown: string[] = [];
   {
     let passed = true;
     const bits: string[] = [];
-    if (input.groundLeaseYearsRemaining !== null && input.groundLeaseYearsRemaining < ruleset.gates.other.minGroundLeaseYearsRemaining) {
-      passed = false; bits.push(`ground lease ${input.groundLeaseYearsRemaining}yr < ${ruleset.gates.other.minGroundLeaseYearsRemaining}yr`);
+    if (groundLeaseTerm !== null && groundLeaseTerm < ruleset.gates.other.minGroundLeaseYearsRemaining) {
+      passed = false; bits.push(`ground lease ${groundLeaseTerm}yr < ${ruleset.gates.other.minGroundLeaseYearsRemaining}yr`);
+    }
+    if (groundLeaseTerm !== null && input.groundLeased === false) {
+      flag('groundLeased', `groundLeased=false (fee simple) contradicts the supplied ground-lease term of ${groundLeaseTerm}yr — the term was tested; correct the tenure`);
+    } else if (groundLeaseTerm === null && input.groundLeased === true) {
+      otherUseUnknown.push('ground-lease term');
+      flag('groundLeaseYearsRemaining', 'ground-leased but the remaining term is unknown — other-use gate not confirmable');
+    } else if (groundLeaseTerm === null && input.groundLeased === null) {
+      otherUseUnknown.push('tenure');
+      flag('groundLeased', 'tenure unknown (fee simple vs ground lease) — other-use gate not confirmable');
     }
     if (input.envRemediationPctOfPrice !== null && input.envRemediationPctOfPrice > ruleset.gates.other.maxEnvRemediationPctOfPrice) {
       passed = false; bits.push(`env remediation ${(input.envRemediationPctOfPrice * 100).toFixed(0)}% > ${(ruleset.gates.other.maxEnvRemediationPctOfPrice * 100).toFixed(0)}%`);
+    } else if (input.envRemediationPctOfPrice === null) {
+      otherUseUnknown.push('environmental remediation');
+      flag('envRemediationPctOfPrice', 'environmental remediation estimate unknown (0 = Phase I clean) — other-use gate not confirmable');
     }
     if (input.use) {
       if (input.use.automotive) { passed = false; bits.push('automotive use'); }
       if (input.use.childRelated && !input.use.childSafetyReviewed) { passed = false; bits.push('child-related use without safety review'); }
+    } else {
+      otherUseUnknown.push('automotive / child-related use');
+      flag('use', 'automotive / child-related use not screened — other-use gate not confirmable');
     }
-    gates.push({ id: 'other-use', passed, detail: bits.length ? bits.join('; ') : 'no disqualifying use' });
+    const detail = bits.length ? bits.join('; ')
+      : otherUseUnknown.length ? `not confirmable: ${otherUseUnknown.join(', ')} unknown`
+        : 'no disqualifying use';
+    gates.push({ id: 'other-use', passed, detail });
   }
   const gatesPassed = gates.every((g) => g.passed);
   // A gate that "passed" only because a KILL-determining input was UNKNOWN is NOT a confirmed pass.
@@ -335,7 +361,8 @@ export function scoreAcquisition(
     input.clusterTier === null ||
     input.clearHeightFt === null || input.multiStory === null ||
     (!accessConfirmedGood && !accessConfirmedKill) ||
-    input.sfhaOnPad === null;
+    input.sfhaOnPad === null ||
+    otherUseUnknown.length > 0;
 
   // ── STAGE 1 — FLOORS ──
   const floors: FloorResult[] = [];

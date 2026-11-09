@@ -51,6 +51,10 @@ const STRONG_BASE: Record<string, unknown> = {
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
   constructionType: 'block-tilt-brick', yearBuilt: 2005,
   sfhaOnPad: false,
+  // other-use gate inputs, CONFIRMED (audit 2026-11-08 other-use-gate-unfed-fail-open): fee simple, Phase I clean,
+  // no automotive / child-related use. Unknown values now cap at T2, so a "fully-known" deal must carry them.
+  groundLeased: false, envRemediationPctOfPrice: 0,
+  use: { automotive: false, childRelated: false, childSafetyReviewed: false },
   allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket',
   sellerMotivationScore: 0.8,
@@ -293,6 +297,72 @@ describe('caps: incomplete/advisory, DD, unknown gates', () => {
     expect(s.floorIndeterminate).toBe(true); // the new first-class observability field
     expect(s.cappedAtT2).toBe(false); // demoted by band, not by cap — was the B5 blind spot
     expect(s.floors.find((f) => f.id === 'yield')?.actual).toBeNull(); // consistent with the floor row
+  });
+});
+
+// Audit 2026-11-08 other-use-gate-unfed-fail-open. The other-use KILL gate (ground lease / environmental remediation /
+// automotive / child-related use) passed whenever its inputs were null, and gateIndeterminate never looked at them, so a
+// deal nobody had screened for those disqualifiers could reach PURSUE. Mechanism-only fix, mirroring the other gates:
+// an UNKNOWN other-use input caps the verdict at T2 (never a KILL); no ratified threshold moves. Ground-lease tenure is
+// tri-state (groundLeased: null unknown / false fee simple / true ground-leased) because a null term used to MEAN fee simple.
+describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
+  const otherUse = (s: ReturnType<typeof score>) => s.gates.find((g) => g.id === 'other-use')!;
+  const flagged = (s: ReturnType<typeof score>, field: string) => s.dataQuality.some((d) => d.field === field);
+
+  it('the fully-confirmed strong deal still reaches PURSUE (fixture carries the other-use inputs)', () => {
+    const s = score(strongDeal());
+    expect(s.verdict).toBe('PURSUE');
+    expect(s.cappedAtT2).toBe(false);
+    expect(otherUse(s).passed).toBe(true);
+  });
+
+  it.each([
+    ['use unknown', { use: null }, 'use'],
+    ['environmental remediation unknown', { envRemediationPctOfPrice: null }, 'envRemediationPctOfPrice'],
+    ['tenure unknown (fee simple vs ground lease)', { groundLeased: null }, 'groundLeased'],
+    ['ground-leased with the term unknown', { groundLeased: true }, 'groundLeaseYearsRemaining'],
+  ] as const)('%s: not KILLED, gate passes but is unconfirmed, verdict capped T1 -> T2, confidence off "confirmed"', (_label, over, field) => {
+    const s = score(strongDeal(over));
+    expect(s.verdict).toBe('WATCH');
+    expect(s.tier).toBe('T2');
+    expect(s.cappedAtT2).toBe(true);
+    expect(otherUse(s).passed).toBe(true);
+    expect(otherUse(s).detail).toMatch(/not confirm/);
+    expect(flagged(s, field)).toBe(true);
+    expect(s.confidence).not.toBe('confirmed');
+    expect(s.reasons.join(' ')).toMatch(/Stage-0 gate input is unconfirmed/);
+  });
+
+  it('a supplied ground-lease term is determinate whatever groundLeased says (term at the ratified minimum passes)', () => {
+    const min = ratified.gates.other.minGroundLeaseYearsRemaining;
+    for (const groundLeased of [null, true] as const) {
+      const s = score(strongDeal({ groundLeased, groundLeaseYearsRemaining: min }));
+      expect(s.verdict).toBe('PURSUE');
+      expect(s.cappedAtT2).toBe(false);
+    }
+  });
+
+  it('a short ground-lease term still KILLS even when tenure is otherwise unknown (KILL beats the cap)', () => {
+    const s = score(strongDeal({ groundLeased: null, groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
+    expect(s.verdict).toBe('KILLED');
+  });
+
+  it('groundLeased=false with a supplied term is flagged as contradictory and the term is still tested', () => {
+    const s = score(strongDeal({ groundLeased: false, groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
+    expect(s.verdict).toBe('KILLED');
+    expect(flagged(s, 'groundLeased')).toBe(true);
+  });
+
+  it('an unscreened deal (all three other-use inputs absent, the pre-fix default) cannot reach PURSUE', () => {
+    const s = score(strongDeal({ use: null, envRemediationPctOfPrice: null, groundLeased: null }));
+    expect(s.verdict).not.toBe('PURSUE');
+    expect(s.verdict).not.toBe('KILLED');
+    expect(s.cappedAtT2).toBe(true);
+  });
+
+  it('a known disqualifier still KILLS with the other inputs unknown', () => {
+    const s = score(strongDeal({ use: { automotive: true, childRelated: false, childSafetyReviewed: false }, envRemediationPctOfPrice: null, groundLeased: null }));
+    expect(s.verdict).toBe('KILLED');
   });
 });
 

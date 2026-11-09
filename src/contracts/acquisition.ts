@@ -263,8 +263,13 @@ export const AcquisitionInput = z.object({
   sfhaOnExcessLandOnly: z.boolean().nullable().default(null),
 
   // other kills (gate: other-use)
-  groundLeaseYearsRemaining: z.number().nullable().default(null), // null = fee simple (not ground-leased)
-  envRemediationPctOfPrice: z.number().nullable().default(null),
+  // Tenure is TRI-STATE (audit 2026-11-08, other-use-gate-unfed-fail-open): null = UNKNOWN, false = confirmed fee
+  // simple, true = ground-leased (then groundLeaseYearsRemaining is required to clear the gate). A null term used to
+  // MEAN fee simple, so an unscreened deal silently passed the ground-lease KILL. A supplied term is always tested.
+  groundLeased: z.boolean().nullable().default(null),
+  groundLeaseYearsRemaining: z.number().nullable().default(null), // remaining term when ground-leased; null = not supplied
+  envRemediationPctOfPrice: z.number().nullable().default(null), // 0 = Phase I clean; null = UNKNOWN (caps at T2)
+  // null = automotive / child-related use NOT screened (caps at T2)
   use: z.object({
     automotive: z.boolean(),
     childRelated: z.boolean(),
