@@ -151,6 +151,7 @@ async function main(): Promise<number> {
       });
       counts[r.status] = (counts[r.status] ?? 0) + 1;
       if (r.unmapped) console.log(`  unmapped in ${r.file}: [${r.unmapped.join('; ')}]`);
+      if (r.status === 'skipped' && r.importId != null) console.log(`  skipped mid-ingest ${r.file}: ${r.reason ?? ''}`);
     }
     console.log('status counts:', JSON.stringify(counts));
 
