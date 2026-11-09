@@ -586,9 +586,35 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
 
   it('collectRefScan records a diff error (never silently skips) when the local sha cannot be diffed', () => {
     const result = collectRefScan(`refs/heads/x ${MISSING} refs/heads/x ${ZERO}\n`, repo);
-    expect(result.diffErrors).toHaveLength(1);
-    expect(result.diffErrors[0]?.localSha).toBe(MISSING);
+    // both the text diff and the binary numstat fail, each recorded on its own
+    expect(result.diffErrors.map((e) => e.localSha)).toEqual([MISSING, MISSING]);
+    expect(result.diffErrors.map((e) => e.message.split(':')[0])).toEqual(['text diff', 'binary numstat']);
     expect(result.addedByRef).toEqual([]);
+  });
+
+  it('a numstat-only failure keeps the text diff that succeeded (its lines are still scanned)', () => {
+    const fakeDiff = '+++ b/a.txt\n@@ -0,0 +1 @@\n+zephyr corp\n';
+    const result = collectRefScan(`refs/heads/x ${'a'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      diffFor: () => fakeDiff,
+      binaryPathsFor: () => {
+        throw Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+      },
+    });
+    expect(result.addedByRef.flat().map((a) => a.text)).toEqual(['zephyr corp']);
+    expect(result.diffErrors).toEqual([{ localSha: 'a'.repeat(40), message: 'binary numstat: ENOBUFS' }]);
+    expect(shouldBlockOnDiffError(result.diffErrors, {})).toBe(true);
+  });
+
+  it('a text-diff-only failure still collects the binary paths', () => {
+    const result = collectRefScan(`refs/heads/x ${'b'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      diffFor: () => {
+        throw new Error('fatal: bad object');
+      },
+      binaryPathsFor: () => ['data/zephyr.xlsx'],
+    });
+    expect(result.addedByRef).toEqual([]);
+    expect(result.binaryHits).toEqual(['data/zephyr.xlsx']);
+    expect(result.diffErrors).toEqual([{ localSha: 'b'.repeat(40), message: 'text diff: fatal: bad object' }]);
   });
 
   it('collectRefScan still scans the added lines when the remote sha is missing locally', () => {
