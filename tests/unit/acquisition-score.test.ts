@@ -41,7 +41,7 @@ describe('acquisition Workbench form mapping', () => {
   });
 
   it('dealToForm prefills price / SF / IRR / horizon from a pipeline Deal', () => {
-    const f = dealToForm({ sf: 50_000, estPrice: 4_000_000, irr: 0.16, holdYrs: 5 });
+    const f = dealToForm({ sf: 50_000, buildings: 1, estPrice: 4_000_000, irr: 0.16, holdYrs: 5 });
     expect(f.price).toBe('4000000');
     expect(f.totalSf).toBe('50000');
     expect(f.leveredIrr).toBe('16');          // decimal → percent
@@ -267,6 +267,59 @@ describe('market plumbing: the deal form carries the market to the engine (OI-35
       const msgs = replacementFlags(market).join(' ');
       if (entry?.proxy) expect(msgs, market).toMatch(/PROXY/);
       else expect(msgs, market).not.toMatch(/PROXY/);
+    }
+  });
+});
+
+// Audit 2026-11-08 dealtoform-portfolio-sf-false-kill. dealToForm prefilled maxBuildingSf (the per-building < 50K gate input)
+// with the Deal's TOTAL SF, so a multi-building portfolio of small buildings (e.g. 3 x 30K = 90K) was KILLED on a building
+// that does not exist. A pipeline Deal carries only total SF and a building count, never per-building SF, so the largest
+// building is KNOWN only for a single-building deal. Mechanism only: the ratified 50K gate value is unchanged.
+describe('dealToForm: per-building SF, never total SF, feeds the size gate (audit 2026-11-08)', () => {
+  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+  const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const gateMax = ruleset.gates.sizePrice.maxSfPerBuilding;
+  const base = { estPrice: 9_000_000, irr: null, holdYrs: null, market: null } as const;
+  const sizeGate = (form: Record<string, string>) =>
+    scoreAcquisition(AcquisitionInput.parse(buildInput(form, 'd')), ruleset, { rct }).gates.find((g) => g.id === 'size-price')!;
+
+  it('a 3-building 90K SF portfolio does not prefill maxBuildingSf with the 90K total, and is marked a portfolio', () => {
+    const f = dealToForm({ ...base, sf: 90_000, buildings: 3 });
+    expect(f.totalSf).toBe('90000');
+    expect(f.maxBuildingSf).toBeUndefined();
+    expect(f.isPortfolio).toBe('yes');
+  });
+
+  it('the portfolio is scored on the portfolio price cap and is not KILLED by its total SF (size gate unconfirmed, not failed)', () => {
+    const f = dealToForm({ ...base, sf: 90_000, buildings: 3, estPrice: ruleset.gates.sizePrice.singleAssetPriceMax + 2_000_000 });
+    const input = AcquisitionInput.parse(buildInput(f, 'd'));
+    expect(input.isPortfolio).toBe(true);
+    expect(input.maxBuildingSf).toBeNull();
+    const g = sizeGate(f);
+    expect(g.passed).toBe(true);
+    expect(g.detail).toMatch(/SF unknown/);
+  });
+
+  it('once the underwriter enters the largest building, the unchanged gate value decides', () => {
+    const f = dealToForm({ ...base, sf: 90_000, buildings: 3 });
+    expect(sizeGate({ ...f, maxBuildingSf: String(gateMax - 1) }).passed).toBe(true);
+    expect(sizeGate({ ...f, maxBuildingSf: String(gateMax) }).passed).toBe(false);
+  });
+
+  it('a single-building deal prefills the largest building with its SF and is not a portfolio', () => {
+    const f = dealToForm({ ...base, sf: 42_000, buildings: 1 });
+    expect(f.maxBuildingSf).toBe('42000');
+    expect(f.isPortfolio).toBe('no');
+    const big = dealToForm({ ...base, sf: 60_000, buildings: 1 });
+    expect(sizeGate(big).passed).toBe(false); // a genuinely oversized single building still KILLs
+  });
+
+  it('an unknown building count prefills neither (total SF is not proof of the largest building)', () => {
+    for (const buildings of [null, undefined, 0] as const) {
+      const f = dealToForm({ ...base, sf: 60_000, buildings });
+      expect(f.totalSf).toBe('60000');
+      expect(f.maxBuildingSf).toBeUndefined();
+      expect(f.isPortfolio).toBeUndefined();
     }
   });
 });
