@@ -314,12 +314,15 @@ describe('dealToForm: per-building SF, never total SF, feeds the size gate (audi
     expect(sizeGate(big).passed).toBe(false); // a genuinely oversized single building still KILLs
   });
 
-  it('isPortfolio is prefilled yes only for a 2-5 building portfolio (Amendment H); a larger count is left blank', () => {
+  it('isPortfolio: yes for a 2-5 building portfolio (Amendment H), no for a KNOWN 6+ (outside the box); a known count is never unknown', () => {
     expect(dealToForm({ ...base, sf: 40_000, buildings: 2 }).isPortfolio).toBe('yes');
     expect(dealToForm({ ...base, sf: 90_000, buildings: 5 }).isPortfolio).toBe('yes');
-    const six = dealToForm({ ...base, sf: 120_000, buildings: 6 });
-    expect(six.isPortfolio).toBeUndefined();
-    expect(six.maxBuildingSf).toBeUndefined();
+    for (const buildings of [6, 12]) {
+      const f = dealToForm({ ...base, sf: 120_000, buildings });
+      expect(f.isPortfolio, String(buildings)).toBe('no');
+      expect(f.maxBuildingSf).toBeUndefined();
+      expect(AcquisitionInput.parse(buildInput(f, 'd')).isPortfolio).toBe(false);
+    }
   });
 
   it('an unknown building count prefills neither (total SF is not proof of the largest building)', () => {
