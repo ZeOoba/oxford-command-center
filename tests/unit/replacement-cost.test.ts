@@ -54,7 +54,7 @@ describe('vintageFloor — linear ramp 65% @<=1995 -> 60% @>=2005', () => {
   it('UNKNOWN vintage defaults to 1995 (the STRICTEST floor) — never the loosest', () => {
     expect(vintageFloor(null)).toBeCloseTo(0.65, 4);
     expect(vintageFloor(null)).toBe(vintageFloor(1995));
-    expect(vintageFloor(null)).toBeGreaterThan(vintageFloor(2005));
+    expect(vintageFloor(null)).toBeGreaterThan(vintageFloor(2005)!);
   });
 });
 

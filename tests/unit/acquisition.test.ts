@@ -533,7 +533,7 @@ describe('confirmatory refute fixes — RCT v03 refute pass (2026-07-14, 2/3 son
     const yearBuilt = 2005;
     const sf = 60_000;
     const clientRow = RCT_V03[market]!;
-    const clientFloorPsf = clientRow.low * (1 - vintageFloor(yearBuilt));
+    const clientFloorPsf = clientRow.low * (1 - vintageFloor(yearBuilt)!);
     // Server: replicate its resolved floor via the ratified RCT + ruleset (same market/vintage).
     const serverFloorDiscount = basisVintageFloor(yearBuilt, ratified);
     const serverRow = RCT.markets[market]!;

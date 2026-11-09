@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { basisVintageFloor, parseRuleset } from '../../server/warehouse/acquisition';
 import {
-  RCT_V03, rctFromConfig, replacementCostAnalysis, vintageFloor, vintageFloorFor,
+  RCT_V03, floorsFromRuleset, rctFromConfig, replacementCostAnalysis, replacementCostAnalysisWith, vintageFloor, vintageFloorFor,
 } from '../../src/brain/replacement-cost';
 
 const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
@@ -90,5 +90,39 @@ describe('client basis-floor engine reads the ratified config (values unchanged)
         }
       }
     }
+  });
+});
+
+// Refute wf_6e927240-7cc (low): the client vintage floor read the ruleset without checking its ratification. It now
+// mirrors rctFromConfig and the server's assertProductionRuleset: an unratified or unsigned ruleset scores nothing.
+describe('client vintage floor fails closed on an unratified ruleset', () => {
+  const rulesetJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')) as Record<string, unknown>;
+
+  it('the ratified, signed ruleset yields its floors (values unchanged)', () => {
+    expect(floorsFromRuleset(rulesetJson)).toEqual({
+      basisDiscountMinPreMillennium: ruleset.floors.basisDiscountMinPreMillennium,
+      basisDiscountMinPostMillennium: ruleset.floors.basisDiscountMinPostMillennium,
+      basisVintageRampStartYear: ruleset.floors.basisVintageRampStartYear,
+      basisVintageCutoffYear: ruleset.floors.basisVintageCutoffYear,
+    });
+  });
+
+  it('proposed, unsigned or malformed floors yield null', () => {
+    expect(floorsFromRuleset({ ...rulesetJson, ratification: 'proposed' })).toBeNull();
+    expect(floorsFromRuleset({ ...rulesetJson, ratifiedBy: null })).toBeNull();
+    expect(floorsFromRuleset({ ...rulesetJson, ratifiedDate: '' })).toBeNull();
+    expect(floorsFromRuleset({ ...rulesetJson, floors: { ...(rulesetJson.floors as object), basisVintageCutoffYear: '2005' } })).toBeNull();
+    expect(floorsFromRuleset(null)).toBeNull();
+  });
+
+  it('with no ratified floors the analysis prices the RCT but scores no basis verdict', () => {
+    const r = replacementCostAnalysisWith({ sf: 40_000, estPrice: 1_000_000, market: 'Columbus OH', yearBuilt: 2000 }, null)!;
+    expect(r.marketCovered).toBe(true);
+    expect(r.low).toBe(40_000 * PRIOR_RCT['Columbus OH'].low);
+    expect(r.vintageFloorPct).toBeNull();
+    expect(r.floorPsf).toBeNull();
+    expect(r.clearsFloor).toBeNull();
+    expect(r.verdict).toBeNull();
+    expect(r.basis).toMatch(/not ratified/);
   });
 });
