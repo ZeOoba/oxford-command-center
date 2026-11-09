@@ -137,8 +137,8 @@ describe('check-refute-required — financial-source classification', () => {
       'Server/Brief/Send.ts',
       'src/contracts/Lease.ts',
       'SRC/LIB/CN.TS',
-      // DELIVERY_ONLY_PATHS entries in odd case (real entries: server/warehouse/api.ts, .../debt-api.ts).
-      'Server/Warehouse/API.ts',
+      // DELIVERY_ONLY_PATHS entry in odd case (real entry: server/warehouse/debt-api.ts). api.ts left
+      // the allowlist 2026-11-09 (it now classifies financial; its odd-case form is asserted below).
       'SERVER/WAREHOUSE/DEBT-API.TS',
     ]) {
       expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: false });
@@ -659,7 +659,7 @@ describe('check-refute-required — default-deny roots server/ and scripts/ (Gab
     expect(isFinancialSourcePath('server/warehouse/placeholders/loss-runs.placeholder.json')).toBe(false);
   });
   it('keeps the DELIVERY_ONLY_PATHS subtractions ahead of the root rule', () => {
-    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/debt-api.ts')).toBe(false);
     expect(isFinancialSourcePath('server/sources/graph-auth.ts')).toBe(false);
   });
   it('exposes the two roots so a future edit cannot silently drop one', () => {
@@ -748,7 +748,6 @@ describe('check-refute-required — reviewed non-financial exemptions under the 
 
 describe('check-refute-required — delivery-only allowlist', () => {
   it('treats delivery-only warehouse routing files as non-financial', () => {
-    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
     expect(isFinancialSourcePath('server/warehouse/debt-api.ts')).toBe(false);
     expect(isFinancialSourcePath('server/warehouse/actions.ts')).toBe(false);
     // Phase 3 W1: lease-forecast-api.ts is pure route-plumbing (no math)
@@ -756,7 +755,23 @@ describe('check-refute-required — delivery-only allowlist', () => {
     // Lease Market Intelligence P1 Task 14: lease-market-api.ts is pure route-plumbing (no math)
     expect(isFinancialSourcePath('server/warehouse/lease-market-api.ts')).toBe(false);
     // Windows separators normalize before set lookup
-    expect(isFinancialSourcePath('server\\warehouse\\api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server\\warehouse\\debt-api.ts')).toBe(false);
+  });
+  // 2026-11-09 (refute run wf_44a3341e-b41, medium; architect sign-off: Gabriel (architect) approved
+  // 2026-11-09). server/warehouse/api.ts is NOT pure plumbing: its POST /acquisition/score handler
+  // resolves the ratified config, calls scoreAcquisition and applies the governor proxy, and it owns
+  // the /acq/intel verdict-rank ORDER BY. Its edge twin functions/api/warehouse/acquisition/score.ts
+  // was gated by the 2026-11-08 sweep, so the two halves of one governor-proxy contract had different
+  // attestation requirements. Both must classify the same way.
+  it('classifies the Brain Server and edge acquisition-score routes the same way (both financial)', () => {
+    const brain = isFinancialSourcePath('server/warehouse/api.ts');
+    const edge = isFinancialSourcePath('functions/api/warehouse/acquisition/score.ts');
+    expect(brain).toBe(edge);
+    expect(brain).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('Server\\Warehouse\\API.ts')).toBe(true);
+    const commits = [{ sha: 'b1', message: 'fix(acq): reorder intel ranking', files: ['server/warehouse/api.ts'] }];
+    expect(findUnattestedCommits(commits).map((c) => c.sha)).toEqual(['b1']);
   });
   it('still flags non-allowlisted warehouse files', () => {
     expect(isFinancialSourcePath('server/warehouse/scores.ts')).toBe(true);
@@ -767,8 +782,7 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/lease-velocity.ts')).toBe(true);
   });
   it('exposes the delivery-only allowlist with the expected membership', () => {
-    expect(DELIVERY_ONLY_PATHS.size).toBe(11);
-    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.size).toBe(10);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/actions.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-forecast-api.ts')).toBe(true);
