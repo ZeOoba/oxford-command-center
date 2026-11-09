@@ -144,12 +144,31 @@ const num = (v: string): number | null => {
 };
 
 /** Prefill the form from a pipeline Deal's known fields (the rest the underwriter fills in). */
-export function dealToForm(deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'> & { market?: Deal['market'] | null }): FormState {
+export function dealToForm(
+  deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'> & { market?: Deal['market'] | null; buildings?: Deal['buildings'] | undefined },
+): FormState {
   const f: FormState = {};
   // Only a market that has an RCT row is prefilled; anything else stays blank (strictest fallback), never guessed.
   if (deal.market && Object.prototype.hasOwnProperty.call(RCT_V03, deal.market)) f.market = deal.market;
   if (deal.estPrice !== null) f.price = String(deal.estPrice);
-  if (deal.sf !== null) { f.totalSf = String(deal.sf); f.maxBuildingSf = String(deal.sf); }
+  // Deal.sf is the TOTAL SF; the size gate tests the LARGEST SINGLE building (audit 2026-11-08,
+  // dealtoform-portfolio-sf-false-kill: a 3 x 30K portfolio was KILLED as one 90K building). A Deal carries no
+  // per-building SF, so the largest building is known only when the deal is ONE building. For a portfolio, or an
+  // unknown building count, it stays blank: the engine caps that at T2 until the underwriter enters it, never a KILL.
+  // Known trade-off (refute 2026-11-08): while blank, the engine's Cat-3 clear-height band falls back to the smallest
+  // (most lenient) band (acquisition.ts `maxBuildingSf ?? 0`), so the T2-capped composite can read high until entered.
+  if (deal.sf !== null) {
+    f.totalSf = String(deal.sf);
+    if (deal.buildings === 1) f.maxBuildingSf = String(deal.sf);
+  }
+  // Portfolio status drives the price cap (single asset vs portfolio). The portfolio cap is doctrine for a 2-5 building
+  // portfolio sold together (acquisition-underwriting Amendment H), so a KNOWN count decides it: 2-5 is 'yes', 1 or 6+
+  // is 'no' (6+ is outside the portfolio box; refute wf_3d47a7eb-3e0: a known count never falls back to unknown).
+  // Only an UNKNOWN count is left blank, which reaches the engine as null (tri-state since refute wf_6e927240-7cc): a
+  // price between the single-asset and portfolio caps then caps at T2 instead of KILLing on the single-asset cap.
+  if (typeof deal.buildings === 'number' && deal.buildings >= 1) {
+    f.isPortfolio = deal.buildings >= 2 && deal.buildings <= 5 ? 'yes' : 'no';
+  }
   if (deal.irr !== null) f.leveredIrr = String(Math.round(deal.irr * 1000) / 10); // decimal → %
   if (deal.holdYrs === 5 || deal.holdYrs === 10) f.underwriteHorizonYrs = String(deal.holdYrs);
   return f;

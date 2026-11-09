@@ -235,9 +235,12 @@ describe('extractOmFields', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    const call = calls[0];
-    if (!call) throw new Error('expected exactly one fetch call');
+    // Two requests since E3 (audit 2026-11-08): the main extraction and the small other-use extraction
+    // (tests/unit/om-extract-other-use.test.ts). This test pins the MAIN request.
+    expect(calls).toHaveLength(2);
+    const mainSchema = JSON.stringify(buildOmExtractSchema());
+    const call = calls.find((c) => JSON.stringify(JSON.parse(c.opts.body ?? '{}').output_config?.format?.schema) === mainSchema);
+    if (!call) throw new Error('expected the main extraction request');
     const body = JSON.parse(call.opts.body ?? '{}');
     expect(body.temperature).toBe(0);
     expect(body.output_config?.format?.type).toBe('json_schema');

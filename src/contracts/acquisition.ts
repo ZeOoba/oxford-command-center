@@ -232,7 +232,10 @@ export type AcquisitionRuleset = z.infer<typeof AcquisitionRuleset>;
 // along so a low-confidence input is visible in the output.
 export const AcquisitionInput = z.object({
   dealId: z.string(),
-  isPortfolio: z.boolean().default(false),
+  // Tri-state (architect-approved 2026-11-09, refute wf_6e927240-7cc): null = unknown, false = confirmed single asset,
+  // true = portfolio. It used to default to false, so an unknown status was scored as a confirmed single asset and a
+  // deal priced between the single-asset and portfolio caps was KILLED on a fact nobody had confirmed.
+  isPortfolio: z.boolean().nullable().default(null),
 
   // size / price (gate: size-price)
   price: z.number().nullable().default(null),

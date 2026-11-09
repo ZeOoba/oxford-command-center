@@ -50,8 +50,17 @@ interface OmField {
   key: string;
   desc: string;
   enum?: readonly string[];
+  /** Other-use fields: the underwriting-form key the value is returned under (e.g. `use:automotive`). */
+  formKey?: string;
+  /** Other-use fields: a plain non-negative decimal within these bounds, or the value is dropped. */
+  numeric?: { min: number; max: number };
 }
 const EXTRACTABLE_FIELDS: readonly OmField[] = fieldsConfig.fields;
+// Other-use kill-screen fields (audit 2026-11-08, E3): a SECOND request with its own schema. Anthropic's limit of 16
+// union-type parameters is the combined total across all strict schemas IN ONE REQUEST, and EXTRACTABLE_FIELDS already
+// uses 15, so these six cannot join that schema (nor a nested sub-object of it) without crossing the limit, which has
+// caused "Grammar compilation timed out" failures before (2026-07-18). Two small requests keep each one under it.
+const OTHER_USE_FIELDS: readonly OmField[] = fieldsConfig.otherUseFields;
 
 const VALID_KEYS = new Set<string>(EXTRACTABLE_FIELDS.map((f) => f.key));
 
@@ -80,15 +89,26 @@ export interface OmExtractJsonSchema {
  *  Every property here counts against Anthropic's "parameters with union types" limit (16,
  *  separate from the unused "optional parameters" limit of 24) — 16 total is the documented
  *  ceiling (not the trigger point), this schema uses 15, so a 16th field still fits; a 17th
- *  extractable field would need to split into a second schema/call. */
+ *  extractable field would need to split into a second schema/call. The limit is the combined total across all
+ *  strict schemas in ONE request (Anthropic structured-outputs docs), which is why the six other-use fields (E3,
+ *  2026-11-08) are a separate request (buildOmOtherUseSchema) rather than a nested sub-object of this schema. */
 export function buildOmExtractSchema(): OmExtractJsonSchema {
+  return schemaFor(EXTRACTABLE_FIELDS);
+}
+
+/** The second request's schema (other-use kill screen, E3): same all-required + nullable shape, 6 union parameters. */
+export function buildOmOtherUseSchema(): OmExtractJsonSchema {
+  return schemaFor(OTHER_USE_FIELDS);
+}
+
+function schemaFor(fields: readonly OmField[]): OmExtractJsonSchema {
   const properties: Record<string, OmSchemaProperty> = {};
-  for (const field of EXTRACTABLE_FIELDS) {
+  for (const field of fields) {
     properties[field.key] = field.enum
       ? { anyOf: [{ type: 'string', enum: field.enum }, { type: 'null' }] }
       : { type: ['string', 'null'] };
   }
-  return { type: 'object', properties, required: EXTRACTABLE_FIELDS.map((f) => f.key), additionalProperties: false };
+  return { type: 'object', properties, required: fields.map((f) => f.key), additionalProperties: false };
 }
 
 const SYSTEM =
@@ -102,6 +122,17 @@ const SYSTEM =
   `- hasDock / hasDriveIn: output exactly "yes" or "no" (never guess — use null if not stated).\n` +
   `- constructionType: output exactly one of the listed values, or null if not stated.\n` +
   `- If a field is absent or ambiguous, use null.`;
+
+const OTHER_USE_SYSTEM =
+  `You are a commercial real estate data extractor. Extract the property's tenure, environmental and use facts from the OM text.\n` +
+  `The response is schema-constrained; every listed key will be present in your output.\n` +
+  `Rules:\n` +
+  `- Only fill in a field when the document states it explicitly. Never infer a value from a tenant list, a photo caption or a property description.\n` +
+  `- Use null for any field not clearly stated. Do NOT guess. A null is always safe; a wrong yes/no is not.\n` +
+  `- groundLeased: "no" only when the OM states the interest offered is fee simple; "yes" only when it states a ground lease / leasehold.\n` +
+  `- envRemediationPctOfPrice: 0 only when the OM states a Phase I ESA found no RECs and no remediation is required.\n` +
+  `- Numbers: digits only (a decimal point is allowed), no units, symbols or words.\n` +
+  `- yes/no fields: output exactly "yes" or "no", or null.`;
 
 /** A boolean is taken as given; a live predicate is evaluated now, and a throw counts as confidential. */
 function isDealConfidential(v: OmExtractOptions['dealConfidential']): boolean {
@@ -205,7 +236,72 @@ export async function extractOmFields(
     }
   }
 
-  const fieldManifest = EXTRACTABLE_FIELDS.map((f) => `- ${f.key}: ${f.desc}`).join('\n');
+  // Both requests are built from the SAME already-scanned body, after every egress check above, and sent in parallel
+  // (so the client's 55s timeout still covers them). The main request decides success exactly as before; the other-use
+  // request is best-effort: if it fails, its fields stay unknown (the engine caps the verdict at T2), never invented.
+  const apiKey = opts.apiKey;
+  // The other-use request can never reject the main one: an unexpected throw (e.g. a non-JSON response body) is
+  // caught and becomes "failed, fields unknown". The main request's success/error handling is unchanged.
+  const otherUseSafe = requestExtraction(OTHER_USE_FIELDS, OTHER_USE_SYSTEM, buildOmOtherUseSchema(), body, apiKey, opts)
+    .catch((): ExtractionResponse => ({ ok: false, error: 'other-use extraction threw', status: 502 }));
+  const [main, otherUse] = await Promise.all([
+    requestExtraction(EXTRACTABLE_FIELDS, SYSTEM, buildOmExtractSchema(), body, apiKey, opts),
+    otherUseSafe,
+  ]);
+  if (!main.ok) return main;
+
+  // Strip unknown keys and non-string values
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(main.raw)) {
+    if (VALID_KEYS.has(k) && typeof v === 'string' && v.trim() !== '') {
+      fields[k] = v.trim();
+    }
+  }
+  // The copy-the-OM-text fallback keys off the MAIN extraction only (as before E3): other-use fields alone must not
+  // hide it when nothing about size, price or physicals was found.
+  const mainFieldCount = Object.keys(fields).length;
+  if (otherUse.ok) Object.assign(fields, otherUseFormFields(otherUse.raw));
+  else console.error(`[om-extract] other-use extraction failed (${otherUse.status}); other-use fields left unknown`);
+
+  const fieldCount = Object.keys(fields).length;
+  return { ok: true, fields, fieldCount, ...(mainFieldCount === 0 ? { rawText: body } : {}) };
+}
+
+const PLAIN_DECIMAL = /^\d+(\.\d+)?$/;
+
+/** Keep only the other-use schema's own keys, with a valid value, under their FORM keys (`use:*` etc.). An enum value
+ *  outside its enum, or a number that is not a plain in-range decimal, is dropped (left unknown), never coerced. */
+function otherUseFormFields(raw: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const field of OTHER_USE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, field.key)) continue;
+    const v = raw[field.key];
+    if (typeof v !== 'string') continue;
+    const value = v.trim();
+    if (value === '') continue;
+    if (field.enum && !field.enum.includes(value)) continue;
+    if (field.numeric) {
+      if (!PLAIN_DECIMAL.test(value)) continue;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < field.numeric.min || n > field.numeric.max) continue;
+    }
+    out[field.formKey ?? field.key] = value;
+  }
+  return out;
+}
+
+type ExtractionResponse = { ok: true; raw: Record<string, unknown> } | { ok: false; error: string; status: number };
+
+/** One structured-outputs extraction request over `fields`. Returns the parsed JSON object, or a client-safe error. */
+async function requestExtraction(
+  fields: readonly OmField[],
+  system: string,
+  schema: OmExtractJsonSchema,
+  body: string,
+  apiKey: string,
+  opts: OmExtractOptions,
+): Promise<ExtractionResponse> {
+  const fieldManifest = fields.map((f) => `- ${f.key}: ${f.desc}`).join('\n');
   const userPrompt = `Extract these fields from the OM text:\n${fieldManifest}\n\nOM TEXT:\n${body}`;
 
   const f = opts.fetchImpl ?? fetch;
@@ -221,7 +317,7 @@ export async function extractOmFields(
       signal: ac.signal,
       headers: {
         'content-type': 'application/json',
-        'x-api-key': opts.apiKey,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -229,11 +325,11 @@ export async function extractOmFields(
         model: opts.model ?? 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
         temperature: 0,
-        system: SYSTEM,
+        system,
         messages: [{ role: 'user', content: userPrompt }],
         // Structured outputs: constrains the response to this schema, eliminating the
         // markdown-fence / preamble / truncation failures a prompt-only instruction can't prevent.
-        output_config: { format: { type: 'json_schema', schema: buildOmExtractSchema() } },
+        output_config: { format: { type: 'json_schema', schema } },
       }),
     });
   } catch (e) {
@@ -272,15 +368,5 @@ export async function extractOmFields(
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, error: 'AI returned unexpected response format — try again.', status: 422 };
   }
-
-  // Strip unknown keys and non-string values
-  const fields: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (VALID_KEYS.has(k) && typeof v === 'string' && v.trim() !== '') {
-      fields[k] = v.trim();
-    }
-  }
-
-  const fieldCount = Object.keys(fields).length;
-  return { ok: true, fields, fieldCount, ...(fieldCount === 0 ? { rawText: body } : {}) };
+  return { ok: true, raw: raw as Record<string, unknown> };
 }

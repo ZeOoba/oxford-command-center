@@ -181,9 +181,10 @@ export function DealDrawer({
                               A local insurance comp or GC quote is required before an LOI, regardless of how close to the floor this reads.
                             </div>
                           )}
-                          {rc.vintageAssumed && (
+                          {/* Year from the ratified ruleset (refute wf_3d47a7eb-3e0); absent when no floor is scored (fail closed). */}
+                          {rc.assumedVintageYear !== null && (
                             <div className="text-2xs pt-1" style={{ color: 'var(--text-tertiary)' }}>
-                              Year built unknown — strictest floor (1995) assumed. Confirm the vintage.
+                              Year built unknown — strictest floor ({rc.assumedVintageYear}) assumed. Confirm the vintage.
                             </div>
                           )}
                         </>
