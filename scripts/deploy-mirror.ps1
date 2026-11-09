@@ -277,7 +277,10 @@ try {
     # -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
     # directory, which is THIS checkout ($repo) -- the build root's copy is scanned too, so a route
     # in either tree is probed.
-    $probePaths = Get-AccessGateProbePaths -DistPath $distPath -FunctionsDirs @((Join-Path $repo 'functions'), (Join-Path $buildRoot 'functions')) -IncludeWarehouse:$IncludeWarehouse
+    $functionsDirs  = @((Join-Path $repo 'functions'), (Join-Path $buildRoot 'functions'))
+    $probePaths     = Get-AccessGateProbePaths -DistPath $distPath -FunctionsDirs $functionsDirs -IncludeWarehouse:$IncludeWarehouse
+    # Function routes are probed STRICT (any non-Access answer = exposure) whatever their prefix.
+    $functionRoutes = Get-AccessGateFunctionRoutes -FunctionsDirs $functionsDirs
     Write-Host "  Access-gate probe paths: $((@($probePaths) | ForEach-Object { '/' + $_ }) -join ', ')"
     $wranglerBin  = Join-Path $buildRoot 'node_modules\.bin\wrangler.cmd'
     if (Test-Path -LiteralPath $wranglerBin) {
@@ -307,13 +310,13 @@ try {
       # 2026-07-31 (security review): run the Access-gate probe on the timeout path too, instead of
       # skipping it entirely as before -- the one control that can still catch a genuine exposure
       # even though the deploy itself never confirmed success. A timed-out wrangler may never have
-      # printed the alias, so the alias is probed only if it was printed (no -RequireAlias here).
-      # Severity split as before: an observed exposure (GATE CHECK FAILED, any 2xx) overrides the
+      # printed the alias, so the alias is probed only if it was printed (no -Unprobed alias requirement here).
+      # Severity split as before: an observed exposure (GATE CHECK FAILED) overrides the
       # timeout and alerts CRITICAL; an inconclusive probe during a stall reports the timeout itself,
       # which is what actually went wrong and keeps its suppressible class.
       $timeoutTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
       try {
-        Assert-AccessGateOnAllTargets -Targets $timeoutTargets -AccessHost $AccessHost -Context "(detected while investigating a deploy timeout) $timeoutReason" | Out-Null
+        Assert-AccessGateOnAllTargets -Targets $timeoutTargets -AccessHost $AccessHost -StrictPaths $functionRoutes -Context "(detected while investigating a deploy timeout) $timeoutReason" | Out-Null
       } catch {
         if ($_.Exception.Message -match '^GATE CHECK FAILED') { throw }
         Write-Host "[gate-check] during deploy timeout: $($_.Exception.Message)"
@@ -336,13 +339,13 @@ try {
   #    Invoke-AccessGateProbe (lib/access-gate-probe.ps1) is shared with the deploy-timeout path in
   #    step 3 -- see that definition for the retry/severity-split rationale.
   #    Every target (apex, /snapshot.json, /api/ Functions, and the same on the per-deployment
-  #    alias) must 302 -> Access; Assert-AccessGateOnAllTargets throws GATE CHECK FAILED on any 2xx
+  #    alias) must 302 -> Access; Assert-AccessGateOnAllTargets throws GATE CHECK FAILED on any 2xx (on a Function route: any non-Access answer)
   #    and GATE CHECK INCONCLUSIVE on anything else unverified. wrangler reported success, so it
   #    printed the deployment URL: a missing alias is passed as -Unprobed, which fails the check as
   #    INCONCLUSIVE only AFTER the apex targets were probed, so it can never mask an apex exposure.
   $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
   $gateUnprobed = Get-MissingAliasRequirement -DeployOutput $deployOutput -ProjectName $ProjectName
-  $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed
+  $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed -StrictPaths $functionRoutes
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
   Write-Host "[$stamp] OK - deployed and Access gate verified on all $(@($gateResults).Count) target(s) (302 -> $AccessHost)."

@@ -189,17 +189,62 @@ Set-Content -LiteralPath (Join-Path $fn 'api\reports\index.ts') -Value "export c
 Set-Content -LiteralPath (Join-Path $fn 'api\helpers.ts') -Value "export function notARoute() {}"
 Set-Content -LiteralPath (Join-Path $fn '_shared\access.ts') -Value "export function onRequest() {}"
 Set-Content -LiteralPath (Join-Path $fn 'api\_middleware.ts') -Value "export const onRequest = [];"
+# Refute run wf_c135181a-31a repro, pinned: a re-exported handler and a .js Function were invisible
+# to the old export-syntax match. Every script file is now a route regardless of export syntax.
+Set-Content -LiteralPath (Join-Path $fn 'api\warehouse\export.ts') -Value "const onRequestGet = async () => new Response('x'); export { onRequestGet };"
+Set-Content -LiteralPath (Join-Path $fn 'api\legacy.js') -Value "export const onRequestGet = () => new Response('x');"
+Set-Content -LiteralPath (Join-Path $fn 'api\aliased.mjs') -Value "function h() {} export { h as onRequestPost };"
+Set-Content -LiteralPath (Join-Path $fn 'admin.ts') -Value "export var onRequestPost = () => null;"
+Set-Content -LiteralPath (Join-Path $fn 'api\types.d.ts') -Value "export type X = 1;"
+Set-Content -LiteralPath (Join-Path $fn 'api\ai.test.ts') -Value "it('x', () => {});"
+Set-Content -LiteralPath (Join-Path $fn 'api\readme.md') -Value "not a script"
 $json = @(Get-BakedJsonProbePaths -DistPath $dist)
 Assert-True (($json -contains 'snapshot.json') -and ($json -contains 'macro.json') -and ($json -contains 'zephyr-extra.json')) "14: baked json = floor + dist top-level ($($json -join ','))"
 Assert-True (-not ($json -contains 'nested.json') -and -not ($json -contains 'warehouse.json')) '14b: nested json not top-level; warehouse.json only with -IncludeWarehouse'
 Assert-True (@(Get-BakedJsonProbePaths -DistPath $dist -IncludeWarehouse) -contains 'warehouse.json') '14c: -IncludeWarehouse adds warehouse.json'
 Assert-True (@(Get-BakedJsonProbePaths -DistPath (Join-Path $tmp 'nope')) -contains 'snapshot.json') '14d: missing dist still yields the floor'
 $routes = @(Get-FunctionRoutePaths -FunctionsDir $fn) | Sort-Object
-$expected = @('api/ai', 'api/deals/probe', 'api/reports', 'api/warehouse/acquisition/score') | Sort-Object
-Assert-True (($routes -join '|') -eq ($expected -join '|')) "14e: function routes ($($routes -join ', '))"
+$expected = @('admin', 'api/ai', 'api/aliased', 'api/deals/probe', 'api/helpers', 'api/legacy', 'api/reports', 'api/warehouse/acquisition/score', 'api/warehouse/export') | Sort-Object
+Assert-True (($routes -join '|') -ceq ($expected -join '|')) "14e: function routes, no export-syntax matching ($($routes -join ', '))"
+foreach ($r in @('api/warehouse/export', 'api/legacy', 'api/aliased', 'admin')) {
+  Assert-True ($routes -ccontains $r) "14e2: refute repro route $r derived"
+}
 $all = @(Get-AccessGateProbePaths -DistPath $dist -FunctionsDirs @($fn, (Join-Path $tmp 'missing-fn')) -IncludeWarehouse)
 Assert-True (($all -contains '') -and ($all -contains 'warehouse.json') -and ($all -contains 'api/ai')) "14f: combined probe paths ($($all -join ', '))"
+$fr = @(Get-AccessGateFunctionRoutes -FunctionsDirs @($fn, $fn))
+Assert-True ($fr.Count -eq $expected.Count) "14g: function-route union dedupes ($($fr.Count))"
+Assert-True ((@(Get-FunctionsNotARoute) -ccontains '_shared/access-identity.ts')) '14h: not-a-route allowlist exposed'
+# Case-SENSITIVE dedupe: a dist file 'Snapshot.json' is its own served path, not the floor's 'snapshot.json'.
+Remove-Item -LiteralPath (Join-Path $dist 'snapshot.json')
+Set-Content -LiteralPath (Join-Path $dist 'Snapshot.json') -Value '{}'
+$cs = @(Get-BakedJsonProbePaths -DistPath $dist)
+Assert-True (($cs -ccontains 'Snapshot.json') -and ($cs -ccontains 'snapshot.json')) "14i: case-distinct json both probed ($($cs -join ','))"
 Remove-Item -LiteralPath $tmp -Recurse -Force
+
+# 14j) Strict by route KIND, not only by /api/ prefix: a derived Function route outside /api/
+#      (functions/admin.ts) that answers 405 is FAILED; the same path as a static target is not.
+$adminTargets = @(Get-AccessGateProbeTargets -VerifyUrl $apex -ProjectName $project -DeployOutput '' -ProbePaths @('', 'admin'))
+Assert-True (Test-StrictExposureTarget -Url ($apex + 'admin') -StrictPaths @('admin')) '14j: derived route outside /api/ is strict'
+Assert-True (-not (Test-StrictExposureTarget -Url ($apex + 'admin'))) '14k: same path without the route list is not strict'
+Assert-True (Test-StrictExposureTarget -Url ($apex + 'api') -StrictPaths @('api')) '14l: functions/api/index.ts route (/api) is strict'
+Reset-Mock
+$script:Responses[$apex + 'admin'] = @('405')
+$msg = Get-ThrownMessage { Assert-AccessGateOnAllTargets -Targets $adminTargets @fast -StrictPaths @('admin') }
+Assert-True ($msg -match '^GATE CHECK FAILED' -and $msg.Contains('admin')) "14m: Function route /admin 405 -> FAILED ($msg)"
+Reset-Mock
+$script:Responses[$apex + 'admin'] = @('405')
+$msg = Get-ThrownMessage { Assert-AccessGateOnAllTargets -Targets $adminTargets @fast }
+Assert-True ($msg -match '^GATE CHECK INCONCLUSIVE') "14n: static /admin 405 -> INCONCLUSIVE ($msg)"
+
+# 14o) Strict targets are requested FIRST in round 1, so a Function route always gets a request
+#      inside the budget even when static targets stall.
+Reset-Mock
+$msg = Get-ThrownMessage { Assert-AccessGateOnAllTargets -Targets $targets @fast }
+$firstStatic = -1
+for ($i = 0; $i -lt $script:Calls.Count; $i++) { if (-not (Test-StrictExposureTarget -Url $script:Calls[$i])) { $firstStatic = $i; break } }
+$lastStrict = -1
+for ($i = 0; $i -lt $script:Calls.Count; $i++) { if (Test-StrictExposureTarget -Url $script:Calls[$i]) { $lastStrict = $i } }
+Assert-True ($msg -eq '' -and $lastStrict -lt $firstStatic) "14o: all strict targets precede static ones in round 1 (last strict @$lastStrict, first static @$firstStatic)"
 
 # 15) Invoke-NativeCommandWithTimeout -OutputFile captures the child's stdout+stderr to the file.
 $outFile = Join-Path $env:TEMP ("agp-smoke-" + [guid]::NewGuid().ToString('N') + '.log')

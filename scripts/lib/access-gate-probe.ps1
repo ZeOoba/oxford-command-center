@@ -42,35 +42,60 @@ function Get-BakedJsonProbePaths {
     }
   }
   $out = @()
-  foreach ($p in $paths) { if ($out -notcontains $p) { $out += $p } }
+  foreach ($p in $paths) { if ($out -cnotcontains $p) { $out += $p } }
   return $out
 }
 
+# Files under functions/ (relative, '/'-separated, exact case) that are NOT routes and are therefore
+# not probed. Every other script file is a route, whatever it exports: deciding "is this a handler?"
+# by matching export syntax missed `export { onRequestGet }`, `export { h as onRequestPost }`,
+# `export var` and .js Functions (refute run wf_c135181a-31a). A file under an underscore segment
+# (functions/_shared/, _middleware.ts) is skipped by the derivation, and must ALSO be listed here:
+# tests/unit/access-gate-probe-smoke.test.ts fails on any functions/ file that is neither probed nor
+# listed, so adding a helper is a visible decision, never a silent gap.
+$script:FunctionsNotARoute = @(
+  '_shared/access-identity.ts',
+  '_shared/access-jwt.ts'
+)
+# Extensions Pages compiles as Functions.
+$script:FunctionScriptExtensions = @('.ts', '.js', '.mjs', '.tsx', '.jsx')
+
+function Get-FunctionsNotARoute { return $script:FunctionsNotARoute }
+
 function Get-FunctionRoutePaths {
   <#
-    Every Pages Function route under -FunctionsDir: each *.ts file exporting onRequest /
-    onRequestGet / onRequestPost / ... (function or const), mapped to its URL path the way Pages
-    routes it (functions/api/ai.ts -> api/ai; .../index.ts -> its directory). Skips any path segment
-    starting with '_' (functions/_shared, _middleware.ts), *.d.ts and *.test.ts. A dynamic segment
-    ([id] / [[path]]) is probed with the literal 'probe'.
+    Every Pages Function route under -FunctionsDir: each script file (.ts/.js/.mjs/.tsx/.jsx, not
+    *.d.ts / *.test.* / *.spec.*) that has no underscore-prefixed path segment and is not on
+    $script:FunctionsNotARoute, mapped to its URL path the way Pages routes it
+    (functions/api/ai.ts -> api/ai; .../index.js -> its directory). No export-syntax matching. A
+    dynamic segment ([id] / [[path]]) is probed with the literal 'probe'.
   #>
   param([AllowEmptyString()][string]$FunctionsDir)
   if (-not $FunctionsDir -or -not (Test-Path -LiteralPath $FunctionsDir -PathType Container)) { return @() }
   $root = (Resolve-Path -LiteralPath $FunctionsDir).ProviderPath.TrimEnd('\', '/')
   $routes = @()
-  foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ts' -ErrorAction Stop)) {
-    if ($f.Name -match '\.(d|test|spec)\.ts$') { continue }
+  foreach ($f in @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop)) {
+    if ($script:FunctionScriptExtensions -notcontains $f.Extension.ToLowerInvariant()) { continue }
+    if ($f.Name -match '\.d\.ts$|\.(test|spec)\.[a-z]+$') { continue }
     $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
-    $segments = $rel -split '/'
-    if (@($segments | Where-Object { $_.StartsWith('_') }).Count -gt 0) { continue }
-    $src = [System.IO.File]::ReadAllText($f.FullName)
-    if ($src -notmatch '(?m)^\s*export\s+(?:async\s+)?(?:function\s+|const\s+|let\s+)onRequest(?:Get|Post|Put|Patch|Delete|Head|Options)?\b') { continue }
-    $route = $rel -replace '\.ts$', ''
+    if ($script:FunctionsNotARoute -ccontains $rel) { continue }
+    if (@($rel -split '/' | Where-Object { $_.StartsWith('_') }).Count -gt 0) { continue }
+    $route = $rel -replace '\.[A-Za-z]+$', ''
     $route = $route -replace '(^|/)index$', ''
     $route = $route -replace '\[\[?[^\]]+\]?\]', 'probe'
-    if ($routes -notcontains $route) { $routes += $route }
+    if ($routes -cnotcontains $route) { $routes += $route }
   }
   return $routes
+}
+
+function Get-AccessGateFunctionRoutes {
+  <# The union of Get-FunctionRoutePaths over every -FunctionsDirs entry (the strict-probe set). #>
+  param([string[]]$FunctionsDirs = @())
+  $out = @()
+  foreach ($d in @($FunctionsDirs | Where-Object { $_ })) {
+    foreach ($r in @(Get-FunctionRoutePaths -FunctionsDir $d)) { if ($out -cnotcontains $r) { $out += $r } }
+  }
+  return $out
 }
 
 function Get-AccessGateProbePaths {
@@ -85,9 +110,9 @@ function Get-AccessGateProbePaths {
     [switch]$IncludeWarehouse
   )
   $paths = @('') + @(Get-BakedJsonProbePaths -DistPath $DistPath -IncludeWarehouse:$IncludeWarehouse)
-  foreach ($d in @($FunctionsDirs | Where-Object { $_ })) { $paths += @(Get-FunctionRoutePaths -FunctionsDir $d) }
+  $paths += @(Get-AccessGateFunctionRoutes -FunctionsDirs $FunctionsDirs)
   $out = @()
-  foreach ($p in $paths) { if ($out -notcontains $p) { $out += $p } }
+  foreach ($p in $paths) { if ($out -cnotcontains $p) { $out += $p } }
   return $out
 }
 
@@ -108,7 +133,7 @@ function Get-DeploymentAliasUrls {
   $origins = @()
   foreach ($m in $found) {
     $origin = ('https://' + $m.Groups[1].Value + '.' + $ProjectName + '.pages.dev/').ToLowerInvariant()
-    if ($origins -notcontains $origin) { $origins += $origin }
+    if ($origins -cnotcontains $origin) { $origins += $origin }
   }
   return $origins
 }
@@ -131,12 +156,12 @@ function Get-AccessGateProbeTargets {
   $base = if ($VerifyUrl.EndsWith('/')) { $VerifyUrl } else { $VerifyUrl + '/' }
   $origins = @($base) + @(Get-DeploymentAliasUrls -DeployOutput $DeployOutput -ProjectName $ProjectName)
   $paths = @($ProbePaths)
-  if ($paths -notcontains '') { $paths = @('') + $paths }
+  if ($paths -cnotcontains '') { $paths = @('') + $paths }
   $targets = @()
   foreach ($p in $paths) {
     foreach ($origin in $origins) {
       $u = $origin + $p
-      if ($targets -notcontains $u) { $targets += $u }
+      if ($targets -cnotcontains $u) { $targets += $u }
     }
   }
   return $targets
@@ -159,16 +184,23 @@ function Get-MissingAliasRequirement {
 
 function Test-StrictExposureTarget {
   <#
-    True for a Pages Function path (/api/...). A Function behind Access answers with the Access 302
-    before the Function ever runs, so ANY HTTP response from one that is not that 302 means the
-    request reached the Function: a POST-only Function answers HEAD with 405, a missing route with
-    404 -- both are exposures, not "inconclusive". Only "no HTTP response at all" (code 0: timeout,
-    DNS, refused) stays inconclusive.
+    True for a Pages Function path: any derived Function route in -StrictPaths (whatever its
+    prefix -- functions/admin.ts, functions/api/index.ts -> /api), and, as a floor, anything under
+    /api/. A Function behind Access answers with the Access 302 before the Function ever runs, so ANY
+    HTTP response from one that is not that 302 means the request reached the Function: a POST-only
+    Function answers HEAD with 405, a missing route with 404 -- both are exposures, not
+    "inconclusive". Only "no HTTP response at all" (code 0: timeout, DNS, refused) stays inconclusive.
   #>
-  param([Parameter(Mandatory=$true)][string]$Url)
+  param(
+    [Parameter(Mandatory=$true)][string]$Url,
+    [string[]]$StrictPaths = @()
+  )
   $uri = $null
   if (-not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri)) { return $false }
-  return $uri.AbsolutePath.ToLowerInvariant().StartsWith('/api/')
+  $path = $uri.AbsolutePath.TrimStart('/')
+  if ($path.ToLowerInvariant().StartsWith('api/')) { return $true }
+  # '' is the root: functions/index.ts makes it a Function too.
+  return (@($StrictPaths | Where-Object { $_ -ne $null }) -ccontains $path)
 }
 
 # Invoke-AccessGateProbe -- extracted 2026-07-31 (security review) so the deploy-timeout path
@@ -254,9 +286,11 @@ function Assert-AccessGateOnAllTargets {
     ROUNDS, not per-target retries: round 1 requests EVERY target once; later rounds (up to
     -Attempts) retry only the targets still unverified and not exposed, with -RetryDelaySeconds
     between rounds. So a stalled target cannot starve the others of their first request (refute run
-    wf_44a3341e-b41). The settle sleep runs once. A total budget bounds the worst case: the deadline
-    is checked before each request, and a target never requested within it counts as unverified, so
-    running out of time can only fail the check, never pass it.
+    wf_44a3341e-b41). Within each round the STRICT targets (Function routes, -StrictPaths and /api/)
+    go first, so every Function route gets a request inside the budget even when static targets
+    stall (wf_c135181a-31a). The settle sleep runs once. A total budget bounds the worst case: the
+    deadline is checked before each request, and a target never requested within it counts as
+    unverified, so running out of time can only fail the check, never pass it.
 
     -Unprobed lists REQUIRED targets that could not be probed at all (the missing deployment alias);
     they are reported as INCONCLUSIVE only after every reachable target was probed, so they can never
@@ -271,23 +305,33 @@ function Assert-AccessGateOnAllTargets {
     [int]$Attempts = 3,
     [int]$BudgetSeconds = 180,
     [string[]]$Unprobed = @(),
+    # Derived Function routes (Get-AccessGateFunctionRoutes): probed strict whatever their prefix.
+    [AllowEmptyString()][string[]]$StrictPaths = @(),
     [string]$Context = ''
   )
   if ($SettleSeconds -gt 0) { Start-Sleep -Seconds $SettleSeconds }
   $deadline = (Get-Date).AddSeconds($BudgetSeconds)
-  $state = [ordered]@{}
+  # Case-SENSITIVE map: Pages asset paths are case-sensitive, so /Snapshot.json and /snapshot.json
+  # are two targets, not one.
+  $state = New-Object System.Collections.Specialized.OrderedDictionary ([System.StringComparer]::Ordinal)
+  $strictTargets = @()
+  $staticTargets = @()
   foreach ($t in $Targets) {
-    $state[$t] = [pscustomobject]@{ Url = $t; Verified = $false; Code = 0; Location = ''; CurlExitCode = $null; Exposed = $false; Requested = $false }
+    if ($state.Contains($t)) { continue }
+    $isStrict = Test-StrictExposureTarget -Url $t -StrictPaths $StrictPaths
+    $state[$t] = [pscustomobject]@{ Url = $t; Verified = $false; Code = 0; Location = ''; CurlExitCode = $null; Exposed = $false; Requested = $false; Strict = $isStrict }
+    if ($isStrict) { $strictTargets += $t } else { $staticTargets += $t }
   }
+  # Strict (Function) targets first, each group keeping its path-major order.
+  $Targets = @($strictTargets) + @($staticTargets)
   for ($round = 1; $round -le $Attempts; $round++) {
     $pending = @($Targets | Where-Object { -not $state[$_].Verified -and -not $state[$_].Exposed })
     if ($pending.Count -eq 0) { break }
     if ($round -gt 1 -and $RetryDelaySeconds -gt 0) { Start-Sleep -Seconds $RetryDelaySeconds }
     foreach ($t in $pending) {
       if ((Get-Date) -gt $deadline) { break }
-      $strict = Test-StrictExposureTarget -Url $t
-      $r = Invoke-AccessGateProbe -VerifyUrl $t -AccessHost $AccessHost -SettleSeconds 0 -RetryDelaySeconds 0 -Attempts 1 -StrictExposure:$strict
       $s = $state[$t]
+      $r = Invoke-AccessGateProbe -VerifyUrl $t -AccessHost $AccessHost -SettleSeconds 0 -RetryDelaySeconds 0 -Attempts 1 -StrictExposure:($s.Strict)
       $s.Requested = $true
       $s.Code = $r.Code
       $s.Location = $r.Location

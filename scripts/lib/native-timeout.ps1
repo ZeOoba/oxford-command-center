@@ -143,14 +143,15 @@ function Invoke-NativeCommandWithTimeout {
 # Wording: earlier drafts said "the mirror was NOT updated this run", which overclaims -- a stall
 # inside `wrangler pages deploy` could occur AFTER the upload/publish step, so whether the mirror
 # actually updated is genuinely unknown from here, not "no". Since 2026-07-31 the timeout path runs
-# the Access-gate probe too (an observed 2xx throws GATE CHECK FAILED instead of this message), but
+# the Access-gate probe too (an observed exposure -- a 2xx, or any non-Access answer from a Function
+# route -- throws GATE CHECK FAILED instead of this message), but
 # an inconclusive probe still ends here, so publication state stays unverified. The message says so plainly and gives the exact manual check, rather than asserting a
 # specific (and possibly wrong) outcome.
 function Get-DeployTimeoutReason {
   param([Parameter(Mandatory=$true)][int]$Seconds)
   return "wrangler deploy TIMED OUT after ${Seconds}s and was terminated (process tree killed). " +
          "Publication state UNKNOWN -- the deploy may or may not have published before the stall. " +
-         "The Access-gate probe ran on this path and saw no 2xx exposure, but it may not have " +
+         "The Access-gate probe ran on this path and saw no exposure, but it may not have " +
          "verified every target, and a stalled wrangler may never have printed the deployment alias " +
          "(see the [gate-check] lines in this run's log). This is the 2026-07-29 stall signature; a " +
          "single occurrence has previously been transient, with the next hourly run recovering " +
