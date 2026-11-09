@@ -599,3 +599,43 @@ describe('WALT decay band (M8)', () => {
     expect(decay.composite).toBeGreaterThan(beyond.composite);
   });
 });
+
+// Audit 2026-11-08 satellite-null-drive-kills. A satellite deal whose drive time to the cluster was UNKNOWN failed the
+// market gate (`dm === null` was treated like "over the max"), so a fact nobody had looked up KILLED the deal. Same rule
+// as every other gate: unknown never KILLs, it caps at T2 via gateIndeterminate. The ratified max drive is unchanged.
+describe('market gate: satellite with an unknown drive time caps at T2 (audit 2026-11-08)', () => {
+  const market = (s: ReturnType<typeof score>) => s.gates.find((g) => g.id === 'market')!;
+  const max = ratified.gates.satelliteMaxDriveMinutes;
+
+  it('satellite + null drive: not KILLED, market gate passes unconfirmed, verdict capped at T2, flagged', () => {
+    const s = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: null }));
+    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).toBe('WATCH');
+    expect(s.tier).toBe('T2');
+    expect(s.cappedAtT2).toBe(true);
+    expect(market(s).passed).toBe(true);
+    expect(market(s).detail).toMatch(/unknown/);
+    expect(s.dataQuality.some((d) => d.field === 'driveMinutesToCluster')).toBe(true);
+    expect(s.confidence).not.toBe('confirmed');
+    expect(s.reasons.join(' ')).toMatch(/Stage-0 gate input is unconfirmed/);
+  });
+
+  it('satellite + drive above the ratified max still KILLS; at the max it passes determinately', () => {
+    expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: max + 1 })).verdict).toBe('KILLED');
+    const atMax = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: max }));
+    expect(atMax.verdict).not.toBe('KILLED');
+    expect(market(atMax).passed).toBe(true);
+    expect(atMax.dataQuality.some((d) => d.field === 'driveMinutesToCluster')).toBe(false);
+  });
+
+  it('a null drive on a NON-satellite tier is irrelevant (no flag, no cap from it)', () => {
+    const s = score(strongDeal({ clusterTier: 'owned-submarket', driveMinutesToCluster: null }));
+    expect(s.verdict).toBe('PURSUE');
+    expect(s.dataQuality.some((d) => d.field === 'driveMinutesToCluster')).toBe(false);
+  });
+
+  it('a null drive never rescues a deal another gate KILLS', () => {
+    const s = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: null, sfhaOnPad: true }));
+    expect(s.verdict).toBe('KILLED');
+  });
+});

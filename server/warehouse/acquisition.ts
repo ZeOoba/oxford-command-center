@@ -289,8 +289,11 @@ export function scoreAcquisition(
     if (tier === null) { passed = true; flag('clusterTier', 'cluster tier unknown — market gate not confirmable'); detail = 'cluster tier unknown'; }
     else if (tier === 'none') { passed = false; detail = 'outside target clusters'; }
     else if (tier === 'satellite') {
+      // An UNKNOWN drive time is not a KILL (audit 2026-11-08, satellite-null-drive-kills): it used to fail the gate as if
+      // it were over the max. Unknown never KILLs; it caps at T2 via gateIndeterminate below. The ratified max is unchanged.
       const dm = input.driveMinutesToCluster;
-      if (dm === null || dm > ruleset.gates.satelliteMaxDriveMinutes) { passed = false; detail = `satellite drive ${dm ?? '?'} min > ${ruleset.gates.satelliteMaxDriveMinutes}`; }
+      if (dm === null) { flag('driveMinutesToCluster', 'satellite drive time to cluster unknown — market gate not confirmable'); detail = 'satellite drive unknown'; }
+      else if (dm > ruleset.gates.satelliteMaxDriveMinutes) { passed = false; detail = `satellite drive ${dm} min > ${ruleset.gates.satelliteMaxDriveMinutes}`; }
       else detail = `satellite within ${ruleset.gates.satelliteMaxDriveMinutes} min`;
     } else detail = `${tier} cluster`;
     gates.push({ id: 'market', passed, detail });
@@ -366,6 +369,7 @@ export function scoreAcquisition(
     input.productType === null ||
     input.price === null || input.maxBuildingSf === null ||
     input.clusterTier === null ||
+    (input.clusterTier === 'satellite' && input.driveMinutesToCluster === null) ||
     input.clearHeightFt === null || input.multiStory === null ||
     (!accessConfirmedGood && !accessConfirmedKill) ||
     input.sfhaOnPad === null ||
