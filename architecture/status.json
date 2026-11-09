@@ -1044,5 +1044,14 @@
     "review_needed": true,
     "review_detail": "Architect-owned edit: architecture/api-contracts.md, ONE sentence appended to the POST /api/warehouse/imports/:id/action approve-responses paragraph: approve and reject run their checks and writes in one write-locked transaction, so a concurrent backfill re-derive is serialized behind them; while another writer holds the lock past the busy timeout they answer 503 {error} with Retry-After (nothing written; retry), and POST /api/warehouse/issues/:id/resolve does the same. Why: the contract must list every response these routes return. Not covered by the 2026-11-06 acknowledgement recorded on approve-import-property-gates; needs its own architect acknowledgment.",
     "last_updated": "2026-11-06T19:31:20Z"
+  },
+  "audit-high-2026-11-08": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-dispatched audit fix 2026-11-08",
+    "phase": "Audit 2026-11-08 HIGH findings: brain-authz-fail-open-tunnel (server/access-authz.ts), ing2-restale-autocommit-no-property-gate (server/warehouse/ingest.ts), other-use-gate-unfed-fail-open (server/warehouse/acquisition.ts, mechanism-only).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "architect (Gabriel) approved additive groundLeased contract 2026-11-08 (relayed by the orchestrator). Branch fix/audit-high-2026-11-08; refute wf_5337efe6-574 (scoped, clean); low findings fixed post-run. Also touches architecture/database-schema.md (two DQ kinds documented).",
+    "last_updated": "2026-11-08T00:00:00Z"
   }
 }

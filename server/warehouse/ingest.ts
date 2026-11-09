@@ -8,7 +8,11 @@ import { newerCommittedImport, registerImport } from './raw-store';
 
 /** Thrown inside the ingest transaction to ROLL BACK a re-derive of a committed row that no longer
  *  qualifies for commit — preserving the prior committed data instead of emptying a served period. */
-class RestaleAbort extends Error {}
+class RestaleAbort extends Error {
+  constructor(readonly propertyGate: string | null) {
+    super('restale re-derive no longer qualifies for commit');
+  }
+}
 
 export interface IngestOptions {
   rawDir: string;
@@ -212,8 +216,31 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       insIssue.run(importId, det.propertyId, 'stale-version',
         `a newer version (v${newerCommitted.version}, import #${newerCommitted.id}) of this period is already committed; this older import cannot supersede it — reject it`, 'warn');
     }
+    // Property gate on a re-derive (ING-2 on the ingest path; audit 2026-11-08). The re-derive keeps the batch's STORED
+    // property_id (the UPDATE above never rewrites it) but keys every ledger row to the property DETECTED from this
+    // filename, and the supersede below keys on the detected one too. A byte-identical re-drop under another property's
+    // filename, or an alias change, therefore rebuilds the ledger under a different property than the batch; committing
+    // it would serve this statement's NOI under the detected property while the batch stays filed under its own. Same
+    // two gates approveImport applies (#554, actions.ts): the stored property must be resolved, and every ledger row
+    // must be keyed to it. Either failure blocks auto-commit: a pending-review batch stays in review (approve refuses it
+    // with the same reason), a committed one is rolled back by RestaleAbort below, keeping its prior ledger.
+    // A fresh ('new') import registers the detected property as the batch's, so it cannot disagree.
+    let propertyGate: 'property-unresolved' | 'property-mismatch' | null = null;
+    if (isReDerive) {
+      const stored = (db.prepare('SELECT property_id FROM import_batches WHERE id = ?').get(importId) as { property_id: string | null }).property_id;
+      const ledgerKey = det.propertyId ?? 'unknown';
+      if (stored === null || stored.trim() === '' || stored === 'unknown') {
+        propertyGate = 'property-unresolved';
+        insIssue.run(importId, det.propertyId, 'property-unresolved',
+          `re-derive of import #${importId}: the batch has no resolved property (stored ${stored === null ? 'NULL' : `'${stored}'`}) but its ledger was rebuilt under '${ledgerKey}' from ${fileName} — not auto-committed; reject it and re-drop the statement under its property's PROPERTY_ALIASES filename`, 'error');
+      } else if (ledgerKey !== stored) {
+        propertyGate = 'property-mismatch';
+        insIssue.run(importId, det.propertyId, 'property-mismatch',
+          `re-derive of import #${importId}: the batch is filed under '${stored}' but ${fileName} keyed its ledger rows to '${ledgerKey}' — not auto-committed (committing would serve this statement under the wrong property); reject it and re-drop the statement under the PROPERTY_ALIASES filename of the property it belongs to`, 'error');
+      }
+    }
     const commit = insertedRows > 0 && det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0
-      && undecidableSides.length === 0 && newerCommitted === null;
+      && undecidableSides.length === 0 && newerCommitted === null && propertyGate === null;
     if (commit) {
       // supersede prior committed versions for the same logical period
       const priors = db.prepare(`
@@ -229,26 +256,30 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       // A re-derive of a SERVING ('committed') row that no longer qualifies would empty the period
       // (deactivated ledger + no active prior) — that silently drops a property from served NOI.
       // Abort the tx instead: rollback restores the prior committed ledger/status/parser_version intact.
-      if (isReDerive && priorStatus === 'committed') throw new RestaleAbort();
+      if (isReDerive && priorStatus === 'committed') throw new RestaleAbort(propertyGate);
       // pending-review rows are not active until approved
       db.prepare("UPDATE ledger_entries SET is_active = 0 WHERE import_id = ?").run(importId);
       if (isReDerive) db.prepare("UPDATE import_batches SET status = 'pending-review' WHERE id = ?").run(importId);
     }
-    return commit;
+    return { commit, propertyGate };
   });
 
   let committed: boolean;
+  // Set inside the tx; on a RestaleAbort the tx's DQ rows roll back, so the skip message carries the reason instead.
+  let skippedPropertyGate: string | null = null;
   try {
-    committed = tx();
+    committed = tx().commit;
   } catch (e) {
     if (!(e instanceof RestaleAbort)) throw e;
+    skippedPropertyGate = e.propertyGate;
     // Prior committed version preserved (tx rolled back; parser_version stays stale so a later,
     // fixed parser re-attempts). Surface the skip once (deduped) so it's visible to DQ queries.
     const flagged = db.prepare("SELECT 1 FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped'").get(importId);
     if (!flagged) {
       db.prepare("INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, ?, ?, ?, ?)")
         .run(importId, det.propertyId, 'restale-skipped',
-          `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty/sign-undecidable) — prior committed version retained` +
+          `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty/sign-undecidable/property-unresolved/property-mismatch) — prior committed version retained` +
+          (skippedPropertyGate ? `; ${skippedPropertyGate}: the re-dropped file ${fileName} detects property ${det.propertyId === null ? 'none' : `'${det.propertyId}'`}, not the batch's own — the retained ledger stays under the batch's property` : '') +
           (undecidableSides.length ? `; sign-undecidable: ${undecidableSides.join(' | ')} — retained ledger may carry an unflipped side, verify its sign` : ''), 'warn');
     }
     return { file: fileName, status: 'committed', importId, reason: 'restale-skipped' };

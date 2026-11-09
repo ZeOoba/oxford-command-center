@@ -49,6 +49,140 @@ describe('acquisition Workbench form mapping', () => {
   });
 });
 
+// Audit 2026-11-08 other-use-gate-unfed-fail-open: the other-use KILL gate had no input producer, and unknown inputs
+// now cap the verdict at T2, so the underwriting form must be able to confirm them (tenure, env remediation, use).
+describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', () => {
+  const keys = FIELD_GROUPS.flatMap((g) => g.fields).map((f) => f.key);
+
+  it('carries tenure, ground-lease term, env remediation and the three use flags', () => {
+    for (const k of ['groundLeased', 'groundLeaseYearsRemaining', 'envRemediationPctOfPrice', 'use:automotive', 'use:childRelated', 'use:childSafetyReviewed']) {
+      expect(keys).toContain(k);
+    }
+  });
+
+  it('round-trips confirmed other-use inputs (fee simple, 0% remediation, no disqualifying use)', () => {
+    const input = AcquisitionInput.parse({
+      dealId: 'ou1', groundLeased: false, envRemediationPctOfPrice: 0,
+      use: { automotive: false, childRelated: true, childSafetyReviewed: true },
+    });
+    const round = buildInput(inputToForm(input), 'ou1');
+    expect(round.groundLeased).toBe(false);
+    expect(round.envRemediationPctOfPrice).toBe(0);
+    expect(round.use).toEqual({ automotive: false, childRelated: true, childSafetyReviewed: true });
+    expect(AcquisitionInput.parse(round).use).toEqual(input.use);
+  });
+
+  it('round-trips a ground-leased deal with its remaining term', () => {
+    const input = AcquisitionInput.parse({ dealId: 'ou2', groundLeased: true, groundLeaseYearsRemaining: 40 });
+    const round = buildInput(inputToForm(input), 'ou2');
+    expect(round.groundLeased).toBe(true);
+    expect(round.groundLeaseYearsRemaining).toBe(40);
+  });
+
+  it('leaves use UNKNOWN unless the screen is complete (a partial answer is not a screen, and never a KILL)', () => {
+    expect('use' in buildInput({ 'use:automotive': 'no' }, 'ou3')).toBe(false);
+    expect('use' in buildInput({ 'use:childRelated': 'no', 'use:childSafetyReviewed': 'yes' }, 'ou3')).toBe(false);
+    // child-related with the safety review left blank stays UNKNOWN (caps at T2) — a blank is not "not reviewed"
+    expect('use' in buildInput({ 'use:automotive': 'no', 'use:childRelated': 'yes' }, 'ou3')).toBe(false);
+    expect(buildInput({ 'use:automotive': 'no', 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }, 'ou3').use)
+      .toEqual({ automotive: false, childRelated: true, childSafetyReviewed: false });
+    // not child-related: the safety-review field is irrelevant and may stay blank
+    expect(buildInput({ 'use:automotive': 'no', 'use:childRelated': 'no' }, 'ou3').use)
+      .toEqual({ automotive: false, childRelated: false, childSafetyReviewed: false });
+  });
+
+  it('tenure "No (fee simple)" drops a leftover ground-lease term so stale form state cannot KILL (refute wf_5337efe6-574)', () => {
+    const round = buildInput({ groundLeased: 'no', groundLeaseYearsRemaining: '10' }, 'ou5');
+    expect(round.groundLeased).toBe(false);
+    expect('groundLeaseYearsRemaining' in round).toBe(false);
+    // the term is kept when ground-leased or when tenure is unanswered (the engine then tests it)
+    expect(buildInput({ groundLeased: 'yes', groundLeaseYearsRemaining: '10' }, 'ou5').groundLeaseYearsRemaining).toBe(10);
+    expect(buildInput({ groundLeaseYearsRemaining: '10' }, 'ou5').groundLeaseYearsRemaining).toBe(10);
+  });
+
+  it('an untouched form leaves every other-use input unknown', () => {
+    const round = buildInput(inputToForm(AcquisitionInput.parse({ dealId: 'ou4' })), 'ou4');
+    for (const k of ['groundLeased', 'groundLeaseYearsRemaining', 'envRemediationPctOfPrice', 'use']) expect(k in round).toBe(false);
+  });
+
+  // Review N1: a KILL already determined by the answers given must never be dropped because another use box is blank.
+  // Full 4x4x4 matrix of (unset | yes | no | '') answers, scored by the real engine on an otherwise PURSUE-grade deal.
+  describe('use answers x engine verdict — every combination (review N1)', () => {
+    const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+    const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+    const BASE: Record<string, unknown> = {
+      dealId: 'm', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000, productType: 'shallow-bay-multi', officePct: 0.1,
+      clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
+      constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false, groundLeased: false, envRemediationPctOfPrice: 0,
+      allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
+      sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
+      ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
+    };
+    const verdictFor = (form: Record<string, string>) => {
+      const use = (buildInput(form, 'm') as { use?: unknown }).use ?? null;
+      return { use, verdict: scoreAcquisition(AcquisitionInput.parse({ ...BASE, use }), ruleset, { now: '2026-06-13T00:00:00Z', rct }).verdict };
+    };
+    const VALS = [undefined, 'yes', 'no', ''] as const;
+    const cases: Array<[string | undefined, string | undefined, string | undefined]> = [];
+    for (const a of VALS) for (const c of VALS) for (const r of VALS) cases.push([a, c, r]);
+
+    it.each(cases)('automotive=%j childRelated=%j reviewed=%j', (a, c, r) => {
+      const form: Record<string, string> = {};
+      if (a !== undefined) form['use:automotive'] = a;
+      if (c !== undefined) form['use:childRelated'] = c;
+      if (r !== undefined) form['use:childSafetyReviewed'] = r;
+      const { use, verdict } = verdictFor(form);
+      const knownKill = a === 'yes' || (c === 'yes' && r === 'no');
+      const screened = (a === 'yes' || a === 'no') && (c === 'no' || (c === 'yes' && (r === 'yes' || r === 'no')));
+      if (knownKill) expect(verdict).toBe('KILLED');                 // a confirmed disqualifier is never dropped
+      else if (screened) { expect(use).not.toBeNull(); expect(verdict).toBe('PURSUE'); }
+      else { expect(use).toBeNull(); expect(verdict).toBe('WATCH'); } // incomplete screen: unknown, T2 cap, never KILL
+    });
+
+    it.each([
+      [{ 'use:automotive': 'yes' }],
+      [{ 'use:automotive': 'yes', 'use:childRelated': '' }],
+      [{ 'use:automotive': 'yes', 'use:childRelated': 'yes' }],
+      [{ 'use:automotive': 'yes', 'use:childRelated': 'yes', 'use:childSafetyReviewed': '' }],
+      [{ 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }],
+      [{ 'use:automotive': '', 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }],
+    ])('partly blank but already disqualified %j -> KILLED', (form) => {
+      expect(verdictFor(form).verdict).toBe('KILLED');
+    });
+
+    it('reloading a KILL with blanks restores only the decisive answers (a filled-in false never reappears as "no")', () => {
+      const autoOnly = inputToForm(AcquisitionInput.parse({ dealId: 'k1', ...{ use: buildInput({ 'use:automotive': 'yes' }, 'k1').use } }));
+      expect(autoOnly['use:automotive']).toBe('yes');
+      expect(autoOnly['use:childRelated']).toBeUndefined();
+      expect(autoOnly['use:childSafetyReviewed']).toBeUndefined();
+      const childOnly = inputToForm(AcquisitionInput.parse({ dealId: 'k2', use: buildInput({ 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }, 'k2').use }));
+      expect(childOnly['use:automotive']).toBeUndefined();
+      expect(childOnly).toMatchObject({ 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' });
+      // and flipping the decisive answer after reload yields an incomplete screen (unknown), not a clean pass
+      expect('use' in buildInput({ ...autoOnly, 'use:automotive': 'no' }, 'k1')).toBe(false);
+      expect('use' in buildInput({ ...childOnly, 'use:childSafetyReviewed': 'yes' }, 'k2')).toBe(false);
+    });
+
+    // Review R1 (save -> reload -> edit). Case A: automotive=yes, child-related=yes, review blank. Case B: a clean screen
+    // with child-related=no and review blank. Neither may reload a review answer the user never gave, and editing another
+    // box after reload must not KILL on that phantom "no".
+    const reload = (form: Record<string, string>) => inputToForm(AcquisitionInput.parse({ dealId: 'r', use: buildInput(form, 'r').use }));
+    it('Case A: automotive KILL with an incomplete child screen reloads no child answers; flipping automotive is unknown, not KILLED', () => {
+      const f = reload({ 'use:automotive': 'yes', 'use:childRelated': 'yes' });
+      expect(f['use:automotive']).toBe('yes');
+      expect(f['use:childRelated']).toBeUndefined();
+      expect(f['use:childSafetyReviewed']).toBeUndefined();
+      expect(verdictFor({ ...f, 'use:automotive': 'no' }).verdict).toBe('WATCH');
+    });
+    it('Case B: child-related=no with review blank reloads no review answer; marking child-related=yes is unknown, not KILLED', () => {
+      const f = reload({ 'use:automotive': 'no', 'use:childRelated': 'no' });
+      expect(f).toMatchObject({ 'use:automotive': 'no', 'use:childRelated': 'no' });
+      expect(f['use:childSafetyReviewed']).toBeUndefined();
+      expect(verdictFor({ ...f, 'use:childRelated': 'yes' }).verdict).toBe('WATCH');
+    });
+  });
+});
+
 describe('RCT v03 hygiene — the Workbench form must not present the retired flat table', () => {
   const allSpecs = FIELD_GROUPS.flatMap((g) => g.fields);
 
