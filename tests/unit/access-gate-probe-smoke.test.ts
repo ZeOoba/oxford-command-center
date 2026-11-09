@@ -32,8 +32,10 @@ describe('access-gate probe (scripts/lib/access-gate-probe.ps1)', () => {
       .filter((l) => !/^\s*#/.test(l))
       .join('\n');
     expect(code).toContain("lib\\access-gate-probe.ps1");
-    // success path requires the per-deployment alias; timeout path probes whatever was printed
-    expect(code).toMatch(/Get-AccessGateProbeTargets[^\n]*-DeployOutput \$deployOutput -RequireAlias/);
+    // success path requires the per-deployment alias (reported AFTER probing, via -Unprobed);
+    // the timeout path probes whatever was printed
+    expect(code).toMatch(/Get-MissingAliasRequirement -DeployOutput \$deployOutput/);
+    expect(code).toMatch(/Assert-AccessGateOnAllTargets -Targets \$gateTargets[^\n]*-Unprobed \$gateUnprobed/);
     expect((code.match(/Assert-AccessGateOnAllTargets /g) ?? []).length).toBe(2);
     // the old single-URL call (apex only) must not come back
     expect(code).not.toMatch(/Invoke-AccessGateProbe -VerifyUrl \$VerifyUrl/);
