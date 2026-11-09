@@ -38,7 +38,8 @@ async function main(): Promise<void> {
       importedBy: 'warehouse-backfill',
     });
     counts[r.status] = (counts[r.status] ?? 0) + 1;
-    const extra = r.unmapped ? ` unmapped=[${r.unmapped.join('; ')}]` : '';
+    // reason distinguishes e.g. a file whose batch was rejected mid-ingest ('skipped' with an importId) from a non-P&L skip.
+    const extra = (r.unmapped ? ` unmapped=[${r.unmapped.join('; ')}]` : '') + (r.reason ? ` reason=${r.reason}` : '');
     console.log(`${r.status.padEnd(15)} v${r.version ?? '-'} ${r.file}${extra}`);
   }
   console.log('\nSummary:', JSON.stringify(counts));
