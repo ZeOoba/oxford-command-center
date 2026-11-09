@@ -468,17 +468,30 @@ export function binaryPathsFor(remoteSha, localSha, cwd) {
   return parseBinaryPathsUnderData(text);
 }
 
+/** First line of an error's code or message, for a one-line diffErrors entry. @param {unknown} err */
+function errorLine(err) {
+  const e = /** @type {{code?: string, message?: string}} */ (err);
+  return String(e?.code ?? e?.message ?? err).split('\n')[0] ?? '';
+}
+
 /**
  * Parse git's pre-push stdin ("<local ref> <local sha> <remote ref> <remote sha>" per line) and
  * collect, per pushed ref, the added diff lines (minus EXCLUDE_PATHS) and the binary/export
  * paths under data/. A ref whose diff or numstat could NOT be computed is recorded in diffErrors
  * -- never silently skipped -- so the caller can fail closed.
  *
+ * The text diff and the binary numstat are computed in SEPARATE try blocks: a numstat failure
+ * records its own diffErrors entry but never discards a text diff that succeeded, so its added
+ * lines are still term-scanned (refute run wf_44a3341e-b41, low).
+ *
  * @param {string} stdinText
  * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[]}} [deps] - test seam; defaults to the real git calls.
  * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], diffErrors: {localSha: string, message: string}[]}}
  */
-export function collectRefScan(stdinText, cwd) {
+export function collectRefScan(stdinText, cwd, deps) {
+  const getDiff = deps?.diffFor ?? diffFor;
+  const getBinaries = deps?.binaryPathsFor ?? binaryPathsFor;
   /** @type {{file: string, lineNo: number, text: string}[][]} */
   const addedByRef = [];
   /** @type {string[]} */
@@ -490,19 +503,17 @@ export function collectRefScan(stdinText, cwd) {
     if (!line) continue;
     const [, localSha, , remoteSha] = line.split(/\s+/);
     if (!localSha || ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
-    let diffText;
-    let refBinaries;
     try {
-      diffText = diffFor(remoteSha ?? '', localSha, cwd);
-      refBinaries = binaryPathsFor(remoteSha ?? '', localSha, cwd);
+      const diffText = getDiff(remoteSha ?? '', localSha, cwd);
+      addedByRef.push(parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file)));
     } catch (err) {
-      const e = /** @type {{code?: string, message?: string}} */ (err);
-      const message = String(e?.code ?? e?.message ?? err).split('\n')[0] ?? '';
-      diffErrors.push({ localSha, message });
-      continue;
+      diffErrors.push({ localSha, message: `text diff: ${errorLine(err)}` });
     }
-    addedByRef.push(parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file)));
-    binaryHits.push(...refBinaries);
+    try {
+      binaryHits.push(...getBinaries(remoteSha ?? '', localSha, cwd));
+    } catch (err) {
+      diffErrors.push({ localSha, message: `binary numstat: ${errorLine(err)}` });
+    }
   }
   return { addedByRef, binaryHits, diffErrors };
 }
