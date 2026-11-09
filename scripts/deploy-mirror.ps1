@@ -10,8 +10,9 @@
 
   Confidentiality: MIRROR_INCLUDE_CONFIDENTIAL=1 is set ONLY because the deploy target is
   verified behind Cloudflare Access. The post-deploy curl re-proves the gate before the run
-  is considered successful; if ANY deployed surface (the apex, /snapshot.json, the /api/
-  Functions, or the per-deployment <hash>.pages.dev alias, 2026-11-08) does NOT 302 to Access,
+  is considered successful; if ANY deployed surface (the root, every baked top-level *.json,
+  every Pages Function route -- derived at deploy time -- on the production URL and on the
+  per-deployment <hash>.pages.dev alias, 2026-11-08) does NOT 302 to Access,
   the script FAILS loudly so a confidential bake is never left publicly reachable.
 
   Incident (2026-07-09): this script used to build+deploy whatever was currently checked out
@@ -102,8 +103,10 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # Invoke-AccessGateProbe / Get-AccessGateProbeTargets / Assert-AccessGateOnAllTargets live in
 # lib/access-gate-probe.ps1 (shared with access-gate-probe.smoke-test.ps1, so the smoke test runs the
 # real probe with a mocked curl). Since 2026-11-08 (mirror-gate-probe-apex-only) the gate check
-# probes EVERY deployed surface -- the apex, /snapshot.json, the /api/ Functions and the
-# per-deployment <hash>.<project>.pages.dev alias -- not just the apex '/'.
+# probes EVERY deployed surface -- the root, every baked top-level *.json in dist/, every Pages
+# Function route under functions/, on the production URL AND the per-deployment
+# <hash>.<project>.pages.dev alias -- not just the apex '/'. The path list is derived at deploy
+# time (Get-AccessGateProbePaths), never hand-kept.
 . (Join-Path $PSScriptRoot 'lib\access-gate-probe.ps1')
 
 $beaconPath = Get-DeployBeaconPath -RepoRoot $repo
@@ -269,6 +272,13 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $distPath 'index.html'))) {
       throw "Build root produced no dist/index.html at $distPath -- refusing to deploy (a missing artifact must never fall back to another tree's dist)."
     }
+    # Probe paths for the Access-gate check (steps 3 and 4), derived from what is about to be
+    # published: every top-level *.json in dist/ (warehouse.json is also expected when
+    # -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
+    # directory, which is THIS checkout ($repo) -- the build root's copy is scanned too, so a route
+    # in either tree is probed.
+    $probePaths = Get-AccessGateProbePaths -DistPath $distPath -FunctionsDirs @((Join-Path $repo 'functions'), (Join-Path $buildRoot 'functions')) -IncludeWarehouse:$IncludeWarehouse
+    Write-Host "  Access-gate probe paths: $((@($probePaths) | ForEach-Object { '/' + $_ }) -join ', ')"
     $wranglerBin  = Join-Path $buildRoot 'node_modules\.bin\wrangler.cmd'
     if (Test-Path -LiteralPath $wranglerBin) {
       $deployExe  = $wranglerBin
@@ -301,7 +311,7 @@ try {
       # Severity split as before: an observed exposure (GATE CHECK FAILED, any 2xx) overrides the
       # timeout and alerts CRITICAL; an inconclusive probe during a stall reports the timeout itself,
       # which is what actually went wrong and keeps its suppressible class.
-      $timeoutTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput
+      $timeoutTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
       try {
         Assert-AccessGateOnAllTargets -Targets $timeoutTargets -AccessHost $AccessHost -Context "(detected while investigating a deploy timeout) $timeoutReason" | Out-Null
       } catch {
@@ -330,7 +340,7 @@ try {
   #    and GATE CHECK INCONCLUSIVE on anything else unverified. wrangler reported success, so it
   #    printed the deployment URL: a missing alias is passed as -Unprobed, which fails the check as
   #    INCONCLUSIVE only AFTER the apex targets were probed, so it can never mask an apex exposure.
-  $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput
+  $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
   $gateUnprobed = Get-MissingAliasRequirement -DeployOutput $deployOutput -ProjectName $ProjectName
   $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed
 
