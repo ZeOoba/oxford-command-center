@@ -130,8 +130,9 @@ interface BatchRow {
  * the busy handler (see debt-snapshot.ts). As defense in depth the activating UPDATE is keyed on (id, import_id) and its
  * total change count must equal the rows read, and the batch's status flip must hit exactly one pending-review row;
  * otherwise approve throws and the transaction rolls back, leaving the served version and the batch untouched.
- * Not covered here: the reverse order (a re-derive that read its prior status before this approve committed, then runs
- * after it) is ingest.ts's own check-then-write (it reads priorStatus outside its transaction); its fix belongs there.
+ * The reverse order (a re-derive that registered before this approve committed, then writes after it) is closed in
+ * ingest.ts: the re-derive reads its prior status inside its own IMMEDIATE transaction, so it sees this approve's commit
+ * and rolls back rather than un-committing the batch (tests/unit/warehouse-rederive-race.test.ts).
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
   const result = db.transaction(() => checkAndCommit(db, importId)).immediate();
