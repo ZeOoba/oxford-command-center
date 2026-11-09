@@ -97,7 +97,29 @@ export function vintageFloorFor(yearBuilt: number | null | undefined, floors: Ba
   return strict + ((clamped - start) / (end - start)) * (loose - strict);
 }
 
-const RATIFIED_FLOORS: BasisVintageFloors = rulesetJson.floors;
+/** The vintage-ramp floors from a ruleset config, or null unless it is ratified AND signed with four finite floor values.
+ *  Mirrors rctFromConfig and the server's assertProductionRuleset (refute wf_6e927240-7cc low): an unratified ruleset
+ *  must not drive a basis verdict, so the drawer fails closed (basis not scored) instead of reading it anyway. */
+export function floorsFromRuleset(cfg: unknown): BasisVintageFloors | null {
+  if (typeof cfg !== 'object' || cfg === null) return null;
+  const c = cfg as { ratification?: unknown; ratifiedBy?: unknown; ratifiedDate?: unknown; floors?: unknown };
+  const signed = c.ratification === 'ratified'
+    && typeof c.ratifiedBy === 'string' && c.ratifiedBy !== ''
+    && typeof c.ratifiedDate === 'string' && c.ratifiedDate !== '';
+  if (!signed || typeof c.floors !== 'object' || c.floors === null) return null;
+  const f = c.floors as Record<string, unknown>;
+  const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  if (!fin(f.basisDiscountMinPreMillennium) || !fin(f.basisDiscountMinPostMillennium)
+    || !fin(f.basisVintageRampStartYear) || !fin(f.basisVintageCutoffYear)) return null;
+  return {
+    basisDiscountMinPreMillennium: f.basisDiscountMinPreMillennium,
+    basisDiscountMinPostMillennium: f.basisDiscountMinPostMillennium,
+    basisVintageRampStartYear: f.basisVintageRampStartYear,
+    basisVintageCutoffYear: f.basisVintageCutoffYear,
+  };
+}
+
+const RATIFIED_FLOORS: BasisVintageFloors | null = floorsFromRuleset(rulesetJson);
 
 /**
  * Vintage ramp, read from the ratified ruleset (today: 65% discount floor at ≤1995, sliding to 60% at ≥2005).
@@ -111,10 +133,10 @@ const RATIFIED_FLOORS: BasisVintageFloors = rulesetJson.floors;
  * an artifact of an understated denominator, never the strategy.
  *
  * Unknown vintage resolves to the STRICTEST floor (the ramp start). Never hand a building a
- * looser floor because we failed to look its year up.
+ * looser floor because we failed to look its year up. Null when the ruleset is not ratified and signed (fail closed).
  */
-export function vintageFloor(yearBuilt: number | null | undefined): number {
-  return vintageFloorFor(yearBuilt, RATIFIED_FLOORS);
+export function vintageFloor(yearBuilt: number | null | undefined): number | null {
+  return RATIFIED_FLOORS === null ? null : vintageFloorFor(yearBuilt, RATIFIED_FLOORS);
 }
 
 export type ReplacementVerdict = 'Clears basis floor' | 'Fails basis floor';
@@ -134,7 +156,8 @@ export interface ReplacementCostAnalysis {
   basisPsf: number | null;
   /** True when yearBuilt was unknown and the ramp start (strictest floor) was assumed. */
   vintageAssumed: boolean;
-  vintageFloorPct: number;
+  /** Null when the ruleset is not ratified and signed: the basis is then not scored (fail closed). */
+  vintageFloorPct: number | null;
   /** RCT LOW × (1 − vintageFloorPct). Basis must be at or below this. */
   floorPsf: number | null;
   /** Max price that would clear the floor. */
@@ -147,18 +170,25 @@ export interface ReplacementCostAnalysis {
   basis: string;
 }
 
-/** Replacement-cost analysis for a deal. Null when SF is unknown (cannot compute a basis). */
-export function replacementCostAnalysis(deal: {
+interface RcDeal {
   sf: number | null;
   estPrice: number | null;
   market?: Market | null;
   yearBuilt?: number | null;
-}): ReplacementCostAnalysis | null {
+}
+
+/** Replacement-cost analysis for a deal. Null when SF is unknown (cannot compute a basis). */
+export function replacementCostAnalysis(deal: RcDeal): ReplacementCostAnalysis | null {
+  return replacementCostAnalysisWith(deal, RATIFIED_FLOORS);
+}
+
+/** replacementCostAnalysis over explicit floors (null = ruleset not ratified/signed: basis not scored). Exported for tests. */
+export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFloors | null): ReplacementCostAnalysis | null {
   if (deal.sf === null || deal.sf <= 0) return null;
   const sf = deal.sf;
   const entry = deal.market ? RCT_V03[deal.market] : undefined;
   const vintageAssumed = deal.yearBuilt === null || deal.yearBuilt === undefined;
-  const vintageFloorPct = vintageFloor(deal.yearBuilt);
+  const vintageFloorPct = floors === null ? null : vintageFloorFor(deal.yearBuilt, floors);
   const estPrice = deal.estPrice;
   const basisPsf = estPrice !== null ? (estPrice * CLOSING_COST_LOAD) / sf : null;
 
@@ -185,6 +215,18 @@ export function replacementCostAnalysis(deal: {
     };
   }
 
+  if (floors === null || vintageFloorPct === null) {
+    // Fail closed: the RCT is priced, but no ratified floor exists to test the basis against.
+    return {
+      rctVersion: RCT_VERSION, sf, marketCovered: true, proxy: entry.proxy,
+      low: sf * entry.low, mid: sf * entry.point, high: sf * entry.high, estPrice, basisPsf, vintageAssumed,
+      vintageFloorPct: null, floorPsf: null, walkPrice: null, clearsFloor: null,
+      basisToPoint: basisPsf !== null ? basisPsf / entry.point : null,
+      priceToReplacementMid: estPrice !== null && entry.point > 0 ? estPrice / (sf * entry.point) : null,
+      verdict: null,
+      basis: `${RCT_VERSION} ${deal.market} — acquisition ruleset not ratified and signed; basis floor not scored`,
+    };
+  }
   const floorPsf = entry.low * (1 - vintageFloorPct);
   const walkPrice = (floorPsf * sf) / CLOSING_COST_LOAD;
   const clearsFloor = basisPsf !== null ? basisPsf <= floorPsf : null;
@@ -208,6 +250,6 @@ export function replacementCostAnalysis(deal: {
     basisToPoint: basisPsf !== null ? basisPsf / entry.point : null,
     priceToReplacementMid: estPrice !== null && mid > 0 ? estPrice / mid : null,
     verdict: clearsFloor === null ? null : clearsFloor ? 'Clears basis floor' : 'Fails basis floor',
-    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ` (vintage assumed ${RATIFIED_FLOORS.basisVintageRampStartYear})` : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
+    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ` (vintage assumed ${floors.basisVintageRampStartYear})` : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
   };
 }
