@@ -91,6 +91,15 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
       .toEqual({ automotive: false, childRelated: false, childSafetyReviewed: false });
   });
 
+  it('tenure "No (fee simple)" drops a leftover ground-lease term so stale form state cannot KILL (refute wf_5337efe6-574)', () => {
+    const round = buildInput({ groundLeased: 'no', groundLeaseYearsRemaining: '10' }, 'ou5');
+    expect(round.groundLeased).toBe(false);
+    expect('groundLeaseYearsRemaining' in round).toBe(false);
+    // the term is kept when ground-leased or when tenure is unanswered (the engine then tests it)
+    expect(buildInput({ groundLeased: 'yes', groundLeaseYearsRemaining: '10' }, 'ou5').groundLeaseYearsRemaining).toBe(10);
+    expect(buildInput({ groundLeaseYearsRemaining: '10' }, 'ou5').groundLeaseYearsRemaining).toBe(10);
+  });
+
   it('an untouched form leaves every other-use input unknown', () => {
     const round = buildInput(inputToForm(AcquisitionInput.parse({ dealId: 'ou4' })), 'ou4');
     for (const k of ['groundLeased', 'groundLeaseYearsRemaining', 'envRemediationPctOfPrice', 'use']) expect(k in round).toBe(false);

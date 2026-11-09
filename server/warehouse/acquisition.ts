@@ -176,7 +176,14 @@ export function computeInputsVersion(
   const input = AcquisitionInput.parse(rawInput); // apply defaults → canonical form
   // ddKnown is .partial(): an ABSENT key and an explicit false are decision-identical (engine reads `!== true`),
   // so canonicalize to the four booleans — otherwise logically-identical deals hash differently. (Refute fix.)
-  const canonicalInput = { ...input, ddKnown: canonicalDd(input.ddKnown) };
+  // Same idea for the other-use inputs (refute wf_5337efe6-574, determinism lens): childSafetyReviewed is read only when
+  // childRelated is true, and with a ground-lease term supplied groundLeased null and true decide identically (the term is
+  // tested, nothing flagged). Fold both so a decision-identical save -> reload -> re-save keeps the same key.
+  // groundLeased === false with a term stays distinct: it raises the contradiction flag.
+  const canonicalUse = input.use === null ? null
+    : { ...input.use, childSafetyReviewed: input.use.childRelated ? input.use.childSafetyReviewed : false };
+  const canonicalGroundLeased = input.groundLeaseYearsRemaining !== null && input.groundLeased !== false ? null : input.groundLeased;
+  const canonicalInput = { ...input, ddKnown: canonicalDd(input.ddKnown), use: canonicalUse, groundLeased: canonicalGroundLeased };
   const canonical = stableStringify({
     input: canonicalInput,
     rulesetVersion: ruleset.rulesetVersion,
