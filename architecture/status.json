@@ -1067,9 +1067,9 @@
     "agent_role": "Engineering (Claude Code) - orchestrator-dispatched Wave-1 batch A-1 (2026-11-08 medium remediation)",
     "phase": "Wave 1 A-1 acquisition screen inputs (mechanism-only): satellite-null-drive-kills (server/warehouse/acquisition.ts), dealtoform-portfolio-sf-false-kill (src/modules/acquisitions/acquisition-score.ts), client-basis-floor-engine-hardcodes-ruleset (src/brain/replacement-cost.ts), E3 other-use OM producer (server/warehouse/om-extract.ts + om-extract-fields.json).",
     "status": "in_progress",
-    "blocked_by": "fix/audit-high-2026-11-08 (PR #560) - stacked PR, merge #560 first",
+    "blocked_by": null,
     "review_needed": false,
-    "detail": "Branch fix/wave1-a1-screen-inputs, worktree .claude/worktrees/wave1-a1, base fix/audit-high-2026-11-08. No architect-owned file (src/contracts/, server/index.ts, src/analytics/engine.ts) touched. Governor values unchanged. Commits need a refute-financial-change Workflow wf_ id (orchestrator).",
+    "detail": "Branch fix/wave1-a1-screen-inputs, worktree .claude/worktrees/wave1-a1, base main (rebased after #560 merged as 2cfb3845). No architect-owned file (src/contracts/, server/index.ts, src/analytics/engine.ts) touched. Governor values unchanged. Commits need a refute-financial-change Workflow wf_ id (orchestrator).",
     "last_updated": "2026-11-09T02:04:19Z"
   }
 }
