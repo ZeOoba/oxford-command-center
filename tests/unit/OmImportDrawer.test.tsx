@@ -84,4 +84,24 @@ describe('OmImportDrawer', () => {
     await waitFor(() => expect(screen.getByText(/unavailable/i)).toBeTruthy());
     expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy();
   });
+
+  // E3 (audit 2026-11-08): the other-use extraction can find tenure/use facts when the main extraction found nothing.
+  // The server then still sends rawText (keyed off the main count), and the Copy OM text fallback must stay reachable.
+  it('shows Copy OM text whenever rawText is present, even when other-use fields were found', async () => {
+    const extractFn = vi.fn(async () => ({ fields: { groundLeased: 'no' }, fieldCount: 1, rawText: 'OM body text' }));
+    render(<OmImportDrawer open={true} onClose={noop} onApply={noop} extractFn={extractFn} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['%PDF-1.4'], 'test.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(screen.getByText(/1 field found/i)).toBeTruthy());
+    expect(screen.getByRole('button', { name: /copy om text/i })).toBeTruthy();
+  });
+
+  it('no Copy OM text button when the main extraction found fields (no rawText)', async () => {
+    const extractFn = vi.fn(async () => ({ fields: { price: '1450000' }, fieldCount: 1 }));
+    render(<OmImportDrawer open={true} onClose={noop} onApply={noop} extractFn={extractFn} />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['%PDF-1.4'], 'test.pdf', { type: 'application/pdf' })] } });
+    await waitFor(() => expect(screen.getByText(/1 field found/i)).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /copy om text/i })).toBeNull();
+  });
 });
