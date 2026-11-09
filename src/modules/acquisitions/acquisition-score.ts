@@ -51,6 +51,8 @@ export interface FieldSpec {
   hint?: string;
 }
 export interface FieldGroup { title: string; fields: readonly FieldSpec[] }
+/** Form keys `use:<flag>` assemble into AcquisitionInput.use (an object), like `dd:<item>` into ddKnown. */
+const USE_PREFIX = 'use:';
 
 const PRODUCT_TYPES = [
   'shallow-bay-multi', 'flex', 'office-warehouse', 'functional-single-tenant', 'quasi-ios', 'retail-only', 'office-only', 'other',
@@ -90,6 +92,15 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     { key: 'constructionType', label: 'Construction', kind: 'select', options: CONSTRUCTION },
     { key: 'yearBuilt', label: 'Year built', kind: 'num' },
     { key: 'sfhaOnPad', label: 'SFHA flood on pad', kind: 'tribool' },
+  ] },
+  // Other-use kill screen (audit 2026-11-08): the engine caps the verdict at T2 while any of these is unknown.
+  { title: 'Other-Use Kill Screen', fields: [
+    { key: 'groundLeased', label: 'Ground-leased', kind: 'tribool', hint: 'No = fee simple' },
+    { key: 'groundLeaseYearsRemaining', label: 'Ground lease yrs remaining', kind: 'num' },
+    { key: 'envRemediationPctOfPrice', label: 'Env remediation % of price', kind: 'pct', hint: '0 = Phase I clean' },
+    { key: 'use:automotive', label: 'Automotive use', kind: 'tribool' },
+    { key: 'use:childRelated', label: 'Child-related use', kind: 'tribool' },
+    { key: 'use:childSafetyReviewed', label: 'Child-safety reviewed', kind: 'tribool' },
   ] },
   { title: 'Basis · Yield · IRR', fields: [
     { key: 'allInBasis', label: 'All-in basis', kind: 'usd' },
@@ -149,10 +160,16 @@ export function dealToForm(deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs
 export function buildInput(form: FormState, dealId: string): Record<string, unknown> {
   const out: Record<string, unknown> = { dealId };
   const ddKnown: Record<string, boolean> = {};
+  const useBits: Record<string, boolean> = {};
   for (const group of FIELD_GROUPS) {
     for (const spec of group.fields) {
       const raw = form[spec.key];
       if (raw === undefined) continue;
+      if (spec.key.startsWith(USE_PREFIX)) {
+        if (raw === 'yes') useBits[spec.key.slice(USE_PREFIX.length)] = true;
+        else if (raw === 'no') useBits[spec.key.slice(USE_PREFIX.length)] = false;
+        continue;
+      }
       switch (spec.kind) {
         case 'usd': case 'num': { const n = num(raw); if (n !== null) out[spec.key] = n; break; }
         case 'pct': { const n = num(raw); if (n !== null) out[spec.key] = n / 100; break; }
@@ -166,7 +183,59 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
     }
   }
   if (Object.keys(ddKnown).length > 0) out.ddKnown = ddKnown;
+  const use = assembleUse(useBits);
+  if (use !== null) out.use = use;
+  // Tenure "No (fee simple)" means there is no ground lease, so a leftover term in the form (e.g. from an earlier OM pass)
+  // is not sent: otherwise the engine, which always tests a supplied term, would KILL a fee-simple deal on stale state.
+  if (out.groundLeased === false) delete out.groundLeaseYearsRemaining;
   return out;
+}
+
+/**
+ * Assemble AcquisitionInput.use (one object of three booleans) from the three `use:*` tri-state answers.
+ *  - A KILL already determined by the answers given (automotive = yes, or child-related = yes AND safety review = no)
+ *    is ALWAYS sent, whatever else is blank: a confirmed disqualifier must never be dropped to "unknown". The blank
+ *    fields are filled with false; they cannot change a KILL, and inputToForm does not reload them (see killingUseFlags).
+ *  - Otherwise `use` is sent only when the screen is complete: automotive answered, and child-related answered with,
+ *    when child-related = yes, the safety review answered. Anything less stays unknown (the engine caps at T2) and is
+ *    never turned into a KILL by reading a blank safety-review field as "not reviewed".
+ */
+function assembleUse(b: Record<string, boolean>): { automotive: boolean; childRelated: boolean; childSafetyReviewed: boolean } | null {
+  const automotiveKill = b.automotive === true;
+  const childKill = b.childRelated === true && b.childSafetyReviewed === false;
+  const filled = { automotive: b.automotive === true, childRelated: b.childRelated === true, childSafetyReviewed: b.childSafetyReviewed === true };
+  if (childKill) return filled;
+  if (automotiveKill) {
+    // The child questions only stay on a stored automotive KILL when fully answered; an incomplete child screen is stored
+    // as not-child-related, so childRelated=yes never sits next to a filled-in review=false that reload would show.
+    const childComplete = b.childRelated === false || (b.childRelated === true && b.childSafetyReviewed !== undefined);
+    return childComplete ? filled : { automotive: true, childRelated: false, childSafetyReviewed: false };
+  }
+  const childScreened = b.childRelated === false || (b.childRelated === true && b.childSafetyReviewed !== undefined);
+  return b.automotive !== undefined && childScreened ? filled : null;
+}
+
+// ACCEPTED TRADE-OFF (refute wf_5337efe6-574, correctness lens): a stored automotive KILL reloads ONLY the automotive flag.
+// assembleUse stores an incomplete child screen on an automotive KILL as childRelated:false, so a confirmed child answer
+// cannot be told apart from a filled-in one; both are dropped on reload. If the user then clears the automotive KILL,
+// `use` is unknown (T2 cap) until the child questions are answered again: extra re-entry, never a fabricated pass.
+// Nothing else displays the stored use flags (no IC memo / export reads use.childRelated), so the fill is never shown as "no".
+function storedUseFormValue(use: AcquisitionInput['use'], flag: string): boolean | undefined {
+  if (!use) return undefined;
+  const kill = killingUseFlags(use);
+  // childSafetyReviewed means nothing when the use is not child-related: its stored false is a fill, never reloaded.
+  if (flag === 'childSafetyReviewed' && !use.childRelated) return undefined;
+  if (kill === null) return (use as Record<string, boolean>)[flag];
+  if (flag === 'automotive') return kill.automotive ? true : undefined;
+  return kill.child ? (use as Record<string, boolean>)[flag] : undefined;
+}
+
+/** Which `use` flags are decisive for a KILL on a stored input (null when `use` is not a KILL). */
+function killingUseFlags(use: AcquisitionInput['use']): { automotive: boolean; child: boolean } | null {
+  if (!use) return null;
+  const automotive = use.automotive;
+  const child = use.childRelated && !use.childSafetyReviewed;
+  return automotive || child ? { automotive, child } : null;
 }
 
 /** Persist a deal's underwriting inputs to the overlay (POST /api/actions/acquisition-input). Returns
@@ -195,7 +264,11 @@ export function inputToForm(input: AcquisitionInput): FormState {
         if (dd[spec.key.slice(3)] === true) f[spec.key] = 'true';
         continue;
       }
-      const v = rec[spec.key];
+      // A stored KILL `use` may carry blank answers filled with false (assembleUse): reload ONLY the decisive flags, so a
+      // filled-in false never reappears as a confirmed "no" that a later edit could turn into a clean screen.
+      const v = spec.key.startsWith(USE_PREFIX)
+        ? storedUseFormValue(input.use, spec.key.slice(USE_PREFIX.length))
+        : rec[spec.key];
       if (v === null || v === undefined) continue;
       switch (spec.kind) {
         case 'usd': case 'num': case 'numselect': case 'select': f[spec.key] = String(v); break;
