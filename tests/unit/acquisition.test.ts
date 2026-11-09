@@ -360,6 +360,21 @@ describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
     expect(s.cappedAtT2).toBe(true);
   });
 
+  it('inputs_version folds decision-identical other-use inputs (refute wf_5337efe6-574 determinism lens)', () => {
+    const v = (over: Record<string, unknown>) => computeInputsVersion(strongDeal(over), ratified);
+    // childSafetyReviewed is irrelevant when not child-related
+    expect(v({ use: { automotive: false, childRelated: false, childSafetyReviewed: true } }))
+      .toBe(v({ use: { automotive: false, childRelated: false, childSafetyReviewed: false } }));
+    // ...but it matters when child-related
+    expect(v({ use: { automotive: false, childRelated: true, childSafetyReviewed: true } }))
+      .not.toBe(v({ use: { automotive: false, childRelated: true, childSafetyReviewed: false } }));
+    // with a term supplied, groundLeased null and true decide identically; false (contradiction flag) stays distinct
+    expect(v({ groundLeased: null, groundLeaseYearsRemaining: 40 })).toBe(v({ groundLeased: true, groundLeaseYearsRemaining: 40 }));
+    expect(v({ groundLeased: false, groundLeaseYearsRemaining: 40 })).not.toBe(v({ groundLeased: true, groundLeaseYearsRemaining: 40 }));
+    // with no term, all three tenure states are distinct decisions
+    expect(new Set([v({ groundLeased: null }), v({ groundLeased: true }), v({ groundLeased: false })]).size).toBe(3);
+  });
+
   it('a known disqualifier still KILLS with the other inputs unknown', () => {
     const s = score(strongDeal({ use: { automotive: true, childRelated: false, childSafetyReviewed: false }, envRemediationPctOfPrice: null, groundLeased: null }));
     expect(s.verdict).toBe('KILLED');

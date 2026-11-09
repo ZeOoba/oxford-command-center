@@ -185,6 +185,9 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
   if (Object.keys(ddKnown).length > 0) out.ddKnown = ddKnown;
   const use = assembleUse(useBits);
   if (use !== null) out.use = use;
+  // Tenure "No (fee simple)" means there is no ground lease, so a leftover term in the form (e.g. from an earlier OM pass)
+  // is not sent: otherwise the engine, which always tests a supplied term, would KILL a fee-simple deal on stale state.
+  if (out.groundLeased === false) delete out.groundLeaseYearsRemaining;
   return out;
 }
 
@@ -212,6 +215,11 @@ function assembleUse(b: Record<string, boolean>): { automotive: boolean; childRe
   return b.automotive !== undefined && childScreened ? filled : null;
 }
 
+// ACCEPTED TRADE-OFF (refute wf_5337efe6-574, correctness lens): a stored automotive KILL reloads ONLY the automotive flag.
+// assembleUse stores an incomplete child screen on an automotive KILL as childRelated:false, so a confirmed child answer
+// cannot be told apart from a filled-in one; both are dropped on reload. If the user then clears the automotive KILL,
+// `use` is unknown (T2 cap) until the child questions are answered again: extra re-entry, never a fabricated pass.
+// Nothing else displays the stored use flags (no IC memo / export reads use.childRelated), so the fill is never shown as "no".
 function storedUseFormValue(use: AcquisitionInput['use'], flag: string): boolean | undefined {
   if (!use) return undefined;
   const kill = killingUseFlags(use);
