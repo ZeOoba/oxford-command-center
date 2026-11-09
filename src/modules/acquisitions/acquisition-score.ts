@@ -155,13 +155,17 @@ export function dealToForm(
   // dealtoform-portfolio-sf-false-kill: a 3 x 30K portfolio was KILLED as one 90K building). A Deal carries no
   // per-building SF, so the largest building is known only when the deal is ONE building. For a portfolio, or an
   // unknown building count, it stays blank: the engine caps that at T2 until the underwriter enters it, never a KILL.
+  // Known trade-off (refute 2026-11-08): while blank, the engine's Cat-3 clear-height band falls back to the smallest
+  // (most lenient) band (acquisition.ts `maxBuildingSf ?? 0`), so the T2-capped composite can read high until entered.
   if (deal.sf !== null) {
     f.totalSf = String(deal.sf);
     if (deal.buildings === 1) f.maxBuildingSf = String(deal.sf);
   }
-  // Portfolio status drives the price cap (single asset vs portfolio); set only when the building count is known.
+  // Portfolio status drives the price cap (single asset vs portfolio); set only when the building count is known. The
+  // portfolio cap is doctrine for a 2-5 building portfolio sold together (acquisition-underwriting Amendment H); the
+  // ruleset carries no building-count bound, so a larger count is left for the underwriter rather than prefilled 'yes'.
   if (deal.buildings === 1) f.isPortfolio = 'no';
-  else if (typeof deal.buildings === 'number' && deal.buildings > 1) f.isPortfolio = 'yes';
+  else if (typeof deal.buildings === 'number' && deal.buildings >= 2 && deal.buildings <= 5) f.isPortfolio = 'yes';
   if (deal.irr !== null) f.leveredIrr = String(Math.round(deal.irr * 1000) / 10); // decimal → %
   if (deal.holdYrs === 5 || deal.holdYrs === 10) f.underwriteHorizonYrs = String(deal.holdYrs);
   return f;
