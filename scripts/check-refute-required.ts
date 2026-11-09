@@ -151,6 +151,33 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   // criterion as loan.ts/debt.ts/capital.ts above: a silently dropped or renamed field desyncs the
   // contract from the governor math it types.
   'src/contracts/lease-market.ts',
+  // 2026-11-08 (medium-findings remediation Wave 1, E-2; Gabriel approved the mechanism-only gate
+  // widening). acquisition.ts is the Zod contract of the ratified acquisition scorecard:
+  // AcquisitionInput (the fields the engine scores), AcquisitionRuleset and ReplacementCostTable
+  // (the 0.65/0.90 basis floors and the RCT denominator, parsed and asserted by the engine), and
+  // the score/verdict/tier shapes the capital BUY verdict reads. coding-standards requires the refute
+  // pass on the scorecard, yet a change here merged with no trailer demanded.
+  'src/contracts/acquisition.ts',
+  // governor-constants.ts holds THE literal ratified governors (DSCR floor 1.25, aggregate LTV
+  // ceiling 0.40) that every other copy derives from (Hard Invariant 4), and liquidity-policy.ts the
+  // ratified firm cash floor. Both were outside this gate: a one-token edit moved a governor with no
+  // attestation required. Found by the same sweep.
+  'src/contracts/governor-constants.ts',
+  'src/contracts/liquidity-policy.ts',
+]);
+
+// Acquisition scorecard INPUT SHAPING outside the default-deny roots (2026-11-08, same sweep):
+//  - src/modules/acquisitions/acquisition-score.ts turns a Deal (SF, price, IRR, hold, market) into
+//    the AcquisitionInput the engine scores (dealToForm / buildInput / inputToForm / applyDealMarket).
+//    A wrong prefill there (e.g. a portfolio's total SF as the max building SF) kills or passes a deal
+//    as surely as an engine bug, and it is the path every Workbench score goes through.
+//  - functions/api/warehouse/acquisition/score.ts is the Access-gated mirror's copy of the score
+//    route: it resolves and asserts the ratified ruleset + RCT and applies the governor proxy.
+// File-level, not a prefix: the rest of src/modules/acquisitions/ is display, and the rest of
+// functions/ is identity/AI plumbing.
+const FINANCIAL_INPUT_SHAPING_PATHS: ReadonlySet<string> = new Set([
+  'src/modules/acquisitions/acquisition-score.ts',
+  'functions/api/warehouse/acquisition/score.ts',
 ]);
 
 // Financial CONFIG (2026-09-21, weekly sweep — fifth occurrence of the scope-staleness mode): every
@@ -435,6 +462,7 @@ export function isFinancialSourcePath(p: string): boolean {
     path === 'src/data/seed-deals.ts' ||
     path === 'src/data/public-deals.ts' ||
     FINANCIAL_CONTRACT_PATHS.has(path) ||
+    FINANCIAL_INPUT_SHAPING_PATHS.has(path) ||
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
     // Priced against RCT v03, the ratified basis denominator — a governor-adjacent constant table.
