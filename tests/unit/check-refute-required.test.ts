@@ -355,6 +355,42 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('src/contracts/lease-market.ts')).toBe(true);
   });
 
+  // 2026-11-08 (medium-findings remediation Wave 1, E-2): the acquisition scorecard's own contract
+  // and its client input-shaping were outside the gate, so a change to how a deal's SF / price /
+  // IRR / market is turned into an AcquisitionInput (or to the Zod shape the engine parses) merged
+  // with no attestation even though coding-standards requires the refute pass on the scorecard.
+  // The same sweep found the literal governor constants (DSCR 1.25 / LTV 0.40), the ratified cash
+  // floor, and the edge scoring Function outside it too.
+  it('flags the acquisition scorecard contract and its input-shaping (2026-11-08)', () => {
+    expect(isFinancialSourcePath('src/contracts/acquisition.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/modules/acquisitions/acquisition-score.ts')).toBe(true);
+    // the edge copy of the score route: resolves the ratified config and applies the governor proxy
+    expect(isFinancialSourcePath('functions/api/warehouse/acquisition/score.ts')).toBe(true);
+  });
+  it('flags the ratified governor and liquidity-floor constants (2026-11-08)', () => {
+    expect(isFinancialSourcePath('src/contracts/governor-constants.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/contracts/liquidity-policy.ts')).toBe(true);
+  });
+  it('is case- and separator-insensitive for the 2026-11-08 additions, like every other entry', () => {
+    expect(isFinancialSourcePath('src\\contracts\\Acquisition.ts')).toBe(true);
+    expect(isFinancialSourcePath('SRC/modules/acquisitions/acquisition-score.ts')).toBe(true);
+    expect(isFinancialSourcePath('functions\\api\\warehouse\\acquisition\\score.ts')).toBe(true);
+  });
+  it('keeps the 2026-11-08 additions narrow: neighbouring display and auth files stay out', () => {
+    expect(isFinancialSourcePath('src/modules/acquisitions/AcquisitionWorkbench.tsx')).toBe(false);
+    expect(isFinancialSourcePath('src/modules/acquisitions/tabs.ts')).toBe(false);
+    expect(isFinancialSourcePath('functions/api/whoami.ts')).toBe(false);
+    expect(isFinancialSourcePath('functions/_shared/access-identity.ts')).toBe(false);
+    // tests of the newly-covered files stay exempt, like every other test
+    expect(isFinancialSourcePath('src/modules/acquisitions/acquisition-score.test.ts')).toBe(false);
+  });
+  it('a commit touching only acquisition-score.ts now needs its own trailer', () => {
+    const commits = [{ sha: 'a1', message: 'fix(acq): prefill portfolio SF', files: ['src/modules/acquisitions/acquisition-score.ts'] }];
+    expect(findUnattestedCommits(commits).map((c) => c.sha)).toEqual(['a1']);
+    const attested = [{ ...commits[0]!, message: 'fix(acq): prefill portfolio SF\n\nRefute-Reviewed: wf_d10ede49-078\n' }];
+    expect(findUnattestedCommits(attested)).toEqual([]);
+  });
+
   // Broad-prefix coverage (server/warehouse/, src/analytics/) already reaches these — asserted
   // explicitly so a future DELIVERY_ONLY_PATHS or prefix change can't silently exempt them.
   it('reaches lease-market math files via the existing broad prefixes', () => {
