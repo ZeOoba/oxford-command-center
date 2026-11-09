@@ -89,8 +89,12 @@ import { dirname, join, posix, resolve, win32 } from 'node:path';
 // still requires a refute trailer. See architecture/coding-standards.md.
 // NOTE: actions.ts dispatches recompute (scoreProperties/detectAnomalies) but holds no math;
 // re-evaluate this entry if it gains analytic logic.
+// REMOVED 2026-11-09: server/warehouse/api.ts (refute run wf_44a3341e-b41, medium; architect sign-off:
+// "Gabriel (architect) approved 2026-11-09"). It is not pure plumbing: POST /acquisition/score resolves
+// the ratified config, calls scoreAcquisition and applies the governor proxy, and /acq/intel owns the
+// verdict-rank ORDER BY. Its edge twin functions/api/warehouse/acquisition/score.ts is gated, so both
+// halves of the score contract now need the same attestation.
 export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
-  'server/warehouse/api.ts',
   'server/warehouse/debt-api.ts',
   'server/warehouse/actions.ts',
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
