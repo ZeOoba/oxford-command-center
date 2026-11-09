@@ -1050,8 +1050,8 @@
     "phase": "Audit 2026-11-08 HIGH findings: brain-authz-fail-open-tunnel (server/access-authz.ts), ing2-restale-autocommit-no-property-gate (server/warehouse/ingest.ts), other-use-gate-unfed-fail-open (server/warehouse/acquisition.ts, mechanism-only).",
     "status": "in_progress",
     "blocked_by": null,
-    "review_needed": false,
-    "detail": "Branch fix/audit-high-2026-11-08. No architect-owned source, migrations or governor constants touched. Not pushed; refute-financial-change workflow pending (orchestrator).",
+    "review_needed": true,
+    "review_detail": "Architect-owned edit pending acknowledgment: src/contracts/acquisition.ts (additive AcquisitionInput.groundLeased tri-state, default null = tenure unknown; the old 'null term = fee simple' meaning is retired). Side effect: the acquisition inputs_version keyspace moves (golden pins re-pinned in tests/unit/acquisition-golden-characterization.test.ts), so every persisted acq score classifies stale (BUY withheld) until rescoreStaleCandidates runs post-merge (it re-scores active candidates only by default). No migrations, no governor constants, no ratified thresholds changed. Branch fix/audit-high-2026-11-08, not pushed; refute-financial-change workflow pending (orchestrator).",
     "last_updated": "2026-11-08T00:00:00Z"
   }
 }

@@ -62,8 +62,14 @@ function seededGovernorFingerprint(): string {
 
 // Captured once at baseline (origin/main 140a67a). A change here means the dedup keyspace moved:
 // every persisted acq_scores row re-keys. Requires a deliberate migration plan (A3 / R-HASH) — not a casual re-pin.
-const PIN_LEGACY = '7c4b74ef66c5424e';
-const PIN_WITH_GOVERNORS = 'fbefaf653fb0c02e';
+// RE-PINNED 2026-11-08 (audit other-use-gate-unfed-fail-open; was 7c4b74ef66c5424e / fbefaf653fb0c02e): the new
+// AcquisitionInput.groundLeased field (default null) enters the canonical input. Deliberate: every persisted score was
+// computed while the other-use gate failed open, so re-keying classifies them 'stale' (the BUY gate withholds non-current
+// scores) until re-scored. The stale reason text names governor values, not this contract change: expected. Migration
+// plan: after merge, restart the Brain Server and run rescoreStaleCandidates (server/warehouse/acq-score-freshness.ts)
+// against the live warehouse; it re-scores ACTIVE candidates by default, so archived/passed rows stay stale.
+const PIN_LEGACY = '9822252ee189ddaf';
+const PIN_WITH_GOVERNORS = 'ff9faf6d20ed5866';
 const PIN_GOVERNOR_FINGERPRINT = '1:1.25:0.4:0.085';
 
 describe('golden: inputs_version pin (R-HASH)', () => {
