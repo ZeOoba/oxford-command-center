@@ -250,10 +250,23 @@ export function cloudflareJwksFetcher(issuer: string): () => Promise<readonly Jw
  * extraAllowedHostsFromEnv) must run with ACCESS_REQUIRE=1: once a non-loopback Host is admitted,
  * loopback binding is no longer the boundary and the Access assertion is the only identity check.
  *
+ * BRAIN_HOST_AUTH is the one explicit exception (Gabriel-approved 2026-11-09): the live server is
+ * reached through Tailscale Serve, not Cloudflare Access. See parseBrainHostAuth / isTailnetHost. With
+ * BRAIN_HOST_AUTH=tailnet, extra hosts are admitted without ACCESS_REQUIRE=1 ONLY if every one is a
+ * *.ts.net name; the tailnet ACL is then the authorization boundary and one startup line says so.
+ * tailnet + ACCESS_REQUIRE=1 is allowed and means Access is enforced as well (every request must also
+ * carry a verified Cf-Access-Jwt-Assertion, which plain Tailscale Serve traffic does not, so it 403s).
+ *
  * When enabled, the issuer/audience/roster are REQUIRED. Every misconfiguration refuses to start
  * rather than booting with authorization silently inert — the failure mode that looks fine in every log.
+ *
+ * `log` receives the single startup line describing the host-auth boundary (tailnet mode only).
  */
-export function accessAuthzOptionsFromEnv(env: Record<string, string | undefined>): AccessAuthzOptions {
+export function accessAuthzOptionsFromEnv(
+  env: Record<string, string | undefined>,
+  log: (message: string) => void = (m) => console.warn(m),
+): AccessAuthzOptions {
+  const hostAuth = parseBrainHostAuth(env.BRAIN_HOST_AUTH);
   const raw = env.ACCESS_REQUIRE;
   if (raw !== undefined && raw !== '' && raw !== '0' && raw !== '1') {
     throw new Error(
@@ -261,7 +274,17 @@ export function accessAuthzOptionsFromEnv(env: Record<string, string | undefined
     );
   }
   const enabled = raw === '1';
-  if (extraAllowedHostsFromEnv(env).length > 0 && !enabled) {
+  const extraHosts = extraAllowedHostsFromEnv(env);
+  if (hostAuth === 'tailnet') {
+    const foreign = extraHosts.filter((h) => !isTailnetHost(h));
+    if (foreign.length > 0) {
+      throw new Error(
+        `BRAIN_HOST_AUTH=tailnet but BRAIN_ALLOWED_HOSTS contains ${foreign.length} host(s) that are not *.ts.net names (${foreign
+          .map((h) => JSON.stringify(h))
+          .join(', ')}) — refusing to start: only tailnet hosts may skip ACCESS_REQUIRE.`,
+      );
+    }
+  } else if (extraHosts.length > 0 && !enabled) {
     throw new Error(
       'BRAIN_ALLOWED_HOSTS admits non-loopback hosts but ACCESS_REQUIRE is not "1" — refusing to start with the tunnel unauthenticated.',
     );
@@ -286,5 +309,48 @@ export function accessAuthzOptionsFromEnv(env: Record<string, string | undefined
     }
   }
 
+  if (hostAuth === 'tailnet') {
+    log(
+      extraHosts.length === 0
+        ? '[access-authz] BRAIN_HOST_AUTH=tailnet with no extra hosts — loopback only.'
+        : `[access-authz] BRAIN_HOST_AUTH=tailnet: the tailnet ACL is the authorization boundary for ${extraHosts.join(', ')}` +
+            (enabled
+              ? ' — Cloudflare Access is enforced as well (ACCESS_REQUIRE=1).'
+              : ' — no Cloudflare Access check (ACCESS_REQUIRE off). Tailscale Funnel must stay off for this node.'),
+    );
+  }
+
   return { enabled, issuer, audience, allowlist, fetchJwks: cloudflareJwksFetcher(issuer) };
+}
+
+export type BrainHostAuth = 'default' | 'tailnet';
+
+/**
+ * BRAIN_HOST_AUTH: unset or '' = default (the ACCESS_REQUIRE rule above); exactly 'tailnet' = the
+ * tailnet opt-in. ANY other value — including 'Tailnet', ' tailnet', 'access' — refuses to start, the
+ * same strictness as ACCESS_REQUIRE: a typo must never silently select a mode.
+ */
+export function parseBrainHostAuth(raw: string | undefined): BrainHostAuth {
+  if (raw === undefined || raw === '') return 'default';
+  if (raw === 'tailnet') return 'tailnet';
+  throw new Error(
+    `BRAIN_HOST_AUTH is set to ${JSON.stringify(raw)} but the only accepted value is "tailnet" — refusing to start rather than guess.`,
+  );
+}
+
+/** One DNS label: LDH, 1–63 chars, no leading/trailing hyphen. ASCII only — IDN must be punycode. */
+const DNS_LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+/** <one or more labels>.ts.net, optional :port. Anchored: no trailing dot, no userinfo/path, no wildcard. */
+const TAILNET_AUTHORITY = new RegExp(String.raw`^(?:${DNS_LABEL}\.)+ts\.net(?::([1-9][0-9]{0,4}))?$`);
+
+/**
+ * True when `authority` (a BRAIN_ALLOWED_HOSTS entry, compared lower-cased like host-guard does) is a
+ * Tailscale MagicDNS name: at least one whole label before a final `ts.net`, optional port 1–65535.
+ * `ts.net.evil.com`, `evilts.net`, `ts.net`, `x.ts.net.` and anything with non-LDH characters are not.
+ */
+export function isTailnetHost(authority: string): boolean {
+  const m = TAILNET_AUTHORITY.exec(authority.toLowerCase());
+  if (!m) return false;
+  const port = m[1];
+  return port === undefined || Number(port) <= 65535;
 }

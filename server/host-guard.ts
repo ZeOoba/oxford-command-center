@@ -44,7 +44,9 @@ function normalizeHost(host: string): string {
  * (serve() binds 127.0.0.1 only — `[::1]` and 0.0.0.0 are deliberately absent). The port-less form is
  * accepted ONLY on port 80, where HTTP clients omit it. `extra` is for the Cloudflare-tunnel
  * deployment (BRAIN_ALLOWED_HOSTS), where cloudflared forwards the public hostname as Host unless its
- * ingress sets httpHostHeader; each entry is compared exactly, lower-cased.
+ * ingress sets httpHostHeader; each entry is compared exactly, lower-cased. The Tailscale Serve deployment
+ * (BRAIN_HOST_AUTH=tailnet) uses the same exact match — that mode only changes the STARTUP rule in
+ * access-authz.ts (which extra hosts may run without ACCESS_REQUIRE=1), never per-request matching here.
  */
 export function allowedHosts(port: number, extra: readonly string[] = []): ReadonlySet<string> {
   const set = new Set<string>([`localhost:${port}`, `127.0.0.1:${port}`]);
