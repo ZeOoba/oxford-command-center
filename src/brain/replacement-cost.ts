@@ -1,4 +1,8 @@
-import type { Market } from '../contracts/common';
+import { Market } from '../contracts/common';
+// The ratified configs the SERVER engine scores with (server/warehouse/acquisition.ts). Read here, never re-typed, so the
+// deal-drawer badge cannot drift from the engine's verdict (audit 2026-11-08, client-basis-floor-engine-hardcodes-ruleset).
+import rulesetJson from '../../config/acquisition-ruleset.v1.json';
+import rctJson from '../../config/replacement-cost.v3.json';
 
 /**
  * ORA replacement cost — RCT v03 (ratified by Gabriel 2026-07-14; supersedes the flat
@@ -36,34 +40,35 @@ export interface RctEntry {
 }
 
 /**
- * Keyed by the `Market` enum. The enum also carries 'Toledo OH' / 'Cleveland MSA' / 'Other' /
- * 'Unknown', which have no RCT row and are NOT priced — we do not invent a denominator. See
- * `marketCovered`.
- *
- * This table is a hand-maintained mirror of `config/replacement-cost.v3.json` (the server
- * engine's copy, both citing the `acquisition-underwriting` skill's RCT v03 table as the true
- * authoritative source — SKILL.md: "There is now ONE denominator: RCT v03. If you find a
- * second, it is a bug"). It previously covered only 4 of the then-9 ratified markets, silently
- * showing "basis cannot be scored" in the deal drawer for 5 markets the server engine could
- * already score — caught by cc-audit-army 2026-09-28 (OI-354), synced here to match the skill's
- * current 10-market table (incl. Louisville KY, added to the skill 2026-08-11). A test in
- * `tests/unit/replacement-cost-client-parity.test.ts` pins this object's keys and values to
- * `config/replacement-cost.v3.json` so the two cannot silently re-diverge.
+ * The RCT table, built from `config/replacement-cost.v3.json`, the SAME file the server engine divides by (both cite the
+ * `acquisition-underwriting` skill's RCT v03 table as the true authoritative source — SKILL.md: "There is now ONE
+ * denominator: RCT v03. If you find a second, it is a bug"). It used to be a hand-maintained copy of that file
+ * (OI-354 caught it covering 4 of 9 markets; the 2026-11-08 audit caught the copy as a drift risk), so it is now read
+ * from the config instead of re-typed. Mirrors the server's rule: an RCT that is not ratified AND signed prices nothing.
+ * `tests/unit/replacement-cost-ruleset-source.test.ts` pins the values to the pre-change table (no value moved).
  */
-export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = {
-  'Columbus OH': { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
-  'Cincinnati OH': { low: 251.46, point: 279.4, high: 307.34, cwHardPsf: 143.15, proxy: false },
-  'Kansas City MO': { low: 227.9, point: 253.22, high: 278.54, cwHardPsf: 129.94, proxy: false },
-  'Indianapolis IN': { low: 253.83, point: 282.03, high: 310.24, cwHardPsf: 143.46, proxy: false },
-  // Mid-Atlantic == ORA's Maryland / Baltimore–DC cluster; priced off the C&W Baltimore row.
-  'Mid-Atlantic': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: false },
-  'Madison WI': { low: 229.08, point: 254.53, high: 279.98, cwHardPsf: 130.05, proxy: true },
-  'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },
-  'Richmond VA': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: true },
-  'Des Moines IA': { low: 231.66, point: 257.4, high: 283.14, cwHardPsf: 131.46, proxy: true },
-  // SOURCED, not proxied (skill correction 2026-08-11) — present in the C&W 2025 guide directly.
-  'Louisville KY': { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false },
-} as const;
+export function rctFromConfig(cfg: unknown): Readonly<Partial<Record<Market, RctEntry>>> {
+  const out: Partial<Record<Market, RctEntry>> = {};
+  if (typeof cfg !== 'object' || cfg === null) return out;
+  const c = cfg as { ratification?: unknown; ratifiedBy?: unknown; ratifiedDate?: unknown; markets?: unknown };
+  const signed = c.ratification === 'ratified'
+    && typeof c.ratifiedBy === 'string' && c.ratifiedBy !== ''
+    && typeof c.ratifiedDate === 'string' && c.ratifiedDate !== '';
+  if (!signed || typeof c.markets !== 'object' || c.markets === null) return out;
+  const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  for (const [key, row] of Object.entries(c.markets as Record<string, unknown>)) {
+    const market = Market.safeParse(key);
+    if (!market.success || typeof row !== 'object' || row === null) continue;
+    const r = row as Record<string, unknown>;
+    if (!fin(r.low) || !fin(r.point) || !fin(r.high) || !fin(r.cwHardPsf) || typeof r.proxy !== 'boolean') continue;
+    out[market.data] = { low: r.low, point: r.point, high: r.high, cwHardPsf: r.cwHardPsf, proxy: r.proxy };
+  }
+  return out;
+}
+
+/** Keyed by the `Market` enum. The enum also carries 'Toledo OH' / 'Cleveland MSA' / 'Other' / 'Unknown', which have no
+ *  RCT row and are NOT priced — we do not invent a denominator. See `marketCovered`. */
+export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = rctFromConfig(rctJson);
 
 /**
  * Basis is ALL-IN (price + closing + CapEx + lease-up carry). At engine level we know price
@@ -72,8 +77,30 @@ export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = {
  */
 export const CLOSING_COST_LOAD = 1.02;
 
+/** The ratified Basis vintage-ramp inputs (`config/acquisition-ruleset.v1.json` `floors`). */
+export interface BasisVintageFloors {
+  basisDiscountMinPreMillennium: number;
+  basisDiscountMinPostMillennium: number;
+  basisVintageRampStartYear: number;
+  basisVintageCutoffYear: number;
+}
+
+/** Same formula as the server engine's `basisVintageFloor` (server/warehouse/acquisition.ts), over any floors. */
+export function vintageFloorFor(yearBuilt: number | null | undefined, floors: BasisVintageFloors): number {
+  const strict = floors.basisDiscountMinPreMillennium;
+  const loose = floors.basisDiscountMinPostMillennium;
+  const start = floors.basisVintageRampStartYear;
+  const end = floors.basisVintageCutoffYear;
+  if (yearBuilt === null || yearBuilt === undefined) return strict;
+  if (end <= start) return yearBuilt >= end ? loose : strict; // degenerate config ⇒ behave as a cliff
+  const clamped = Math.min(end, Math.max(start, yearBuilt));
+  return strict + ((clamped - start) / (end - start)) * (loose - strict);
+}
+
+const RATIFIED_FLOORS: BasisVintageFloors = rulesetJson.floors;
+
 /**
- * Vintage ramp: 65% discount floor at ≤1995, sliding to 60% at ≥2005 (−0.5%/yr).
+ * Vintage ramp, read from the ratified ruleset (today: 65% discount floor at ≤1995, sliding to 60% at ≥2005).
  *
  * ⚠️ The floor % and the denominator are a MATCHED PAIR. This ramp is calibrated to RCT v03
  * and must not be moved without re-solving the other. Against RCT v03 the legacy 25–30%
@@ -83,13 +110,11 @@ export const CLOSING_COST_LOAD = 1.02;
  * ORA buys at ~35–40% of TRUE all-in replacement cost. The legacy "25% discount" framing was
  * an artifact of an understated denominator, never the strategy.
  *
- * Unknown vintage resolves to 1995 — the STRICTEST floor. Never hand a building a looser
- * floor because we failed to look its year up.
+ * Unknown vintage resolves to the STRICTEST floor (the ramp start). Never hand a building a
+ * looser floor because we failed to look its year up.
  */
 export function vintageFloor(yearBuilt: number | null | undefined): number {
-  const y = yearBuilt ?? 1995;
-  const clamped = Math.min(2005, Math.max(1995, y));
-  return 0.65 - (clamped - 1995) * 0.005;
+  return vintageFloorFor(yearBuilt, RATIFIED_FLOORS);
 }
 
 export type ReplacementVerdict = 'Clears basis floor' | 'Fails basis floor';
@@ -107,7 +132,7 @@ export interface ReplacementCostAnalysis {
   estPrice: number | null;
   /** (price × 1.02) ÷ SF — the all-in basis proxy the floor is tested against. */
   basisPsf: number | null;
-  /** True when yearBuilt was unknown and 1995 (strictest) was assumed. */
+  /** True when yearBuilt was unknown and the ramp start (strictest floor) was assumed. */
   vintageAssumed: boolean;
   vintageFloorPct: number;
   /** RCT LOW × (1 − vintageFloorPct). Basis must be at or below this. */
@@ -183,6 +208,6 @@ export function replacementCostAnalysis(deal: {
     basisToPoint: basisPsf !== null ? basisPsf / entry.point : null,
     priceToReplacementMid: estPrice !== null && mid > 0 ? estPrice / mid : null,
     verdict: clearsFloor === null ? null : clearsFloor ? 'Clears basis floor' : 'Fails basis floor',
-    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ' (vintage assumed 1995)' : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
+    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ` (vintage assumed ${RATIFIED_FLOORS.basisVintageRampStartYear})` : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
   };
 }
