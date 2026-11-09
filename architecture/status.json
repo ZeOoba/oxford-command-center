@@ -1,4 +1,14 @@
 {
+  "wave1-e2": {
+    "agent_role": "Engineering (Claude Code) - Wave 1 batch E-2, orchestrator-directed 2026-11-08 (Gabriel approved Wave 1 in chat)",
+    "phase": "2026-11-08 medium-findings remediation, Wave 1 E-2 (confidentiality and refute gates, mechanism-only): prepush-scan-skips-on-diff-error (scripts/prepush-confidential-scan.mjs fails closed on a diff error, PREPUSH_ALLOW_DIFF_ERROR=1 opt-out); mirror-gate-probe-apex-only (scripts/deploy-mirror.ps1 probes every deployed alias/path); check:refute coverage gap (scripts/check-refute-required.ts adds the acquisition contract and scorecard input-shaping files). Branch fix/wave1-e2-confidentiality-gates, worktree .claude/worktrees/wave1-e2. No governor, doctrine, migration or deploy change.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "detail": "Gabriel approved Wave 1 mechanism-only gate widening 2026-11-08",
+    "review_detail": "Gate-script edits (architect authority over gate scripts, architecture/agent-assignments.md): scripts/check-refute-required.ts (financial path list widened), scripts/prepush-confidential-scan.mjs, scripts/deploy-mirror.ps1. Gabriel approved Wave 1 mechanism-only gate widening 2026-11-08. Not merged; the PR needs a Refute-Reviewed wf_ trailer from the refute-financial-change Workflow on the scripts/** commits.",
+    "last_updated": "2026-11-08T21:05:00Z"
+  },
   "refute-check-clean-effort-d750f8": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-28",
     "phase": "Refute gate: qualifier grammar for Refute-Reviewed wf_<id> trailers (clean/scoped/effort/base-workflow/partial/accepted), per Gabriel's AskUserQuestion pick 2026-10-28.",
