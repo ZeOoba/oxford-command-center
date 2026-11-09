@@ -16,5 +16,14 @@
     { "key": "inPlaceRentPsf",   "desc": "Current in-place rent in $/SF/year (NNN). Number only. OM synonyms: current rent, in-place rent, contract rent." },
     { "key": "marketRentPsf",    "desc": "Market rent in $/SF/year (NNN). Number only. OM synonyms: market rent, asking rent." },
     { "key": "waltYears",        "desc": "Weighted average lease term remaining in years (decimal ok). OM synonyms: WALT, weighted average lease term, remaining lease term." }
+  ],
+  "_otherUseComment": "Other-use kill-screen fields (audit 2026-11-08, E3). Sent in a SECOND request with its own schema: Anthropic's union-type parameter limit (16) is per REQUEST, and `fields` above already uses 15. `formKey` is the underwriting-form key the value is returned under; `numeric` bounds a number field (anything else is dropped).",
+  "otherUseFields": [
+    { "key": "groundLeased",              "desc": "Tenure of the interest being sold. yes = the OM states the land is ground-leased / a leasehold interest is offered. no = the OM states the interest offered is fee simple. null when the OM does not state the tenure.", "enum": ["yes", "no"] },
+    { "key": "groundLeaseYearsRemaining", "desc": "Years remaining on the ground lease term, number only, exactly as the OM states it. Do not compute it from dates and do not add renewal options. null when not stated or not ground-leased.", "numeric": { "min": 0, "max": 999 } },
+    { "key": "envRemediationPctOfPrice",  "desc": "Environmental remediation cost as a percent of the asking price, 0-100 (NOT decimal), only when the OM states that percentage. Output 0 only when the OM states a Phase I ESA found no RECs (recognized environmental conditions) and no remediation is required. null otherwise, including when only a dollar estimate is given.", "numeric": { "min": 0, "max": 100 } },
+    { "key": "useAutomotive",             "formKey": "use:automotive",          "desc": "yes = the OM states the property's current or intended use includes an automotive use (auto repair, body shop, dealership, fueling, car wash). no = the OM explicitly states there is no automotive use. Never infer no from a tenant list or a property description; otherwise null.", "enum": ["yes", "no"] },
+    { "key": "useChildRelated",           "formKey": "use:childRelated",        "desc": "yes = the OM states a child-related use (daycare, child care, school, youth education or youth sports). no = the OM explicitly states there is no child-related use. Never infer no from a tenant list or a property description; otherwise null.", "enum": ["yes", "no"] },
+    { "key": "useChildSafetyReviewed",    "formKey": "use:childSafetyReviewed", "desc": "yes = the OM explicitly states a child-safety review of the child-related use was completed. no = the OM explicitly states it was not. Otherwise null.", "enum": ["yes", "no"] }
   ]
 }

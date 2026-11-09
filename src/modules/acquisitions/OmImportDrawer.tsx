@@ -191,6 +191,23 @@ export function OmImportDrawer({
                 )}
               </div>
             ) : (
+              <>
+              {/* The main extraction found nothing but the other-use extraction did (E3, audit 2026-11-08): the server
+                  still sends rawText, so keep the copy-text fallback reachable for the size/price/physical fields. */}
+              {state.rawText && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <p className="text-2xs" style={{ color: 'var(--text-secondary)', flex: 1, margin: 0 }}>
+                    No size, price or physical fields extracted.
+                  </p>
+                  <button
+                    type="button"
+                    style={btnBase}
+                    onClick={() => void navigator.clipboard.writeText(state.rawText!)}
+                  >
+                    Copy OM text
+                  </button>
+                </div>
+              )}
               <div style={{ maxHeight: '180px', overflowY: 'auto', marginBottom: '0.5rem' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
                   <thead>
@@ -241,6 +258,7 @@ export function OmImportDrawer({
                   </tbody>
                 </table>
               </div>
+              </>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span
