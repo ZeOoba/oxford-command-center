@@ -1053,5 +1053,14 @@
     "review_needed": false,
     "detail": "architect (Gabriel) approved additive groundLeased contract 2026-11-08 (relayed by the orchestrator). Branch fix/audit-high-2026-11-08; refute wf_5337efe6-574 (scoped, clean); low findings fixed post-run. Also touches architecture/database-schema.md (two DQ kinds documented).",
     "last_updated": "2026-11-08T00:00:00Z"
+  },
+  "brain-tailnet-host-auth": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-dispatched, design approved by Gabriel in chat 2026-11-09",
+    "phase": "Security-gate fix: BRAIN_HOST_AUTH=tailnet explicit opt-in so the Tailscale Serve live server (run-live.ps1, BRAIN_ALLOWED_HOSTS=*.ts.net, no Cloudflare Access) does not crash-loop on the PR #560 startup rule. Extra hosts allowed without ACCESS_REQUIRE=1 only if every one is a whole-label *.ts.net name; any other BRAIN_HOST_AUTH value refuses to start; one startup log line.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned doc edit: architecture/system-overview.md section 3 (two lines documenting the startup rule). Design approved by Gabriel 2026-11-09 (relayed by the orchestrator). Code: server/access-authz.ts, server/host-guard.ts (comment only), tests/unit/access-authz-env.test.ts, env.example, README.md. server/index.ts NOT touched. Branch fix/brain-tailnet-host-auth; not pushed (refute-financial-change Workflow pending).",
+    "last_updated": "2026-11-09T00:00:00Z"
   }
 }
