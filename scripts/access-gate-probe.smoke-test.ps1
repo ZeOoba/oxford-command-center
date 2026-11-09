@@ -60,7 +60,7 @@ Assert-True (@(Get-DeploymentAliasUrls -DeployOutput '' -ProjectName $project).C
 Assert-True (@(Get-DeploymentAliasUrls -DeployOutput "https://x.other-project.pages.dev" -ProjectName $project).Count -eq 0) '1c: other project alias ignored'
 
 # 2) Targets: every probe path on the apex AND on the alias.
-$targets = @(Get-AccessGateProbeTargets -VerifyUrl $apex -ProjectName $project -DeployOutput $wranglerOut -RequireAlias)
+$targets = @(Get-AccessGateProbeTargets -VerifyUrl $apex -ProjectName $project -DeployOutput $wranglerOut)
 foreach ($o in @($apex, $alias)) {
   foreach ($p in @('', 'snapshot.json', 'api/whoami', 'api/warehouse/acquisition/score')) {
     Assert-True ($targets -contains ($o + $p)) "2: target $($o + $p) present"
@@ -70,9 +70,21 @@ Assert-True ($targets.Count -eq 8) "2b: 8 targets (got $($targets.Count))"
 $noSlash = @(Get-AccessGateProbeTargets -VerifyUrl $apex.TrimEnd('/') -ProjectName $project -DeployOutput '')
 Assert-True ($noSlash -contains ($apex + 'snapshot.json')) '2c: verify URL without trailing slash still joins correctly'
 
-# 3) -RequireAlias with no alias in the output fails closed.
-$msg = Get-ThrownMessage { Get-AccessGateProbeTargets -VerifyUrl $apex -ProjectName $project -DeployOutput 'no url here' -RequireAlias }
-Assert-True ($msg -match '^GATE CHECK INCONCLUSIVE') "3: missing alias -> INCONCLUSIVE ($msg)"
+# 3) No alias in the output: target building never throws, the requirement is reported after probing.
+$apexOnly = @(Get-AccessGateProbeTargets -VerifyUrl $apex -ProjectName $project -DeployOutput 'no url here')
+Assert-True ($apexOnly.Count -eq 4) "3: no alias -> the 4 apex targets, no throw ($($apexOnly.Count))"
+$missingAlias = @(Get-MissingAliasRequirement -DeployOutput 'no url here' -ProjectName $project)
+Assert-True ($missingAlias.Count -eq 1) '3b: missing alias produces one unprobed requirement'
+Assert-True (@(Get-MissingAliasRequirement -DeployOutput $wranglerOut -ProjectName $project).Count -eq 0) '3c: alias present -> no unprobed requirement'
+Reset-Mock
+$msg = Get-ThrownMessage { Assert-AccessGateOnAllTargets -Targets $apexOnly -Unprobed $missingAlias @fast }
+Assert-True ($msg -match '^GATE CHECK INCONCLUSIVE' -and $msg -match 'deployment alias') "3d: no alias + apex gated -> INCONCLUSIVE naming the alias ($msg)"
+Assert-True (@($script:Calls).Count -eq 4) "3e: apex targets still probed when the alias is missing ($(@($script:Calls).Count))"
+# Adversarial-review finding C7: a missing alias must NOT mask an apex exposure.
+Reset-Mock
+$script:Responses[$apex] = @('200')
+$msg = Get-ThrownMessage { Assert-AccessGateOnAllTargets -Targets $apexOnly -Unprobed $missingAlias @fast }
+Assert-True ($msg -match '^GATE CHECK FAILED') "3f: no alias + apex 200 -> FAILED, not INCONCLUSIVE ($msg)"
 
 # 4) Every target 302 -> Access: passes.
 Reset-Mock

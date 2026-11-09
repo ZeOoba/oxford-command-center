@@ -43,27 +43,38 @@ function Get-DeploymentAliasUrls {
 function Get-AccessGateProbeTargets {
   <#
     Every URL the gate check must see 302 -> Access on: each probe path on the verify URL, and the
-    same paths on every deployment alias. -RequireAlias (set on a deploy that wrangler reported as
-    successful) makes a missing alias a hard failure: wrangler always prints the per-deployment URL,
-    so not finding one means the alias went unprobed, and an unprobed alias is the exact gap this
-    exists to close.
+    same paths on every deployment alias. NEVER throws: a missing alias must not stop the apex from
+    being probed (an apex exposure would otherwise be reported as a mere INCONCLUSIVE, found by the
+    adversarial review of this change). Use Get-MissingAliasRequirement for the missing-alias case
+    and pass it to Assert-AccessGateOnAllTargets -Unprobed, which reports it only AFTER the probes.
   #>
   param(
     [Parameter(Mandatory=$true)][string]$VerifyUrl,
     [Parameter(Mandatory=$true)][string]$ProjectName,
-    [AllowEmptyString()][string]$DeployOutput,
-    [switch]$RequireAlias
+    [AllowEmptyString()][string]$DeployOutput
   )
   $base = if ($VerifyUrl.EndsWith('/')) { $VerifyUrl } else { $VerifyUrl + '/' }
   $aliases = @(Get-DeploymentAliasUrls -DeployOutput $DeployOutput -ProjectName $ProjectName)
-  if ($RequireAlias -and $aliases.Count -eq 0) {
-    throw "GATE CHECK INCONCLUSIVE: wrangler reported no <hash>.$ProjectName.pages.dev deployment URL, so the per-deployment alias could not be probed. Gate NOT verified on the alias; verify manually."
-  }
   $targets = @()
   foreach ($origin in @($base) + $aliases) {
     foreach ($p in $script:AccessGateProbePaths) { $targets += ($origin + $p) }
   }
   return $targets
+}
+
+function Get-MissingAliasRequirement {
+  <#
+    On a deploy wrangler reported as successful it always prints the per-deployment URL, so finding
+    none means the alias went unprobed -- the exact gap this file exists to close. Returns a one-item
+    description for Assert-AccessGateOnAllTargets -Unprobed (which turns it into INCONCLUSIVE after
+    every reachable target has been probed), or an empty array when an alias was found.
+  #>
+  param(
+    [AllowEmptyString()][string]$DeployOutput,
+    [Parameter(Mandatory=$true)][string]$ProjectName
+  )
+  if (@(Get-DeploymentAliasUrls -DeployOutput $DeployOutput -ProjectName $ProjectName).Count -gt 0) { return @() }
+  return @("<hash>.$ProjectName.pages.dev deployment alias -> not probed (no deployment URL in wrangler output)")
 }
 
 # Invoke-AccessGateProbe -- extracted 2026-07-31 (security review) so the deploy-timeout path
@@ -141,14 +152,20 @@ function Assert-AccessGateOnAllTargets {
     throws "GATE CHECK INCONCLUSIVE". The settle sleep runs once, not per target. A total budget
     bounds the worst case (every target timing out) well under the task's PT30M limit: targets not
     reached within it count as unverified, so running out of time can only fail the check, never
-    pass it. -Context is appended to the message (the deploy-timeout path passes its own reason).
+    pass it. The deadline is checked before each target, so the worst case is settle + budget + one
+    target's full retry cycle (~90s): ~275s at the default, against ~95s for the old apex-only probe.
+    -Unprobed lists REQUIRED targets that could not be probed at all (the missing deployment alias);
+    they are reported as INCONCLUSIVE only after every reachable target was probed, so they can never
+    mask a GATE CHECK FAILED. -Context is appended to the message (the deploy-timeout path passes its
+    own reason).
   #>
   param(
     [Parameter(Mandatory=$true)][string[]]$Targets,
     [Parameter(Mandatory=$true)][string]$AccessHost,
     [int]$SettleSeconds = 5,
     [int]$RetryDelaySeconds = 15,
-    [int]$BudgetSeconds = 300,
+    [int]$BudgetSeconds = 180,
+    [string[]]$Unprobed = @(),
     [string]$Context = ''
   )
   if ($SettleSeconds -gt 0) { Start-Sleep -Seconds $SettleSeconds }
@@ -169,12 +186,15 @@ function Assert-AccessGateOnAllTargets {
     throw "GATE CHECK FAILED: $($exposed.Count) of $($Targets.Count) mirror target(s) answered 2xx without Access ($list). Expected 302 -> *$AccessHost on every target. Confidential bake may be exposed - investigate immediately.$suffix"
   }
   $unverified = @($results | Where-Object { -not $_.Verified })
-  if ($unverified.Count -gt 0) {
-    $list = ($unverified | ForEach-Object {
+  $missing = @($Unprobed | Where-Object { $_ })
+  if ($unverified.Count -gt 0 -or $missing.Count -gt 0) {
+    $items = @($unverified | ForEach-Object {
       if ($_.PSObject.Properties['Skipped'] -and $_.Skipped) { "$($_.Url) -> not probed (budget ${BudgetSeconds}s exhausted)" }
       else { "$($_.Url) -> $($_.Code) (Location='$($_.Location)', curl exit $($_.CurlExitCode))" }
-    }) -join '; '
-    throw "GATE CHECK INCONCLUSIVE: $($unverified.Count) of $($Targets.Count) mirror target(s) not verified ($list). Probe/network issue or edge propagation - gate NOT verified; verify manually.$suffix"
+    }) + $missing
+    $list = $items -join '; '
+    $total = $Targets.Count + $missing.Count
+    throw "GATE CHECK INCONCLUSIVE: $($items.Count) of $total mirror target(s) not verified ($list). Probe/network issue, edge propagation or wrangler output change - gate NOT verified; verify manually.$suffix"
   }
   return $results
 }

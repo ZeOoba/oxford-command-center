@@ -323,14 +323,16 @@ try {
   # 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
   #    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
   #    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
-  #    Invoke-AccessGateProbe (defined above) is shared with the deploy-timeout path in step 3 --
-  #    see that definition for the retry/severity-split rationale.
+  #    Invoke-AccessGateProbe (lib/access-gate-probe.ps1) is shared with the deploy-timeout path in
+  #    step 3 -- see that definition for the retry/severity-split rationale.
   #    Every target (apex, /snapshot.json, /api/ Functions, and the same on the per-deployment
   #    alias) must 302 -> Access; Assert-AccessGateOnAllTargets throws GATE CHECK FAILED on any 2xx
-  #    and GATE CHECK INCONCLUSIVE on anything else unverified. -RequireAlias: wrangler reported
-  #    success, so it printed the deployment URL; failing to find it means the alias went unprobed.
-  $gateTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -RequireAlias
-  $gateResults = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost
+  #    and GATE CHECK INCONCLUSIVE on anything else unverified. wrangler reported success, so it
+  #    printed the deployment URL: a missing alias is passed as -Unprobed, which fails the check as
+  #    INCONCLUSIVE only AFTER the apex targets were probed, so it can never mask an apex exposure.
+  $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput
+  $gateUnprobed = Get-MissingAliasRequirement -DeployOutput $deployOutput -ProjectName $ProjectName
+  $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
   Write-Host "[$stamp] OK - deployed and Access gate verified on all $(@($gateResults).Count) target(s) (302 -> $AccessHost)."
