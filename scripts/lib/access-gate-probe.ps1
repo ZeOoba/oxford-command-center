@@ -183,7 +183,7 @@ function Assert-AccessGateOnAllTargets {
   $exposed = @($results | Where-Object { $_.Exposed -or ($_.Code -ge 200 -and $_.Code -le 299) })
   if ($exposed.Count -gt 0) {
     $list = ($exposed | ForEach-Object { "$($_.Url) -> 2xx observed (last code $($_.Code))" }) -join '; '
-    throw "GATE CHECK FAILED: $($exposed.Count) of $($Targets.Count) mirror target(s) answered 2xx without Access ($list). Expected 302 -> *$AccessHost on every target. Confidential bake may be exposed - investigate immediately.$suffix"
+    throw "GATE CHECK FAILED: $($exposed.Count) of $($Targets.Count) probed mirror target(s) answered 2xx without Access ($list). Expected 302 -> *$AccessHost on every target. Confidential bake may be exposed - investigate immediately.$suffix"
   }
   $unverified = @($results | Where-Object { -not $_.Verified })
   $missing = @($Unprobed | Where-Object { $_ })
