@@ -152,6 +152,15 @@ export function basisVintageFloor(yearBuilt: number | null, ruleset: Acquisition
   return strict + ((clamped - start) / (end - start)) * (loose - strict);
 }
 
+/** True when an UNKNOWN portfolio status (isPortfolio === null) changes the size-price gate: the price is within the
+ *  portfolio cap but above the single-asset cap, so "single asset" would KILL and "portfolio" would pass. Anywhere else
+ *  null decides exactly like false (refute wf_6e927240-7cc). Shared by the gate and the inputs_version fold. */
+export function portfolioStatusDecidesPriceGate(price: number | null, isPortfolio: boolean | null, ruleset: AcquisitionRuleset): boolean {
+  const g = ruleset.gates.sizePrice;
+  return isPortfolio === null && price !== null
+    && price >= g.singleAssetPriceMin && price > g.singleAssetPriceMax && price <= g.portfolioPriceMax;
+}
+
 // ─── Deterministic inputs_version (Q5: pins rulesetVersion; rctVersion folds in once the RCT config lands) ──
 /** Canonicalize ddKnown's .partial() shape to the four booleans the engine actually reads (absent ≡ false). */
 function canonicalDd(dd: AcquisitionInput['ddKnown']): Record<string, boolean> {
@@ -183,7 +192,14 @@ export function computeInputsVersion(
   const canonicalUse = input.use === null ? null
     : { ...input.use, childSafetyReviewed: input.use.childRelated ? input.use.childSafetyReviewed : false };
   const canonicalGroundLeased = input.groundLeaseYearsRemaining !== null && input.groundLeased !== false ? null : input.groundLeased;
-  const canonicalInput = { ...input, ddKnown: canonicalDd(input.ddKnown), use: canonicalUse, groundLeased: canonicalGroundLeased };
+  // isPortfolio is tri-state since refute wf_6e927240-7cc (default null, was false). Wherever null decides exactly like
+  // false (price unknown, within the single-asset cap, or KILLed by either answer) fold it to false, so every input
+  // that hashed under the old default keeps its key; only a price between the two caps hashes unknown separately.
+  const canonicalIsPortfolio = input.isPortfolio === null && !portfolioStatusDecidesPriceGate(input.price, null, ruleset)
+    ? false : input.isPortfolio;
+  const canonicalInput = {
+    ...input, ddKnown: canonicalDd(input.ddKnown), use: canonicalUse, groundLeased: canonicalGroundLeased, isPortfolio: canonicalIsPortfolio,
+  };
   const canonical = stableStringify({
     input: canonicalInput,
     rulesetVersion: ruleset.rulesetVersion,
@@ -259,6 +275,7 @@ export function scoreAcquisition(
 
   // ── STAGE 0 — GATES ──
   const gates: GateResult[] = [];
+  const portfolioStatusUnknownMatters = portfolioStatusDecidesPriceGate(input.price, input.isPortfolio, ruleset);
   // product
   {
     const pt = input.productType;
@@ -270,11 +287,18 @@ export function scoreAcquisition(
   // size-price
   {
     const g = ruleset.gates.sizePrice;
-    const priceMax = input.isPortfolio ? g.portfolioPriceMax : g.singleAssetPriceMax;
+    // isPortfolio is tri-state (refute wf_6e927240-7cc). Unknown (null) never KILLs on the single-asset cap: a price
+    // between the two caps passes unconfirmed and caps at T2 (portfolioStatusUnknownMatters, in gateIndeterminate).
+    // Outside the portfolio cap / below the minimum, both answers KILL, so unknown KILLs too.
+    const priceMax = input.isPortfolio === false ? g.singleAssetPriceMax : g.portfolioPriceMax;
     let passed = true;
     const bits: string[] = [];
     if (input.price !== null) {
       if (input.price < g.singleAssetPriceMin || input.price > priceMax) { passed = false; bits.push(`price ${input.price} outside [${g.singleAssetPriceMin}, ${priceMax}]`); }
+      else if (portfolioStatusUnknownMatters) {
+        flag('isPortfolio', 'portfolio status unknown — price cap not confirmable');
+        bits.push(`portfolio status unknown — price ${input.price} is above the single-asset cap ${g.singleAssetPriceMax}`);
+      }
     } else { flag('price', 'price unknown — size/price gate not confirmable'); bits.push('price unknown'); }
     if (input.maxBuildingSf !== null) {
       if (input.maxBuildingSf >= g.maxSfPerBuilding) { passed = false; bits.push(`maxBuildingSf ${input.maxBuildingSf} ≥ ${g.maxSfPerBuilding}`); }
@@ -367,7 +391,7 @@ export function scoreAcquisition(
   // the disqualifying fact is unknown at screen time. (Adversarial refute finding, 2026-06-13.)
   const gateIndeterminate =
     input.productType === null ||
-    input.price === null || input.maxBuildingSf === null ||
+    input.price === null || input.maxBuildingSf === null || portfolioStatusUnknownMatters ||
     input.clusterTier === null ||
     (input.clusterTier === 'satellite' && input.driveMinutesToCluster === null) ||
     input.clearHeightFt === null || input.multiStory === null ||

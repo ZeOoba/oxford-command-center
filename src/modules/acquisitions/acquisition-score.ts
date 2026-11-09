@@ -164,6 +164,8 @@ export function dealToForm(
   // Portfolio status drives the price cap (single asset vs portfolio); set only when the building count is known. The
   // portfolio cap is doctrine for a 2-5 building portfolio sold together (acquisition-underwriting Amendment H); the
   // ruleset carries no building-count bound, so a larger count is left for the underwriter rather than prefilled 'yes'.
+  // Blank reaches the engine as null (unknown, tri-state since refute wf_6e927240-7cc): a price between the single-asset
+  // and portfolio caps then caps at T2 instead of KILLing on the single-asset cap.
   if (deal.buildings === 1) f.isPortfolio = 'no';
   else if (typeof deal.buildings === 'number' && deal.buildings >= 2 && deal.buildings <= 5) f.isPortfolio = 'yes';
   if (deal.irr !== null) f.leveredIrr = String(Math.round(deal.irr * 1000) / 10); // decimal → %

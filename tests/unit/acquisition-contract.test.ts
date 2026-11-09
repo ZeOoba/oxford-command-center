@@ -140,7 +140,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.8,
     });
     expect(input.dockCount).toBe(4);
-    expect(input.isPortfolio).toBe(false);
+    expect(input.isPortfolio).toBeNull(); // tri-state since refute wf_6e927240-7cc: unset = unknown, not single asset
     expect(input.ddKnown).toEqual({});
   });
 });
