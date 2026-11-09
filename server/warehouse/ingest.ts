@@ -14,6 +14,11 @@ class RestaleAbort extends Error {
   }
 }
 
+/** Thrown inside the ingest transaction when, under the write lock, the batch this ingest registered (new) or is
+ *  re-deriving (restale) is no longer in the state registration saw: a concurrent reject/supersede, or another re-derive
+ *  already stamped the current parser. The ingest writes nothing; the other writer's decision stands. */
+class IngestTargetGone extends Error {}
+
 export interface IngestOptions {
   rawDir: string;
   importedAt: string;
@@ -51,20 +56,38 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     confidence: det.confidence, parserVersion: PARSER_VERSION,
     importedAt: opts.importedAt, importedBy: opts.importedBy, detectNotes,
   });
+  // A 'duplicate' whose batch is an ORPHANED REGISTRATION is resumed instead. registerImport INSERTs the batch in its own
+  // autocommit statement before the ingest transaction below, so if that transaction never ran (SQLITE_BUSY past
+  // busy_timeout, a crash, any throw) the batch is left 'pending-review' at the current parser with no ledger and no DQ
+  // rows — every ingest that reaches its transaction writes at least one of them (an empty parse writes 'empty-parse').
+  // Answering 'duplicate' there would strand the statement for good: approve refuses a batch with no ledger rows and the
+  // same bytes never register again (refute wf_9cac3677-b1c). Resumed only under the SAME detection (property, period)
+  // the batch was registered with, so nothing needs refreshing; the raw copy registerImport stored under the hash is
+  // reused as is. Re-checked under the write lock below, so two resumers (or a resumer and the original) never both write.
+  let resumedVersion: number | undefined;
   if (reg.kind === 'duplicate') {
-    return { file: fileName, status: 'duplicate', importId: reg.existingImportId };
+    const orphan = db.prepare(`
+      SELECT b.version FROM import_batches b
+      WHERE b.id = ? AND b.status = 'pending-review' AND b.parser_version = ?
+        AND b.property_id IS ? AND b.period_start IS ? AND b.period_end IS ?
+        AND NOT EXISTS (SELECT 1 FROM ledger_entries l WHERE l.import_id = b.id)
+        AND NOT EXISTS (SELECT 1 FROM data_quality_issues d WHERE d.import_id = b.id)
+    `).get(reg.existingImportId, PARSER_VERSION, det.propertyId, periodStart, periodEnd) as { version: number } | undefined;
+    if (!orphan) return { file: fileName, status: 'duplicate', importId: reg.existingImportId };
+    resumedVersion = orphan.version;
   }
-  // 'new' → fresh row; 'restale' → an existing ACTIVE row produced by an older parser, re-derived
-  // IN PLACE (same importId, preserving history/refs). The derivation body below is identical for
-  // both; restale first clears the prior ledger/issues and refreshes the row's derived columns.
+  // 'new' (or a resumed orphan, handled exactly like 'new') → fresh row; 'restale' → an existing ACTIVE row produced by
+  // an older parser, re-derived IN PLACE (same importId, preserving history/refs). The derivation body below is
+  // identical for both; restale first clears the prior ledger/issues and refreshes the row's derived columns.
   const importId = reg.kind === 'new' ? reg.importId : reg.existingImportId;
   const isReDerive = reg.kind === 'restale';
-  // status BEFORE the re-derive — a re-derive of a SERVING ('committed') row that turns out not to
-  // qualify for commit must NOT silently empty the period; it is rolled back to preserve the prior
-  // committed data (see RestaleAbort below). pending-review rows aren't serving, so they re-derive freely.
-  const priorStatus = isReDerive
-    ? (db.prepare('SELECT status FROM import_batches WHERE id = ?').get(importId) as { status: string }).status
-    : null;
+  // The batch's status BEFORE the re-derive is read INSIDE the IMMEDIATE transaction below (never here): a re-derive of
+  // a SERVING ('committed') row that turns out not to qualify for commit must NOT silently empty the period; it is
+  // rolled back to preserve the prior committed data (RestaleAbort). Read outside the write lock, a user approve landing
+  // between that read and the transaction (actions.ts commits the batch and supersedes the served version) left a stale
+  // 'pending-review' that let the re-derive deactivate the just-committed rows and flip the batch back to review — the
+  // property-period's NOI disappeared (tests/unit/warehouse-rederive-race.test.ts). pending-review rows aren't serving,
+  // so they re-derive freely.
 
   const unmapped: string[] = [];
   const insLedger = db.prepare(`
@@ -127,6 +150,31 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     }
   }
   const tx = db.transaction(() => {
+    // Re-check, under the write lock, that the batch is still in the state registration saw. registerImport ran in its
+    // own autocommit statements BEFORE this transaction — for a NEW import its INSERT made the batch visible as
+    // 'pending-review' — so a user reject (or, for a re-derive, a reject/supersede/another re-derive) can land in
+    // between. A rejected or superseded batch must never be committed, served, or pulled back into the review queue
+    // (without this check a new import rejected in that window was committed over the reject, superseding the served
+    // version: refute wf_53324d02-ce7). Expected: NEW (or resumed orphan) → 'pending-review' with no ledger or DQ rows
+    // yet (otherwise another ingest of the same registration already wrote it — never write it twice); RESTALE →
+    // registerImport's re-derivable predicate (committed or pending-review, parser older than current). The status read
+    // here is also the RestaleAbort decision's prior status and the guard on the final status flips below.
+    const cur = db.prepare(`
+      SELECT b.status, b.parser_version,
+        EXISTS (SELECT 1 FROM ledger_entries l WHERE l.import_id = b.id)
+          OR EXISTS (SELECT 1 FROM data_quality_issues d WHERE d.import_id = b.id) AS written
+      FROM import_batches b WHERE b.id = ?`).get(importId) as
+      | { status: string; parser_version: number; written: number }
+      | undefined;
+    const stillIngestable = cur !== undefined && (isReDerive
+      ? (cur.status === 'committed' || cur.status === 'pending-review') && cur.parser_version < PARSER_VERSION
+      : cur.status === 'pending-review' && cur.written === 0);
+    if (!stillIngestable) {
+      throw new IngestTargetGone(cur
+        ? `import #${importId} is now ${cur.status} (parser v${cur.parser_version}${!isReDerive && cur.written ? ', already ingested by another writer' : ''})`
+        : `import #${importId} no longer exists`);
+    }
+    const priorStatus = cur.status;
     if (isReDerive) {
       // In-place re-derive of a stale (older-parser) import: drop its prior ledger + DQ rows and
       // refresh its derived columns from the fresh parse. The commit/supersede block below then
@@ -251,7 +299,10 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
         db.prepare("UPDATE ledger_entries SET is_active = 0 WHERE import_id = ?").run(p.id);
         db.prepare("UPDATE import_batches SET status = 'superseded', superseded_by = ? WHERE id = ?").run(importId, p.id);
       }
-      db.prepare("UPDATE import_batches SET status = 'committed' WHERE id = ?").run(importId);
+      // Guarded on the status read under the lock and change-counted (same defense in depth as actions.ts): a flip that
+      // does not hit exactly this one row in that status throws and rolls the whole ingest back, supersedes included.
+      const flipped = db.prepare("UPDATE import_batches SET status = 'committed' WHERE id = ? AND status = ?").run(importId, priorStatus).changes;
+      if (flipped !== 1) throw new Error(`ingestFile: import #${importId} was no longer ${priorStatus} at the commit flip; rolled back.`);
     } else {
       // A re-derive of a SERVING ('committed') row that no longer qualifies would empty the period
       // (deactivated ledger + no active prior) — that silently drops a property from served NOI.
@@ -259,7 +310,11 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       if (isReDerive && priorStatus === 'committed') throw new RestaleAbort(propertyGate);
       // pending-review rows are not active until approved
       db.prepare("UPDATE ledger_entries SET is_active = 0 WHERE import_id = ?").run(importId);
-      if (isReDerive) db.prepare("UPDATE import_batches SET status = 'pending-review' WHERE id = ?").run(importId);
+      // A NEW batch is already 'pending-review' (checked under the lock above); only a re-derive flips it back.
+      if (isReDerive) {
+        const flipped = db.prepare("UPDATE import_batches SET status = 'pending-review' WHERE id = ? AND status = ?").run(importId, priorStatus).changes;
+        if (flipped !== 1) throw new Error(`ingestFile: import #${importId} was no longer ${priorStatus} at the review flip; rolled back.`);
+      }
     }
     return { commit, propertyGate };
   });
@@ -268,20 +323,34 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   // Set inside the tx; on a RestaleAbort the tx's DQ rows roll back, so the skip message carries the reason instead.
   let skippedPropertyGate: string | null = null;
   try {
-    committed = tx().commit;
+    // IMMEDIATE: take the write lock before the first read, so the prior status the RestaleAbort decision uses is the
+    // state the writes act on (a concurrent approve/reject waits on busy_timeout, or api.ts answers a retryable 503).
+    // A DEFERRED read-then-write would instead fail its lock upgrade with SQLITE_BUSY_SNAPSHOT, which skips the busy
+    // handler. SQLITE_BUSY after busy_timeout is rethrown below, never swallowed. The transaction wrote nothing; for a
+    // NEW import the registration row (registerImport's own autocommit INSERT) does remain, 'pending-review' with no
+    // ledger, and a retry resumes it (the orphaned-registration check above) rather than answering 'duplicate'.
+    committed = tx.immediate().commit;
   } catch (e) {
+    if (e instanceof IngestTargetGone) {
+      // The transaction wrote nothing. A re-derive answers what registerImport would answer now ('duplicate': the batch
+      // is no longer re-derivable); a new (or resumed) import answers 'skipped' — its batch was rejected before its
+      // ledger was written, and the reject stands, or another writer already ingested it.
+      return isReDerive
+        ? { file: fileName, status: 'duplicate', importId, reason: `re-derive skipped: ${e.message}` }
+        : { file: fileName, status: 'skipped', importId, reason: `ingest skipped: ${e.message} before this ingest wrote its ledger` };
+    }
     if (!(e instanceof RestaleAbort)) throw e;
     skippedPropertyGate = e.propertyGate;
     // Prior committed version preserved (tx rolled back; parser_version stays stale so a later,
-    // fixed parser re-attempts). Surface the skip once (deduped) so it's visible to DQ queries.
-    const flagged = db.prepare("SELECT 1 FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped'").get(importId);
-    if (!flagged) {
-      db.prepare("INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity) VALUES (?, ?, ?, ?, ?)")
-        .run(importId, det.propertyId, 'restale-skipped',
-          `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty/sign-undecidable/property-unresolved/property-mismatch) — prior committed version retained` +
-          (skippedPropertyGate ? `; ${skippedPropertyGate}: the re-dropped file ${fileName} detects property ${det.propertyId === null ? 'none' : `'${det.propertyId}'`}, not the batch's own — the retained ledger stays under the batch's property` : '') +
-          (undecidableSides.length ? `; sign-undecidable: ${undecidableSides.join(' | ')} — retained ledger may carry an unflipped side, verify its sign` : ''), 'warn');
-    }
+    // fixed parser re-attempts). Surface the skip once (deduped in ONE statement) so it's visible to DQ queries.
+    db.prepare(`INSERT INTO data_quality_issues (import_id, property_id, kind, detail, severity)
+      SELECT ?, ?, 'restale-skipped', ?, 'warn'
+      WHERE NOT EXISTS (SELECT 1 FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped')`)
+      .run(importId, det.propertyId,
+        `parser-version re-derive (v${PARSER_VERSION}) no longer qualifies for commit (unmapped/low-confidence/empty/sign-undecidable/property-unresolved/property-mismatch) — prior committed version retained` +
+        (skippedPropertyGate ? `; ${skippedPropertyGate}: the re-dropped file ${fileName} detects property ${det.propertyId === null ? 'none' : `'${det.propertyId}'`}, not the batch's own — the retained ledger stays under the batch's property` : '') +
+        (undecidableSides.length ? `; sign-undecidable: ${undecidableSides.join(' | ')} — retained ledger may carry an unflipped side, verify its sign` : ''),
+        importId);
     return { file: fileName, status: 'committed', importId, reason: 'restale-skipped' };
   }
 
@@ -289,7 +358,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     file: fileName,
     status: committed ? 'committed' : 'pending-review',
     importId,
-    version: reg.kind === 'new' ? reg.version : undefined,
+    version: reg.kind === 'new' ? reg.version : resumedVersion,
     reason: insertedRows === 0 ? 'empty-parse' : undefined,
     unmapped: unmapped.length ? unmapped : undefined,
   };
