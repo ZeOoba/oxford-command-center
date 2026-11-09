@@ -68,7 +68,7 @@ describe('om-extract default scan refuses the placeholder roster', () => {
   it('control: real roster + clean text proceeds to the API', async () => {
     const { f, calls } = tracking('{}');
     await extractOmFields(Buffer.from('x'), { apiKey: 'sk-test', fetchImpl: f, pdfParseFn: async () => ({ text: 'Clean industrial OM' }) });
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2); // main + other-use extraction requests (E3, 2026-11-08)
   });
 });
 

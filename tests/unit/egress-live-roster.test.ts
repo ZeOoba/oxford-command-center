@@ -224,7 +224,7 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
       pdfParseFn: async () => ({ text: 'clean OM body' }),
       ...omExtractEgressGuards(deal({ name: 'Public Sentinel Deal' }), true, { deals: [deal({ name: 'Public Sentinel Deal' })] }),
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // main + other-use extraction requests (E3, 2026-11-08)
     expect(r.ok).toBe(true);
   });
 
@@ -323,18 +323,18 @@ describe('OM extract — omExtractEgressGuards + extractOmFields', () => {
         ],
       };
       const { fetchImpl } = await extract('', snap, async () => ({ text: 'clean OM body' }));
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2); // main + other-use extraction requests (E3, 2026-11-08)
     });
 
     it('a clean OM with only public deals still reaches the network (no over-block), and a public deal named in it is fine', async () => {
       const { r, fetchImpl } = await extract('', { deals: [target(), pub] }, async () => ({ text: 'Public Sentinel Deal, 40,000 SF flex' }));
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2); // main + other-use extraction requests (E3, 2026-11-08)
       expect(r.ok).toBe(true);
     });
 
     it('Easton rule holds for OM text too: a FLAGGED deal\'s shortName inside unrelated text does not refuse', async () => {
       const { fetchImpl } = await extract('', { deals: [target({ confidential: true }), pub] }, async () => ({ text: `Suite 4, 12 ${TARGET_SHORT} Road, Dayton OH` }));
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2); // main + other-use extraction requests (E3, 2026-11-08)
     });
 
     it('a name gate that throws counts as a hit (403, no fetch)', async () => {
