@@ -126,3 +126,27 @@ describe('client vintage floor fails closed on an unratified ruleset', () => {
     expect(r.basis).toMatch(/not ratified/);
   });
 });
+
+// Refute wf_3d47a7eb-3e0 (lows): the drawer's "strictest floor (1995) assumed" note hardcoded the ramp start, and the
+// client RCT loader skipped the server's rctVersion check.
+describe('drawer vintage note and RCT version follow the ratified configs', () => {
+  it('the analysis carries the assumed vintage year from the ruleset, and none when the floor is not scored', () => {
+    const scored = replacementCostAnalysis({ sf: 40_000, estPrice: 3_000_000, market: 'Columbus OH', yearBuilt: null })!;
+    expect(scored.assumedVintageYear).toBe(ruleset.floors.basisVintageRampStartYear);
+    const known = replacementCostAnalysis({ sf: 40_000, estPrice: 3_000_000, market: 'Columbus OH', yearBuilt: 2001 })!;
+    expect(known.assumedVintageYear).toBeNull();
+    const failClosed = replacementCostAnalysisWith({ sf: 40_000, estPrice: 3_000_000, market: 'Columbus OH', yearBuilt: null }, null)!;
+    expect(failClosed.assumedVintageYear).toBeNull();
+  });
+
+  it('DealDrawer renders the assumed year from the analysis, never a literal year', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/brain/DealDrawer.tsx'), 'utf8');
+    expect(src).not.toMatch(/\(1995\)/);
+    expect(src).toMatch(/assumedVintageYear/);
+  });
+
+  it('an RCT config whose rctVersion is not the version the server accepts prices nothing', () => {
+    expect(rctFromConfig({ ...rctJson, rctVersion: 'replacement-cost.v3.2' })).toEqual({});
+    expect(rctFromConfig({ ...rctJson, rctVersion: undefined })).toEqual({});
+  });
+});

@@ -1,4 +1,5 @@
 import { Market } from '../contracts/common';
+import { RCT_VERSION as RCT_CONFIG_VERSION } from '../contracts/acquisition';
 // The ratified configs the SERVER engine scores with (server/warehouse/acquisition.ts). Read here, never re-typed, so the
 // deal-drawer badge cannot drift from the engine's verdict (audit 2026-11-08, client-basis-floor-engine-hardcodes-ruleset).
 import rulesetJson from '../../config/acquisition-ruleset.v1.json';
@@ -50,7 +51,10 @@ export interface RctEntry {
 export function rctFromConfig(cfg: unknown): Readonly<Partial<Record<Market, RctEntry>>> {
   const out: Partial<Record<Market, RctEntry>> = {};
   if (typeof cfg !== 'object' || cfg === null) return out;
-  const c = cfg as { ratification?: unknown; ratifiedBy?: unknown; ratifiedDate?: unknown; markets?: unknown };
+  const c = cfg as { rctVersion?: unknown; ratification?: unknown; ratifiedBy?: unknown; ratifiedDate?: unknown; markets?: unknown };
+  // Same version the server's ReplacementCostTable contract accepts (z.literal(RCT_VERSION)); a bumped config the server
+  // refuses must not keep pricing the drawer under the old label (refute wf_3d47a7eb-3e0).
+  if (c.rctVersion !== RCT_CONFIG_VERSION) return out;
   const signed = c.ratification === 'ratified'
     && typeof c.ratifiedBy === 'string' && c.ratifiedBy !== ''
     && typeof c.ratifiedDate === 'string' && c.ratifiedDate !== '';
@@ -156,6 +160,8 @@ export interface ReplacementCostAnalysis {
   basisPsf: number | null;
   /** True when yearBuilt was unknown and the ramp start (strictest floor) was assumed. */
   vintageAssumed: boolean;
+  /** The year assumed for an unknown vintage (the ratified ramp start); null when the vintage is known or no floor is scored. */
+  assumedVintageYear: number | null;
   /** Null when the ruleset is not ratified and signed: the basis is then not scored (fail closed). */
   vintageFloorPct: number | null;
   /** RCT LOW × (1 − vintageFloorPct). Basis must be at or below this. */
@@ -188,6 +194,7 @@ export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFl
   const sf = deal.sf;
   const entry = deal.market ? RCT_V03[deal.market] : undefined;
   const vintageAssumed = deal.yearBuilt === null || deal.yearBuilt === undefined;
+  const assumedVintageYear = vintageAssumed && floors !== null ? floors.basisVintageRampStartYear : null;
   const vintageFloorPct = floors === null ? null : vintageFloorFor(deal.yearBuilt, floors);
   const estPrice = deal.estPrice;
   const basisPsf = estPrice !== null ? (estPrice * CLOSING_COST_LOAD) / sf : null;
@@ -204,6 +211,7 @@ export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFl
       estPrice,
       basisPsf,
       vintageAssumed,
+      assumedVintageYear,
       vintageFloorPct,
       floorPsf: null,
       walkPrice: null,
@@ -219,7 +227,7 @@ export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFl
     // Fail closed: the RCT is priced, but no ratified floor exists to test the basis against.
     return {
       rctVersion: RCT_VERSION, sf, marketCovered: true, proxy: entry.proxy,
-      low: sf * entry.low, mid: sf * entry.point, high: sf * entry.high, estPrice, basisPsf, vintageAssumed,
+      low: sf * entry.low, mid: sf * entry.point, high: sf * entry.high, estPrice, basisPsf, vintageAssumed, assumedVintageYear: null,
       vintageFloorPct: null, floorPsf: null, walkPrice: null, clearsFloor: null,
       basisToPoint: basisPsf !== null ? basisPsf / entry.point : null,
       priceToReplacementMid: estPrice !== null && entry.point > 0 ? estPrice / (sf * entry.point) : null,
@@ -243,6 +251,7 @@ export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFl
     estPrice,
     basisPsf,
     vintageAssumed,
+    assumedVintageYear,
     vintageFloorPct,
     floorPsf,
     walkPrice,
@@ -250,6 +259,6 @@ export function replacementCostAnalysisWith(deal: RcDeal, floors: BasisVintageFl
     basisToPoint: basisPsf !== null ? basisPsf / entry.point : null,
     priceToReplacementMid: estPrice !== null && mid > 0 ? estPrice / mid : null,
     verdict: clearsFloor === null ? null : clearsFloor ? 'Clears basis floor' : 'Fails basis floor',
-    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ` (vintage assumed ${floors.basisVintageRampStartYear})` : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
+    basis: `${RCT_VERSION} ${deal.market} — LOW $${entry.low.toFixed(2)}/SF · floor ${(vintageFloorPct * 100).toFixed(1)}%${vintageAssumed ? ` (vintage assumed ${assumedVintageYear})` : ''}${entry.proxy ? ' · [PROXY]' : ''}`,
   };
 }
