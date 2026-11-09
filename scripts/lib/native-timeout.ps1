@@ -48,8 +48,22 @@ function Invoke-NativeCommandWithTimeout {
     # [Process]::Start successfully, then WaitForExit(seconds*1000) THREW a .NET type-conversion
     # error with the child left running, never waited on, never killed -- a guaranteed orphan and a
     # confusing alert. ValidateRange rejects it before the process is ever started.
-    [Parameter(Mandatory=$true)][ValidateRange(1, 86400)][int]$TimeoutSeconds
+    [Parameter(Mandatory=$true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+    # Optional (added 2026-11-08, mirror-gate-probe-apex-only): redirect the command's combined
+    # stdout+stderr into this file INSTEAD of the console, so the caller can read it back (and
+    # echo it, so Task Scheduler's captured output keeps it) (deploy-mirror.ps1 parses the
+    # per-deployment <hash>.pages.dev URL from wrangler's output to probe it). The redirect is
+    # written by cmd.exe at the OS level -- no PowerShell pipe, so none of the ErrorRecord-under-Stop
+    # or pipe-buffer deadlock hazards apply. Omitted = the original inherit-the-console behaviour.
+    [string]$OutputFile
   )
+  if ($OutputFile) {
+    try {
+      Assert-CmdSafeArgument -Argument $OutputFile
+    } catch {
+      throw "Invoke-NativeCommandWithTimeout: OutputFile: $($_.Exception.Message)"
+    }
+  }
 
   # Guard extracted to Assert-CmdSafeArgument above -- see lib/cmd-arg-guard.ps1 for the rule and
   # why it now lives in one place instead of two.
@@ -76,6 +90,7 @@ function Invoke-NativeCommandWithTimeout {
   $quote     = { param($s) if ($s -match '\s') { '"' + $s + '"' } else { $s } }
   $argString = (($Arguments | ForEach-Object { & $quote $_ })) -join ' '
   $command   = (& $quote $Executable) + $(if ($argString) { " $argString" } else { '' })
+  if ($OutputFile) { $command += ' > "' + $OutputFile + '" 2>&1' }
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = 'cmd.exe'
