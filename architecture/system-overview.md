@@ -65,6 +65,8 @@ Property Financials folder (32 P&L .xlsx/.xlsm files, OneDrive)
 ```
 server/index.ts         Hono 4 app, 127.0.0.1:8911 (BRAIN_SERVER_PORT), request boundary first:
                         host-guard -> localhost CORS -> access-authz (ACCESS_REQUIRE=1 only) -> rate limits
+                        Startup: BRAIN_ALLOWED_HOSTS needs ACCESS_REQUIRE=1, OR BRAIN_HOST_AUTH=tailnet with every
+                        extra host a *.ts.net name (Tailscale Serve; the tailnet ACL is the boundary). Else: refuse.
   server/brain.ts       ExcelJS + chokidar file watcher -> in-memory snapshot + EventEmitter -> /sse
   server/workbook/      Workbook parser + counterparty graph
   server/overlay.ts     data/overlay.json -- the one user write surface
