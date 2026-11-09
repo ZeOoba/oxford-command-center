@@ -94,8 +94,12 @@ import { dirname, join, posix, resolve, win32 } from 'node:path';
 // the ratified config, calls scoreAcquisition and applies the governor proxy, and /acq/intel owns the
 // verdict-rank ORDER BY. Its edge twin functions/api/warehouse/acquisition/score.ts is gated, so both
 // halves of the score contract now need the same attestation.
+// REMOVED 2026-11-09: server/warehouse/debt-api.ts (refute run wf_c135181a-31a, medium; architect
+// sign-off: "Gabriel (architect) approved 2026-11-09"). It compares LTV against
+// RATIFIED_GOVERNORS.ltvCeiling ('governor-block'), owns the write-boundary Zod bounds
+// (BoundedLoanForSnapshotWrite: ltv 0..1.5, non-negative balance) and the rate/LTV collision
+// suppression -- governor logic, not plumbing.
 export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
-  'server/warehouse/debt-api.ts',
   'server/warehouse/actions.ts',
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
   // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
