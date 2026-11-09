@@ -144,12 +144,24 @@ const num = (v: string): number | null => {
 };
 
 /** Prefill the form from a pipeline Deal's known fields (the rest the underwriter fills in). */
-export function dealToForm(deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'> & { market?: Deal['market'] | null }): FormState {
+export function dealToForm(
+  deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'> & { market?: Deal['market'] | null; buildings?: Deal['buildings'] | undefined },
+): FormState {
   const f: FormState = {};
   // Only a market that has an RCT row is prefilled; anything else stays blank (strictest fallback), never guessed.
   if (deal.market && Object.prototype.hasOwnProperty.call(RCT_V03, deal.market)) f.market = deal.market;
   if (deal.estPrice !== null) f.price = String(deal.estPrice);
-  if (deal.sf !== null) { f.totalSf = String(deal.sf); f.maxBuildingSf = String(deal.sf); }
+  // Deal.sf is the TOTAL SF; the size gate tests the LARGEST SINGLE building (audit 2026-11-08,
+  // dealtoform-portfolio-sf-false-kill: a 3 x 30K portfolio was KILLED as one 90K building). A Deal carries no
+  // per-building SF, so the largest building is known only when the deal is ONE building. For a portfolio, or an
+  // unknown building count, it stays blank: the engine caps that at T2 until the underwriter enters it, never a KILL.
+  if (deal.sf !== null) {
+    f.totalSf = String(deal.sf);
+    if (deal.buildings === 1) f.maxBuildingSf = String(deal.sf);
+  }
+  // Portfolio status drives the price cap (single asset vs portfolio); set only when the building count is known.
+  if (deal.buildings === 1) f.isPortfolio = 'no';
+  else if (typeof deal.buildings === 'number' && deal.buildings > 1) f.isPortfolio = 'yes';
   if (deal.irr !== null) f.leveredIrr = String(Math.round(deal.irr * 1000) / 10); // decimal → %
   if (deal.holdYrs === 5 || deal.holdYrs === 10) f.underwriteHorizonYrs = String(deal.holdYrs);
   return f;
