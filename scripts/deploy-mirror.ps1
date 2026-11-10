@@ -10,8 +10,10 @@
 
   Confidentiality: MIRROR_INCLUDE_CONFIDENTIAL=1 is set ONLY because the deploy target is
   verified behind Cloudflare Access. The post-deploy curl re-proves the gate before the run
-  is considered successful; if the apex does NOT 302 to Access, the script FAILS loudly so a
-  confidential bake is never left publicly reachable.
+  is considered successful; if ANY deployed surface (the root, every baked top-level *.json,
+  every Pages Function route -- derived at deploy time -- on the production URL and on the
+  per-deployment <hash>.pages.dev alias, 2026-11-08) does NOT 302 to Access,
+  the script FAILS loudly so a confidential bake is never left publicly reachable.
 
   Incident (2026-07-09): this script used to build+deploy whatever was currently checked out
   on disk. Since the hourly scheduled task never pulled, merged main PRs (a full retokenization,
@@ -98,61 +100,14 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # outright and never gets to alert at all. Neither subsumes the other.
 . (Join-Path $PSScriptRoot 'lib\deploy-beacon.ps1')
 
-# Invoke-AccessGateProbe -- extracted 2026-07-31 (security review) so the deploy-timeout path
-# (step 3) can run the SAME Access-gate re-verification as the normal path (step 4), instead of
-# skipping it entirely. Before this, a deploy that timed out never got its gate re-checked at all --
-# meaning a PERSISTENT stall (the same transient-looking signature recurring hourly) left the one
-# control that detects an Access-policy regression unrun for as long as the stall continued, even on
-# runs where the mirror genuinely did publish before wrangler hung. Extracting to a shared function
-# means both call sites can't silently drift the way the pre-extraction duplicated cmd-guard did.
-function Invoke-AccessGateProbe {
-  param(
-    [Parameter(Mandatory=$true)][string]$VerifyUrl,
-    [Parameter(Mandatory=$true)][string]$AccessHost
-  )
-  # Incident (2026-07-09 17:08): a single-shot probe missed transiently and fired the CRITICAL
-  # "confidential bake may be exposed" alert even though the gate was fine. Retry up to 3x
-  # (initial 5s settle, then 15s between attempts) before declaring failure, and split severity
-  # on the last observed $code -- a 2xx apex means the bake really is exposed (CRITICAL); any
-  # other result (0/timeout, 3xx-other, 4xx, 5xx) is an inconclusive probe/edge issue.
-  Start-Sleep -Seconds 5
-  $verified = $false
-  $code = 0
-  $location = ''
-  $lastCurlExit = $null
-  for ($attempt = 1; $attempt -le 3; $attempt++) {
-    if ($attempt -gt 1) { Start-Sleep -Seconds 15 }
-    # Invoke-NativeCommandCapture (not a plain `& curl.exe ... 2>&1`) -- same ErrorRecord-under-
-    # Stop hazard the git fetch case has: curl's `-s` flag normally suppresses curl's own stderr
-    # text, but if it or a future flag change ever leaks anything to stderr, a bare `2>&1` would
-    # throw and silently replace this gate-check's own "GATE CHECK FAILED"/"GATE CHECK INCONCLUSIVE"
-    # wording -- the highest-stakes throw in this script, since it's what detects a confidential
-    # bake being publicly exposed.
-    # --connect-timeout/--max-time (added 2026-07-29, code-review follow-up): without these curl can
-    # hang indefinitely if the edge accepts the TCP connection and then stalls -- the same
-    # unbounded-external-call shape as the wrangler deploy hang this whole fix addresses, on the
-    # single highest-stakes step in the script. Bounded to ~20s per attempt x3 attempts, still
-    # trivial against the scheduler's PT30M limit.
-    $curlResult = Invoke-NativeCommandCapture -Executable 'curl.exe' -Arguments @('-s', '-I', '--connect-timeout', '10', '--max-time', '20', '--max-redirs', '0', $VerifyUrl)
-    $lastCurlExit = $curlResult.ExitCode
-    $curlOut = $curlResult.Output -split "`n"
-    $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
-    $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
-    $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
-    $location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
-    if ($code -eq 302 -and ($location -match [regex]::Escape($AccessHost))) {
-      $verified = $true
-      break
-    }
-    Write-Host "[gate-check] attempt $attempt/3 not yet verified (code=$code, Location='$location')"
-  }
-  return [pscustomobject]@{
-    Verified     = $verified
-    Code         = $code
-    Location     = $location
-    CurlExitCode = $lastCurlExit
-  }
-}
+# Invoke-AccessGateProbe / Get-AccessGateProbeTargets / Assert-AccessGateOnAllTargets live in
+# lib/access-gate-probe.ps1 (shared with access-gate-probe.smoke-test.ps1, so the smoke test runs the
+# real probe with a mocked curl). Since 2026-11-08 (mirror-gate-probe-apex-only) the gate check
+# probes EVERY deployed surface -- the root, every baked top-level *.json in dist/, every Pages
+# Function route under functions/, on the production URL AND the per-deployment
+# <hash>.<project>.pages.dev alias -- not just the apex '/'. The path list is derived at deploy
+# time (Get-AccessGateProbePaths), never hand-kept.
+. (Join-Path $PSScriptRoot 'lib\access-gate-probe.ps1')
 
 $beaconPath = Get-DeployBeaconPath -RepoRoot $repo
 # Stamped BEFORE the try block so that a kill at any point inside it -- including during the
@@ -317,6 +272,16 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $distPath 'index.html'))) {
       throw "Build root produced no dist/index.html at $distPath -- refusing to deploy (a missing artifact must never fall back to another tree's dist)."
     }
+    # Probe paths for the Access-gate check (steps 3 and 4), derived from what is about to be
+    # published: every top-level *.json in dist/ (warehouse.json is also expected when
+    # -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
+    # directory, which is THIS checkout ($repo) -- the build root's copy is scanned too, so a route
+    # in either tree is probed.
+    $functionsDirs  = @((Join-Path $repo 'functions'), (Join-Path $buildRoot 'functions'))
+    $probePaths     = Get-AccessGateProbePaths -DistPath $distPath -FunctionsDirs $functionsDirs -IncludeWarehouse:$IncludeWarehouse
+    # Function routes are probed STRICT (any non-Access answer = exposure) whatever their prefix.
+    $functionRoutes = Get-AccessGateFunctionRoutes -FunctionsDirs $functionsDirs
+    Write-Host "  Access-gate probe paths: $((@($probePaths) | ForEach-Object { '/' + $_ }) -join ', ')"
     $wranglerBin  = Join-Path $buildRoot 'node_modules\.bin\wrangler.cmd'
     if (Test-Path -LiteralPath $wranglerBin) {
       $deployExe  = $wranglerBin
@@ -326,19 +291,35 @@ try {
       $deployExe  = 'npx'
       $deployArgs = @('wrangler', 'pages', 'deploy', $distPath, "--project-name=$ProjectName", '--branch=main')
     }
+    # wrangler's output goes to a file (and is echoed below) so step 4 can read the per-deployment
+    # <hash>.<project>.pages.dev URL out of it and probe that alias too (2026-11-08).
+    $deployLog = Join-Path ([System.IO.Path]::GetTempPath()) ("ora-mirror-deploy-" + [guid]::NewGuid().ToString('N') + '.log')
     $deploy = Invoke-NativeCommandWithTimeout `
       -Executable $deployExe `
       -Arguments $deployArgs `
-      -TimeoutSeconds $DeployTimeoutSeconds
+      -TimeoutSeconds $DeployTimeoutSeconds `
+      -OutputFile $deployLog
+    $deployOutput = ''
+    if (Test-Path -LiteralPath $deployLog) {
+      $deployOutput = [string](Get-Content -LiteralPath $deployLog -Raw -ErrorAction SilentlyContinue)
+      Remove-Item -LiteralPath $deployLog -Force -ErrorAction SilentlyContinue
+    }
+    if ($deployOutput) { Write-Host $deployOutput }
     if ($deploy.TimedOut) {
       $timeoutReason = Get-DeployTimeoutReason -Seconds $DeployTimeoutSeconds
       # 2026-07-31 (security review): run the Access-gate probe on the timeout path too, instead of
-      # skipping it entirely as before. ~95s worst case (5s settle + 3x20s + 2x15s) is trivial
-      # against the scheduler's PT30M budget, and this is the one control that can still catch a
-      # genuine exposure even though the deploy itself never confirmed success.
-      $gate = Invoke-AccessGateProbe -VerifyUrl $VerifyUrl -AccessHost $AccessHost
-      if ($gate.Code -ge 200 -and $gate.Code -le 299) {
-        throw "GATE CHECK FAILED: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') -- detected while investigating a deploy timeout. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately. $timeoutReason"
+      # skipping it entirely as before -- the one control that can still catch a genuine exposure
+      # even though the deploy itself never confirmed success. A timed-out wrangler may never have
+      # printed the alias, so the alias is probed only if it was printed (no -Unprobed alias requirement here).
+      # Severity split as before: an observed exposure (GATE CHECK FAILED) overrides the
+      # timeout and alerts CRITICAL; an inconclusive probe during a stall reports the timeout itself,
+      # which is what actually went wrong and keeps its suppressible class.
+      $timeoutTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
+      try {
+        Assert-AccessGateOnAllTargets -Targets $timeoutTargets -AccessHost $AccessHost -StrictPaths $functionRoutes -Context "(detected while investigating a deploy timeout) $timeoutReason" | Out-Null
+      } catch {
+        if ($_.Exception.Message -match '^GATE CHECK FAILED') { throw }
+        Write-Host "[gate-check] during deploy timeout: $($_.Exception.Message)"
       }
       throw $timeoutReason
     }
@@ -355,20 +336,19 @@ try {
   # 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
   #    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
   #    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
-  #    Invoke-AccessGateProbe (defined above) is shared with the deploy-timeout path in step 3 --
-  #    see that definition for the retry/severity-split rationale.
-  $gate = Invoke-AccessGateProbe -VerifyUrl $VerifyUrl -AccessHost $AccessHost
-  if (-not $gate.Verified) {
-    if ($gate.Code -ge 200 -and $gate.Code -le 299) {
-      throw "GATE CHECK FAILED: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') after 3 attempts. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
-    } else {
-      throw "GATE CHECK INCONCLUSIVE: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') after 3 attempts (last curl exit $($gate.CurlExitCode)). Probe/network issue or edge propagation - gate NOT verified open; verify manually."
-    }
-  }
-  $location = $gate.Location
+  #    Invoke-AccessGateProbe (lib/access-gate-probe.ps1) is shared with the deploy-timeout path in
+  #    step 3 -- see that definition for the retry/severity-split rationale.
+  #    Every target (apex, /snapshot.json, /api/ Functions, and the same on the per-deployment
+  #    alias) must 302 -> Access; Assert-AccessGateOnAllTargets throws GATE CHECK FAILED on any 2xx (on a Function route: any non-Access answer)
+  #    and GATE CHECK INCONCLUSIVE on anything else unverified. wrangler reported success, so it
+  #    printed the deployment URL: a missing alias is passed as -Unprobed, which fails the check as
+  #    INCONCLUSIVE only AFTER the apex targets were probed, so it can never mask an apex exposure.
+  $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
+  $gateUnprobed = Get-MissingAliasRequirement -DeployOutput $deployOutput -ProjectName $ProjectName
+  $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed -StrictPaths $functionRoutes
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-  Write-Host "[$stamp] OK - deployed and Access gate verified (302 -> $AccessHost). Location: $location"
+  Write-Host "[$stamp] OK - deployed and Access gate verified on all $(@($gateResults).Count) target(s) (302 -> $AccessHost)."
 
   # Clears any suppressed offline-signature streak from prior runs and sends one recovery
   # digest if suppression actually happened -- see lib/deploy-alert.ps1.
