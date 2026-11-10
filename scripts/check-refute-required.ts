@@ -89,9 +89,17 @@ import { dirname, join, posix, resolve, win32 } from 'node:path';
 // still requires a refute trailer. See architecture/coding-standards.md.
 // NOTE: actions.ts dispatches recompute (scoreProperties/detectAnomalies) but holds no math;
 // re-evaluate this entry if it gains analytic logic.
+// REMOVED 2026-11-09: server/warehouse/api.ts (refute run wf_44a3341e-b41, medium; architect sign-off:
+// "Gabriel (architect) approved 2026-11-09"). It is not pure plumbing: POST /acquisition/score resolves
+// the ratified config, calls scoreAcquisition and applies the governor proxy, and /acq/intel owns the
+// verdict-rank ORDER BY. Its edge twin functions/api/warehouse/acquisition/score.ts is gated, so both
+// halves of the score contract now need the same attestation.
+// REMOVED 2026-11-09: server/warehouse/debt-api.ts (refute run wf_c135181a-31a, medium; architect
+// sign-off: "Gabriel (architect) approved 2026-11-09"). It compares LTV against
+// RATIFIED_GOVERNORS.ltvCeiling ('governor-block'), owns the write-boundary Zod bounds
+// (BoundedLoanForSnapshotWrite: ltv 0..1.5, non-negative balance) and the rate/LTV collision
+// suppression -- governor logic, not plumbing.
 export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
-  'server/warehouse/api.ts',
-  'server/warehouse/debt-api.ts',
   'server/warehouse/actions.ts',
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
   // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
@@ -151,6 +159,33 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   // criterion as loan.ts/debt.ts/capital.ts above: a silently dropped or renamed field desyncs the
   // contract from the governor math it types.
   'src/contracts/lease-market.ts',
+  // 2026-11-08 (medium-findings remediation Wave 1, E-2; Gabriel approved the mechanism-only gate
+  // widening). acquisition.ts is the Zod contract of the ratified acquisition scorecard:
+  // AcquisitionInput (the fields the engine scores), AcquisitionRuleset and ReplacementCostTable
+  // (the 0.65/0.90 basis floors and the RCT denominator, parsed and asserted by the engine), and
+  // the score/verdict/tier shapes the capital BUY verdict reads. coding-standards requires the refute
+  // pass on the scorecard, yet a change here merged with no trailer demanded.
+  'src/contracts/acquisition.ts',
+  // governor-constants.ts holds THE literal ratified governors (DSCR floor 1.25, aggregate LTV
+  // ceiling 0.40) that every other copy derives from (Hard Invariant 4), and liquidity-policy.ts the
+  // ratified firm cash floor. Both were outside this gate: a one-token edit moved a governor with no
+  // attestation required. Found by the same sweep.
+  'src/contracts/governor-constants.ts',
+  'src/contracts/liquidity-policy.ts',
+]);
+
+// Acquisition scorecard INPUT SHAPING outside the default-deny roots (2026-11-08, same sweep):
+//  - src/modules/acquisitions/acquisition-score.ts turns a Deal (SF, price, IRR, hold, market) into
+//    the AcquisitionInput the engine scores (dealToForm / buildInput / inputToForm / applyDealMarket).
+//    A wrong prefill there (e.g. a portfolio's total SF as the max building SF) kills or passes a deal
+//    as surely as an engine bug, and it is the path every Workbench score goes through.
+//  - functions/api/warehouse/acquisition/score.ts is the Access-gated mirror's copy of the score
+//    route: it resolves and asserts the ratified ruleset + RCT and applies the governor proxy.
+// File-level, not a prefix: the rest of src/modules/acquisitions/ is display, and the rest of
+// functions/ is identity/AI plumbing.
+const FINANCIAL_INPUT_SHAPING_PATHS: ReadonlySet<string> = new Set([
+  'src/modules/acquisitions/acquisition-score.ts',
+  'functions/api/warehouse/acquisition/score.ts',
 ]);
 
 // Financial CONFIG (2026-09-21, weekly sweep — fifth occurrence of the scope-staleness mode): every
@@ -435,6 +470,7 @@ export function isFinancialSourcePath(p: string): boolean {
     path === 'src/data/seed-deals.ts' ||
     path === 'src/data/public-deals.ts' ||
     FINANCIAL_CONTRACT_PATHS.has(path) ||
+    FINANCIAL_INPUT_SHAPING_PATHS.has(path) ||
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
     // Priced against RCT v03, the ratified basis denominator — a governor-adjacent constant table.

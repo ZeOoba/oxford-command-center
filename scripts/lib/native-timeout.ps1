@@ -48,8 +48,22 @@ function Invoke-NativeCommandWithTimeout {
     # [Process]::Start successfully, then WaitForExit(seconds*1000) THREW a .NET type-conversion
     # error with the child left running, never waited on, never killed -- a guaranteed orphan and a
     # confusing alert. ValidateRange rejects it before the process is ever started.
-    [Parameter(Mandatory=$true)][ValidateRange(1, 86400)][int]$TimeoutSeconds
+    [Parameter(Mandatory=$true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
+    # Optional (added 2026-11-08, mirror-gate-probe-apex-only): redirect the command's combined
+    # stdout+stderr into this file INSTEAD of the console, so the caller can read it back (and
+    # echo it, so Task Scheduler's captured output keeps it) (deploy-mirror.ps1 parses the
+    # per-deployment <hash>.pages.dev URL from wrangler's output to probe it). The redirect is
+    # written by cmd.exe at the OS level -- no PowerShell pipe, so none of the ErrorRecord-under-Stop
+    # or pipe-buffer deadlock hazards apply. Omitted = the original inherit-the-console behaviour.
+    [string]$OutputFile
   )
+  if ($OutputFile) {
+    try {
+      Assert-CmdSafeArgument -Argument $OutputFile
+    } catch {
+      throw "Invoke-NativeCommandWithTimeout: OutputFile: $($_.Exception.Message)"
+    }
+  }
 
   # Guard extracted to Assert-CmdSafeArgument above -- see lib/cmd-arg-guard.ps1 for the rule and
   # why it now lives in one place instead of two.
@@ -76,6 +90,7 @@ function Invoke-NativeCommandWithTimeout {
   $quote     = { param($s) if ($s -match '\s') { '"' + $s + '"' } else { $s } }
   $argString = (($Arguments | ForEach-Object { & $quote $_ })) -join ' '
   $command   = (& $quote $Executable) + $(if ($argString) { " $argString" } else { '' })
+  if ($OutputFile) { $command += ' > "' + $OutputFile + '" 2>&1' }
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = 'cmd.exe'
@@ -127,18 +142,21 @@ function Invoke-NativeCommandWithTimeout {
 #
 # Wording: earlier drafts said "the mirror was NOT updated this run", which overclaims -- a stall
 # inside `wrangler pages deploy` could occur AFTER the upload/publish step, so whether the mirror
-# actually updated is genuinely unknown from here, not "no". The post-deploy Access-gate re-check
-# (step 4 of deploy-mirror.ps1) never runs on this path either, so publication state is doubly
-# unverified. The message says so plainly and gives the exact manual check, rather than asserting a
+# actually updated is genuinely unknown from here, not "no". Since 2026-07-31 the timeout path runs
+# the Access-gate probe too (an observed exposure -- a 2xx, or any non-Access answer from a Function
+# route -- throws GATE CHECK FAILED instead of this message), but
+# an inconclusive probe still ends here, so publication state stays unverified. The message says so plainly and gives the exact manual check, rather than asserting a
 # specific (and possibly wrong) outcome.
 function Get-DeployTimeoutReason {
   param([Parameter(Mandatory=$true)][int]$Seconds)
   return "wrangler deploy TIMED OUT after ${Seconds}s and was terminated (process tree killed). " +
-         "Publication state UNKNOWN -- the deploy may or may not have published before the stall, " +
-         "and the post-deploy Access-gate re-check did NOT run this pass (skipped entirely on this " +
-         "path). This is the 2026-07-29 stall signature; a single occurrence has previously been " +
-         "transient, with the next hourly run recovering unattended -- but verify manually rather " +
-         "than assume that again: curl -s -I --max-redirs 0 https://ora-command-center.pages.dev/ " +
-         "should return 302 to a *.cloudflareaccess.com Location. Investigate further if this repeats " +
-         "or if that check does not come back clean."
+         "Publication state UNKNOWN -- the deploy may or may not have published before the stall. " +
+         "The Access-gate probe ran on this path and saw no exposure, but it may not have " +
+         "verified every target, and a stalled wrangler may never have printed the deployment alias " +
+         "(see the [gate-check] lines in this run's log). This is the 2026-07-29 stall signature; a " +
+         "single occurrence has previously been transient, with the next hourly run recovering " +
+         "unattended -- but verify manually rather than assume that again: " +
+         "curl -s -I --max-redirs 0 https://ora-command-center.pages.dev/ and .../snapshot.json " +
+         "should each return 302 to a *.cloudflareaccess.com Location. Investigate further if this " +
+         "repeats or if that check does not come back clean."
 }

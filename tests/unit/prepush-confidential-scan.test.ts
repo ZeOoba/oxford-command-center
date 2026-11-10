@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 // The module below is plain .mjs on purpose (the raw .git/hooks/pre-push script invokes it
 // with no npm context). Its types come from a GENERATED sibling .d.mts, emitted from that
@@ -28,6 +28,9 @@ import {
   shouldBlockOnMissingRoster,
   parseBinaryPathsUnderData,
   binaryPathsFor,
+  shouldBlockOnDiffError,
+  resolveDiffBase,
+  collectRefScan,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -516,5 +519,136 @@ describe('prepush-confidential-scan / binary scan against a real git repo', () =
     git(repo, 'rm', '-q', 'data/ar/processed/old.xlsx');
     git(repo, 'commit', '-qm', 'delete');
     expect(binaryPathsFor(before, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual([]);
+  });
+});
+
+// prepush-scan-skips-on-diff-error (audit 2026-11-08): the scanner used to WARN and skip a ref
+// whose diff it could not compute (ENOBUFS on a huge push, a remote sha absent locally), so the
+// largest, most data-heavy pushes were the ones that went through unscanned. It now fails closed.
+describe('prepush-confidential-scan / diff errors fail closed', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
+  const ZERO = '0000000000000000000000000000000000000000';
+  const MISSING = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+  const script = join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs');
+  let repo: string;
+  let home: string;
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'prepush-differr-'));
+    home = mkdtempSync(join(tmpdir(), 'prepush-differr-home-'));
+    mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
+    // A valid roster with no active deals, so the roster gate passes and only the diff path is exercised.
+    writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), '{"_meta":{}}');
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), 'base\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'base');
+    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const commitOnFeature = (file: string, content: string) => {
+    git(repo, 'checkout', '-q', '-b', 'feat');
+    writeFileSync(join(repo, file), content);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'feat');
+    return git(repo, 'rev-parse', 'HEAD');
+  };
+
+  const runHook = (stdin: string, extraEnv: Record<string, string> = {}) => {
+    const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+    delete env['PREPUSH_ALLOW_DIFF_ERROR'];
+    delete env['PREPUSH_ALLOW_NO_ROSTER'];
+    Object.assign(env, extraEnv);
+    return spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env });
+  };
+
+  it('shouldBlockOnDiffError blocks on any diff error unless PREPUSH_ALLOW_DIFF_ERROR=1', () => {
+    const errs = [{ localSha: 'abc', message: 'ENOBUFS' }];
+    expect(shouldBlockOnDiffError(errs, {})).toBe(true);
+    expect(shouldBlockOnDiffError(errs, { PREPUSH_ALLOW_DIFF_ERROR: '0' })).toBe(true);
+    expect(shouldBlockOnDiffError(errs, { PREPUSH_ALLOW_DIFF_ERROR: 'true' })).toBe(true);
+    expect(shouldBlockOnDiffError(errs, { PREPUSH_ALLOW_DIFF_ERROR: '1' })).toBe(false);
+    expect(shouldBlockOnDiffError([], {})).toBe(false);
+  });
+
+  it('resolveDiffBase falls back to the merge-base with origin/main when the remote sha is not in the local object DB', () => {
+    const main = git(repo, 'rev-parse', 'main');
+    const local = commitOnFeature('a.txt', 'zephyr corp\n');
+    expect(resolveDiffBase(MISSING, local, repo)).toBe(main);
+    // a remote sha that IS present locally is used as-is
+    expect(resolveDiffBase(main, local, repo)).toBe(main);
+  });
+
+  it('collectRefScan records a diff error (never silently skips) when the local sha cannot be diffed', () => {
+    const result = collectRefScan(`refs/heads/x ${MISSING} refs/heads/x ${ZERO}\n`, repo);
+    // both the text diff and the binary numstat fail, each recorded on its own
+    expect(result.diffErrors.map((e) => e.localSha)).toEqual([MISSING, MISSING]);
+    expect(result.diffErrors.map((e) => e.message.split(':')[0])).toEqual(['text diff', 'binary numstat']);
+    expect(result.addedByRef).toEqual([]);
+  });
+
+  it('a numstat-only failure keeps the text diff that succeeded (its lines are still scanned)', () => {
+    const fakeDiff = '+++ b/a.txt\n@@ -0,0 +1 @@\n+zephyr corp\n';
+    const result = collectRefScan(`refs/heads/x ${'a'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      diffFor: () => fakeDiff,
+      binaryPathsFor: () => {
+        throw Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+      },
+    });
+    expect(result.addedByRef.flat().map((a) => a.text)).toEqual(['zephyr corp']);
+    expect(result.diffErrors).toEqual([{ localSha: 'a'.repeat(40), message: 'binary numstat: ENOBUFS' }]);
+    expect(shouldBlockOnDiffError(result.diffErrors, {})).toBe(true);
+  });
+
+  it('a text-diff-only failure still collects the binary paths', () => {
+    const result = collectRefScan(`refs/heads/x ${'b'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      diffFor: () => {
+        throw new Error('fatal: bad object');
+      },
+      binaryPathsFor: () => ['data/zephyr.xlsx'],
+    });
+    expect(result.addedByRef).toEqual([]);
+    expect(result.binaryHits).toEqual(['data/zephyr.xlsx']);
+    expect(result.diffErrors).toEqual([{ localSha: 'b'.repeat(40), message: 'text diff: fatal: bad object' }]);
+  });
+
+  it('collectRefScan still scans the added lines when the remote sha is missing locally', () => {
+    const local = commitOnFeature('a.txt', 'zephyr corp\n');
+    const result = collectRefScan(`refs/heads/feat ${local} refs/heads/feat ${MISSING}\n`, repo);
+    expect(result.diffErrors).toEqual([]);
+    expect(result.addedByRef.flat().map((a) => a.text)).toEqual(['zephyr corp']);
+  });
+
+  it('the hook EXITS NON-ZERO when it cannot compute the diff for a pushed ref', () => {
+    const r = runHook(`refs/heads/x ${MISSING} refs/heads/x ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('PUSH BLOCKED');
+    expect(r.stderr).toContain('PREPUSH_ALLOW_DIFF_ERROR');
+  });
+
+  it('the hook exits 0 with a loud warning when PREPUSH_ALLOW_DIFF_ERROR=1 is set for the push', () => {
+    const r = runHook(`refs/heads/x ${MISSING} refs/heads/x ${ZERO}\n`, { PREPUSH_ALLOW_DIFF_ERROR: '1' });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/PREPUSH_ALLOW_DIFF_ERROR=1[^\n]*UNSCANNED/);
+  });
+
+  it('the opt-out does NOT suppress a real hit on another ref in the same push', () => {
+    const local = commitOnFeature('a.json', '{"confidential": true}\n');
+    const r = runHook(
+      `refs/heads/x ${MISSING} refs/heads/x ${ZERO}\nrefs/heads/feat ${local} refs/heads/feat ${ZERO}\n`,
+      { PREPUSH_ALLOW_DIFF_ERROR: '1' },
+    );
+    expect(r.status).toBe(1);
+  });
+
+  it('a clean push with a computable diff still exits 0', () => {
+    const local = commitOnFeature('a.txt', 'plain text\n');
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(0);
   });
 });

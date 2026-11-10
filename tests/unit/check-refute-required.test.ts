@@ -137,9 +137,10 @@ describe('check-refute-required — financial-source classification', () => {
       'Server/Brief/Send.ts',
       'src/contracts/Lease.ts',
       'SRC/LIB/CN.TS',
-      // DELIVERY_ONLY_PATHS entries in odd case (real entries: server/warehouse/api.ts, .../debt-api.ts).
-      'Server/Warehouse/API.ts',
-      'SERVER/WAREHOUSE/DEBT-API.TS',
+      // DELIVERY_ONLY_PATHS entry in odd case (real entry: server/sources/graph-auth.ts, OAuth transport
+      // with no deal or portfolio figures). api.ts and debt-api.ts left the allowlist 2026-11-09 (both
+      // now classify financial; their odd-case forms are asserted below).
+      'SERVER/SOURCES/GRAPH-AUTH.TS',
     ]) {
       expect({ p, financial: isFinancialSourcePath(p) }).toEqual({ p, financial: false });
     }
@@ -353,6 +354,42 @@ describe('check-refute-required — financial-source classification', () => {
   // loan.ts/debt.ts/capital.ts on this list.
   it('flags src/contracts/lease-market.ts — LmThresholds/CellBenchmark type the radar and comparable-set governor math', () => {
     expect(isFinancialSourcePath('src/contracts/lease-market.ts')).toBe(true);
+  });
+
+  // 2026-11-08 (medium-findings remediation Wave 1, E-2): the acquisition scorecard's own contract
+  // and its client input-shaping were outside the gate, so a change to how a deal's SF / price /
+  // IRR / market is turned into an AcquisitionInput (or to the Zod shape the engine parses) merged
+  // with no attestation even though coding-standards requires the refute pass on the scorecard.
+  // The same sweep found the literal governor constants (DSCR 1.25 / LTV 0.40), the ratified cash
+  // floor, and the edge scoring Function outside it too.
+  it('flags the acquisition scorecard contract and its input-shaping (2026-11-08)', () => {
+    expect(isFinancialSourcePath('src/contracts/acquisition.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/modules/acquisitions/acquisition-score.ts')).toBe(true);
+    // the edge copy of the score route: resolves the ratified config and applies the governor proxy
+    expect(isFinancialSourcePath('functions/api/warehouse/acquisition/score.ts')).toBe(true);
+  });
+  it('flags the ratified governor and liquidity-floor constants (2026-11-08)', () => {
+    expect(isFinancialSourcePath('src/contracts/governor-constants.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/contracts/liquidity-policy.ts')).toBe(true);
+  });
+  it('is case- and separator-insensitive for the 2026-11-08 additions, like every other entry', () => {
+    expect(isFinancialSourcePath('src\\contracts\\Acquisition.ts')).toBe(true);
+    expect(isFinancialSourcePath('SRC/modules/acquisitions/acquisition-score.ts')).toBe(true);
+    expect(isFinancialSourcePath('functions\\api\\warehouse\\acquisition\\score.ts')).toBe(true);
+  });
+  it('keeps the 2026-11-08 additions narrow: neighbouring display and auth files stay out', () => {
+    expect(isFinancialSourcePath('src/modules/acquisitions/AcquisitionWorkbench.tsx')).toBe(false);
+    expect(isFinancialSourcePath('src/modules/acquisitions/tabs.ts')).toBe(false);
+    expect(isFinancialSourcePath('functions/api/whoami.ts')).toBe(false);
+    expect(isFinancialSourcePath('functions/_shared/access-identity.ts')).toBe(false);
+    // tests of the newly-covered files stay exempt, like every other test
+    expect(isFinancialSourcePath('src/modules/acquisitions/acquisition-score.test.ts')).toBe(false);
+  });
+  it('a commit touching only acquisition-score.ts now needs its own trailer', () => {
+    const commits = [{ sha: 'a1', message: 'fix(acq): prefill portfolio SF', files: ['src/modules/acquisitions/acquisition-score.ts'] }];
+    expect(findUnattestedCommits(commits).map((c) => c.sha)).toEqual(['a1']);
+    const attested = [{ ...commits[0]!, message: 'fix(acq): prefill portfolio SF\n\nRefute-Reviewed: wf_d10ede49-078\n' }];
+    expect(findUnattestedCommits(attested)).toEqual([]);
   });
 
   // Broad-prefix coverage (server/warehouse/, src/analytics/) already reaches these — asserted
@@ -623,7 +660,7 @@ describe('check-refute-required — default-deny roots server/ and scripts/ (Gab
     expect(isFinancialSourcePath('server/warehouse/placeholders/loss-runs.placeholder.json')).toBe(false);
   });
   it('keeps the DELIVERY_ONLY_PATHS subtractions ahead of the root rule', () => {
-    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/capital-allocation-api.ts')).toBe(false);
     expect(isFinancialSourcePath('server/sources/graph-auth.ts')).toBe(false);
   });
   it('exposes the two roots so a future edit cannot silently drop one', () => {
@@ -712,15 +749,42 @@ describe('check-refute-required — reviewed non-financial exemptions under the 
 
 describe('check-refute-required — delivery-only allowlist', () => {
   it('treats delivery-only warehouse routing files as non-financial', () => {
-    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
-    expect(isFinancialSourcePath('server/warehouse/debt-api.ts')).toBe(false);
     expect(isFinancialSourcePath('server/warehouse/actions.ts')).toBe(false);
     // Phase 3 W1: lease-forecast-api.ts is pure route-plumbing (no math)
     expect(isFinancialSourcePath('server/warehouse/lease-forecast-api.ts')).toBe(false);
     // Lease Market Intelligence P1 Task 14: lease-market-api.ts is pure route-plumbing (no math)
     expect(isFinancialSourcePath('server/warehouse/lease-market-api.ts')).toBe(false);
     // Windows separators normalize before set lookup
-    expect(isFinancialSourcePath('server\\warehouse\\api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server\\warehouse\\capital-allocation-api.ts')).toBe(false);
+  });
+  // 2026-11-09 (refute run wf_c135181a-31a, medium; architect sign-off: Gabriel (architect) approved
+  // 2026-11-09). server/warehouse/debt-api.ts is NOT pure plumbing either: it compares LTV against
+  // RATIFIED_GOVERNORS.ltvCeiling to return 'governor-block', owns the write-boundary Zod bounds
+  // (BoundedLoanForSnapshotWrite ltv 0..1.5, non-negative balance) whose absence was the root cause of
+  // two HIGH governor findings, and carries the rate/LTV collision suppression. Same criterion that
+  // took api.ts out.
+  it('classifies server/warehouse/debt-api.ts as financial (governor comparison + LTV/balance write bounds)', () => {
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/debt-api.ts')).toBe(true);
+    expect(isFinancialSourcePath('SERVER\\WAREHOUSE\\DEBT-API.TS')).toBe(true);
+    const commits = [{ sha: 'd1', message: 'fix(debt): widen ltv bound', files: ['server/warehouse/debt-api.ts'] }];
+    expect(findUnattestedCommits(commits).map((c) => c.sha)).toEqual(['d1']);
+  });
+  // 2026-11-09 (refute run wf_44a3341e-b41, medium; architect sign-off: Gabriel (architect) approved
+  // 2026-11-09). server/warehouse/api.ts is NOT pure plumbing: its POST /acquisition/score handler
+  // resolves the ratified config, calls scoreAcquisition and applies the governor proxy, and it owns
+  // the /acq/intel verdict-rank ORDER BY. Its edge twin functions/api/warehouse/acquisition/score.ts
+  // was gated by the 2026-11-08 sweep, so the two halves of one governor-proxy contract had different
+  // attestation requirements. Both must classify the same way.
+  it('classifies the Brain Server and edge acquisition-score routes the same way (both financial)', () => {
+    const brain = isFinancialSourcePath('server/warehouse/api.ts');
+    const edge = isFinancialSourcePath('functions/api/warehouse/acquisition/score.ts');
+    expect(brain).toBe(edge);
+    expect(brain).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('Server\\Warehouse\\API.ts')).toBe(true);
+    const commits = [{ sha: 'b1', message: 'fix(acq): reorder intel ranking', files: ['server/warehouse/api.ts'] }];
+    expect(findUnattestedCommits(commits).map((c) => c.sha)).toEqual(['b1']);
   });
   it('still flags non-allowlisted warehouse files', () => {
     expect(isFinancialSourcePath('server/warehouse/scores.ts')).toBe(true);
@@ -731,9 +795,7 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/lease-velocity.ts')).toBe(true);
   });
   it('exposes the delivery-only allowlist with the expected membership', () => {
-    expect(DELIVERY_ONLY_PATHS.size).toBe(11);
-    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(true);
-    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.size).toBe(9);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/actions.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-forecast-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-market-api.ts')).toBe(true);

@@ -376,12 +376,62 @@ export function baseForNewBranch(localSha, cwd) {
   }
 }
 
-function diffFor(remoteSha, localSha) {
-  const base = ZERO_SHA.test(remoteSha) ? baseForNewBranch(localSha) : remoteSha;
+/**
+ * The base a pushed ref's diff is computed against. A zero remote sha (new branch) uses
+ * baseForNewBranch. A non-zero remote sha that is NOT in the local object database (the remote
+ * moved and was not fetched, or was force-pushed) also falls back to baseForNewBranch -- the
+ * merge-base with origin/main -- instead of letting `git diff` fail and the ref go unscanned
+ * (prepush-scan-skips-on-diff-error, 2026-11-08).
+ *
+ * @param {string} remoteSha
+ * @param {string} localSha
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @returns {string}
+ */
+export function resolveDiffBase(remoteSha, localSha, cwd) {
+  if (!remoteSha || ZERO_SHA.test(remoteSha)) return baseForNewBranch(localSha, cwd);
+  try {
+    execFileSync('git', ['cat-file', '-e', `${remoteSha}^{commit}`], { stdio: 'pipe', cwd });
+    return remoteSha;
+  } catch {
+    console.warn(
+      `[prepush-confidential-scan] remote sha ${remoteSha} is not in the local object DB -- ` +
+        'scanning from the merge-base with origin/main instead.',
+    );
+    return baseForNewBranch(localSha, cwd);
+  }
+}
+
+// No fixed maxBuffer cap: the old 64 MB cap threw ENOBUFS on exactly the largest, most
+// data-heavy pushes, and the caller then skipped them. Every scanner needs the ref's whole added
+// corpus in memory anyway (context terms gate on the full range), so streaming would not lower
+// the peak. A diff too large for one JS string still throws, and that throw now BLOCKS the push.
+/** @param {string} remoteSha
+ * @param {string} localSha
+ * @param {string} [cwd] */
+function diffFor(remoteSha, localSha, cwd) {
+  const base = resolveDiffBase(remoteSha, localSha, cwd);
   return execFileSync('git', ['diff', `${base}..${localSha}`], {
     encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: Infinity,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd,
   });
+}
+
+/**
+ * Invariant 3 fail-closed rule for diff errors (prepush-scan-skips-on-diff-error, 2026-11-08): a
+ * ref whose diff or numstat could not be computed was never scanned, so the push blocks unless
+ * the operator explicitly opts out for this push with PREPUSH_ALLOW_DIFF_ERROR=1. Pure so it is
+ * unit-testable without process.exit.
+ *
+ * @param {{localSha: string, message: string}[]} diffErrors
+ * @param {Record<string, string|undefined>} env
+ * @returns {boolean} true = block the push
+ */
+export function shouldBlockOnDiffError(diffErrors, env) {
+  if (!Array.isArray(diffErrors) || diffErrors.length === 0) return false;
+  return env['PREPUSH_ALLOW_DIFF_ERROR'] !== '1';
 }
 
 function readStdin() {
@@ -405,16 +455,67 @@ function blockOnHits(hits, header, formatHit, trailer) {
  * @param {string} [cwd] - test seam; defaults to the process cwd.
  * @returns {string[]} */
 export function binaryPathsFor(remoteSha, localSha, cwd) {
-  const base = ZERO_SHA.test(remoteSha) ? baseForNewBranch(localSha, cwd) : remoteSha;
+  const base = resolveDiffBase(remoteSha, localSha, cwd);
   // quotepath=off: a non-ASCII filename (en dash in an Excel export name) is otherwise emitted
   // as a quoted "\342\200\223" string that fails the data/ prefix test. --no-renames: a binary
   // moved into data/ with edits is otherwise status R and dropped by --diff-filter=AM.
   const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--numstat', '--no-renames', '--diff-filter=AM', `${base}..${localSha}`], {
     encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: Infinity,
+    stdio: ['ignore', 'pipe', 'pipe'],
     cwd,
   });
   return parseBinaryPathsUnderData(text);
+}
+
+/** First line of an error's code or message, for a one-line diffErrors entry. @param {unknown} err */
+function errorLine(err) {
+  const e = /** @type {{code?: string, message?: string}} */ (err);
+  return String(e?.code ?? e?.message ?? err).split('\n')[0] ?? '';
+}
+
+/**
+ * Parse git's pre-push stdin ("<local ref> <local sha> <remote ref> <remote sha>" per line) and
+ * collect, per pushed ref, the added diff lines (minus EXCLUDE_PATHS) and the binary/export
+ * paths under data/. A ref whose diff or numstat could NOT be computed is recorded in diffErrors
+ * -- never silently skipped -- so the caller can fail closed.
+ *
+ * The text diff and the binary numstat are computed in SEPARATE try blocks: a numstat failure
+ * records its own diffErrors entry but never discards a text diff that succeeded, so its added
+ * lines are still term-scanned (refute run wf_44a3341e-b41, low).
+ *
+ * @param {string} stdinText
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[]}} [deps] - test seam; defaults to the real git calls.
+ * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], diffErrors: {localSha: string, message: string}[]}}
+ */
+export function collectRefScan(stdinText, cwd, deps) {
+  const getDiff = deps?.diffFor ?? diffFor;
+  const getBinaries = deps?.binaryPathsFor ?? binaryPathsFor;
+  /** @type {{file: string, lineNo: number, text: string}[][]} */
+  const addedByRef = [];
+  /** @type {string[]} */
+  const binaryHits = [];
+  /** @type {{localSha: string, message: string}[]} */
+  const diffErrors = [];
+  for (const rawLine of String(stdinText ?? '').split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const [, localSha, , remoteSha] = line.split(/\s+/);
+    if (!localSha || ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
+    try {
+      const diffText = getDiff(remoteSha ?? '', localSha, cwd);
+      addedByRef.push(parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file)));
+    } catch (err) {
+      diffErrors.push({ localSha, message: `text diff: ${errorLine(err)}` });
+    }
+    try {
+      binaryHits.push(...getBinaries(remoteSha ?? '', localSha, cwd));
+    } catch (err) {
+      diffErrors.push({ localSha, message: `binary numstat: ${errorLine(err)}` });
+    }
+  }
+  return { addedByRef, binaryHits, diffErrors };
 }
 
 function main() {
@@ -432,36 +533,35 @@ function main() {
     process.exit(1);
   }
   const stdin = readStdin();
+  const { addedByRef, binaryHits, diffErrors } = collectRefScan(stdin);
   const allHits = [];
   const flagHits = [];
-  const binaryHits = [];
-
-  for (const rawLine of stdin.split('\n')) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const [, localSha, , remoteSha] = line.split(/\s+/);
-    if (!localSha || ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
-    let diffText = '';
-    try {
-      diffText = diffFor(remoteSha ?? '', localSha);
-    } catch (err) {
-      // Fail SAFE on infrastructure errors (could not compute the diff): warn loudly but do NOT
-      // block — only an actual confidential-term HIT blocks a push. Because this hook lives in the
-      // shared .git/hooks and guards every worktree's pushes, a transient git error must not brick
-      // a legitimate push. The manual path-2 scan remains the belt to this hook's suspenders.
-      console.warn(
-        `[prepush-confidential-scan] WARN: could not compute diff for ${localSha} (${err?.message ?? err}) — skipping scan for this ref.`,
-      );
-      continue;
-    }
-    const added = parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file));
+  for (const added of addedByRef) {
     allHits.push(...scanDiffForConfidential(added, alwaysTerms));
     allHits.push(...scanDiffForContextTerms(added, contextGroups));
     flagHits.push(...scanDiffForConfidentialFlag(added));
-    try {
-      binaryHits.push(...binaryPathsFor(remoteSha ?? '', localSha));
-    } catch {
-      // Same fail-safe stance as the diff above: an infrastructure error must not brick a push.
+  }
+
+  // Fail CLOSED on a ref that could not be diffed (prepush-scan-skips-on-diff-error, 2026-11-08).
+  // This used to warn and skip, so the largest, most data-heavy pushes (ENOBUFS) went out
+  // unscanned. The explicit per-push opt-out keeps a transient git error from bricking pushes
+  // permanently, and it does not suppress real hits found on the refs that WERE scanned (the
+  // hit checks below still run).
+  if (diffErrors.length > 0) {
+    if (shouldBlockOnDiffError(diffErrors, process.env)) {
+      blockOnHits(
+        diffErrors,
+        'the confidential scan could not compute the diff for pushed ref(s), so they were NOT scanned',
+        (e) => `${e.localSha}  ->  ${e.message}`,
+        'Invariant 3, fail closed. Fix the git error (for a missing remote sha, `git fetch origin`) ' +
+          'and push again, or set PREPUSH_ALLOW_DIFF_ERROR=1 for this one push if you have verified ' +
+          'it carries no deal data.',
+      );
+    }
+    for (const e of diffErrors) {
+      console.warn(
+        `[prepush-confidential-scan] WARN: PREPUSH_ALLOW_DIFF_ERROR=1 - ref ${e.localSha} pushed UNSCANNED (${e.message}).`,
+      );
     }
   }
 

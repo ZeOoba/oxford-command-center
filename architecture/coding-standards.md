@@ -269,12 +269,26 @@ unattested `src/analytics/conditions.ts` change in its child.
   union of the branch's trailers** (one line per distinct `Refute-Reviewed`/`Refute-Skip`), because the
   branch commits do not survive onto `main`.
 
-**Delivery-only allowlist.** Three files in `server/warehouse/` are pure route-plumbing and are
-explicitly exempted from the trailer requirement (declared in `DELIVERY_ONLY_PATHS` in
-`scripts/check-refute-required.ts`): `api.ts`, `debt-api.ts`, `actions.ts`. The gate is
-fail-**closed** for everything else — any warehouse file not in the allowlist still requires a
-trailer. Adding to the allowlist requires architect sign-off (same as any `architecture/` change);
-a new file not yet listed just keeps requiring a trailer until it is explicitly approved and added.
+**Delivery-only allowlist.** A small set of pure route-plumbing files under the default-deny roots
+(e.g. `server/warehouse/capital-allocation-api.ts`, `server/sources/graph-auth.ts`) is explicitly exempted from the trailer
+requirement. `DELIVERY_ONLY_PATHS` in `scripts/check-refute-required.ts` is the source of truth for
+the membership; its test pins the exact set. The gate is fail-**closed** for everything else — any
+warehouse file not in the allowlist still requires a trailer. Adding to or removing from the
+allowlist requires architect sign-off (same as any `architecture/` change); a new file not yet listed
+just keeps requiring a trailer until it is explicitly approved and added.
+
+_Removed 2026-11-09:_ `server/warehouse/api.ts` (refute run `wf_44a3341e-b41`; architect sign-off:
+"Gabriel (architect) approved 2026-11-09"). Its `POST /acquisition/score` handler resolves the
+ratified config, scores and applies the governor proxy, and `/acq/intel` owns the verdict-rank
+ORDER BY, so it is not plumbing. Its edge twin `functions/api/warehouse/acquisition/score.ts` is
+gated, and both halves of one score contract must classify the same way. Every `api.ts` commit
+now needs a trailer (a pure-routing edit may use the `Refute-Skip: route-only` escape hatch below).
+
+_Removed 2026-11-09:_ `server/warehouse/debt-api.ts` (refute run `wf_c135181a-31a`; architect
+sign-off: "Gabriel (architect) approved 2026-11-09"). It compares LTV against
+`RATIFIED_GOVERNORS.ltvCeiling` to return `governor-block`, owns the write-boundary Zod bounds
+(`BoundedLoanForSnapshotWrite`: `ltv` 0..1.5, non-negative balance) and the rate/LTV collision
+suppression. That is governor logic, not plumbing, by the same criterion that removed `api.ts`.
 
 _Caveat on `actions.ts`:_ it dispatches recompute (`scoreProperties`, `detectAnomalies`) but
 contains no financial math of its own. It qualifies as delivery-only under the current definition;
