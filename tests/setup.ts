@@ -18,11 +18,10 @@ if (process.env.CONFIDENTIAL_TERMS_PATH === undefined) {
 }
 
 // ---- Repo-data write isolation ---------------------------------------------------------------
-// The tracked files under data/ are real repo content, and data/snapshots/portfolio.json is
-// auto-committed and auto-pushed to origin/main by the ora-lease-snapshot-refresh /
-// ora-cc-snapshot-refresh scheduled tasks. Anything a test run leaves in the working tree there is
-// therefore a contamination path into an unattended commit, plus a false positive for
-// dirty-tree-triage and the shared-checkout single-writer discipline.
+// The data files under data/ are the live machine's REAL firm data (local-only and gitignored since
+// 2026-11-10: real data is never tracked; CI and fresh clones run on the synthetic stand-ins seeded
+// from fixtures/synthetic/). A test that wrote into them would silently corrupt live data the app and
+// the scheduled refresh tasks read, with no git history to restore it from.
 //
 // No test writes them today (verified 2026-08-24: full suite in an isolated worktree, with the real
 // .env and data/overlay.json present, left `git status --short` empty). This is the guard that keeps

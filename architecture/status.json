@@ -1081,5 +1081,15 @@
     "review_needed": false,
     "detail": "Branch fix/wave1-a1-screen-inputs, worktree .claude/worktrees/wave1-a1, base main (rebased after #560 merged as 2cfb3845). architect (Gabriel) approved tri-state isPortfolio 2026-11-09 (Gabriel selected 'Tri-state, cap at T2 (Recommended)' in the orchestrator's question in chat, 2026-11-09): ARCHITECT-OWNED src/contracts/acquisition.ts isPortfolio z.boolean().nullable().default(null), the fix for refute wf_6e927240-7cc MEDIUM (unknown portfolio status KILLed on the single-asset cap). server/index.ts and src/analytics/engine.ts not touched. Governor values unchanged. Commits need a refute-financial-change Workflow wf_ id (orchestrator re-runs over the branch).",
     "last_updated": "2026-11-09T13:17:09Z"
+  },
+  "decouple-real-data-2026-11-10": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-directed 2026-11-10",
+    "phase": "Stop tracking real firm data (prerequisite for a separate history purge): untrack the real-data manifest paths, commit synthetic stand-ins under fixtures/synthetic/, seed them via postinstall/globalSetup, fail closed on any tracked manifest path (pre-push scan + governance), tests derive from the data in place.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "detail": "Branch chore/decouple-real-data-2026-11-10, worktree claude-worktrees/occ-decouple. Not pushed.",
+    "review_detail": "Architect-owned edits: CLAUDE.md (section 9 bullet + quick-reference rows), package.json (postinstall + data:synthetic scripts), scripts/governance-check.ts (checkRealDataUntracked), scripts/prepush-confidential-scan.mjs (real-data path block), .gitignore and .github/workflows/ci.yml (comment only) shared-infra edits, architecture/coding-standards.md (real-data paragraph). No migration, governor constant or config/*.json change.",
+    "last_updated": "2026-11-10T21:00:00Z"
   }
 }

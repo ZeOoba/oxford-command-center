@@ -252,6 +252,7 @@ The following will cause irreversible damage or confidentiality violations:
 - **Gabriel's uncommitted files** (see the §2 off-limits rule) — treat as locked.
 - **The gate** — never bypass (`--no-verify`); never remove a check without architect approval.
 - **CORS config** (`server/index.ts`) — never relax the localhost-only rule.
+- **Real firm data is never tracked** (ruling 2026-11-10). Every path in `scripts/fixtures/real-data-manifest.json` (snapshot, seed deals/counterparties, property-financials dataset + curated inputs, AR cache/queue, building specs, calibration, cost seg, account-mapping seed, annual statements) is gitignored and local-only — the snapshot is no longer committed by anyone or anything. The committed copy is the synthetic stand-in under `fixtures/synthetic/` (regenerate with `npm run data:synthetic`); `scripts/ensure-local-data.ts` (postinstall + vitest globalSetup) seeds it only where the real file is absent, so CI runs on synthetic data. Never `git add -f` a manifest path (the pre-push scan and `npm run governance` fail closed); write tests against the data in place, never hardcoded real figures or names. On the live checkout, copy the manifest files aside before pulling a change that untracks them (git deletes untracked-by-commit files on pull), then copy them back.
 
 ---
 
@@ -284,7 +285,8 @@ The governance gate (`scripts/governance-check.ts`) also scans for duplicate rou
 | Warehouse path env | `WAREHOUSE_DB` |
 | Overlay (write surface) | `data/overlay.json` (gitignored) |
 | Property master seed | `server/warehouse/property-master.ts` |
-| Account mapping seed | `docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json` |
+| Account mapping seed | `docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json` (local-only; synthetic in `fixtures/synthetic/`) |
+| Real-data manifest (never tracked) | `scripts/fixtures/real-data-manifest.json`; synthetic stand-ins `fixtures/synthetic/` |
 | Architecture lock files | `architecture/` |
 | Worktree registry | `architecture/ownership.json` |
 | Agent status bus | `architecture/status.json` |
