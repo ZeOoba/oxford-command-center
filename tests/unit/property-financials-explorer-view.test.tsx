@@ -18,6 +18,7 @@ import { PF_KEYS } from '../../src/modules/property-financials/hooks';
 import { buildExplorer, propertyCards } from '../../src/modules/property-financials/explorer-model';
 import type { PfDatasetResponse } from '../../src/modules/property-financials/types';
 import { loadDataset } from './property-financials-helpers';
+import { pfGolden } from './golden-helpers';
 
 const D = loadDataset();
 
@@ -74,7 +75,12 @@ describe('card grid', () => {
     const pressed = [...cards].filter((c) => c.getAttribute('aria-pressed') === 'true');
     expect(pressed.map((c) => c.getAttribute('data-entity'))).toEqual(['1900 Broadway']);
     // Figures come from the dataset (synthetic in CI, real where present: ruling 2026-11-10).
-    const fy25 = (id: (typeof PF_ENTITY_IDS)[number]) => usd(D.history[id].yr['2025']!.noi);
+    // Each card figure is also held to the ratified value lock, so the check is not circular.
+    const fy25 = (id: (typeof PF_ENTITY_IDS)[number]) => {
+      const noi = D.history[id].yr['2025']!.noi;
+      expect(Math.round(noi), `${id} FY2025 value lock`).toBe(pfGolden().noi[id]!.FY2025);
+      return usd(noi);
+    };
     expect(card('1100 Rarig').textContent).toContain(fy25('1100 Rarig'));
     expect(card('1100 Rarig').textContent).toContain('NOI 2025');
     for (const id of ['9050 Red Branch', 'FVC', '55 New Plant (EGFLLC)', '1851 South Club Solar'] as const) expect(card(id).textContent).toContain(fy25(id));
@@ -150,6 +156,8 @@ describe('rules on the page', () => {
     const rows = (D.leases.find((l) => l.property === '3034 Westerville') as unknown as { rent_schedule_monthly: Array<[string, string | null, number]> }).rent_schedule_monthly;
     const cur = rows.find((r) => r[0] === '2026-04-01')![2];
     const nxt = rows.find((r) => r[0] === '2027-04-01')![2];
+    expect(cur).toBeCloseTo(pfGolden().locks.westervilleRent.current!, 2); // value locks
+    expect(nxt).toBeCloseTo(pfGolden().locks.westervilleRent.next!, 2);
     expect(screen.getByTestId('pf-lease-current').textContent).toBe(`Current rent ${usd(cur * 12, 'f')} a year, $${((cur * 12) / 18_360).toFixed(2)} per SF.`);
     expect(screen.getByTestId('pf-lease-next').textContent).toContain(`Next step 2027-04-01 to ${usd(nxt, 'f')} per month`);
     expect(within(screen.getByTestId('pf-step-chart')).getByText('today')).toBeTruthy();
@@ -201,6 +209,7 @@ describe('M1: stacked opex total is signed', () => {
     const credit = y.cats['Real estate & property tax']!;
     const gross = y.opex - credit;
     expect(credit).toBeLessThan(0);
+    expect(credit).toBeCloseTo(pfGolden().locks.credit9620ReTaxS26, 2); // value lock
     expect(row.lastElementChild!.textContent).toBe(`${usd(y.opex, 'f')} (incl. ${usd(credit, 'f')} credit)`);
     const labels = [...chart.querySelectorAll('svg text')].map((t) => t.textContent);
     expect(labels).toContain(`$${Math.round(y.opex / 1000)}K`); // the bar label is whole thousands

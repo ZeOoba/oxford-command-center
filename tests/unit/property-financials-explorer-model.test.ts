@@ -31,8 +31,13 @@ import { applyLiveSf, type PfLiveSfBlock } from '@analytics/property-financials/
 import { computeLevers, describeLeverRate, LEVERS } from '@analytics/property-financials/levers';
 import { periodLabel } from '@analytics/property-financials/periods';
 import { loadDataset } from './property-financials-helpers';
+import { pfGolden } from './golden-helpers';
 
 const D = loadDataset();
+// Value locks (scripts/golden/compute-golden.ts): figures a check would otherwise read from the very
+// dataset it is checking. Gitignored real copy, committed synthetic copy in CI.
+const G = pfGolden();
+const L = G.locks;
 
 // The committed dataset is SYNTHETIC in CI (real firm data is never tracked, ruling 2026-11-10) and
 // real on a machine that has it, so dollar expectations are read from the dataset, never hardcoded.
@@ -144,8 +149,9 @@ describe('property cards', () => {
     for (const c of cards) {
       const label = latest[c.id];
       expect(c.periodLabel, c.id).toBe(label);
-      const noi = label === '2026 (9 mo)' ? ytd(c.id, '2026').noi : fy(c.id, label).noi;
-      expect(Math.round(c.noi!), c.id).toBe(Math.round(noi));
+      // against the ratified value lock, not the dataset's own history block (that would be circular)
+      const noi = label === '2026 (9 mo)' ? G.latestNoi[c.id]!.noi : G.noi[c.id]!.FY2025;
+      expect(Math.round(c.noi!), c.id).toBe(noi);
     }
   });
 
@@ -277,7 +283,7 @@ describe('buildExplorer: every property', () => {
     const c = models['1100 Rarig'].categories;
     const total = c.totals.find((r) => r.label === 'Total operating expense')!;
     const i25 = c.columns.findIndex((x) => x.key === '2025');
-    expect(total.cells[i25]!.value).toBeCloseTo(fy('1100 Rarig', '2025').opex, 2);
+    expect(total.cells[i25]!.value).toBeCloseTo(L.rarigOpex2025, 2);
     expect(c.revenue.map((r) => r.label)).toContain('Base rent');
   });
 });
@@ -307,11 +313,12 @@ describe('chart data (series slots, tooltips)', () => {
 
   it('F3: a net-credit category tooltip shows the signed value, the categoryTable change and no fake -100%', () => {
     const cases = [
-      { id: '9620 State 350' as const, col: 'S26', cat: 'Real estate & property tax' as const, value: ytd('9620 State 350', '2026').cats['Real estate & property tax']! },
-      { id: '3540 E 5th' as const, col: '2024', cat: 'Grounds / snow / lot' as const, value: fy('3540 E 5th', '2024').cats['Grounds / snow / lot']! },
+      { id: '9620 State 350' as const, col: 'S26', cat: 'Real estate & property tax' as const, value: ytd('9620 State 350', '2026').cats['Real estate & property tax']!, lock: L.credit9620ReTaxS26 },
+      { id: '3540 E 5th' as const, col: '2024', cat: 'Grounds / snow / lot' as const, value: fy('3540 E 5th', '2024').cats['Grounds / snow / lot']!, lock: L.credit3540Grounds2024 },
     ];
     for (const c of cases) {
       expect(c.value, `${c.id} ${c.cat} must be a net credit for this case`).toBeLessThan(0);
+      expect(c.value, `${c.id} ${c.cat} value lock`).toBeCloseTo(c.lock, 2);
       const gs = periodGroups(D, c.id);
       const s = opexStack(gs);
       const i = s.columns.findIndex((x) => x.key === c.col);
@@ -357,6 +364,7 @@ describe('chart data (series slots, tooltips)', () => {
     const gross = Object.values(cats).reduce((a, v) => a + Math.max(0, v ?? 0), 0);
     const credit = cats['Real estate & property tax'] ?? 0;
     expect(credit).toBeLessThan(0);
+    expect(credit).toBeCloseTo(L.credit9620ReTaxS26, 2); // value lock
     expect(gross).toBeCloseTo(gs[i]!.row.opex - credit, 2); // gross charges = signed opex + the credit
     expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / gross)} of gross charges, before the ${usd(credit, 'f')} credit`);
     // a column without a credit keeps the plain wording (gross = net there)
@@ -383,14 +391,15 @@ describe('chart data (series slots, tooltips)', () => {
 
   it('M1: net-credit columns are marked explicitly in the total text', () => {
     const cases = [
-      { id: '9620 State 350' as const, col: 'S26', row: ytd('9620 State 350', '2026') },
-      { id: '3540 E 5th' as const, col: '2024', row: fy('3540 E 5th', '2024') },
+      { id: '9620 State 350' as const, col: 'S26', row: ytd('9620 State 350', '2026'), cat: 'Real estate & property tax' as const, lock: L.credit9620ReTaxS26 },
+      { id: '3540 E 5th' as const, col: '2024', row: fy('3540 E 5th', '2024'), cat: 'Grounds / snow / lot' as const, lock: L.credit3540Grounds2024 },
     ];
     for (const c of cases) {
       const s = opexStack(periodGroups(D, c.id));
       const i = s.columns.findIndex((x) => x.key === c.col);
       const credit = Object.values(c.row.cats).reduce((a, v) => a + Math.min(0, v ?? 0), 0);
       expect(credit).toBeLessThan(0);
+      expect(c.row.cats[c.cat]!, `${c.id} ${c.cat} value lock`).toBeCloseTo(c.lock, 2);
       // compact credit wording (small credits are not abbreviated), full figures in the table
       expect(s.stack!.creditNote[i]).toMatch(/^incl\. -\$[\d.,]+K? credit$/);
       expect(s.stack!.text[i]).toBe(`Total ${usd(c.row.opex, 'k')} (${s.stack!.creditNote[i]})`);
@@ -432,6 +441,9 @@ describe('rent schedule normalization (lease panel)', () => {
     const rows = schedule(D.leases.find((l) => l.property === '3034 Westerville')!);
     const cur = rows.find((r) => r[0] === '2026-04-01')![2];
     const nxt = rows.find((r) => r[0] === '2027-04-01')![2];
+    // the two steps are value locks, so a change to the lease schedule data cannot move both sides at once
+    expect(cur).toBeCloseTo(L.westervilleRent.current!, 2);
+    expect(nxt).toBeCloseTo(L.westervilleRent.next!, 2);
     expect(m.lease!.current?.value).toBe(cur);
     expect(m.lease!.next?.from).toBe('2027-04-01');
     expect(m.lease!.next?.change.value).toBeCloseTo(nxt / cur - 1, 10);
@@ -675,12 +687,15 @@ describe('L1: recovery "+10 points" sensitivity is ONE number per entity', () =>
     expect(seen).toBe(3);
     const t9620 = explorerInsights(D, '9620 State 350', lowRules).find((i) => i.heading === 'Recovery')!.text;
     const lv9620 = levers.find((l) => LEVERS.some((d) => d.id === l.id && d.base.kind === 'recoveryPool' && d.base.entity === '9620 State 350'))!;
+    expect(lv9620.value.value!).toBeCloseTo(L.recovery9620Lever, 2); // value lock
     expect(t9620).toContain(usd(lv9620.value.value!, 'f'));
     expect(t9620).toMatch(/the Rent & NOI levers figure/);
   });
 
   it('entities without a lever label the period of their own figure', () => {
     const text = explorerInsights(D, '29000 Info Lane', lowRules).find((i) => i.heading === 'Recovery')!.text;
-    expect(text).toContain(`Each 10 points recovered is worth ${usd(D.properties['29000 Info Lane'].periods.FY2025.pool * 0.1, 'f')} a year on the 2025 pool.`);
+    const tenPoints = D.properties['29000 Info Lane'].periods.FY2025.pool * 0.1;
+    expect(tenPoints).toBeCloseTo(L.pool29000TenPoints, 2); // value lock
+    expect(text).toContain(`Each 10 points recovered is worth ${usd(tenPoints, 'f')} a year on the 2025 pool.`);
   });
 });

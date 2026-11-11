@@ -10,7 +10,7 @@
 // 2. Every mechanically-derived curated impact (EXP-07 / 08 / 09 / 10) is recomputed from the dataset
 //    or computeLevers, so a mapping change cannot leave one behind; checked in the curated file AND in
 //    the committed dataset.json.
-import { isSynthetic } from './golden-helpers';
+import { isSynthetic, pfGolden } from './golden-helpers';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -133,6 +133,7 @@ describe('curated insights: mechanically-derived impacts recomputed', () => {
   it('EXP-07 after v03.2: the management-fee lever is 0.5% of TTM26 revenue across the PM properties', () => {
     const ttmRevenue = PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + (figures(id)?.TTM26?.revenue ?? 0), 0);
     expect(lever('mgmtFee')).toBeCloseTo(0.005 * ttmRevenue, 1);
+    expect(lever('mgmtFee')).toBeCloseTo(pfGolden().locks.exp07Lever, 2); // value lock
     expect(shipped('EXP-07').annual_impact_usd).toBe(Math.round(lever('mgmtFee')));
   });
 });
