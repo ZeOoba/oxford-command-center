@@ -2,10 +2,14 @@
 //
 // Shared reader for the "real firm data is never tracked" model (ruling 2026-11-10):
 // scripts/fixtures/real-data-manifest.json lists every real-data path; fixtures/synthetic/<path> holds
-// the committed synthetic stand-in. A runtime file is SYNTHETIC when its bytes equal the stand-in, or
-// equal the hash data/.synthetic-seeded.json recorded when it was seeded (so a seeded copy is still
-// recognised after the fixtures are regenerated); REAL when it differs, ABSENT when missing. Used by scripts/ensure-local-data.ts, the server boot banner, reconcile, the drift check,
-// bake-mirror and the tests' golden selection. Node built-ins only.
+// the committed synthetic stand-in. A runtime file is SYNTHETIC when its bytes equal the stand-in, or when
+// data/.synthetic-seeded.json lists it as seeded — whatever it holds now: a seeded file that a writer
+// later patched, or that the fixtures moved past, is still synthetic (refute 2026-11-11, F13; the same
+// rule as deploy-buildroot.ps1). Only moving the marker away (a deliberate restore of real files, see
+// docs/ops/2026-11-11-real-data-untrack-pull-runbook.md) makes such a path real again. REAL when it
+// differs from the stand-in and is not marker-listed, ABSENT when missing. Used by
+// scripts/ensure-local-data.ts, the server boot banner, Brain, reconcile, the drift check, bake-mirror,
+// the manifest writers and the tests' golden selection. Node built-ins only.
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -51,15 +55,13 @@ const sha = (path: string): string => createHash('sha256').update(readFileSync(p
 /** SHA-256 (hex) of a file's bytes. */
 export const fileSha = sha;
 
-/** Hashes recorded by ensure-local-data for the files it seeded. An unreadable marker throws:
- *  the caller cannot then tell seeded copies from real files. */
-function seededHashes(root: string): Record<string, string> {
+/** The paths ensure-local-data seeded (normalized). An unreadable marker throws: the caller cannot
+ *  then tell seeded copies from real files. */
+function seededPaths(root: string): Set<string> {
   const path = join(root, SEED_MARKER);
-  if (!existsSync(path)) return {};
-  const m = JSON.parse(readFileSync(path, 'utf8')) as { sha256?: Record<string, string> };
-  const out: Record<string, string> = {};
-  for (const [rel, h] of Object.entries(m.sha256 ?? {})) out[normPath(rel)] = h;
-  return out;
+  if (!existsSync(path)) return new Set();
+  const m = JSON.parse(readFileSync(path, 'utf8')) as { seeded?: string[]; sha256?: Record<string, string> };
+  return new Set([...(m.seeded ?? []), ...Object.keys(m.sha256 ?? {})].map(normPath));
 }
 
 export type FileState = 'absent' | 'synthetic' | 'real';
@@ -82,7 +84,7 @@ export function realDataStatus(root: string): PathStatus[] {
   const rels = new Set<string>(listFiles(fixtureRoot).map((p) => relative(fixtureRoot, p).replace(/\\/g, '/')));
   for (const d of m.dirs) for (const p of listFiles(join(root, d))) rels.add(relative(root, p).replace(/\\/g, '/'));
   for (const f of m.files) rels.add(f);
-  const seeded = seededHashes(root);
+  const seeded = seededPaths(root);
   const out: PathStatus[] = [];
   for (const rel of [...rels].sort()) {
     const target = join(root, rel);
@@ -90,8 +92,7 @@ export function realDataStatus(root: string): PathStatus[] {
     const dir = m.dirs.find((d) => normPath(rel).startsWith(normPath(d))) ?? null;
     let state: FileState = 'absent';
     if (existsSync(target)) {
-      const h = sha(target);
-      state = (existsSync(fixture) && h === sha(fixture)) || seeded[normPath(rel)] === h ? 'synthetic' : 'real';
+      state = seeded.has(normPath(rel)) || (existsSync(fixture) && sha(target) === sha(fixture)) ? 'synthetic' : 'real';
     }
     out.push({ rel, state, dir, optional: (m.optional ?? []).some((o) => normPath(o) === normPath(rel)) });
   }

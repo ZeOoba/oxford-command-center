@@ -90,6 +90,7 @@ import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { SNAPSHOT_PATH } from '../server/config';
 import type { LeaseLite } from '../server/ar/match-tenant';
 import type { TenantArrears } from '../src/contracts/index';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 const INBOX = process.env.AR_INBOX ?? join(process.cwd(), 'data', 'ar', 'inbox');
 const AR_ROOT = dirname(INBOX);
@@ -469,6 +470,9 @@ function quarantine(pdf: string, reason: string): void {
 }
 
 async function main(): Promise<void> {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('ar-import-headless');
   const nowIso = new Date().toISOString();
   console.log(`→ Headless AR import · inbox=${INBOX} · ${nowIso}`);
 

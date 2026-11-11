@@ -8,6 +8,7 @@ import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } f
 import { withRuntimeFlags } from '../server/reconcile-runtime';
 import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, requireLiveM365Source, type DriftLeaseView } from './lease-snapshot-drift-check';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 loadEnvFile();
 
@@ -25,6 +26,9 @@ loadEnvFile();
 // Exit codes now match lease-snapshot-drift-check.ts's convention: 0 = clean, 1 = refused
 // (portfolio.json unchanged), 2 = wrote successfully but found drift worth a look.
 async function main() {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('extract-workbook');
   const force = process.argv.includes('--force');
   const previousResult = loadPrevious();
   if (previousResult.corrupt) {

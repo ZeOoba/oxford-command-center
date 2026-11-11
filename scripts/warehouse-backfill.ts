@@ -9,6 +9,7 @@ import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
 import { seedLeaseTerms } from '../server/warehouse/lease-terms';
 import { noiMatrix } from '../server/warehouse/queries';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 loadEnvFile();
 
@@ -19,6 +20,9 @@ const RAW_DIR = join(process.cwd(), 'data', 'warehouse', 'raw');
 const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-12-pfi-account-mapping-seed.json');
 
 async function main(): Promise<void> {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('warehouse-backfill');
   const db = openWarehouse(DB_PATH);
   seedPropertyMaster(db);
   const leaseTerms = seedLeaseTerms(db);

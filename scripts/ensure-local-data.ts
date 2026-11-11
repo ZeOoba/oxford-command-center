@@ -97,8 +97,8 @@ export function ensureLocalData(root = ROOT, log: (line: string) => void = (l) =
   } catch {
     prior = [];
   }
-  // The seeded bytes' hashes let readers still recognise a seeded copy after the fixtures are
-  // regenerated (its bytes then no longer equal the new stand-in).
+  // Readers treat every path listed here as synthetic whatever it later holds (a fixture regen or an
+  // in-place write cannot turn it real). The seeded bytes' hashes are kept as an audit record.
   const sha256 = { ...priorSha };
   for (const rel of result.seeded) sha256[rel] = fileSha(join(root, rel));
   mkdirSync(dirname(markerPath), { recursive: true });

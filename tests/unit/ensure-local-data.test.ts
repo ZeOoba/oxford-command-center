@@ -6,7 +6,7 @@
 // with an explicit opt-in, never overwriting, never mixing synthetic files in beside real ones, and
 // failing closed when the manifest and the fixture tree drift apart.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ensureLocalData, isManifestPath } from '../../scripts/ensure-local-data';
@@ -127,19 +127,30 @@ describe('ensureLocalData', () => {
     expect(flags.length).toBe(3);
     expect(flags.every((f) => f.severity === 'error')).toBe(true);
     expect(() => refuseIfSynthetic('bake-mirror', root, DEV)).toThrow(/REFUSING to run on synthetic stand-in data/);
-    // a real file (different bytes) is not reported
-    write('data/snapshots/portfolio.json', '{"real":true}\n');
-    expect(syntheticDataFlags(root, DEV).map((f) => f.field)).not.toContain('data/snapshots/portfolio.json');
+    // a writer patching a seeded file in place does not turn it real: the marker still lists it (F13)
+    write('data/snapshots/portfolio.json', '{"synthetic":true,"patched":1}\n');
+    expect(syntheticDataFlags(root, DEV).map((f) => f.field)).toContain('data/snapshots/portfolio.json');
+    expect(() => refuseIfSynthetic('ar-import-headless', root, DEV)).toThrow(/REFUSING/);
   });
 
-  it('a seeded copy is still synthetic after the fixtures are regenerated (seed-marker hashes)', () => {
+  it('only a deliberate restore (real files in, the seed marker moved away) makes a seeded path real', () => {
+    ensureLocalData(root, quiet, CI);
+    write('data/snapshots/portfolio.json', '{"real":true}\n');
+    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('synthetic');
+    renameSync(join(root, 'data/.synthetic-seeded.json'), join(root, 'data/.synthetic-seeded.json.restored'));
+    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('real');
+    // files still byte-identical to their stand-ins stay synthetic by content
+    expect(realDataStatus(root).find((s) => s.rel === 'data/calibration/observations.json')?.state).toBe('synthetic');
+  });
+
+  it('a seeded copy is still synthetic after the fixtures are regenerated (seed marker)', () => {
     ensureLocalData(root, quiet, CI);
     write('fixtures/synthetic/data/snapshots/portfolio.json', '{"synthetic":"regenerated"}\n');
     expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('synthetic');
     expect(() => refuseIfSynthetic('bake-mirror', root, DEV)).toThrow(/data\/snapshots\/portfolio\.json/);
-    // real bytes copied over the seeded file are real again
+    // ... and so are bytes later copied over it, until the marker is moved away (see the restore test)
     write('data/snapshots/portfolio.json', '{"real":true}\n');
-    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('real');
+    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('synthetic');
   });
 
   it('fails closed when the status cannot be read: an unreadable seed marker refuses outside CI', () => {
