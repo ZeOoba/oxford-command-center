@@ -13,19 +13,19 @@
       "pis": "2023-10-05 (closing; register shows ~2023-10-06)",
       "fee": null,
       "alloc": {
-        "5yr": 93805.11,
-        "7yr": 1278.17,
-        "15yr": 82320.4,
-        "39yr": 852059.42,
+        "5yr": 148798,
+        "7yr": 10355,
+        "15yr": 463814,
+        "39yr": 3986286,
         "9yr_ads": 0
       },
-      "total": 1029463.1,
+      "total": 4609253,
       "source_file": "Business/1100 Rarig/Cost Segregation Final Report -- 1100 Rarig Ave 08.27.2024.pdf (60 pp)",
       "other_sources": [
         "Synthetic other_sources 001.",
         "Synthetic other_sources 002."
       ],
-      "alloc_sum": 1029463.1,
+      "alloc_sum": 4609253,
       "alloc_ties": true
     },
     "CS-BWY": {
@@ -36,21 +36,21 @@
       "as_of": "2024-05-21",
       "method": "Cost segregation (acquisition; retroactive study on 2015 PIS)",
       "pis": "2015-09-01",
-      "fee": 5671,
+      "fee": 18232,
       "alloc": {
-        "5yr": 332575,
+        "5yr": 268929,
         "7yr": 0,
-        "15yr": 521932,
-        "39yr": 2834122,
+        "15yr": 115357,
+        "39yr": 2014976,
         "9yr_ads": 0
       },
-      "total": 3688629,
+      "total": 2399262,
       "source_file": "Business/1900 North Broadway/Cost Segregation Report 06.2024 - 1900 N Broadway.pdf (78 pp) + .xlsx FinalReportDataDetail",
       "other_sources": [
         "Synthetic other_sources 003.",
         "Synthetic other_sources 004."
       ],
-      "alloc_sum": 3688629,
+      "alloc_sum": 2399262,
       "alloc_ties": true
     },
     "CS-RDB": {
@@ -63,18 +63,18 @@
       "pis": "2015-09-01",
       "fee": null,
       "alloc": {
-        "5yr": 602275,
-        "7yr": 41323,
-        "15yr": 635626,
-        "39yr": 7038053,
+        "5yr": 675756,
+        "7yr": 20351,
+        "15yr": 72102,
+        "39yr": 1166708,
         "9yr_ads": 0
       },
-      "total": 8317277,
+      "total": 1934917,
       "source_file": "Business/9050 Red Branch Rd/Cost Segregation Report 06.2024 - 9050 Red Branch Road.pdf (86 pp) + .xlsx FinalReportDataDetail",
       "other_sources": [
         "Synthetic other_sources 005."
       ],
-      "alloc_sum": 8317277,
+      "alloc_sum": 1934917,
       "alloc_ties": true
     },
     "CS-NWD": {
@@ -85,21 +85,21 @@
       "as_of": "2024-12-03",
       "method": "Cost segregation (acquisition)",
       "pis": "2024-10-25",
-      "fee": 3765,
+      "fee": 19314,
       "alloc": {
-        "5yr": 115215,
+        "5yr": 358041,
         "7yr": 0,
-        "15yr": 310479,
-        "39yr": 1634023,
-        "9yr_ads": 1701
+        "15yr": 66305,
+        "39yr": 1754682,
+        "9yr_ads": 125549
       },
-      "total": 2061418,
+      "total": 2304577,
       "source_file": "Business/2203-2207 Northwood/Cost Seg Final Report (scanned, 129 pp; OCR pp.1-93)",
       "other_sources": [
         "Synthetic other_sources 006."
       ],
       "ocr": true,
-      "alloc_sum": 2061418,
+      "alloc_sum": 2304577,
       "alloc_ties": true
     },
     "CS-LIV": {
@@ -110,20 +110,20 @@
       "as_of": "2025-07-08",
       "method": "Cost segregation (acquisition)",
       "pis": "2025-04-30",
-      "fee": 3105,
+      "fee": 5635,
       "alloc": {
-        "5yr": 36854,
+        "5yr": 222935,
         "7yr": 0,
-        "15yr": 111255,
-        "39yr": 403384,
+        "15yr": 138075,
+        "39yr": 2698024,
         "9yr_ads": 0
       },
-      "total": 551493,
+      "total": 3059034,
       "source_file": "Business/3883 Livingston, LLC/Cost Seg Final Report 3875-3883 E Livingston Avenue.pdf (79 pp) + Excel detail",
       "other_sources": [
         "Synthetic other_sources 007."
       ],
-      "alloc_sum": 551493,
+      "alloc_sum": 3059034,
       "alloc_ties": true
     },
     "CS-FIS": {
@@ -134,20 +134,20 @@
       "as_of": "2026-03-17",
       "method": "Cost segregation (acquisition; building cost only)",
       "pis": "2026-01-01 (SYN017) vs ~2026-01-29 (tax register)",
-      "fee": 3557,
+      "fee": 24505,
       "alloc": {
-        "5yr": 67352.3,
+        "5yr": 711211,
         "7yr": 0,
-        "15yr": 110226.28,
-        "39yr": 761480.06,
+        "15yr": 485798,
+        "39yr": 4097580,
         "9yr_ads": 0
       },
-      "total": 939058.64,
+      "total": 5294589,
       "source_file": "Business/7658 Fishel/Tax Documents/#133278-01_Oxford Realty_Full Report.pdf (31 pp) + Cost Report.pdf",
       "other_sources": [
         "Synthetic other_sources 008."
       ],
-      "alloc_sum": 939058.64,
+      "alloc_sum": 5294589,
       "alloc_ties": true
     }
   },
@@ -286,7 +286,7 @@
       "study_id": "CS-RAR",
       "component": "acquisition",
       "attribute": "contract_price",
-      "value": 1205117,
+      "value": 55725,
       "unit": "USD",
       "as_of": "2024-08-26",
       "consultant": "Vendor 24",
@@ -305,8 +305,8 @@
       "component": "acquisition",
       "attribute": "annual_county_tax_by_parcel",
       "value": {
-        "000-000001-00": 27197.07,
-        "000-000002-00": 376.1
+        "000-000001-00": 185547,
+        "000-000002-00": 3237
       },
       "unit": "USD/yr",
       "as_of": "2024-08-26",
@@ -408,7 +408,7 @@
       "source_page": null,
       "ocr": false,
       "confidence": "STATED",
-      "note": "Roof coverings priced at $3.89/SF; roof membrane type not stated in text reviewed"
+      "note": "Roof coverings priced at $12,014.96/SF; roof membrane type not stated in text reviewed"
     },
     {
       "property": "1100 Rarig Ave",
@@ -1301,7 +1301,7 @@
       "study_id": "CS-BWY",
       "component": "hvac",
       "attribute": "modeled_cost_basis",
-      "value": 199869.78,
+      "value": 8815,
       "unit": "USD",
       "as_of": "2024-05-21",
       "consultant": "Vendor 25",
@@ -1337,7 +1337,7 @@
       "study_id": "CS-BWY",
       "component": "elevator",
       "attribute": "modeled_cost_basis",
-      "value": 45859.6,
+      "value": 135739,
       "unit": "USD",
       "as_of": "2024-05-21",
       "consultant": "Vendor 25",
@@ -1608,14 +1608,14 @@
       "component": "basis",
       "attribute": "unit_of_property_basis",
       "value": {
-        "structure": 1873272,
-        "hvac": 199870,
-        "plumbing": 164893,
-        "electrical": 385518,
-        "elevator": 45859,
-        "fire_alarm": 164710,
-        "personal_5yr": 332575,
-        "land_improvements": 521932
+        "structure": 2153814,
+        "hvac": 78362,
+        "plumbing": 79691,
+        "electrical": 62872,
+        "elevator": 98356,
+        "fire_alarm": 5745,
+        "personal_5yr": 272458,
+        "land_improvements": 355813
       },
       "unit": "USD",
       "as_of": "2024-05-21",
@@ -1634,7 +1634,7 @@
       "study_id": "CS-BWY",
       "component": "acquisition",
       "attribute": "land_allocation_per_proposal",
-      "value": 1075122,
+      "value": 105455,
       "unit": "USD",
       "as_of": "2024-05-21",
       "consultant": "Vendor 25",
@@ -1652,7 +1652,7 @@
       "study_id": "CS-BWY",
       "component": "acquisition",
       "attribute": "implied_purchase_price",
-      "value": 4763751,
+      "value": 85705,
       "unit": "USD",
       "as_of": "2024-05-21",
       "consultant": "Vendor 25",
@@ -2606,7 +2606,7 @@
       "source_page": null,
       "ocr": true,
       "confidence": "DERIVED",
-      "note": "Back-solved from $23,040 at $2.21/SF with 0.84 and 0.92 multipliers; total modeled 54,000 SF vs King/Pegnato 52,233 SF"
+      "note": "Back-solved from $78,143 at $230,850.91/SF with 0.84 and 0.92 multipliers; total modeled 54,000 SF vs King/Pegnato 52,233 SF"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -2628,7 +2628,7 @@
       "source_page": null,
       "ocr": true,
       "confidence": "DERIVED",
-      "note": "Back-solved from cost / $1,572 unit price / 0.7728 multipliers"
+      "note": "Back-solved from cost / $16,704 unit price / 0.7728 multipliers"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -2682,7 +2682,7 @@
       "source_page": 9,
       "ocr": true,
       "confidence": "STATED",
-      "note": "[SPECULATIVE] likely unsprinklered; UoP fire basis ~$6.5-9.1K per building looks alarm-only"
+      "note": "[SPECULATIVE] likely unsprinklered; UoP fire basis ~$2,062.2-9.1K per building looks alarm-only"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -2725,7 +2725,7 @@
       "study_id": "CS-NWD",
       "component": "paving",
       "attribute": "asphalt_parking_cost_modeled",
-      "value": 198705.19,
+      "value": 27589,
       "unit": "USD",
       "as_of": "2024-12-03",
       "consultant": "Vendor 27",
@@ -2852,32 +2852,32 @@
       "component": "basis",
       "attribute": "unit_of_property_basis",
       "value": {
-        "public_space_5yr": 10017,
-        "land_improvements": 310479,
+        "public_space_5yr": 34763,
+        "land_improvements": 390793,
         "A": {
-          "structure": 374568,
-          "hvac": 54816,
-          "plumbing": 78239,
-          "electrical": 42698,
-          "fire": 5296,
-          "pp5": 32572
+          "structure": 938450,
+          "hvac": 211730,
+          "plumbing": 50593,
+          "electrical": 494528,
+          "fire": 20706,
+          "pp5": 294379
         },
         "B": {
-          "structure": 376990,
-          "hvac": 54816,
-          "plumbing": 78239,
-          "electrical": 42698,
-          "fire": 4972,
-          "pp5": 28856,
-          "pp9": 1701
+          "structure": 1493336,
+          "hvac": 88054,
+          "plumbing": 69274,
+          "electrical": 246836,
+          "fire": 6190,
+          "pp5": 20334,
+          "pp9": 75628
         },
         "C": {
-          "structure": 339770,
-          "hvac": 54816,
-          "plumbing": 78239,
-          "electrical": 42698,
-          "fire": 5168,
-          "pp5": 43770
+          "structure": 839589,
+          "hvac": 49513,
+          "plumbing": 225787,
+          "electrical": 229291,
+          "fire": 69537,
+          "pp5": 169843
         }
       },
       "unit": "USD",
@@ -2897,7 +2897,7 @@
       "study_id": "CS-NWD",
       "component": "acquisition",
       "attribute": "land_allocation_per_proposal",
-      "value": 487109,
+      "value": 19053,
       "unit": "USD",
       "as_of": "2024-12-03",
       "consultant": "Vendor 27",
@@ -2915,7 +2915,7 @@
       "study_id": "CS-NWD",
       "component": "acquisition",
       "attribute": "implied_purchase_price",
-      "value": 2548527,
+      "value": 362431,
       "unit": "USD",
       "as_of": "2024-12-03",
       "consultant": "Vendor 27",
@@ -3599,7 +3599,7 @@
       "study_id": "CS-LIV",
       "component": "acquisition",
       "attribute": "proposal_estimated_basis",
-      "value": 576602,
+      "value": 3264,
       "unit": "USD",
       "as_of": "2025-07-08",
       "consultant": "Vendor 26",
@@ -3617,7 +3617,7 @@
       "study_id": "CS-LIV",
       "component": "acquisition",
       "attribute": "land_allocation_per_proposal",
-      "value": 283998,
+      "value": 2044,
       "unit": "USD",
       "as_of": "2025-07-08",
       "consultant": "Vendor 26",
@@ -3635,7 +3635,7 @@
       "study_id": "CS-LIV",
       "component": "acquisition",
       "attribute": "implied_purchase_price_from_proposal",
-      "value": 860600,
+      "value": 11369,
       "unit": "USD",
       "as_of": "2025-07-08",
       "consultant": "Vendor 26",
@@ -3887,7 +3887,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "roofing_systems",
-      "value": 43723.37,
+      "value": 6528,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3905,7 +3905,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "foundations",
-      "value": 151733.8,
+      "value": 15934,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3923,7 +3923,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "structural_framing",
-      "value": 346165.15,
+      "value": 39574,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3941,7 +3941,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "electrical",
-      "value": 97767.08,
+      "value": 102057,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3959,7 +3959,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "hvac",
-      "value": 15908.37,
+      "value": 158891,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3977,7 +3977,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "plumbing",
-      "value": 5355.82,
+      "value": 5156,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -3995,7 +3995,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "fire_protection_alarm",
-      "value": 2114.94,
+      "value": 171066,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4013,7 +4013,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "overhead_doors",
-      "value": 19006.11,
+      "value": 9524,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4031,7 +4031,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "doors_frames",
-      "value": 8612.7,
+      "value": 11464,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4049,7 +4049,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "windows",
-      "value": 2782.4,
+      "value": 101000,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4067,7 +4067,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "emergency_generator_5yr",
-      "value": 15510.39,
+      "value": 255727,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4085,7 +4085,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "dock_equipment_5yr",
-      "value": 14670.1,
+      "value": 86976,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4103,7 +4103,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "interior_overhead_security_doors_5yr",
-      "value": 3673,
+      "value": 219012,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4121,7 +4121,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "parking_lot_15yr",
-      "value": 51556.19,
+      "value": 240374,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4139,7 +4139,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "exterior_fencing_15yr",
-      "value": 15796.8,
+      "value": 43600,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4157,7 +4157,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "aggregate_base_paved_15yr",
-      "value": 22334.9,
+      "value": 55724,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4175,7 +4175,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "loading_area_concrete_15yr",
-      "value": 12959.7,
+      "value": 156279,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4193,7 +4193,7 @@
       "study_id": "CS-FIS",
       "component": "modeled_cost_allocation",
       "attribute": "canopies_awnings_5yr",
-      "value": 6143.93,
+      "value": 2132,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4211,7 +4211,7 @@
       "study_id": "CS-FIS",
       "component": "basis",
       "attribute": "building_cost_replacement_cost_total",
-      "value": 1429542.89,
+      "value": 44947,
       "unit": "USD",
       "as_of": "2026-03-17",
       "consultant": "Vendor 28",
@@ -4235,13 +4235,13 @@
     {
       "id": "D2",
       "property": "3875-3883 E Livingston",
-      "issue": "Roof is three surfaces: 3883 aluminum panel 6,078 SF + asphalt shingle 2,962 SF; 3875 EPDM 2,240 SF. PCA $18,987 and Able signed $22,063 have no stated scope/qty.",
+      "issue": "Roof is three surfaces: 3883 aluminum panel 6,078 SF + asphalt shingle 2,962 SF; 3875 EPDM 2,240 SF. PCA $1,856 and Able signed $141,099 have no stated scope/qty.",
       "action": "Get Able scope by roof section; only then create a calibration row"
     },
     {
       "id": "D3",
       "property": "3875-3883 E Livingston",
-      "issue": "Study basis $577,850 vs proposal estimate $525,531 (-$25,148, -4.4%).",
+      "issue": "Study basis $47,897 vs proposal estimate $2,379 (-$65,155, -4.4%).",
       "action": "Informational; use study figure"
     },
     {
@@ -4277,19 +4277,19 @@
     {
       "id": "D9",
       "property": "1100 Rarig",
-      "issue": "Tax register Sch. L depreciable assets $1,667,735-$1,159,578 equals the full settlement total, while the study depreciable allocation is $1,064,487 (pre-study estimate had $259,397 land). Land split in the books needs checking.",
+      "issue": "Tax register Sch. L depreciable assets $247,833-$1,725 equals the full settlement total, while the study depreciable allocation is $9,409 (pre-study estimate had $70,577 land). Land split in the books needs checking.",
       "action": "Tax/basis item for Controller/CPA; no change to PCA data"
     },
     {
       "id": "D10",
       "property": "7658 Fishel",
-      "issue": "PIS 01/01/2026 (SYN017) vs ~01/29/2026 (tax register). Lease ran to 09/30/2026 (renewal status unknown). SYN017 allocates $20.2K to an emergency generator and $19.3K to dock equipment, and $18.4K to HVAC; building notes mention no generator and only two unit heaters.",
+      "issue": "PIS 01/01/2026 (SYN017) vs ~01/29/2026 (tax register). Lease ran to 09/30/2026 (renewal status unknown). SYN017 allocates $237,714 to an emergency generator and $14,832 to dock equipment, and $163,061 to HVAC; building notes mention no generator and only two unit heaters.",
       "action": "Confirm PIS date, lease status, and whether a generator exists"
     },
     {
       "id": "D11",
       "property": "1900 N Broadway",
-      "issue": "Only source for a hydraulic 2-stop elevator (modeled basis $47,114), full basement, and wet-pipe sprinklers (55,342 SF). SYN007 PCA body is missing.",
+      "issue": "Only source for a hydraulic 2-stop elevator (modeled basis $9,507), full basement, and wet-pipe sprinklers (55,342 SF). SYN007 PCA body is missing.",
       "action": "Add elevator to asset register; get inspection certificate and maintenance contract"
     },
     {
@@ -4314,74 +4314,74 @@
   "qc": [
     {
       "check": "CS-RAR",
-      "computed": 1029463.1,
-      "expected": 1029463.1,
+      "computed": 4609253,
+      "expected": 4609253,
       "ok": true
     },
     {
       "check": "CS-BWY",
-      "computed": 3688629,
-      "expected": 3688629,
+      "computed": 2399262,
+      "expected": 2399262,
       "ok": true
     },
     {
       "check": "CS-RDB",
-      "computed": 8317277,
-      "expected": 8317277,
+      "computed": 1934917,
+      "expected": 1934917,
       "ok": true
     },
     {
       "check": "CS-NWD",
-      "computed": 2061418,
-      "expected": 2061418,
+      "computed": 2304577,
+      "expected": 2304577,
       "ok": true
     },
     {
       "check": "CS-LIV",
-      "computed": 551493,
-      "expected": 551493,
+      "computed": 3059034,
+      "expected": 3059034,
       "ok": true
     },
     {
       "check": "CS-FIS",
-      "computed": 939058.64,
-      "expected": 939058.64,
+      "computed": 5294589,
+      "expected": 5294589,
       "ok": true
     },
     {
       "check": "FIS 15yr detail",
-      "computed": 110226.28,
-      "expected": 110226.28,
+      "computed": 485798,
+      "expected": 485798,
       "ok": true
     },
     {
       "check": "FIS 5yr detail",
-      "computed": 67352.3,
-      "expected": 67352.3,
+      "computed": 711211,
+      "expected": 711211,
       "ok": true
     },
     {
       "check": "BWY UoP",
-      "computed": 3688629,
-      "expected": 3688629,
+      "computed": 2560571,
+      "expected": 2739539,
       "ok": true
     },
     {
       "check": "NWD UoP",
-      "computed": 2061418,
-      "expected": 2061418,
+      "computed": 1620093,
+      "expected": 4101386,
       "ok": true
     },
     {
       "check": "LIV 3883 roof 6,078+2,962=9,040",
-      "computed": 8020,
-      "expected": 8020,
+      "computed": 4454392,
+      "expected": 6941112,
       "ok": true
     },
     {
       "check": "LIV GBA 9,040+2,240",
-      "computed": 10008,
-      "expected": 10008,
+      "computed": 4707799,
+      "expected": 3500743,
       "ok": true
     }
   ]
