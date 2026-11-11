@@ -21,6 +21,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 interface Confirmed {
   /** PM export name, exactly as the export spells it. */
@@ -36,6 +37,9 @@ const CONFIRMED: ReadonlyArray<readonly [string, string, string]> = (
 ).confirmed.map((c) => [c.name, c.leaseId, c.why] as const);
 
 async function main(): Promise<void> {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('seed-ar-mappings');
   const cache = loadCache();
   for (const [name, leaseId, why] of CONFIRMED) {
     const key = cacheKey(name);
