@@ -101,6 +101,44 @@ foreach ($v in 'SMOKE_PLAIN','SMOKE_QUOTED','SMOKE_SINGLE','SMOKE_EQUALS','SMOKE
   Remove-Item "Env:\$v" -ErrorAction SilentlyContinue
 }
 
+Write-Host "=== Copy-RealDataIntoBuildRoot: real data in, synthetic never (ruling 2026-11-10) ==="
+
+function New-SmokeTree([string]$name) {
+  $d = Join-Path ([System.IO.Path]::GetTempPath()) ("deploy-realdata-$name-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Force -Path $d | Out-Null
+  $d
+}
+function Write-SmokeFile([string]$root, [string]$rel, [string]$text) {
+  $p = Join-Path $root ($rel -replace '/', '\')
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $p) | Out-Null
+  Set-Content -LiteralPath $p -Value $text -NoNewline -Encoding ASCII
+}
+$canon = New-SmokeTree 'canon'
+$build = New-SmokeTree 'build'
+$manifestJson = '{"files":["data/snapshots/portfolio.json"],"dirs":["data/calibration/"]}'
+Write-SmokeFile $build 'scripts/fixtures/real-data-manifest.json' $manifestJson
+Write-SmokeFile $canon 'fixtures/synthetic/data/snapshots/portfolio.json' '{"synthetic":true}'
+Write-SmokeFile $canon 'data/snapshots/portfolio.json' '{"real":true}'
+Write-SmokeFile $canon 'data/calibration/observations.json' '[1]'
+
+Assert-True ((Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build) -eq 2) 'copies every manifest file and every file under a manifest dir'
+Assert-True ((Get-Content -LiteralPath (Join-Path $build 'data\snapshots\portfolio.json') -Raw) -eq '{"real":true}') 'the build root gets the REAL bytes'
+
+Remove-Item -LiteralPath (Join-Path $canon 'data\snapshots\portfolio.json')
+Assert-Throws { Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build } 'fails closed when a manifest file is missing from the canonical checkout'
+Write-SmokeFile $canon 'data/snapshots/portfolio.json' '{"synthetic":true}'
+Assert-Throws { Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build } 'fails closed when a canonical file is byte-identical to its synthetic stand-in'
+Write-SmokeFile $canon 'data/snapshots/portfolio.json' '{"real":2}'
+Write-SmokeFile $canon 'data/.synthetic-seeded.json' '{"seeded":["data/snapshots/portfolio.json"]}'
+Assert-Throws { Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build } 'fails closed when a canonical file is listed in data/.synthetic-seeded.json'
+Remove-Item -LiteralPath (Join-Path $canon 'data\.synthetic-seeded.json')
+Write-SmokeFile $build 'data/calibration/stale-synthetic.json' '[]'
+Assert-Throws { Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build } 'fails closed on a build-root file under a manifest dir the canonical checkout lacks'
+Remove-Item -LiteralPath (Join-Path $build 'data\calibration\stale-synthetic.json')
+Write-SmokeFile $build 'data/.synthetic-seeded.json' '{"seeded":[]}'
+Assert-Throws { Copy-RealDataIntoBuildRoot -RepoRoot $canon -BuildRoot $build } 'fails closed when the build root itself was seeded'
+Remove-Item -LiteralPath $canon, $build -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host ""
 if ($failures.Count) {
   Write-Host "FAILED ($($failures.Count)):"
