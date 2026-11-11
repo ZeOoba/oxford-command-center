@@ -194,8 +194,10 @@ class Brain extends EventEmitter {
     // self-clearing on any deal-stage click. It also means the persist() gate below could not fire on
     // this path at all, so M1 and H2 are one change. `this.base` never carries rtFlags (it is the
     // pre-overlay parse result), so recomputing cannot double-add them.
-    // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.)
-    const rtFlags = checkSnapshot(merged);
+    // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.) The synthetic-data flags are
+    // re-added for the same reason: refresh() adds them, and dropping them here would clear the
+    // "running on synthetic stand-ins" error flags on the first UI write-back (refute 2026-11-11, F3).
+    const rtFlags = [...checkSnapshot(merged), ...syntheticDataFlags()];
     const adopted = this.adoptSnapshot(
       rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged,
     );

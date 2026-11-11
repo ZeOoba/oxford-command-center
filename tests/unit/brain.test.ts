@@ -31,6 +31,8 @@ const h = vi.hoisted(() => {
     /** Overlay precondition result Brain.persist sees; null => healthy (2026-09-06 refute). */
     overlayRefusal: null as { refuse: true; reason: string } | null,
     overlayPath: '/tmp/test-overlay.json',
+    /** What syntheticDataFlags() reports (refute 2026-11-11 F3: rederive must keep these). */
+    syntheticFlags: [] as unknown[],
   };
 });
 
@@ -96,6 +98,11 @@ vi.mock('../../server/reconcile-runtime', async (importOriginal) => ({
   checkSnapshot: vi.fn(() => h.reconcileFlags),
 }));
 
+vi.mock('../../server/real-data-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../server/real-data-status')>()),
+  syntheticDataFlags: vi.fn(() => h.syntheticFlags),
+}));
+
 vi.mock('../../server/sources/quickbooks', () => ({
   resolveQuickbooks: vi.fn(() => ({ quickbooks: null, preservedFrom: null })),
 }));
@@ -125,6 +132,7 @@ beforeEach(async () => {
   h.base = makeBase();
   h.dealsDegraded = null;
   h.overlayRefusal = null;
+  h.syntheticFlags = [];
   rmSync(h.snapshotPath, { force: true });
   vi.clearAllMocks();
   vi.resetModules();
@@ -311,6 +319,17 @@ describe('Brain.persist — H2/M1: reconciliation gate on the third writer', () 
     await brain.setDealStage('d1', 'Diligence' as DealStage);
 
     expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('F3: rederive keeps the synthetic-data error flags ON the served snapshot after a write-back', async () => {
+    const synthetic = { entity: 'data-source', field: 'data/snapshots/portfolio.json', issue: 'synthetic stand-in data', severity: 'error' };
+    h.syntheticFlags = [synthetic];
+    await brain.refresh();
+    expect(brain.getSnapshot()!.dataQuality).toContainEqual(synthetic);
+
+    await brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    expect(brain.getSnapshot()!.dataQuality).toContainEqual(synthetic);
   });
 
   it('M1: rederive keeps reconciliation flags ON the served snapshot', async () => {
