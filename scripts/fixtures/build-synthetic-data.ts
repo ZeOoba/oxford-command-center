@@ -15,20 +15,26 @@
 //     notionDealId uniqueness) still holds.
 //   - free text (notes, findings, task labels, deal status...) becomes "Synthetic <field> NNN.",
 //     keeping only the handful of keywords the code parses (OCR, UNVERIFIED, inferred, confirm).
-//   - every currency amount (and every "$1,234" inside kept text) gets its OWN keyed multiplier
-//     (scripts/fixtures/perturb.ts: HMAC of the amount, or of a group such as one property's P&L,
-//     with a local secret), rounded to the source's native precision. Derived figures (sums, NOI,
-//     per-SF, cap rate, DSCR, LTV, portfolio views, cash totals, curated lever impacts) are recomputed
-//     from the perturbed parts wherever the identity held in the real file. SF, counts, dates and
-//     rates are unchanged.
+//   - every currency amount (and every "$1,234" inside kept text) is a SEEDED RANDOM draw with no
+//     functional link to the real amount (scripts/fixtures/synthetic-money.ts): a public seed plus the
+//     value's structural key (its location in the synthetic output), inside a band chosen from the
+//     field's meaning and, where the record has one, its square footage. Only the real amount's sign
+//     and exact zero are read. The P&L series are drawn with structure (a per-entity, per-line level,
+//     flat base rent stepped at the real event months, gentle annual drift, the real zero pattern),
+//     not white noise. Derived figures (sums, NOI, per-SF, cap rate, DSCR, LTV, portfolio views, cash
+//     totals, curated lever impacts) are recomputed from the drawn parts wherever the identity held in
+//     the real file, and joins (loan balance vs loan row, arrears vs AR balances, cash entities vs
+//     their history, task payment vs loan, ...) are re-established by copying the canonical record's
+//     drawn value into its mirrors wherever the two were equal in the real file. SF, counts, dates
+//     and rates (including a lease schedule's escalation rate, rounded to 0.1%) are unchanged.
 //   - owned-property identities (property names, addresses, ids, property keys) are KEPT: they are
 //     already hardcoded across tracked code (server/warehouse/property-master.ts, the property-
 //     financials contract and entity registry, the workbook parser), so renaming them in the
 //     fixtures would break those joins without making anything less public.
 //
-// The secret is NOT in this file (the repo is public). It comes from SYNTH_SECRET or the gitignored
-// local file fixtures/.synthetic-secret.local (at least 32 hex characters). The earlier single scale
-// factor is burned (recoverable from history) and is no longer read.
+// No secret is involved (the HMAC perturbation and its local secret file were retired 2026-11-11):
+// the seed is public, and the output is the same whatever the real amounts are, as long as the
+// structure (records, keys, SF, signs, zeros and which identities held) is the same.
 //
 // Usage:
 //   npx tsx scripts/fixtures/build-synthetic-data.ts            # regenerate fixtures/synthetic/**
@@ -50,12 +56,22 @@ import { slug } from '../../src/contracts/common';
 import { canonicalAttribute } from '../../src/analytics/building-specs';
 import { rentStepEvents } from '../../src/analytics/property-financials/metrics';
 import { computeLevers } from '../../src/analytics/property-financials/levers';
-import { decimalsOf, makePerturber, roundTo, type Perturber } from './perturb';
+import {
+  DEFAULT_SF,
+  UNIT_COST_BANDS,
+  bandFor,
+  hasBand,
+  makeMoneyDrawer,
+  roundTo,
+  uniform,
+  unit,
+  type Band,
+  type MoneyDrawer,
+} from './synthetic-money';
 import { GOLDEN_COST, GOLDEN_PF, computeCostGolden, computePfGolden } from '../golden/compute-golden';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT_ROOT = join(ROOT, 'fixtures', 'synthetic');
-const SECRET_FILE = join(ROOT, 'fixtures', '.synthetic-secret.local');
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 type Obj = { [k: string]: Json };
@@ -88,19 +104,6 @@ function realFiles(root: string, m: Manifest): string[] {
   const out = m.files.filter((f) => existsSync(join(root, f)));
   for (const d of m.dirs) out.push(...listFiles(join(root, d)).map((p) => relative(root, p).replace(/\\/g, '/')));
   return out;
-}
-
-// ── scale ───────────────────────────────────────────────────────────────────────────────────────
-
-function loadSecret(): Buffer {
-  const raw = (process.env.SYNTH_SECRET ?? (existsSync(SECRET_FILE) ? readFileSync(SECRET_FILE, 'utf8') : '')).trim();
-  if (!/^[0-9a-f]{32,}$/i.test(raw)) {
-    throw new Error(
-      'No perturbation secret: set SYNTH_SECRET or write >= 32 hex characters to fixtures/.synthetic-secret.local ' +
-        '(gitignored). It is deliberately not committed.',
-    );
-  }
-  return Buffer.from(raw, 'hex');
 }
 
 // ── aliasing ────────────────────────────────────────────────────────────────────────────────────
@@ -332,25 +335,37 @@ class Ctx {
   private emails = new Map<string, string>();
   private phones = new Map<string, string>();
   private freeCounters = new Map<string, number>();
-  private readonly p: Perturber;
-  /** Current money group (see perturb.ts); null = keyed by the amount itself. */
-  group: string | null = null;
-  constructor(secret: Buffer) {
-    this.p = makePerturber(secret);
+  private readonly m: MoneyDrawer;
+  private textDollars = 0;
+  /** @param avoid real-amount fingerprints a draw must never equal (redrawn with a counter). */
+  constructor(avoid: ReadonlySet<string> = new Set()) {
+    this.m = makeMoneyDrawer(avoid);
   }
 
-  money(v: number, group?: string | null): number {
-    return this.p.money(v, group === undefined ? this.group : group);
+  get redraws(): number {
+    return this.m.redraws;
   }
 
-  inGroup<T>(group: string | null, fn: () => T): T {
-    const prev = this.group;
-    this.group = group;
-    try {
-      return fn();
-    } finally {
-      this.group = prev;
-    }
+  /**
+   * The synthetic stand-in for one real amount `v` at structural location `key`: a seeded draw inside
+   * the band for `field` (scaled by `sf` when the band is per-SF). Only v's sign and exact zero are
+   * read; non-finite values and zeros (including -0) pass through.
+   */
+  money(v: number, key: string, field: string, sf?: number | null): number {
+    return this.moneyIn(v, key, bandFor(field), sf);
+  }
+
+  moneyIn(v: number, key: string, band: Band, sf?: number | null): number {
+    if (!Number.isFinite(v) || v === 0) return v;
+    const scale = band.perSf ? (sf && sf > 0 ? sf : DEFAULT_SF) : 1;
+    return this.m.draw(key, Math.sign(v), band.lo * scale, band.hi * scale, band.decimals ?? 2);
+  }
+
+  /** A model value: a draw within +/- `jitter` (relative) of `center`, with the given sign. */
+  around(key: string, sign: number, center: number, jitter: number, decimals = 2): number {
+    if (sign === 0) return 0;
+    const c = Math.max(Math.abs(center), 0.01);
+    return this.m.draw(key, sign, c * (1 - jitter), c * (1 + jitter), decimals);
   }
 
   email(e: string): string {
@@ -375,15 +390,15 @@ class Ctx {
   }
 
   private dollars(s: string): string {
+    // A dollar figure inside kept text: a generic draw keyed by its running position (text order is
+    // structure), formatted as plain dollars. A K/M suffix is dropped: it would carry the real
+    // amount's order of magnitude.
     return s.replace(DOLLAR_RE, (_m, intPart: string, dec: string | undefined, suffix: string | undefined) => {
       const v = Number(intPart.replace(/,/g, '') + (dec ?? ''));
-      const scaled = this.p.money(v, null);
-      const sfx = suffix ?? '';
-      const decimals = dec ? Math.min(dec.length - 1, 2) : sfx ? 1 : 0;
-      const body = intPart.includes(',')
-        ? scaled.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-        : scaled.toFixed(decimals);
-      return `$${body}${sfx}`;
+      this.textDollars += 1;
+      const decimals = dec && !suffix ? Math.min(dec.length - 1, 2) : 0;
+      const drawn = this.moneyIn(v === 0 ? 0 : 1, `text$|${this.textDollars}`, { lo: 500, hi: 250_000, decimals });
+      return `$${drawn.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
     });
   }
 
@@ -427,6 +442,16 @@ class Ctx {
  * field can never slip through unclassified. Strings go through ctx.t() (or ctx.free() for free-text
  * keys); non-identifier object keys go through ctx.t() too.
  */
+/** The band name for a money key: a generic map key ("balances.*") uses its own last path segment
+ *  when that names a band (a cost-seg class "5yr"), else its singular container name. */
+function bandField(key: string, path: string): string {
+  if (!key.endsWith('.*')) return key;
+  const last = path.slice(path.lastIndexOf('/') + 1);
+  if (hasBand(last)) return last;
+  const base = key.slice(0, -2);
+  return base === 'balances' ? 'balance' : base === 'value' ? 'usd_value' : base;
+}
+
 function walk(
   ctx: Ctx,
   v: Json,
@@ -434,20 +459,25 @@ function walk(
   money: ReadonlySet<string>,
   keep: ReadonlySet<string>,
   freeKeys: ReadonlySet<string> = new Set(),
+  path = '',
+  sf: number | null = null,
 ): Json {
-  if (Array.isArray(v)) return v.map((x) => walk(ctx, x, key, money, keep, freeKeys));
+  if (Array.isArray(v)) return v.map((x, i) => walk(ctx, x, key, money, keep, freeKeys, `${path}[${i}]`, sf));
   if (v && typeof v === 'object') {
+    const own = num((v as Obj)['sf']);
+    const sfHere = own !== null && own > 0 ? own : sf;
     const out: Obj = {};
     for (const [k, x] of Object.entries(v)) {
       const generic = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k);
       // Identifier keys go through t() too: a schema key never carries a registered name, but a
       // hand-written key can (e.g. a reviewer's first name in a JSON key).
-      out[ctx.t(k) ?? k] = walk(ctx, x, generic ? `${key}.*` : k, money, keep, freeKeys);
+      const ok = ctx.t(k) ?? k;
+      out[ok] = walk(ctx, x, generic ? `${key}.*` : k, money, keep, freeKeys, `${path}/${ok}`, sfHere);
     }
     return out;
   }
   if (typeof v === 'number') {
-    if (money.has(key)) return ctx.money(v);
+    if (money.has(key)) return ctx.money(v, path, bandField(key, path), sf);
     if (keep.has(key)) return v;
     throw new Error(`unclassified numeric key "${key}" — add it to the money or keep set`);
   }
@@ -479,9 +509,11 @@ interface Ids {
   lease: Map<string, string>;
   deal: Map<string, string>;
   loan: Map<string, string>;
+  /** dealComps: real key -> synthetic key, recorded while transforming (identity pairing). */
+  comp: Map<string, string>;
 }
 
-const newIds = (): Ids => ({ lease: new Map(), deal: new Map(), loan: new Map() });
+const newIds = (): Ids => ({ lease: new Map(), deal: new Map(), loan: new Map(), comp: new Map() });
 
 /** Lease id = `${slug(propertyKey)}-${slug(unit)}-${slug(company ?? tenant)}` (server/workbook/parse.ts):
  *  swap the tenant suffix for the fake tenant's slug, keep the property/unit prefix. */
@@ -551,7 +583,8 @@ function transformDeal(ctx: Ctx, ids: Ids, d: Obj): Obj {
     else if (k === 'lender') out[k] = ctx.a.alias('lender', str(v));
     else if (k === 'status') out[k] = ctx.free('deal status', v);
     else if (k === 'nextAction') out[k] = ctx.free('next action', v);
-    else if (k === 'estPrice') out[k] = typeof v === 'number' ? ctx.money(v) : v;
+    // keyed by the synthetic deal id: the same deal in the seed list and the snapshot draws the same price
+    else if (k === 'estPrice') out[k] = typeof v === 'number' ? ctx.money(v, `deal/${id}/estPrice`, 'estPrice', num(d['sf'])) : v;
     else if (typeof v === 'string' && !DEAL_KEPT_STRINGS.has(k)) out[k] = ctx.t(v);
     // sf, buildings, capRate, irr, equityMultiple, holdYrs, notionDealId, confidential, stage,
     // targetCloseDate, estimatedFields, market: kept (shape, ratios and opaque ids).
@@ -656,7 +689,7 @@ function isPropertyLike(ctx: Ctx, s: string): boolean {
  * annual rent and rent per SF, cash deltas, totals and shares, history totals, AR totals, QuickBooks
  * NOI and expense, comp price per SF, and the workbook totals the reconcile check ties to.
  */
-function fixSnapshotIdentities(real: Obj, syn: Obj): void {
+function fixSnapshotIdentities(real: Obj, syn: Obj, ids: Ids): void {
   /** Set syn[f] = calc(syn) when real[f] == calc(real) (relative 1e-6 or abs tol). Ratio fields keep
    *  full precision; amounts are rounded to the real field's native precision. */
   const derive = (r: Obj, o: Obj, f: string, calc: (x: Obj) => number | null, ratio = false, tol = 0): void => {
@@ -666,12 +699,52 @@ function fixSnapshotIdentities(real: Obj, syn: Obj): void {
     if (Math.abs(rv - rc) > Math.max(tol, 1e-6 * Math.max(1, Math.abs(rv)))) return;
     const sc = calc(o);
     if (sc === null || !Number.isFinite(sc)) return;
-    o[f] = ratio ? sc : roundTo(sc, decimalsOf(rv) > 2 ? 2 : decimalsOf(rv));
+    o[f] = ratio ? sc : roundTo(sc, 2);
   };
   const n = (x: Obj, k: string): number | null => num(x[k]);
   const div = (a: number | null, b: number | null): number | null => (a === null || b === null || b === 0 ? null : a / b);
   const pairs = (k: string): Array<[Obj, Obj]> =>
     (((real[k] as Obj[] | undefined) ?? []).map((r, i) => [r, ((syn[k] as Obj[] | undefined) ?? [])[i]!] as [Obj, Obj])).filter(([, o]) => !!o);
+
+  // Leases first: a property's gross income is the sum of its leases' annual rent.
+  for (const [r, o] of pairs('leases')) {
+    derive(r, o, 'annualRent', (x) => (n(x, 'monthlyRent') ?? NaN) * 12);
+    derive(r, o, 'rentPerSf', (x) => div(n(x, 'annualRent'), n(x, 'sf')), true);
+  }
+  for (const [r, o] of pairs('loans')) derive(r, o, 'absBalance', (x) => Math.abs(n(x, 'currentBalance') ?? NaN));
+  // Joins: property <- its leases (gross income) and its borrower loans (balance, debt service),
+  // wherever the real property figure was exactly that sum.
+  const leasePairs = pairs('leases');
+  const loanPairs = pairs('loans').filter(([r]) => r['direction'] === 'borrower');
+  for (const [r, o] of pairs('properties')) {
+    const ls = leasePairs.filter(([l]) => l['propertyId'] === r['id']);
+    const sumL = (side: 0 | 1, f: string): number => ls.reduce((a, p) => a + (n(p[side], f) ?? 0), 0);
+    if (ls.length && held(n(r, 'grossIncome'), sumL(0, 'annualRent'), 1)) o['grossIncome'] = roundTo(sumL(1, 'annualRent'), 2);
+    const lo = loanPairs.filter(([l]) => l['collateralProperty'] === r['name'] || l['collateralProperty'] === r['id']);
+    const sumLo = (side: 0 | 1, f: string, k = 1): number => lo.reduce((a, p) => a + (n(p[side], f) ?? 0) * k, 0);
+    if (lo.length && held(n(r, 'loanBalance'), sumLo(0, 'currentBalance'), 1)) o['loanBalance'] = roundTo(sumLo(1, 'currentBalance'), 2);
+    if (lo.length && held(n(r, 'debtService'), sumLo(0, 'monthlyPmt', 12), 1)) o['debtService'] = roundTo(sumLo(1, 'monthlyPmt', 12), 2);
+  }
+  // A task that carries a loan's payment mirrors that loan's drawn payment.
+  const allLoans = pairs('loans');
+  for (const [r, o] of pairs('tasks')) {
+    const rp = n(r, 'monthlyPmt');
+    if (rp === null || rp === 0) continue;
+    const hit = allLoans.find(([l]) => n(l, 'monthlyPmt') === rp);
+    if (hit && n(hit[1], 'monthlyPmt') !== null) o['monthlyPmt'] = n(hit[1], 'monthlyPmt');
+  }
+  // tenantArrears[leaseId] mirrors that lease's AR balance buckets.
+  const rTa = (real['tenantArrears'] as Obj | undefined) ?? {};
+  const sTa = (syn['tenantArrears'] as Obj | undefined) ?? {};
+  const arPairs = pairs('arBalances');
+  for (const [lid, rv] of Object.entries(rTa)) {
+    const so = sTa[ids.lease.get(lid) ?? ''] as Obj | undefined;
+    const hit = arPairs.find(([b]) => b['leaseId'] === lid);
+    if (!so || !hit || !rv || typeof rv !== 'object') continue;
+    for (const k of ['d30', 'd60', 'd90', 'd90plus']) {
+      if (num((rv as Obj)[k]) !== null && num((rv as Obj)[k]) === n(hit[0], k)) so[k] = hit[1][k] ?? null;
+    }
+  }
 
   for (const [r, o] of pairs('properties')) {
     derive(r, o, 'oxfordValue', (x) => (n(x, 'estValue100') ?? NaN) * (n(x, 'oxfordOwnPct') ?? NaN));
@@ -686,20 +759,39 @@ function fixSnapshotIdentities(real: Obj, syn: Obj): void {
     derive(r, o, 'rentPerSf', (x) => div(n(x, 'grossIncome'), n(x, 'sf')), true);
     derive(r, o, 'cashOnCash', (x) => div(n(x, 'netCashFlow'), n(x, 'equityInvested')), true);
   }
-  for (const [r, o] of pairs('leases')) {
-    derive(r, o, 'annualRent', (x) => (n(x, 'monthlyRent') ?? NaN) * 12);
-    derive(r, o, 'rentPerSf', (x) => div(n(x, 'annualRent'), n(x, 'sf')), true);
-  }
-  for (const [r, o] of pairs('loans')) derive(r, o, 'absBalance', (x) => Math.abs(n(x, 'currentBalance') ?? NaN));
 
   const rc = real['cash'] as Obj | undefined;
   const sc = syn['cash'] as Obj | undefined;
   if (rc && sc) {
     const rE = (rc['entities'] as Obj[] | undefined) ?? [];
     const sE = (sc['entities'] as Obj[] | undefined) ?? [];
+    const rHist = (rc['history'] as Obj[] | undefined) ?? [];
+    const sHist = (sc['history'] as Obj[] | undefined) ?? [];
     rE.forEach((r, i) => {
       const o = sE[i];
       if (!o) return;
+      // An entity's balances mirror its own drawn history series: current / prior / 12-months-ago /
+      // extremes copy the history point they equalled in the real file; avg3 and the all-time
+      // extremes are re-derived from the series where that held.
+      const rs = rHist.map((h) => num(((h['balances'] as Obj | undefined) ?? {})[String(r['entity'])]));
+      const ss = sHist.map((h) => num(((h['balances'] as Obj | undefined) ?? {})[String(o['entity'])]));
+      for (const f of ['currentBalance', 'priorBalance', 'bal12moAgo', 'maxAllTime', 'minAllTime']) {
+        const rv = n(r, f);
+        if (rv === null) continue;
+        for (let j = rs.length - 1; j >= 0; j--) {
+          if (rs[j] !== null && held(rs[j]!, rv, 0.006) && ss[j] !== null) {
+            o[f] = ss[j]!;
+            break;
+          }
+        }
+      }
+      const present = (xs: Array<number | null>): number[] => xs.filter((x): x is number => x !== null);
+      const last3 = (xs: Array<number | null>): number => present(xs).slice(-3).reduce((a, x) => a + x, 0) / Math.max(1, present(xs).slice(-3).length);
+      if (present(rs).length && present(ss).length) {
+        if (held(n(r, 'avg3'), last3(rs), 0.01)) o['avg3'] = roundTo(last3(ss), 2);
+        if (held(n(r, 'maxAllTime'), Math.max(...present(rs)), 0.006)) o['maxAllTime'] = Math.max(...present(ss));
+        if (held(n(r, 'minAllTime'), Math.min(...present(rs)), 0.006)) o['minAllTime'] = Math.min(...present(ss));
+      }
       derive(r, o, 'deltaDollar', (x) => (n(x, 'currentBalance') ?? NaN) - (n(x, 'priorBalance') ?? NaN), false, 0.006);
       derive(r, o, 'deltaPct', (x) => div(n(x, 'deltaDollar'), n(x, 'priorBalance')), true);
       derive(r, o, 'growth12Dollar', (x) => (n(x, 'currentBalance') ?? NaN) - (n(x, 'bal12moAgo') ?? NaN), false, 0.006);
@@ -741,15 +833,30 @@ function fixSnapshotIdentities(real: Obj, syn: Obj): void {
       if (!o) return;
       const gl = (x: Obj): number => ((x['glExpense'] as Obj[] | undefined) ?? []).reduce((a, g) => a + (n(g, 'amount') ?? 0), 0);
       derive(r, o, 'annualExpense', gl, false, 0.006);
+      // the monthly rows mirror the annual figures they equalled, then keep noi = income - expense
+      const rm = (r['monthly'] as Obj[] | undefined) ?? [];
+      const sm = (o['monthly'] as Obj[] | undefined) ?? [];
+      const sumM = (xs: Obj[], f: string): number => xs.reduce((a, x) => a + (n(x, f) ?? 0), 0);
+      rm.forEach((rr, j) => {
+        const oo = sm[j];
+        if (!oo) return;
+        if (held(n(rr, 'expense'), n(r, 'annualExpense'), 0.006)) oo['expense'] = o['annualExpense'] ?? null;
+      });
+      derive(r, o, 'annualIncome', (x) => sumM((x['monthly'] as Obj[] | undefined) ?? [], 'income'), false, 0.006);
+      rm.forEach((rr, j) => {
+        const oo = sm[j];
+        if (oo) derive(rr, oo, 'noi', (x) => (n(x, 'income') ?? NaN) - (n(x, 'expense') ?? NaN), false, 0.02);
+      });
       derive(r, o, 'annualNoi', (x) => (n(x, 'annualIncome') ?? NaN) - (n(x, 'annualExpense') ?? NaN), false, 0.006);
     });
   }
+  // dealComps are paired by identity (real key -> synthetic key, recorded while transforming).
   const rdc = (real['dealComps'] as Obj | undefined) ?? {};
   const sdc = (syn['dealComps'] as Obj | undefined) ?? {};
-  const rKeys = Object.keys(rdc);
-  Object.keys(sdc).forEach((k, i) => {
-    const r = rdc[rKeys[i]!] as Obj | undefined;
-    const o = sdc[k] as Obj | undefined;
+  Object.keys(rdc).forEach((rk) => {
+    const r = rdc[rk] as Obj | undefined;
+    const sk = ids.comp.get(rk);
+    const o = sk === undefined ? undefined : (sdc[sk] as Obj | undefined);
     if (!r || !o) return;
     for (const kind of ['saleComps', 'rentComps']) {
       ((r[kind] as Obj[] | undefined) ?? []).forEach((rr, j) => {
@@ -771,14 +878,16 @@ function fixSnapshotIdentities(real: Obj, syn: Obj): void {
 function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   const arr = (k: string): Obj[] => ((s[k] as Obj[] | undefined) ?? []);
   const out: Obj = { ...s };
-  out['properties'] = arr('properties').map((p) => {
-    const q = walk(ctx, p, 'property', SNAP_MONEY, SNAP_KEEP) as Obj;
+  /** Snapshot walk: every amount keyed by its location in the synthetic output. */
+  const W = (v: Json, key: string, path: string, free: ReadonlySet<string> = new Set()): Json => walk(ctx, v, key, SNAP_MONEY, SNAP_KEEP, free, path);
+  out['properties'] = arr('properties').map((p, i) => {
+    const q = W(p, 'property', `snap/properties[${i}]`) as Obj;
     for (const k of ['id', 'name', 'address', 'market', 'type', 'acqDate']) if (k in p) q[k] = p[k]!;
     if (typeof p['lender'] === 'string') q['lender'] = ctx.a.alias('lender', p['lender']);
     return q;
   });
-  out['leases'] = arr('leases').map((l) => {
-    const q = walk(ctx, l, 'lease', SNAP_MONEY, SNAP_KEEP) as Obj;
+  out['leases'] = arr('leases').map((l, i) => {
+    const q = W(l, 'lease', `snap/leases[${i}]`) as Obj;
     q['id'] = leaseId(ctx, ids, l);
     q['tenantName'] = ctx.a.alias('person', str(l['tenantName']));
     q['company'] = l['company'] ? ctx.a.alias('company', str(l['company'])) : (l['company'] ?? null);
@@ -788,8 +897,8 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   });
   // Loans: borrower loans are keyed by the owned property and keep their ids; lender/internal loans
   // name a private counterparty, so the name is aliased and the id recomputed from it.
-  out['loans'] = arr('loans').map((l) => {
-    const q = walk(ctx, l, 'loan', SNAP_MONEY, SNAP_KEEP) as Obj;
+  out['loans'] = arr('loans').map((l, i) => {
+    const q = W(l, 'loan', `snap/loans[${i}]`) as Obj;
     const realId = String(l['id']);
     if (l['direction'] !== 'borrower') {
       const name = ctx.a.alias('note', str(l['name']))!;
@@ -812,46 +921,60 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   const cash = s['cash'] as Obj;
   const entityName = (e: string): string => (isPropertyLike(ctx, e) ? ctx.t(e)! : ctx.a.alias('firm', e)!);
   const entities = ((cash['entities'] as Obj[] | undefined) ?? []).map((e) => {
-    const q = walk(ctx, e, 'cashEntity', SNAP_MONEY, SNAP_KEEP) as Obj;
     const realName = String(e['entity']);
-    q['entity'] = entityName(realName);
+    const name = entityName(realName);
+    const q = W(e, 'cashEntity', `snap/cash/entities/${name}`) as Obj;
+    q['entity'] = name;
     q['id'] = isPropertyLike(ctx, realName) ? String(e['id']) : slug(String(q['entity']));
     return q;
   });
-  const history = ((cash['history'] as Obj[] | undefined) ?? []).map((h) => {
+  // Each entity's balance history is a drawn random walk around a drawn level (keyed by the
+  // synthetic entity name and the row), so its months move like a bank balance, not white noise.
+  const walkLevel = (name: string, row: number): number => {
+    let x = Math.log(20_000) + (Math.log(2_500_000) - Math.log(20_000)) * unit(`cash|${name}|level`);
+    for (let j = 0; j <= row; j++) x += uniform(`cash|${name}|step|${j}`, -0.08, 0.08);
+    return Math.exp(x);
+  };
+  const history = ((cash['history'] as Obj[] | undefined) ?? []).map((h, row) => {
     const balances: Obj = {};
-    for (const [k, v] of Object.entries((h['balances'] as Obj | undefined) ?? {})) balances[entityName(k)] = typeof v === 'number' ? ctx.money(v) : v;
-    return { ...h, total: typeof h['total'] === 'number' ? ctx.money(h['total']) : (h['total'] ?? null), balances };
+    for (const [k, v] of Object.entries((h['balances'] as Obj | undefined) ?? {})) {
+      const name = entityName(k);
+      balances[name] = typeof v === 'number' ? ctx.around(`snap/cash/history[${row}]/${name}`, Math.sign(v), walkLevel(name, row), 0.01) : v;
+    }
+    return { ...h, total: typeof h['total'] === 'number' ? ctx.money(h['total'], `snap/cash/history[${row}]/total`, 'totalCash') : (h['total'] ?? null), balances };
   });
-  const cashOut = walk(ctx, { ...cash, entities: [], history: [] }, 'cash', SNAP_MONEY, SNAP_KEEP) as Obj;
+  const cashOut = W({ ...cash, entities: [], history: [] }, 'cash', 'snap/cash') as Obj;
   cashOut['entities'] = entities;
   cashOut['history'] = history;
   cashOut['largestEntity'] = typeof cash['largestEntity'] === 'string' ? entityName(cash['largestEntity']) : (cash['largestEntity'] ?? null);
   out['cash'] = cashOut;
 
-  out['insurance'] = arr('insurance').map((i) => {
-    const q = walk(ctx, i, 'insurance', SNAP_MONEY, SNAP_KEEP, set('notes', 'issue')) as Obj;
+  out['insurance'] = arr('insurance').map((i, j) => {
+    const q = W(i, 'insurance', `snap/insurance[${j}]`, set('notes', 'issue')) as Obj;
     q['carrier'] = ctx.a.alias('carrier', str(i['carrier']));
     q['policyNo'] = ctx.a.alias('policy', str(i['policyNo']));
     return q;
   });
   out['deals'] = arr('deals').map((d) => transformDeal(ctx, ids, d));
-  out['tasks'] = arr('tasks').map((t) => {
-    const q = walk(ctx, t, 'task', SNAP_MONEY, SNAP_KEEP) as Obj;
+  out['tasks'] = arr('tasks').map((t, i) => {
+    const q = W(t, 'task', `snap/tasks[${i}]`) as Obj;
     q['label'] = t['type'] === 'M365 To-Do' ? ctx.free('task', t['label']) : ctx.t(str(t['label']));
     q['notes'] = ctx.free('task note', t['notes']);
     return q;
   });
   out['counterparties'] = arr('counterparties').map((c) => transformCounterparty(ctx, ids, c));
-  const remapKeys = (o: Json | undefined, m: Map<string, string>, valueFn: (v: Json) => Json = (v) => v): Obj => {
+  const remapKeys = (o: Json | undefined, m: Map<string, string>, valueFn: (v: Json, key: string) => Json = (v) => v): Obj => {
     const r: Obj = {};
-    for (const [k, v] of Object.entries((o as Obj | undefined) ?? {})) r[m.get(k) ?? refLeaseId(ctx, ids, k)] = valueFn(v);
+    for (const [k, v] of Object.entries((o as Obj | undefined) ?? {})) {
+      const nk = m.get(k) ?? refLeaseId(ctx, ids, k);
+      r[nk] = valueFn(v, nk);
+    }
     return r;
   };
   // AR balances carry their tenant/company, so an orphan lease id there keeps its prefix (leaseId);
   // they are mapped before the bare-keyed maps below so those reuse the same fake id.
-  const arBalances = arr('arBalances').map((b) => {
-    const q = walk(ctx, b, 'arBalance', SNAP_MONEY, SNAP_KEEP) as Obj;
+  const arBalances = arr('arBalances').map((b, i) => {
+    const q = W(b, 'arBalance', `snap/arBalances[${i}]`) as Obj;
     q['leaseId'] = b['leaseId'] == null ? null
       : leaseId(ctx, ids, { id: String(b['leaseId']), company: b['company'] ?? null, tenantName: b['tenantName'] ?? null });
     q['tenantName'] = ctx.a.alias('person', str(b['tenantName']));
@@ -862,33 +985,35 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   });
   out['renewalStages'] = remapKeys(s['renewalStages'], ids.lease);
   out['tenantNotes'] = remapKeys(s['tenantNotes'], ids.lease, (v) => (typeof v === 'string' ? ctx.free('tenant note', v) : v));
-  out['tenantArrears'] = remapKeys(s['tenantArrears'], ids.lease, (v) => walk(ctx, v, 'arrears', SNAP_MONEY, SNAP_KEEP));
+  out['tenantArrears'] = remapKeys(s['tenantArrears'], ids.lease, (v, k) => W(v, 'arrears', `snap/tenantArrears/${k}`));
   out['arBalances'] = arBalances;
   // Deal comps: keyed by the pipeline deal; comp addresses and source links are replaced.
   let comp = 0;
   const dealComps: Obj = {};
   for (const [k, v] of Object.entries((s['dealComps'] as Obj | undefined) ?? {})) {
     const c = v as Obj;
-    const fixComp = (x: Json): Json => {
-      const o = walk(ctx, x, 'comp', SNAP_MONEY, SNAP_KEEP) as Obj;
+    const sk = ctx.t(k)!;
+    ids.comp.set(k, sk);
+    const fixComp = (kind: string) => (x: Json, j: number): Json => {
+      const o = W(x, 'comp', `snap/dealComps/${sk}/${kind}[${j}]`) as Obj;
       comp += 1;
       if ('address' in o) o['address'] = `Comp ${pad(comp, 3)}`;
       if (typeof o['source'] === 'string') o['source'] = `https://example.com/comp-source/${pad(comp, 3)}`;
       return o;
     };
-    dealComps[ctx.t(k)!] = {
-      ...(walk(ctx, { ...c, saleComps: [], rentComps: [], sources: [] }, 'dealComps', SNAP_MONEY, SNAP_KEEP) as Obj),
-      saleComps: ((c['saleComps'] as Json[] | undefined) ?? []).map(fixComp),
-      rentComps: ((c['rentComps'] as Json[] | undefined) ?? []).map(fixComp),
+    dealComps[sk] = {
+      ...(W({ ...c, saleComps: [], rentComps: [], sources: [] }, 'dealComps', `snap/dealComps/${sk}`) as Obj),
+      saleComps: ((c['saleComps'] as Json[] | undefined) ?? []).map(fixComp('saleComps')),
+      rentComps: ((c['rentComps'] as Json[] | undefined) ?? []).map(fixComp('rentComps')),
       sources: ((c['sources'] as Json[] | undefined) ?? []).map((_x, i) => `https://example.com/market-source/${pad(i + 1, 3)}`),
     };
   }
   out['dealComps'] = dealComps;
   const qb = s['quickbooks'] as Obj | null | undefined;
-  if (qb !== undefined) out['quickbooks'] = qb ? { ...(walk(ctx, qb, 'quickbooks', SNAP_MONEY, SNAP_KEEP) as Obj), sourceFile: 'synthetic/ora-pl-by-property.csv' } : qb;
+  if (qb !== undefined) out['quickbooks'] = qb ? { ...(W(qb, 'quickbooks', 'snap/quickbooks') as Obj), sourceFile: 'synthetic/ora-pl-by-property.csv' } : qb;
   out['dataQuality'] = arr('dataQuality').map((f) => ({ ...f, issue: ctx.free('data-quality issue', f['issue']) }));
   for (const k of ['meta', 'assumptions', 'acquisitionInputs', 'noiBudgets', 'marketRents', 'governors', 'workbookTotals']) {
-    if (k in s) out[k] = walk(ctx, s[k]!, k, SNAP_MONEY, SNAP_KEEP);
+    if (k in s) out[k] = W(s[k]!, k, `snap/${k}`);
   }
   return out;
 }
@@ -926,12 +1051,14 @@ const PF_KEEP = set(
   'n', 'nm', 'conc', 'occ', 'tenants', 'common_area_sf',
 );
 
-/** dataset.json: every numeric key not in PF_KEEP (or a *_pct/_ratio/_margin) is a USD amount. */
+/** A money leaf of a property-financials tree: (synthetic path, field name, real value) -> drawn value. */
+type PfLeaf = (path: readonly string[], field: string, v: number) => number;
+
 /** dataset.json: every numeric key not in PF_KEEP (or a *_pct/_ratio/_margin) is a USD amount, except
  *  inside a `yoy` block, whose line values are percents; its `delta` / `opex_by_delta` children are
- *  dollars again. */
-function walkPf(ctx: Ctx, v: Json, key: string, inYoy = false): Json {
-  if (Array.isArray(v)) return v.map((x) => walkPf(ctx, x, key, inYoy));
+ *  dollars again. Amounts go to `leaf` with their synthetic path. */
+function walkPf(ctx: Ctx, v: Json, key: string, inYoy: boolean, path: readonly string[], leaf: PfLeaf): Json {
+  if (Array.isArray(v)) return v.map((x, i) => walkPf(ctx, x, key, inYoy, [...path, String(i)], leaf));
   if (v && typeof v === 'object') {
     const out: Obj = {};
     for (const [k, x] of Object.entries(v)) {
@@ -939,16 +1066,240 @@ function walkPf(ctx: Ctx, v: Json, key: string, inYoy = false): Json {
       const childYoy = k === 'yoy' ? true : k === 'delta' || k === 'opex_by_delta' ? false : inYoy;
       // In a driver row {p, n, d} `n` is the NEW-period amount (elsewhere `n` counts months).
       const driverN = k === 'n' && 'p' in (v as Obj) && 'd' in (v as Obj);
-      out[generic ? ctx.t(k)! : k] = walkPf(ctx, x, generic ? `${key}.*` : driverN ? 'n_amount' : k, childYoy);
+      const ok = generic ? ctx.t(k)! : k;
+      out[ok] = walkPf(ctx, x, generic ? `${key}.*` : driverN ? 'n_amount' : k, childYoy, [...path, ok], leaf);
     }
     return out;
   }
   if (typeof v === 'number') {
     if (inYoy || PF_KEEP.has(key) || /(^|_)(pct|ratio|margin)$/.test(key)) return v;
-    return ctx.money(v);
+    return leaf(path, key, v);
   }
   if (typeof v === 'string') return ctx.t(v);
   return v;
+}
+
+/** History / revenue-category names -> the P&L line they are an amount of. */
+const PF_LINE: Readonly<Record<string, string>> = {
+  br: 'base_rent',
+  'Base rent': 'base_rent',
+  rv: 'revenue',
+  rev: 'revenue',
+  ox: 'opex',
+  tx: 'Real estate & property tax',
+  'Vacancy / waivers / bad debt': 'vacancy_waivers',
+  'Recoveries (CAM/tax/ins)': 'recoveries',
+  'Utility reimbursements': 'utility_reimb',
+  'Other income': 'other_income',
+  'Solar / energy income': 'energy_income',
+};
+const pfLine = (k: string): string => PF_LINE[k] ?? k;
+/** The period field a history `rc` (revenue category) mirrors. */
+const RC_FIELD: Readonly<Record<string, string>> = {
+  'Base rent': 'base_rent',
+  'Vacancy / waivers / bad debt': 'vacancy_waivers',
+  'Recoveries (CAM/tax/ins)': 'recoveries',
+  'Utility reimbursements': 'utility_reimb',
+  'Other income': 'other_income',
+  'Solar / energy income': 'energy_income',
+};
+const PF_OPEX_CATS = [
+  'Real estate & property tax', 'Insurance', 'Management fees', 'Utilities', 'Grounds / snow / lot', 'Repairs & maintenance',
+  'Turnover / make-ready', 'Professional / admin',
+];
+const PF_REV_COMPONENTS = ['base_rent', 'reimbursements', 'other_income'];
+
+/** The year a period / history label refers to (FY2025 -> 2025, YTD26 -> 2026, 2024-07 -> 2024). */
+function pfYear(label: string): number {
+  const four = /(20\d{2})/.exec(label)?.[1];
+  if (four) return Number(four);
+  const two = /(\d{2})/.exec(label)?.[1];
+  return two ? 2000 + Number(two) : 2025;
+}
+
+/**
+ * The seeded P&L model behind every dataset.json amount. Per entity and line it draws an annual
+ * level (the line's $/SF band x the entity's SF), a gentle drawn drift per year, and for base rent a
+ * flat series stepped at the entity's REAL rent-event months by a drawn percentage (event DATES are
+ * kept; their sizes are not). Each leaf is then a small jitter around the model value, with the real
+ * amount's sign and exact zero kept. A line billed in only k months of a year (the real zero pattern)
+ * spreads the year's amount over those k months, so lumpy lines (tax, insurance) stay lumpy and a
+ * year's total stays plausible. Nothing here reads the magnitude of a real amount.
+ */
+class PfModel {
+  private readonly levels = new Map<string, number>();
+  constructor(
+    private readonly ctx: Ctx,
+    private readonly real: Obj,
+  ) {}
+
+  private obj(...keys: string[]): Obj | undefined {
+    let v: Json | undefined = this.real;
+    for (const k of keys) v = v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj)[k] : undefined;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Obj) : undefined;
+  }
+
+  sfOf(id: string): number {
+    const a = num(this.obj('sf', id)?.['sf']);
+    const b = num(this.obj('properties', id)?.['sf']);
+    return a && a > 0 ? a : b && b > 0 ? b : DEFAULT_SF;
+  }
+
+  /** Annual level of one line of one entity (totals are the sums of their drawn components). */
+  level(id: string, line: string): number {
+    const k = `${id}|${line}`;
+    const hit = this.levels.get(k);
+    if (hit !== undefined) return hit;
+    let v: number;
+    if (line === 'revenue') v = PF_REV_COMPONENTS.reduce((a, l) => a + this.level(id, l), 0);
+    else if (line === 'opex') v = PF_OPEX_CATS.reduce((a, l) => a + this.level(id, l), 0);
+    else if (line === 'noi') v = Math.max(this.level(id, 'revenue') - this.level(id, 'opex'), 0.1 * this.level(id, 'revenue'));
+    else if (line === 'pool') v = PF_POOL.reduce((a, l) => a + this.level(id, l), 0);
+    else if (line.startsWith('acct:')) {
+      // an account inside a category: a drawn share of its category's level
+      const cat = line.split('|')[1] ?? '';
+      v = this.level(id, cat) * uniform(`pf|${id}|${line}|share`, 0.2, 1);
+    } else {
+      const band = bandFor(line);
+      v = uniform(`pf|${id}|${line}|level`, band.lo, band.hi) * (band.perSf ? this.sfOf(id) : 1);
+    }
+    this.levels.set(k, v);
+    return v;
+  }
+
+  /** Cumulative drawn drift of a line, 1.0 in 2024. */
+  growth(id: string, line: string, year: number): number {
+    let f = 1;
+    const g = (y: number): number => 1 + uniform(`pf|${id}|${line}|g|${y}`, -0.03, 0.07);
+    if (year > 2024) for (let y = 2025; y <= year; y++) f *= g(y);
+    else for (let y = year + 1; y <= 2024; y++) f /= g(y);
+    return f;
+  }
+
+  /** Base-rent step factor at a month: the product of the drawn steps at every real event month <= it. */
+  rentFactor(id: string, month: string): number {
+    const evs = ((this.obj('history', id)?.['ev'] as Obj[] | undefined) ?? []).map((e) => String(e['m'])).sort();
+    let f = 1;
+    for (const m of evs) {
+      if (m > month) break;
+      const up = unit(`pf|${id}|stepsign|${m}`) < 0.8;
+      f *= 1 + (up ? 1 : -1) * uniform(`pf|${id}|step|${m}`, 0.06, 0.16);
+    }
+    return f;
+  }
+
+  /** One month's amount of a line (sign / zero from the real value; `active` = billed months that year). */
+  monthly(key: string, id: string, line: string, month: string, sign: number, active: number): number {
+    if (sign === 0) return 0;
+    const year = pfYear(month);
+    if (line === 'base_rent') return this.ctx.around(key, sign, (this.level(id, line) / 12) * this.rentFactor(id, month), 0);
+    if (line === 'revenue') {
+      const rest = this.level(id, 'revenue') - this.level(id, 'base_rent');
+      const center = (this.level(id, 'base_rent') / 12) * this.rentFactor(id, month) + (rest / 12) * this.growth(id, 'revenue', year);
+      return this.ctx.around(key, sign, center, 0.04);
+    }
+    const center = (this.level(id, line) * this.growth(id, line, year)) / Math.max(1, Math.min(12, active));
+    return this.ctx.around(key, sign, center, 0.2);
+  }
+
+  /** An amount of a line over `months` months of a year. */
+  annual(key: string, id: string, line: string, year: number, months: number, sign: number, decimals = 2): number {
+    if (sign === 0) return 0;
+    const share = Math.max(months, 0.5) / 12;
+    if (line === 'base_rent') return this.ctx.around(key, sign, this.level(id, line) * this.rentFactor(id, `${year}-06`) * share, 0.02, decimals);
+    return this.ctx.around(key, sign, this.level(id, line) * this.growth(id, line, year) * share, 0.08, decimals);
+  }
+
+  /** Billed months of a line in a year, from the real zero pattern of a parallel monthly series. */
+  private activeIn(values: Array<number | null>, months: string[], year: number): number {
+    let k = 0;
+    months.forEach((m, i) => {
+      if (m.startsWith(`${year}-`) && (values[i] ?? 0) !== 0) k++;
+    });
+    return k || 12;
+  }
+
+  leaf: PfLeaf = (path, field, v) => {
+    const sign = Math.sign(v);
+    if (!Number.isFinite(v) || v === 0) return v;
+    const key = `pf/${path.join('/')}`;
+    const [blk, id = ''] = path;
+    if (blk === 'monthly') {
+      const month = path[2] ?? '';
+      const line = path[3] === 'opex_by' ? (path[4] ?? '') : (path[3] ?? field);
+      const cube = this.obj('monthly', id) ?? {};
+      const months = Object.keys(cube).sort();
+      const vals = months.map((m) => {
+        const row = cube[m] as Obj | undefined;
+        return num(path[3] === 'opex_by' ? ((row?.['opex_by'] as Obj | undefined) ?? {})[line] : row?.[line]);
+      });
+      return this.monthly(key, id, line, month, sign, this.activeIn(vals, months, pfYear(month)));
+    }
+    if (blk === 'properties') {
+      if (path[2] === 'periods') {
+        const per = path[3] ?? '';
+        const line = path[4] === 'opex_by' ? (path[5] ?? '') : (path[4] ?? field);
+        const n = num(this.obj('properties', id, 'periods', per)?.['n_months']) ?? 12;
+        return this.annual(key, id, line, pfYear(per), n, sign);
+      }
+      if (path[2] === 'base_rent_runrate_q3') return this.annual(key, id, 'base_rent', pfYear(path[3] ?? ''), 12, sign);
+      if (path[2] === 'nonop') return this.ctx.money(v, key, path[3] ?? field);
+      // yoy deltas and anything else: a small amount on the entity's scale (re-derived where it held)
+      return this.ctx.money(v, key, 'capex', this.sfOf(id));
+    }
+    if (blk === 'history') {
+      const sub = path[2];
+      if (sub === 'yr' || sub === 'ytd') {
+        const y = path[3] ?? '';
+        const f = path[4] ?? field;
+        const line = f === 'cats' || f === 'rc' ? pfLine(path[5] ?? '') : pfLine(f);
+        const n = num(this.obj('history', id, sub, y)?.['n']) ?? 12;
+        return this.annual(key, id, line, pfYear(y), n, sign);
+      }
+      if (sub === 'months') {
+        const arr = path[3] ?? '';
+        const i = Number(path[4]);
+        const series = this.obj('history', id, 'months') ?? {};
+        const g = ((series['g'] as Json[] | undefined) ?? []).map(String);
+        const vals = ((series[arr] as Json[] | undefined) ?? []).map((x) => num(x));
+        const month = g[i] ?? '2025-01';
+        return this.monthly(key, id, pfLine(arr), month, sign, this.activeIn(vals, g, pfYear(month)));
+      }
+      if (sub === 'drv') {
+        const y = path[3] ?? '';
+        const row = ((this.obj('history', id, 'drv') ?? {})[y] as Obj[] | undefined)?.[Number(path[4])] ?? {};
+        const cat = String(row['c'] ?? '');
+        const line = `acct:|${pfLine(cat)}|${String(row['a'] ?? '')}`;
+        const year = pfYear(y);
+        const nm = /^\d{4}$/.test(y) ? 12 : 9;
+        if (field === 'p') return this.annual(key, id, line, year - 1, nm, sign, 0);
+        return this.annual(key, id, line, year, nm, sign, 0);
+      }
+      return this.ctx.money(v, key, 'base_rent', this.sfOf(id) / 12);
+    }
+    if (blk === 'account_movers') {
+      const cmp = path[2] ?? '';
+      const row = ((this.obj('account_movers', id) ?? {})[cmp] as Obj[] | undefined)?.[Number(path[3])] ?? {};
+      const [cur = 'FY2025', prior = 'FY2024'] = cmp.split('_vs_');
+      const line = `acct:|${String(row['category'] ?? '')}|${String(row['account'] ?? '')}`;
+      const per = field === 'prior' ? prior : cur;
+      const n = num(this.obj('properties', id, 'periods', per)?.['n_months']) ?? 12;
+      return this.annual(key, id, line, pfYear(per), n, sign);
+    }
+    if (blk === 'insights') {
+      const ins = ((this.real['insights'] as Obj[] | undefined) ?? [])[Number(id)] ?? {};
+      const ev = (ins['evidence'] as Obj | undefined) ?? {};
+      const prop = String(ins['property'] ?? '');
+      if (/^q3_\d{4}$/.test(field)) return this.annual(key, prop, 'base_rent', pfYear(field), 12, sign);
+      return this.ctx.money(v, key, field, num(ev['sf']) ?? this.sfOf(prop));
+    }
+    if (blk === 'leases') {
+      const l = ((this.real['leases'] as Obj[] | undefined) ?? [])[Number(id)] ?? {};
+      return this.ctx.money(v, key, field, num(l['sf']));
+    }
+    if (blk === 'portfolio') return this.ctx.money(v, key, field === 'current' || field === 'prior' ? 'base_rent' : field, 150_000);
+    return this.ctx.money(v, key, field);
+  };
 }
 
 /** Per-entity blocks: every amount of one entity shares one keyed multiplier (its own margins, YoY
@@ -977,7 +1328,7 @@ function fixPfIdentities(real: Json, syn: Json): void {
     const sa = num(o[a]);
     const sb = num(o[b]);
     if (sa === null || sb === null) return;
-    o[target] = roundTo(sa + sign * sb, Math.max(decimalsOf(rt), decimalsOf(ra), decimalsOf(rb)));
+    o[target] = roundTo(sa + sign * sb, 2);
   };
   rule('reimbursements', 'recoveries', 'utility_reimb', 1);
   rule('noi', 'revenue', 'opex', -1);
@@ -1005,7 +1356,14 @@ function fixPfSums(real: Obj, syn: Obj): void {
   const setIf = (r: Obj, o: Obj, f: string, rv: number, sv: number, tol = 0.006): void => {
     if (held(num(r[f]), rv, tol)) o[f] = roundTo(sv, 2);
   };
-  const rowIdentities = (r: Obj, o: Obj, fromMonths = false): void => {
+  const rowIdentities = (r: Obj, o: Obj, fromMonths = false, signKey: string | null = null): void => {
+    if (signKey && held(num(r['noi']), (num(r['revenue']) ?? NaN) - (num(r['opex']) ?? NaN), 0.006)) {
+      // a period built from its own lines (annual entity): keep NOI's real sign
+      const rev = sumKeys(o, ['base_rent', 'vacancy_waivers', 'other_income', 'energy_income']) +
+        (held(num(r['reimbursements']), sumKeys(r, ['recoveries', 'utility_reimb']), 0.006) ? sumKeys(o, ['recoveries', 'utility_reimb']) : (num(o['reimbursements']) ?? 0));
+      const ob = o['opex_by'] as Obj | undefined;
+      if (ob) opexToSign(ob, rev, num(r['noi']), signKey);
+    }
     setIf(r, o, 'opex', obSum(r), obSum(o));
     if (fromMonths) {
       // reimbursements came from the months (which carry no recoveries / utility split): keep the
@@ -1062,8 +1420,15 @@ function fixPfSums(real: Obj, syn: Obj): void {
             }
           }
         }
+        // period-only split (the months carry no recoveries): a drawn share of the period's own
+        // drawn reimbursements, so utility_reimb (derived below) keeps its sign
+        const sRe = num(o['reimbursements']);
+        if ((num(r['recoveries']) ?? 0) > 0 && (num(r['reimbursements']) ?? 0) > 0 && sRe !== null && sRe > 0) {
+          o['recoveries'] = roundTo(sRe * uniform(`pf/${id}/${per}/recoveries-share`, 0.6, 0.95), 2);
+        }
       }
-      rowIdentities(r, o, rp['kind'] === 'monthly' && months.length > 0);
+      const fromMonths = rp['kind'] === 'monthly' && months.length > 0;
+      rowIdentities(r, o, fromMonths, fromMonths ? null : `pf/${id}/${per}/noi-sign`);
     }
     const rq = rp['base_rent_runrate_q3'] as Obj | undefined;
     const sq = sp['base_rent_runrate_q3'] as Obj | undefined;
@@ -1141,8 +1506,16 @@ function fixPfSums(real: Obj, syn: Obj): void {
         const o = ((sh[block] as Obj | undefined) ?? {})[yr] as Obj | undefined;
         if (!o) continue;
         const cats = (x: Obj): number => Object.values((x['cats'] as Obj | undefined) ?? {}).reduce<number>((a, v) => a + (num(v) ?? 0), 0);
-        if (held(num(r['opex']), cats(r), 0.006 * 12)) o['opex'] = roundTo(cats(o), decimalsOf(num(r['opex'])!));
-        if (held(num(r['noi']), (num(r['rev']) ?? NaN) - (num(r['opex']) ?? NaN), 0.012)) o['noi'] = roundTo((num(o['rev']) ?? 0) - (num(o['opex']) ?? 0), Math.max(decimalsOf(num(r['rev'])!), decimalsOf(num(r['opex'])!)));
+        const rcs = (x: Obj): number => Object.values((x['rc'] as Obj | undefined) ?? {}).reduce<number>((a, v) => a + (num(v) ?? 0), 0);
+        const rcBr = (x: Obj): number | null => num(((x['rc'] as Obj | undefined) ?? {})['Base rent']);
+        if (held(num(r['br']), rcBr(r), 0.06) && rcBr(o) !== null) o['br'] = rcBr(o);
+        if (held(num(r['rev']), rcs(r), 0.06)) o['rev'] = roundTo(rcs(o), 2);
+        // keep the row's real NOI sign (a loss year) where noi = rev - opex and opex = sum(cats) held
+        if (o['cats'] && held(num(r['opex']), cats(r), 0.006 * 12) && held(num(r['noi']), (num(r['rev']) ?? NaN) - (num(r['opex']) ?? NaN), 0.012)) {
+          opexToSign(o['cats'] as Obj, num(o['rev']) ?? 0, num(r['noi']), `pf/${id}/${block}/${yr}/noi-sign`);
+        }
+        if (held(num(r['opex']), cats(r), 0.006 * 12)) o['opex'] = roundTo(cats(o), 2);
+        if (held(num(r['noi']), (num(r['rev']) ?? NaN) - (num(r['opex']) ?? NaN), 0.012)) o['noi'] = roundTo((num(o['rev']) ?? 0) - (num(o['opex']) ?? 0), 2);
       }
     }
   }
@@ -1161,7 +1534,7 @@ function fixPfSums(real: Obj, syn: Obj): void {
         const so = ((sh[block] as Obj | undefined) ?? {})[yr] as Obj | undefined;
         if (!rp || !spp || !so) continue;
         const mirror = (rv: number | null, rpv: number | null, spv: Json | undefined): Json | undefined =>
-          rv !== null && held(rv, rpv, 0.506) && num(spv ?? null) !== null ? roundTo(num(spv ?? null)!, decimalsOf(rv)) : undefined;
+          rv !== null && held(rv, rpv, 0.506) && num(spv ?? null) !== null ? roundTo(num(spv ?? null)!, 2) : undefined;
         for (const [hk, pk] of MIRROR) {
           const m = mirror(num((rowv as Obj)[hk]), num(rp[pk]), spp[pk]);
           if (m !== undefined) so[hk] = m;
@@ -1172,6 +1545,17 @@ function fixPfSums(real: Obj, syn: Obj): void {
           for (const cat of Object.keys(rc)) {
             const m = mirror(num(rc[cat]), num(((rp['opex_by'] as Obj) ?? {})[cat]), ((spp['opex_by'] as Obj) ?? {})[cat]);
             if (m !== undefined) sc[cat] = m;
+          }
+        }
+        // revenue categories mirror their period revenue line
+        const rrc = (rowv as Obj)['rc'] as Obj | undefined;
+        const src = so['rc'] as Obj | undefined;
+        if (rrc && src) {
+          for (const cat of Object.keys(rrc)) {
+            const f = RC_FIELD[cat];
+            if (!f) continue;
+            const m = mirror(num(rrc[cat]), num(rp[f]), spp[f]);
+            if (m !== undefined) src[cat] = m;
           }
         }
       }
@@ -1193,6 +1577,9 @@ function fixPfSums(real: Obj, syn: Obj): void {
         const rPeriod = (((rProps[id] as Obj | undefined)?.['periods'] as Obj | undefined) ?? {})[per] as Obj | undefined;
         const mirrored = !!rPeriod && held(num(r['noi']), num(rPeriod['noi']), 0.506);
         const catsHeld = held(num(r['opex']), catsOf(r), 0.006 * 12);
+        const rcOf = (x: Obj): number => Object.values((x['rc'] as Obj | undefined) ?? {}).reduce<number>((acc, v) => acc + (num(v) ?? 0), 0);
+        const rcHeld = held(num(r['rev']), rcOf(r), 0.06);
+        const brHeld = held(num(r['br']), num(((r['rc'] as Obj | undefined) ?? {})['Base rent']), 0.06);
         if (mirrored) {
           const sc = o['cats'] as Obj | undefined;
           const residual = roundTo((num(o['opex']) ?? 0) - catsOf(o), 2);
@@ -1200,8 +1587,21 @@ function fixPfSums(real: Obj, syn: Obj): void {
             const big = Object.keys(sc).reduce((a, k) => (Math.abs(num(sc[k]) ?? 0) > Math.abs(num(sc[a]) ?? 0) ? k : a), Object.keys(sc)[0]!);
             sc[big] = roundTo((num(sc[big]) ?? 0) + residual, 2);
           }
+          // revenue categories: any residual against the mirrored revenue goes to the largest
+          // non-base-rent category (base rent stays equal to br)
+          const src = o['rc'] as Obj | undefined;
+          const rres = roundTo((num(o['rev']) ?? 0) - rcOf(o), 2);
+          if (rcHeld && src && rres !== 0) {
+            const keys = Object.keys(src).filter((k) => k !== 'Base rent' || Object.keys(src).length === 1);
+            if (keys.length) {
+              const big = keys.reduce((a, k) => (Math.abs(num(src[k]) ?? 0) > Math.abs(num(src[a]) ?? 0) ? k : a), keys[0]!);
+              src[big] = roundTo((num(src[big]) ?? 0) + rres, 2);
+            }
+          }
           continue;
         }
+        if (brHeld && num(((o['rc'] as Obj | undefined) ?? {})['Base rent']) !== null) o['br'] = num((o['rc'] as Obj)['Base rent']);
+        if (rcHeld) o['rev'] = roundTo(rcOf(o), 2);
         if (catsHeld) o['opex'] = roundTo(catsOf(o), 2);
         if (held(num(r['noi']), (num(r['rev']) ?? NaN) - (num(r['opex']) ?? NaN), 0.012)) o['noi'] = roundTo((num(o['rev']) ?? 0) - (num(o['opex']) ?? 0), 2);
       }
@@ -1218,6 +1618,133 @@ function fixPfSums(real: Obj, syn: Obj): void {
       if (same) for (const k of ['br', 'rev', 'opex', 'noi', 'cats', 'rc']) if (k in (sytd[y] as Obj)) (syr[y] as Obj)[k] = structuredClone((sytd[y] as Obj)[k] ?? null);
     }
   }
+}
+
+/**
+ * NOI SIGN is a retained attribute (a loss-making month, year or period means something: lease-up,
+ * a vacant year). Drawn revenue and opex lines are independent, so a derived NOI can come out with
+ * the wrong sign; these helpers rescale the drawn opex categories of a row (never revenue, never by
+ * anything read from a real magnitude) until NOI has the real sign.
+ */
+function opexToSign(cats: Obj, revenue: number, realNoi: number | null, key: string): void {
+  if (realNoi === null || realNoi === 0 || !(revenue > 0)) return;
+  const total = Object.values(cats).reduce<number>((a, v) => a + (num(v) ?? 0), 0);
+  if (!(total > 0)) return;
+  const want = Math.sign(realNoi);
+  if (Math.sign(revenue - total) === want) return;
+  const target = revenue * (want < 0 ? uniform(`${key}|loss`, 1.1, 1.5) : uniform(`${key}|profit`, 0.35, 0.75));
+  const f = target / total;
+  for (const c of Object.keys(cats)) if (num(cats[c]) !== null) cats[c] = roundTo(num(cats[c])! * f, 2);
+}
+
+/**
+ * Monthly entities: a period's NOI is the sum of its months, so its sign is restored at month level.
+ * The months whose real NOI was negative (the loss months, a sign) get their drawn opex scaled by one
+ * multiplier per entity, searched upward from 1 until every month-derived period NOI has its real
+ * sign. Only signs are read from the real file.
+ */
+function retainMonthlyNoiSigns(real: Obj, syn: Obj): void {
+  const periodsMeta = ((real['meta'] as Obj | undefined)?.['periods'] as Obj | undefined) ?? {};
+  const REV = ['base_rent', 'vacancy_waivers', 'reimbursements', 'other_income', 'energy_income'];
+  for (const [id, pv] of Object.entries((real['properties'] as Obj | undefined) ?? {})) {
+    if ((pv as Obj)['kind'] !== 'monthly') continue;
+    const rm = (((real['monthly'] as Obj | undefined) ?? {})[id] as Obj | undefined) ?? {};
+    const sm = (((syn['monthly'] as Obj | undefined) ?? {})[id] as Obj | undefined) ?? {};
+    const loss = new Set(Object.keys(rm).filter((m) => (num((rm[m] as Obj)['noi']) ?? 0) < 0));
+    if (!loss.size) continue;
+    const rev = (m: string): number => REV.reduce((a, f) => a + (num((sm[m] as Obj | undefined)?.[f]) ?? 0), 0);
+    const opex = (m: string): number => Object.values(((sm[m] as Obj | undefined)?.['opex_by'] as Obj | undefined) ?? {}).reduce<number>((a, v) => a + (num(v) ?? 0), 0);
+    const checks: Array<{ months: string[]; sign: number }> = [];
+    for (const [per, rp] of Object.entries(((pv as Obj)['periods'] as Obj | undefined) ?? {})) {
+      const months = (((periodsMeta[per] as Obj | undefined)?.['months'] as Json[] | undefined) ?? []).map(String).filter((m) => m in sm);
+      const rn = num((rp as Obj)['noi']);
+      const sumReal = months.reduce((a, m) => a + (num((rm[m] as Obj | undefined)?.['noi']) ?? 0), 0);
+      if (rn !== null && rn !== 0 && months.length && held(rn, sumReal, 0.006 * months.length + 0.01)) checks.push({ months, sign: Math.sign(rn) });
+    }
+    const ok = (mult: number): boolean =>
+      checks.every(({ months, sign }) => Math.sign(months.reduce((a, m) => a + rev(m) - opex(m) * (loss.has(m) ? mult : 1), 0)) === sign);
+    let mult = 1;
+    for (let k = 0; k <= 400; k++) {
+      if (ok(1 + 0.05 * k)) {
+        mult = 1 + 0.05 * k;
+        break;
+      }
+    }
+    if (mult === 1) continue;
+    for (const m of loss) {
+      const ob = ((sm[m] as Obj | undefined)?.['opex_by'] as Obj | undefined) ?? {};
+      for (const c of Object.keys(ob)) if (num(ob[c]) !== null) ob[c] = roundTo(num(ob[c])! * mult, 2);
+    }
+  }
+}
+
+/**
+ * Account-level detail, re-derived from the drawn figures wherever the identity held in the real file:
+ *   history drivers   n / p = the (rounded) history category of that year / the prior year,
+ *                     d = n - p, pct = round3(n / p - 1)
+ *   account movers    delta = current - prior, pct = round2(current / prior - 1)
+ *   insight evidence  q3_YYYY = the property's Q3 run-rate figure
+ */
+function fixPfDetail(real: Obj, syn: Obj): void {
+  const rH = (real['history'] as Obj | undefined) ?? {};
+  const sH = (syn['history'] as Obj | undefined) ?? {};
+  for (const [id, hv] of Object.entries(rH)) {
+    const sh = sH[id] as Obj | undefined;
+    if (!sh) continue;
+    const rowOf = (h: Obj, y: string): Obj | undefined =>
+      (/^\d{4}$/.test(y) ? ((h['yr'] as Obj | undefined) ?? {})[y] : ((h['ytd'] as Obj | undefined) ?? {})[`20${y.slice(3)}`]) as Obj | undefined;
+    const prevOf = (y: string): string => (/^\d{4}$/.test(y) ? String(Number(y) - 1) : `YTD${Number(y.slice(3)) - 1}`);
+    const catVal = (row: Obj | undefined, lt: Json | undefined, c: string): number | null =>
+      row ? num((((lt === 'rev' ? row['rc'] : row['cats']) as Obj | undefined) ?? {})[c]) : null;
+    for (const [y, list] of Object.entries(((hv as Obj)['drv'] as Obj | undefined) ?? {})) {
+      const sl = (((sh['drv'] as Obj | undefined) ?? {})[y] as Obj[] | undefined) ?? [];
+      ((list as Obj[] | undefined) ?? []).forEach((r, i) => {
+        const o = sl[i];
+        if (!o) return;
+        const c = String(r['c'] ?? '');
+        const rCur = catVal(rowOf(hv as Obj, y), r['lt'], c);
+        const sCur = catVal(rowOf(sh, y), r['lt'], c);
+        const rPrev = catVal(rowOf(hv as Obj, prevOf(y)), r['lt'], c);
+        const sPrev = catVal(rowOf(sh, prevOf(y)), r['lt'], c);
+        if (rCur !== null && sCur !== null && held(num(r['n']), Math.round(rCur), 1.01)) o['n'] = Math.round(sCur);
+        if (rPrev !== null && sPrev !== null && held(num(r['p']), Math.round(rPrev), 1.01)) o['p'] = Math.round(sPrev);
+        const rp = num(r['p']);
+        const rn = num(r['n']);
+        const sp = num(o['p']);
+        const sn = num(o['n']);
+        if (rp !== null && rn !== null && sp !== null && sn !== null) {
+          if (held(num(r['d']), rn - rp, 1.01)) o['d'] = sn - sp;
+          if (rp !== 0 && sp !== 0 && held(num(r['pct']), Math.round((rn / rp - 1) * 1000) / 1000, 0.0011)) o['pct'] = Math.round((sn / sp - 1) * 1000) / 1000;
+        }
+      });
+    }
+  }
+  const rM = (real['account_movers'] as Obj | undefined) ?? {};
+  const sM = (syn['account_movers'] as Obj | undefined) ?? {};
+  for (const [id, per] of Object.entries(rM)) {
+    for (const [cmp, list] of Object.entries((per as Obj | undefined) ?? {})) {
+      const sl = ((((sM[id] as Obj | undefined) ?? {})[cmp]) as Obj[] | undefined) ?? [];
+      ((list as Obj[] | undefined) ?? []).forEach((r, i) => {
+        const o = sl[i];
+        if (!o) return;
+        const [rc, rp, sc, sp] = [num(r['current']), num(r['prior']), num(o['current']), num(o['prior'])];
+        if (rc === null || rp === null || sc === null || sp === null) return;
+        if (held(num(r['delta']), rc - rp, 0.02)) o['delta'] = roundTo(sc - sp, 2);
+        if (rp !== 0 && sp !== 0 && held(num(r['pct']), roundTo(rc / rp - 1, 2), 0.0001)) o['pct'] = roundTo(sc / sp - 1, 2);
+      });
+    }
+  }
+  const rI = (real['insights'] as Obj[] | undefined) ?? [];
+  const sI = (syn['insights'] as Obj[] | undefined) ?? [];
+  rI.forEach((r, i) => {
+    const o = sI[i];
+    const rev = (r['evidence'] as Obj | undefined) ?? {};
+    const sev = (o?.['evidence'] as Obj | undefined) ?? {};
+    const prop = String(r['property'] ?? '');
+    const rq = (((real['properties'] as Obj | undefined)?.[prop] as Obj | undefined)?.['base_rent_runrate_q3'] as Obj | undefined) ?? {};
+    const sq = (((syn['properties'] as Obj | undefined)?.[prop] as Obj | undefined)?.['base_rent_runrate_q3'] as Obj | undefined) ?? {};
+    for (const k of Object.keys(rev)) if (/^q3_\d{4}$/.test(k) && held(num(rev[k]), num(rq[k]), 0.01) && num(sq[k]) !== null) sev[k] = sq[k]!;
+  });
 }
 
 /** Portfolio views are sums of their member entities' period figures: recompute them (and their
@@ -1299,39 +1826,63 @@ function pmTax(d: Obj): number {
   return 0.05 * t;
 }
 
+/** A lease rent schedule [[start, end, monthly], ...]: the first step is a draw from the lease's SF
+ *  band; every later step applies the schedule's own escalation RATE (a lease term, kept like every
+ *  other rate, rounded to 0.1%) to the previous drawn step. A zero step stays zero. */
+function pfSchedule(ctx: Ctx, rows: Json, key: string, sf: number | null): Json {
+  if (!Array.isArray(rows)) return rows;
+  let prevReal: number | null = null;
+  let prevSyn: number | null = null;
+  return rows.map((row, j) => {
+    if (!Array.isArray(row)) return row;
+    const amt = num(row[2]);
+    if (amt === null) return [...row];
+    let syn: number;
+    if (amt === 0) syn = amt;
+    else if (prevReal && prevSyn) syn = roundTo(prevSyn * (1 + Math.round((amt / prevReal - 1) * 1000) / 1000), 2);
+    else syn = ctx.money(amt, `${key}/${j}`, 'monthlyRent', sf);
+    prevReal = amt;
+    prevSyn = syn;
+    return [...row.slice(0, 2), syn, ...row.slice(3)];
+  });
+}
+
 function transformDataset(ctx: Ctx, d: Obj): Obj {
+  const model = new PfModel(ctx, d);
+  const leaf = model.leaf;
   const out: Obj = {};
   for (const [k, v] of Object.entries(d)) {
     if (PF_ENTITY_BLOCKS.has(k) && v && typeof v === 'object' && !Array.isArray(v)) {
       const block: Obj = {};
-      for (const [id, x] of Object.entries(v)) block[ctx.t(id)!] = ctx.inGroup(`pf:${id}`, () => walkPf(ctx, x, id));
+      for (const [id, x] of Object.entries(v)) {
+        const sid = ctx.t(id)!;
+        block[sid] = walkPf(ctx, x, id, false, [k, sid], leaf);
+      }
       out[k] = block;
-    } else if (k === 'portfolio') {
-      out[k] = ctx.inGroup('pf:portfolio', () => walkPf(ctx, v, k));
     } else if (k !== 'insights' && k !== 'leases') {
-      out[k] = walkPf(ctx, v, k);
+      out[k] = walkPf(ctx, v, k, false, [k], leaf);
     }
   }
-  const entities = new Set(Object.keys((d['properties'] as Obj | undefined) ?? {}));
   // Insight narrative is free text (it quotes real figures and cross-entity percentages): replaced.
-  out['insights'] = ((d['insights'] as Obj[] | undefined) ?? []).map((i) => {
-    const prop = String(i['property'] ?? '');
-    const q = ctx.inGroup(entities.has(prop) ? `pf:${prop}` : null, () => walkPf(ctx, i, 'insight')) as Obj;
+  out['insights'] = ((d['insights'] as Obj[] | undefined) ?? []).map((i, idx) => {
+    const q = walkPf(ctx, i, 'insight', false, ['insights', String(idx)], leaf) as Obj;
     q['title'] = ctx.free('insight title', i['title']);
     q['finding'] = ctx.free('finding', i['finding']);
     q['action'] = ctx.free('action', i['action']);
     if (typeof q['annual_impact_usd'] === 'number') q['annual_impact_usd'] = Math.round(q['annual_impact_usd']);
     return q;
   });
-  out['leases'] = ((d['leases'] as Obj[] | undefined) ?? []).map((l) => {
-    // one multiplier per lease: its rent steps keep their escalator (a lever reads it)
-    const q = ctx.inGroup(`pfl:${String(l['property'] ?? '')}|${String(l['tenant'] ?? '')}`, () => walkPf(ctx, l, 'lease')) as Obj;
+  out['leases'] = ((d['leases'] as Obj[] | undefined) ?? []).map((l, idx) => {
+    const q = walkPf(ctx, l, 'lease', false, ['leases', String(idx)], leaf) as Obj;
+    if ('rent_schedule_monthly' in l) q['rent_schedule_monthly'] = pfSchedule(ctx, l['rent_schedule_monthly'] ?? null, `pf/leases/${idx}/rent`, num(l['sf']));
     q['tenant'] = ctx.a.alias('company', str(l['tenant']));
     q['source'] = `Lease -- ${String(q['property'] ?? 'property')} ${String(q['tenant'])}.pdf`;
     return q;
   });
+  retainMonthlyNoiSigns(d, out);
   fixPfIdentities(d, out);
   fixPfSums(d, out);
+  fixPfDetail(d, out);
   fixPortfolioViews(d, out);
   // Rent-step events carry an absolute $ threshold (RENT_STEP_RULES.minDollars): recompute them from
   // the perturbed series with the module's own detector, exactly as the dataset builder does.
@@ -1365,27 +1916,33 @@ function transformArtifact(ctx: Ctx, html: string): string {
       if (!m) return ctx.t(line) ?? line;
       const d = JSON.parse(m[2]!) as Obj;
       const out: Obj = {};
+      // A design reference with no consumer in code or tests: every amount is a plain banded draw
+      // keyed by its location (no P&L structure needed).
+      const leaf: PfLeaf = (path, field, v) => ctx.money(v, `art/${path.join('/')}`, field);
       for (const [k, v] of Object.entries(d)) {
         if (ENTITY.has(k) && v && typeof v === 'object' && !Array.isArray(v)) {
           const block: Obj = {};
-          for (const [id, x] of Object.entries(v)) block[ctx.t(id)!] = ctx.inGroup(`pf:${id}`, () => walkPf(ctx, x, id));
+          for (const [id, x] of Object.entries(v)) {
+            const sid = ctx.t(id)!;
+            block[sid] = walkPf(ctx, x, id, false, [k, sid], leaf);
+          }
           out[k] = block;
         } else if (k === 'insights' && Array.isArray(v)) {
-          out[k] = v.map((i) => {
-            const q = walkPf(ctx, i, 'insight') as Obj;
+          out[k] = v.map((i, idx) => {
+            const q = walkPf(ctx, i, 'insight', false, [k, String(idx)], leaf) as Obj;
             for (const f of ['title', 'finding', 'action']) if (typeof q[f] === 'string') q[f] = ctx.free(`artifact ${f}`, (i as Obj)[f]);
             if (typeof q['annual_impact_usd'] === 'number') q['annual_impact_usd'] = Math.round(q['annual_impact_usd']);
             return q;
           });
         } else if (k === 'leases' && Array.isArray(v)) {
-          out[k] = v.map((l) => {
-            const q = walkPf(ctx, l, 'lease') as Obj;
+          out[k] = v.map((l, idx) => {
+            const q = walkPf(ctx, l, 'lease', false, [k, String(idx)], leaf) as Obj;
             if (typeof (l as Obj)['tenant'] === 'string') q['tenant'] = ctx.a.alias('company', str((l as Obj)['tenant']));
             if (typeof q['source'] === 'string') q['source'] = `Lease -- ${String(q['property'] ?? 'property')} ${String(q['tenant'] ?? '')}.pdf`;
             return q;
           });
         } else {
-          out[k] = ctx.inGroup(k === 'portfolio' ? 'pf:portfolio' : null, () => walkPf(ctx, v, k));
+          out[k] = walkPf(ctx, v, k, false, [k], leaf);
         }
       }
       return `${m[1]}${JSON.stringify(out)}${m[3]}`;
@@ -1398,16 +1955,18 @@ function transformAnnualCsv(ctx: Ctx, text: string): string {
   const header = lines[0]!;
   const cols = header.split(',');
   const amountIdx = cols.indexOf('amount_usd');
+  const catIdx = cols.indexOf('category');
   const out = [header];
-  for (const line of lines.slice(1)) {
-    if (!line) continue;
+  lines.slice(1).forEach((line, row) => {
+    if (!line) return;
     // Fields are simple (no quoted commas) in this export; assert rather than guess.
     const f = line.split(',');
     if (f.length !== cols.length || amountIdx < 0) throw new Error('annual-statements.csv: unexpected field count');
-    const scaled = ctx.money(Number(f[amountIdx]), `pf:${f[0]}`);
+    // keyed by row; banded by the row's category (a per-SF opex band at the default SF, or generic)
+    const scaled = ctx.money(Number(f[amountIdx]), `csv/annual-statements/${row}`, catIdx >= 0 ? (f[catIdx] ?? '') : '');
     f[amountIdx] = Number.isInteger(scaled) ? `${scaled}.0` : String(scaled);
     out.push(f.map((x, i) => (i === amountIdx ? x : (ctx.t(x) ?? x))).join(','));
-  }
+  });
   return out.join('\n') + '\n';
 }
 
@@ -1455,9 +2014,18 @@ const ANALYTIC_ATTRS = new Set([
   'fire_life_safety|sprinklered',
 ]);
 
-function walkWithUnit(ctx: Ctx, v: Json, key: string, money: ReadonlySet<string>, keep: ReadonlySet<string>, freeKeys: ReadonlySet<string>, stableKeys: ReadonlySet<string> = new Set()): Json {
-  const recur = (x: Json, k: string): Json => walkWithUnit(ctx, x, k, money, keep, freeKeys, stableKeys);
-  if (Array.isArray(v)) return v.map((x) => recur(x, key));
+function walkWithUnit(
+  ctx: Ctx,
+  v: Json,
+  key: string,
+  money: ReadonlySet<string>,
+  keep: ReadonlySet<string>,
+  freeKeys: ReadonlySet<string>,
+  stableKeys: ReadonlySet<string> = new Set(),
+  path = '',
+): Json {
+  const recur = (x: Json, k: string, p: string): Json => walkWithUnit(ctx, x, k, money, keep, freeKeys, stableKeys, p);
+  if (Array.isArray(v)) return v.map((x, i) => recur(x, key, `${path}[${i}]`));
   if (v && typeof v === 'object') {
     const o = v as Obj;
     const out: Obj = {};
@@ -1473,15 +2041,18 @@ function walkWithUnit(ctx: Ctx, v: Json, key: string, money: ReadonlySet<string>
     };
     for (const [k, x] of Object.entries(o)) {
       const generic = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k);
-      if (k === 'value' && typeof x === 'number') out[k] = usd ? ctx.money(x) : x;
+      if (k === 'value' && typeof x === 'number') out[k] = usd ? ctx.money(x, `${path}/value`, 'usd_value') : x;
       else if (k === 'value' && attr && (typeof x === 'string' || Array.isArray(x))) out[k] = textValue(x);
       else if (stableKeys.has(k) && typeof x === 'string') out[k] = ctx.stable(k, x);
-      else out[generic ? ctx.t(k)! : k] = recur(x, generic ? `${key}.*` : k);
+      else {
+        const ok = generic ? ctx.t(k)! : k;
+        out[ok] = recur(x, generic ? `${key}.*` : k, `${path}/${ok}`);
+      }
     }
     return out;
   }
   if (typeof v === 'number') {
-    if (money.has(key)) return ctx.money(v);
+    if (money.has(key)) return ctx.money(v, path, bandField(key, path));
     if (keep.has(key)) return v;
     throw new Error(`unclassified numeric key "${key}"`);
   }
@@ -1527,24 +2098,18 @@ function transformCostSeg(ctx: Ctx, d: Json): Json {
   // Cost-seg notes/issues are engineering text the analytics and tests read ("no quantities",
   // "rent roll is the record", "unverified", correction dates): kept with names replaced and dollar
   // figures scaled. Value strings that are not analytic attributes (tenant rosters etc.) are replaced.
-  // Each study shares one keyed multiplier (its allocation classes, line items and QC re-sum stay
-  // proportional); studies are independent of each other. Totals are re-derived after rounding.
+  // Every amount is a banded draw keyed by its location (study id, class, fact index); the study
+  // totals, allocation sums and QC re-sums are re-derived from the drawn classes below.
   const src = aliasVendors(ctx, d) as Obj;
-  const walkCs = (v: Json): Json => walkWithUnit(ctx, v, '', COSTSEG_MONEY, COSTSEG_KEEP, set('other_sources', 'description'), set('scope'));
+  const walkCs = (v: Json, path: string): Json => walkWithUnit(ctx, v, '', COSTSEG_MONEY, COSTSEG_KEEP, set('other_sources', 'description'), set('scope'), path);
   const studyOf = (check: string): string => (/^CS-/.test(check) ? check : `CS-${check.split(/\s+/)[0]}`);
   const out: Obj = {};
   for (const [k, v] of Object.entries(src)) {
     if (k === 'studies' && v && typeof v === 'object' && !Array.isArray(v)) {
       const st: Obj = {};
-      for (const [id, x] of Object.entries(v)) st[id] = ctx.inGroup(`cs:${id}`, () => walkCs(x));
+      for (const [id, x] of Object.entries(v)) st[id] = walkCs(x, `cs/studies/${id}`);
       out[k] = st;
-    } else if ((k === 'facts' || k === 'qc') && Array.isArray(v)) {
-      out[k] = v.map((x) => {
-        const o = x as Obj;
-        const study = k === 'facts' ? String(o['study_id'] ?? '') : studyOf(String(o['check'] ?? ''));
-        return ctx.inGroup(study ? `cs:${study}` : null, () => walkCs(x));
-      });
-    } else out[k] = walkCs(v);
+    } else out[k] = walkCs(v, `cs/${k}`);
   }
   const rs = ((d as Obj)['studies'] as Obj | undefined) ?? {};
   const ss = (out['studies'] as Obj | undefined) ?? {};
@@ -1585,8 +2150,8 @@ function transformCostSeg(ctx: Ctx, d: Json): Json {
 const SPECS_MONEY = set('estimate_usd');
 const SPECS_KEEP = set('pages_total', 'pages_without_text', 'pages_read', 'source_page', 'qty');
 
-function transformSpecs(ctx: Ctx, d: Json): Json {
-  return walkWithUnit(ctx, aliasVendors(ctx, d), '', SPECS_MONEY, SPECS_KEEP, set('notes', 'note', 'description'), set('scope'));
+function transformSpecs(ctx: Ctx, d: Json, rel: string): Json {
+  return walkWithUnit(ctx, aliasVendors(ctx, d), '', SPECS_MONEY, SPECS_KEEP, set('notes', 'note', 'description'), set('scope'), `specs/${rel}`);
 }
 
 const CAL_MONEY = set('pca_unit_cost', 'contractor_unit_cost');
@@ -1608,11 +2173,19 @@ function registerObsIds(ctx: Ctx, rows: Json, obsIds: Map<string, string>): void
   }
 }
 
-function transformCalibration(ctx: Ctx, rows: Json, obsIds: Map<string, string>): Json {
+function transformCalibration(ctx: Ctx, rows: Json, obsIds: Map<string, string>, rel: string): Json {
   if (!Array.isArray(rows)) return rows;
   const fix = (id: string): string => obsIds.get(id) ?? id;
-  return (rows as Obj[]).map((r) => {
-    const q = walk(ctx, aliasVendors(ctx, r), '', CAL_MONEY, CAL_KEEP, set('scope_note')) as Obj;
+  return (rows as Obj[]).map((r, i) => {
+    const q = walk(ctx, aliasVendors(ctx, r), '', CAL_MONEY, CAL_KEEP, set('scope_note'), `cal/${rel}[${i}]`) as Obj;
+    // unit costs: banded by the observation's unit (SF / LF / EA ...), a structural field
+    const band = UNIT_COST_BANDS[String(r['unit'] ?? '')];
+    if (band) {
+      for (const f of ['pca_unit_cost', 'contractor_unit_cost']) {
+        const v = num(r[f]);
+        if (v !== null) q[f] = ctx.moneyIn(v, `cal/${rel}[${i}]/${f}`, band);
+      }
+    }
     q['obs_id'] = fix(String(r['obs_id']));
     if (Array.isArray(r['supersedes'])) q['supersedes'] = (r['supersedes'] as Json[]).map((x) => (typeof x === 'string' ? fix(x) : x));
     return q;
@@ -1629,11 +2202,61 @@ function transformArCache(ctx: Ctx, ids: Ids, c: Obj): Obj {
 
 function transformReviewQueue(ctx: Ctx, ids: Ids, rows: Json): Json {
   if (!Array.isArray(rows)) return rows;
-  return (rows as Obj[]).map((r) => {
-    const q = walk(ctx, r, 'review', SNAP_MONEY, SNAP_KEEP, set('reason')) as Obj;
+  return (rows as Obj[]).map((r, i) => {
+    const q = walk(ctx, r, 'review', SNAP_MONEY, SNAP_KEEP, set('reason'), `ar-review[${i}]`) as Obj;
     if (typeof r['proposedLeaseId'] === 'string') q['proposedLeaseId'] = refLeaseId(ctx, ids, r['proposedLeaseId']);
     return q;
   });
+}
+
+// ── money classification (for tests) ────────────────────────────────────────────────────────────
+
+/** The manifest files whose amounts the tests address: snapshot, property-financials dataset, cost seg. */
+export type MoneyFileKind = 'snapshot' | 'dataset' | 'costSeg';
+
+/**
+ * Visit every number the generator treats as a real AMOUNT in one parsed real file (the same
+ * classification as walk / walkPf / walkWithUnit), with its positional path (object keys by their
+ * index, so a real file and its synthetic copy, whose ids are aliased, line up), and return a copy
+ * with each visited number replaced by `visit`'s result. Used by the money tests: to scale a file's
+ * amounts (independence test) and to pair real and synthetic amounts (attack tests).
+ */
+export function mapMoney(kind: MoneyFileKind, v: Json, visit: (path: string, x: number, key: string) => number): Json {
+  const rec = (x: Json, key: string, path: string, inYoy: boolean): Json => {
+    if (Array.isArray(x)) return x.map((y, i) => rec(y, key, `${path}[${i}]`, inYoy));
+    if (x && typeof x === 'object') {
+      const o = x as Obj;
+      const out: Obj = {};
+      const usd = typeof o['unit'] === 'string' && /usd|\$/i.test(o['unit']);
+      Object.entries(o).forEach(([k, y], i) => {
+        const generic = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k);
+        const childYoy = kind === 'dataset' && (k === 'yoy' ? true : k === 'delta' || k === 'opex_by_delta' ? false : inYoy);
+        const driverN = kind === 'dataset' && k === 'n' && 'p' in o && 'd' in o;
+        const ck = generic ? `${key}.*` : driverN ? 'n_amount' : k;
+        // cash history balances are amounts whatever the entity key looks like
+        const childKey = kind === 'snapshot' && key === 'balances' ? 'balances.*' : ck;
+        out[k] = rec(y, k === 'value' && kind === 'costSeg' && usd ? '__usd_value' : childKey, `${path}/${i}`, childYoy);
+      });
+      return out;
+    }
+    if (typeof x !== 'number' || !Number.isFinite(x)) return x;
+    let isMoney: boolean;
+    if (kind === 'snapshot') isMoney = SNAP_MONEY.has(key);
+    else if (kind === 'dataset') isMoney = !(inYoy || PF_KEEP.has(key) || /(^|_)(pct|ratio|margin)$/.test(key));
+    else isMoney = key === '__usd_value' || COSTSEG_MONEY.has(key);
+    return isMoney ? visit(path, x, key) : x;
+  };
+  return rec(v, '', '', false);
+}
+
+/** Every amount of a parsed file as [positional path, value, field key]. */
+export function moneyLeaves(kind: MoneyFileKind, v: Json): Array<[string, number, string]> {
+  const out: Array<[string, number, string]> = [];
+  mapMoney(kind, v, (p, x, k) => {
+    out.push([p, x, k]);
+    return x;
+  });
+  return out;
 }
 
 // ── leak check ──────────────────────────────────────────────────────────────────────────────────
@@ -1673,9 +2296,23 @@ function scanForLeaks(files: string[], terms: string[]): LeakHit[] {
 const readJson = (root: string, rel: string): Json => JSON.parse(readFileSync(join(root, rel), 'utf8')) as Json;
 const json = (v: Json): string => JSON.stringify(v, null, 2) + '\n';
 
-async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs: string[] }> {
+/**
+ * Transform the real manifest files under `root` into their synthetic stand-ins. Returns the outputs
+ * (repo-relative path -> content) without touching disk unless `write`. Exported for the money-
+ * independence test, which runs it on two inputs that differ only in their amounts.
+ *
+ * `avoidRealAmounts` (default true): a draw that equals a distinctive real amount is redrawn. That is
+ * the one place the real amounts touch the draws, and it can only move a value AWAY from a real
+ * amount; the independence test turns it off to compare two inputs byte for byte.
+ */
+export async function build(
+  root: string,
+  write: boolean,
+  opts: { avoidRealAmounts?: boolean } = {},
+): Promise<{ ctx: Ctx; outputs: string[]; contents: Map<string, string> }> {
   const manifest = loadManifest(ROOT);
-  const ctx = new Ctx(write ? loadSecret() : Buffer.from('check-mode-only', 'utf8'));
+  // A drawn amount must never equal a distinctive real amount (it would trip the fingerprint check).
+  const ctx = new Ctx(opts.avoidRealAmounts === false ? new Set() : realNumberFingerprints(root));
   const ids = newIds();
   const have = (rel: string): boolean => existsSync(join(root, rel));
   const outputs: Array<[string, () => string]> = [];
@@ -1765,7 +2402,7 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
       }
     }
     const synthSnap = transformSnapshot(ctx, ids, snapshot);
-    fixSnapshotIdentities(snapshot, synthSnap);
+    fixSnapshotIdentities(snapshot, synthSnap, ids);
     outputs.push(['data/snapshots/portfolio.json', () => json(synthSnap)]);
   }
   if (have('src/data/seed-deals.ts')) {
@@ -1803,14 +2440,14 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
   const premRel = 'scripts/data/2026-08-22-insurance-premium-history.json';
   if (have(premRel)) {
     const prem = readJson(root, premRel) as Obj;
-    const policies = ((prem['policies'] as Obj[] | undefined) ?? []).map((x) => {
-      const q = walk(ctx, x, 'premiumPolicy', set('premiumAnnual', 'coverageTiv'), set()) as Obj;
+    const policies = ((prem['policies'] as Obj[] | undefined) ?? []).map((x, i) => {
+      const q = walk(ctx, x, 'premiumPolicy', set('premiumAnnual', 'coverageTiv'), set(), new Set(), `prem/policies[${i}]`) as Obj;
       q['insurer'] = ctx.a.alias('carrier', str(x['insurer']));
       q['policyNumber'] = ctx.a.alias('policy', str(x['policyNumber']));
       q['propertyId'] = x['propertyId'] ?? null;
       return q;
     });
-    const p2 = { ...(walk(ctx, { ...prem, policies: [] }, 'premiumHistory', set('premiumAnnual', 'coverageTiv'), set()) as Obj), policies };
+    const p2 = { ...(walk(ctx, { ...prem, policies: [] }, 'premiumHistory', set('premiumAnnual', 'coverageTiv'), set(), new Set(), 'prem') as Obj), policies };
     outputs.push([premRel, () => json(p2)]);
   }
   // Local operator tables moved out of tracked code (config/local/, gitignored).
@@ -1847,13 +2484,13 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
     outputs.push(['data/cost-seg/cost-seg.json', () => json(c)]);
   }
   for (const f of specFiles) {
-    const s = transformSpecs(ctx, readJson(root, f));
+    const s = transformSpecs(ctx, readJson(root, f), f);
     outputs.push([f, () => json(s)]);
   }
   const obsIds = new Map<string, string>();
   for (const f of calFiles) registerObsIds(ctx, readJson(root, f), obsIds);
   for (const f of calFiles) {
-    const c = transformCalibration(ctx, readJson(root, f), obsIds);
+    const c = transformCalibration(ctx, readJson(root, f), obsIds, f);
     if (f.endsWith('/observations.json')) synth.observations = c;
     outputs.push([f, () => json(c)]);
   }
@@ -1878,15 +2515,17 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
   const missing = all.filter((f) => !covered.has(f));
   if (missing.length) throw new Error(`no transformer for manifest file(s): ${missing.join(', ')}`);
 
+  const contents = new Map(outputs.map(([rel, content]) => [rel, content()] as [string, string]));
   if (write) {
-    for (const [rel, content] of outputs) {
+    for (const [rel, content] of contents) {
       const abs = join(OUT_ROOT, rel);
       mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, content());
+      writeFileSync(abs, content);
       console.log(`[synthetic] wrote fixtures/synthetic/${rel}`);
     }
+    console.log(`[synthetic] money: seeded draws, ${ctx.redraws} redraw(s) forced by the real-amount fingerprint list`);
   }
-  return { ctx, outputs: outputs.map(([rel]) => `fixtures/synthetic/${rel}`) };
+  return { ctx, outputs: outputs.map(([rel]) => `fixtures/synthetic/${rel}`), contents };
 }
 
 async function main(): Promise<void> {
