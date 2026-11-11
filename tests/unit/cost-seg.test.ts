@@ -319,7 +319,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
 describe('quantity bridge → calibration_pending only', () => {
   const proposal = (over: Record<string, unknown> = {}): CalibrationProposal =>
     CalibrationProposal.parse({
-      obs_id: 'e-fulton:roof_epdm:x:1', property: '9050 Red Branch Rd', component: 'roof_epdm', unit: 'SF', qty: null, pca_unit_cost: 5,
+      obs_id: 'e-fulton:roof_epdm:x:1', property: '9050 Red Branch Rd', component: 'roof_epdm', unit: 'SF', qty: null, pca_unit_cost: 4,
       pca_source: { consultant: 'PCI', report_date: '2025-01', source_file: 'f', source_date: '2025-01', price_basis: 'PCA_CONSULTANT_ESTIMATE', status: 'CURRENT' },
       contractor_unit_cost: null,
       contractor_source: { vendor: 'V', doc_date: '2026-01-01', status: 'BID', source_file: 'q', source_date: '2026-01-01', price_basis: 'CONTRACTOR_QUOTE' },
@@ -338,7 +338,7 @@ describe('quantity bridge → calibration_pending only', () => {
     expect(out.qty).toBe(52500);
     expect(out.qty_source).toBe('STATED');
     const filled = bridgeCostSegQuantities([proposal()], ds.facts)[0]!;
-    expect(filled.pca_unit_cost).toBe(5);
+    expect(filled.pca_unit_cost).toBe(4);
     expect(filled.contractor_unit_cost).toBeNull();
   });
 
@@ -410,7 +410,7 @@ describe('isolation — cost seg never feeds reserve / near-term / intensity / c
   it('PCA reserve / near-term / calibration outputs are identical before and after the cost seg code runs over the same data', () => {
     const pcaProp = {
       propertyKey: 'e-livingston', propertyLabel: 'Livingston', propertyMasterId: null, history: [], ageYears: 1, reservesPsfYr: null, hasDollarFigures: true,
-      current: { reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft' as const, usabilityRaw: null, sf: 10950, immediateUsd: 10400, shortTermUsd: 59000, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: 118129, termYears: 12, psfYrStated: null, notes: null },
+      current: { reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft' as const, usabilityRaw: null, sf: 10950, immediateUsd: 11000, shortTermUsd: 22000, reservesUninflUsd: 123456, reservesInflUsd: 130000, termYears: 12, psfYrStated: null, notes: null },
     };
     const report = { asOf: '2026-10-13', loaded: true, properties: [pcaProp], totals: { propertiesTotal: 1, propertiesWithFigures: 1, immediateUsd: 0, shortTermUsd: 0, reservesUninflUsd: 0 }, schedule: [], lifecycle: [], calibration: [], quotes: [], priceBook: [], openItems: [] };
     const ledger = parseLedger(JSON.parse(readFileSync(join(process.cwd(), 'data', 'calibration', 'observations.json'), 'utf-8')));
@@ -419,7 +419,7 @@ describe('isolation — cost seg never feeds reserve / near-term / intensity / c
     for (const id of Object.keys(ds.studies)) crossCheck(ds.facts, id, pcaComparators([], null, 10950));
     bridgeCostSegQuantities([], ds.facts);
     expect(snap()).toBe(before);
-    expect(JSON.parse(before).rollup.totalUsd).toBe(69400); // Livingston 10,400 + 59,000 — unmoved by cost seg
+    expect(JSON.parse(before).rollup.totalUsd).toBe(33000); // Livingston 11,000 + 22,000 (synthetic) — unmoved by cost seg
   });
 
   it('no cost seg fact carries PCA vintage / reserve fields, and every study_id has a study record', () => {

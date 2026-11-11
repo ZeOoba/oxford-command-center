@@ -417,7 +417,7 @@ describe('checkSnapshot — runtime reconciliation', () => {
     // 2026-09-25: a 2026-07-10 row was keyed from estimates. The value-only gate check caught it only
     // because the current balances were not rolled forward; had they been, it would have passed.
     describe('estimated-row signature (round-number balances)', () => {
-      const june = { A: REDACTED-AMT, B: REDACTED-AMT, C: REDACTED-AMT, D: REDACTED-AMT, E: REDACTED-AMT, F: REDACTED-AMT };
+      const june = { A: 123456.78, B: 4400017, C: 34567.89, D: 1234567.89, E: 222222.333, F: 11111.1 };
       const row = (date: string, balances: Record<string, number>) => ({
         date,
         total: Object.values(balances).reduce((a, b) => a + b, 0),
@@ -436,11 +436,11 @@ describe('checkSnapshot — runtime reconciliation', () => {
       });
 
       it('is silent for statement-style balances (cents, odd dollars), even when some entities are unchanged', () => {
-        expect(flagsFor({ ...june, A: 190313.07, B: 4481220, D: 1601877.12, E: 212004.5 })).toEqual([]);
+        expect(flagsFor({ ...june, A: 145678.91, B: 4400123, D: 1300456.12, E: 222333.5 })).toEqual([]);
       });
 
       it('is silent when only one or two changed balances happen to be round', () => {
-        expect(flagsFor({ ...june, A: 190000, B: 4481220.5, C: 40000, D: 1601877.12 })).toEqual([]);
+        expect(flagsFor({ ...june, A: 150000, B: 4400123.5, C: 40000, D: 1300456.12 })).toEqual([]);
       });
 
       it('is silent for history rows that carry no per-entity balances', () => {
@@ -454,7 +454,7 @@ describe('checkSnapshot — runtime reconciliation', () => {
   });
 
   // 2026-09-14 sweep: two live entities carried a percent whose sign contradicted its own dollar
-  // figure (deltaDollar -REDACTED-AMT with deltaPct +4.1%; growth12Dollar +REDACTED-AMT with growth12Pct -1186%)
+  // figure (a negative deltaDollar with a positive deltaPct; a positive growth12Dollar with a large negative growth12Pct)
   // because the workbook's own percent cell divides by a NEGATIVE prior balance. parse.ts now
   // recomputes both and emits null over a wrong-signed number; this is the self-consistency
   // backstop over whatever is actually on the snapshot (committed file, legacy bake, hand-edit).
@@ -467,7 +467,7 @@ describe('checkSnapshot — runtime reconciliation', () => {
     const snapWith = (e: Record<string, unknown>) => base({ cash: { totalCash: 500, entities: [entity(e)] } });
 
     it('flags (warn) an entity whose deltaDollar and deltaPct disagree in sign', () => {
-      const flags = checkSnapshot(snapWith({ deltaDollar: -1698.4, deltaPct: 0.0413 }));
+      const flags = checkSnapshot(snapWith({ deltaDollar: -1234.5, deltaPct: 0.0413 }));
       const f = flags.find((x) => x.field === 'cash.entities.deltaPct');
       expect(f).toBeDefined();
       expect(f!.severity).toBe('warn');
@@ -475,15 +475,15 @@ describe('checkSnapshot — runtime reconciliation', () => {
     });
 
     it('flags (warn) an entity whose growth12Dollar and growth12Pct disagree in sign', () => {
-      const flags = checkSnapshot(snapWith({ growth12Dollar: REDACTED-AMT, growth12Pct: -11.863 }));
+      const flags = checkSnapshot(snapWith({ growth12Dollar: 2345.678, growth12Pct: -11.863 }));
       const f = flags.find((x) => x.field === 'cash.entities.growth12Pct');
       expect(f).toBeDefined();
       expect(f!.severity).toBe('warn');
     });
 
     it('is silent when the signs agree, when either side is null, or when the dollar move is exactly zero', () => {
-      expect(checkSnapshot(snapWith({ deltaDollar: 416.9, deltaPct: 0.0503 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
-      expect(checkSnapshot(snapWith({ deltaDollar: -416.9, deltaPct: null })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+      expect(checkSnapshot(snapWith({ deltaDollar: 321.9, deltaPct: 0.0503 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+      expect(checkSnapshot(snapWith({ deltaDollar: -321.9, deltaPct: null })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
       expect(checkSnapshot(snapWith({ deltaDollar: 0, deltaPct: 0 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
     });
 
@@ -558,7 +558,7 @@ describe('checkStaleLeaseRows', () => {
 });
 
 // 2026-09-23 review: Overview "Total Debt" (property loan balances) and Capital › Debt "External Debt"
-// (loan schedule) disagreed by ~$0.7M. Round 2 (2026-09-24): affiliate notes are excluded on BOTH
+// (loan schedule) disagreed by the affiliate notes. Round 2 (2026-09-24): affiliate notes are excluded on BOTH
 // sides (src/analytics/debt-basis.ts) and the check lists each unmatched row instead of one net gap.
 // Warn-only, entity 'debt': never picks a winner, never alters a total, never fires reconcile-fail.
 type P = { id: string; name: string; type?: string; lender?: string | null; loanBalance: number };
@@ -566,25 +566,26 @@ type L = { id: string; name: string; direction: string; absBalance: number; lend
 const debtSnap = (properties: P[], loans: L[]) => ({ properties, loans }) as never;
 
 // Live shape (data/snapshots/portfolio.json, asOf 2026-09-13), trimmed to the rows that matter.
-const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'Firm 03', loanBalance: REDACTED-AMT };
-const RARIG: P = { id: 'p-rarig', name: '1100 Rarig Ave, Columbus OH', type: 'Flex', lender: 'Oxford Capital', loanBalance: REDACTED-AMT };
+// Balances are synthetic stand-ins; the row structure (lenders, directions, collateral) is the live one.
+const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'Firm 03', loanBalance: 2_456_789.12 };
+const RARIG: P = { id: 'p-rarig', name: '1100 Rarig Ave, Columbus OH', type: 'Flex', lender: 'Oxford Capital', loanBalance: 1_111_111 };
 const LIVINGSTON: P = { id: 'p-liv', name: '3875-3883 E Livingston Ave, Columbus OH', type: 'Flex', lender: null, loanBalance: 0 };
 const RESIDENCE: P = { id: 'p-res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', lender: null, loanBalance: 0 };
-const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'Oxford / Lender 03', counterparty: 'Oxford / Lender 03', collateralProperty: '29000 Information Lane, Easton MD' };
-const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
-const RARIG_NOTE: L = { id: 'n-rarig', name: 'Note Party 01', direction: 'lender', absBalance: REDACTED-AMT, lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share', collateralProperty: null };
+const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: 2_456_789.12, lender: 'Oxford / Lender 03', counterparty: 'Oxford / Lender 03', collateralProperty: '29000 Information Lane, Easton MD' };
+const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: 333_333, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
+const RARIG_NOTE: L = { id: 'n-rarig', name: 'Note Party 01', direction: 'lender', absBalance: 555_555, lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share', collateralProperty: null };
 
 describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (2026-09-24)', () => {
   it('the live shape reconciles per row: Rarig (affiliate property row) and 3883 (affiliate borrower loan) drop out of the third-party comparison; only the affiliate-total flag remains', () => {
     // Ratified 2026-09-26: the two affiliate totals come from different spines (Rarig owes Oxford
-    // Capital $REDACTED-AMT on the property row; the loan schedule carries "3883 from Oxford (50%)"
-    // $REDACTED-AMT) and legitimately differ — disclosed as ONE warn flag, never an error.
+    // Capital $1,111,111 on the property row; the loan schedule carries "3883 from Oxford (50%)"
+    // $333,333) and legitimately differ — disclosed as ONE warn flag, never an error.
     const flags = checkDebtBasis(debtSnap([EASTON, RARIG, LIVINGSTON, RESIDENCE], [EASTON_LOAN, LOAN_3883, RARIG_NOTE]));
     expect(flags.map((f) => f.field)).toEqual(['debt.basis.affiliate']);
     expect(flags[0]).toMatchObject({ entity: 'debt', severity: 'warn' });
-    expect(flags[0]!.issue).toContain('$REDACTED-AMT');
-    expect(flags[0]!.issue).toContain('$REDACTED-AMT');
-    expect(flags[0]!.issue).toContain('gap $REDACTED-AMT');
+    expect(flags[0]!.issue).toContain('$1,111,111');
+    expect(flags[0]!.issue).toContain('$333,333');
+    expect(flags[0]!.issue).toContain('gap $777,778');
   });
 
   it('a property row that disagrees with its attributed loan is listed by name with both figures and the gap', () => {
@@ -592,7 +593,7 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ entity: 'debt', field: 'debt.basis.property.p-easton', severity: 'warn' });
     expect(flags[0]!.issue).toBe(
-      '29000 Information Lane, Easton MD: Property NOI sheet loan balance $2,800,000 vs loan schedule $2,760,612 (29000 Information Lane) — gap $39,388',
+      '29000 Information Lane, Easton MD: Property NOI sheet loan balance $2,800,000 vs loan schedule $2,456,789 (29000 Information Lane) — gap $343,211',
     );
   });
 
@@ -644,11 +645,11 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
   it('aggregate guard: rows each within tolerance but summing past it → no per-row flag, one root flag (refute wf_2b574580-61b)', () => {
     const beta: P = { id: 'p-beta', name: 'Beta Flex', type: 'Flex', lender: 'Bank B', loanBalance: 200_999 };
     const betaLoan: L = { id: 'b-beta', name: 'Beta Loan', direction: 'borrower', absBalance: 200_000, lender: 'Bank B', counterparty: 'Bank B', collateralProperty: 'Beta Flex' };
-    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_761_610.91 }, beta], [EASTON_LOAN, betaLoan]));
+    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_457_788.12 }, beta], [EASTON_LOAN, betaLoan]));
     expect(flags.map((f) => f.field)).toEqual(['debt.basis']);
     expect(flags[0]).toMatchObject({ entity: 'debt', severity: 'warn' });
-    expect(flags[0]!.issue).toContain('$2,962,610');
-    expect(flags[0]!.issue).toContain('$2,960,612');
+    expect(flags[0]!.issue).toContain('$2,658,787');
+    expect(flags[0]!.issue).toContain('$2,656,789');
     expect(flags[0]!.issue).toContain('residual gap across rows within tolerance $1,998');
   });
 
@@ -666,13 +667,13 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
   });
 
   it('aggregate guard is silent when the aggregate is within tolerance', () => {
-    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_761_000 }], [EASTON_LOAN]));
+    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_457_000 }], [EASTON_LOAN]));
     expect(flags).toEqual([]);
   });
 
   it('duplicate loan ids among third-party loans are flagged once and excluded from the comparison, in either row order (refute wf_2b574580-61b)', () => {
     const dupA: L = { ...EASTON_LOAN, id: 'dup', name: 'Dup A', absBalance: 2_000_000 };
-    const dupB: L = { ...EASTON_LOAN, id: 'dup', name: 'Dup B', absBalance: 760_611.91 };
+    const dupB: L = { ...EASTON_LOAN, id: 'dup', name: 'Dup B', absBalance: 456_789.12 };
     const ab = checkDebtBasis(debtSnap([EASTON], [dupA, dupB]));
     const ba = checkDebtBasis(debtSnap([EASTON], [dupB, dupA]));
     expect(ab).toEqual(ba);
@@ -732,12 +733,12 @@ describe('checkDebtBasis — affiliate totals cross-spine disclosure (2026-09-26
     const flags = checkDebtBasis(debtSnap([RARIG], [LOAN_3883]));
     expect(flags).toEqual([{
       entity: 'debt', field: 'debt.basis.affiliate', severity: 'warn',
-      issue: 'Affiliate notes: Property NOI sheet $REDACTED-AMT (rows with an Oxford-affiliate lender) vs loan schedule $REDACTED-AMT (affiliate borrower loans) — gap $REDACTED-AMT',
+      issue: 'Affiliate notes: Property NOI sheet $1,111,111 (rows with an Oxford-affiliate lender) vs loan schedule $333,333 (affiliate borrower loans) — gap $777,778',
     }]);
   });
 
   it('equal affiliate totals → no flag (and neither affiliate row enters the third-party comparison)', () => {
-    const matched: L = { ...LOAN_3883, absBalance: REDACTED-AMT, collateralProperty: '1100 Rarig Ave, Columbus OH' };
+    const matched: L = { ...LOAN_3883, absBalance: 1_111_111, collateralProperty: '1100 Rarig Ave, Columbus OH' };
     expect(checkDebtBasis(debtSnap([RARIG], [matched]))).toEqual([]);
   });
 

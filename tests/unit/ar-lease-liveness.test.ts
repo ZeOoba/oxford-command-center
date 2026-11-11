@@ -6,10 +6,10 @@ import { isDeadLease } from '../../server/ar/lease-liveness';
 // carried their own `status !== 'Expired'` check -- which let an Active lease carrying $0 rent
 // (a roster placeholder, not a billing tenant) and a 'Vacant' record both pass as live candidates
 // and absorb an unattended auto-write. Real rows: Tenant 072 LLC (29000 Information Lane
-// #202, Active, $0) and Example Gymnastics (2207 Northwood A15, Active, $0, $REDACTED-AMT AR).
+// #202, Active, $0) and Example Gymnastics (2207 Northwood A15, Active, $0, with AR).
 describe('isDeadLease', () => {
   it('Expired -> dead (the original 2026-08-24 rule, unchanged)', () => {
-    expect(isDeadLease({ status: 'Expired', annualRent: REDACTED-AMT })).toBe(true);
+    expect(isDeadLease({ status: 'Expired', annualRent: 4500 })).toBe(true);
   });
 
   it('Vacant -> dead (a vacancy placeholder is never a billing tenant)', () => {
@@ -22,8 +22,8 @@ describe('isDeadLease', () => {
   });
 
   it('Active / Expiring Soon / Unknown with positive rent -> live (unchanged behaviour)', () => {
-    expect(isDeadLease({ status: 'Active', annualRent: 25500 })).toBe(false);
-    expect(isDeadLease({ status: 'Expiring Soon', annualRent: REDACTED-AMT })).toBe(false);
+    expect(isDeadLease({ status: 'Active', annualRent: 24000 })).toBe(false);
+    expect(isDeadLease({ status: 'Expiring Soon', annualRent: 13500 })).toBe(false);
     expect(isDeadLease({ status: 'Unknown', annualRent: 100 })).toBe(false);
   });
 
@@ -43,7 +43,7 @@ describe('isDeadLease', () => {
   // annualRent is year-1 cash NET of abated months (parse.ts, 2026-10-06): a fully abated live lease
   // (Abated Months = 12) reads annualRent 0 while monthlyRent is still the contract rate.
   it('Active, annualRent 0 but monthlyRent > 0 (fully abated) -> LIVE, not a $0 placeholder', () => {
-    expect(isDeadLease({ status: 'Active', annualRent: 0, monthlyRent: 5300 })).toBe(false);
+    expect(isDeadLease({ status: 'Active', annualRent: 0, monthlyRent: 5000 })).toBe(false);
   });
 
   it('Active, annualRent 0 and monthlyRent 0 / null / absent -> still dead (placeholder rows)', () => {
@@ -53,7 +53,7 @@ describe('isDeadLease', () => {
   });
 
   it('monthlyRent never revives an Expired / Vacant lease', () => {
-    expect(isDeadLease({ status: 'Expired', annualRent: 0, monthlyRent: 5300 })).toBe(true);
-    expect(isDeadLease({ status: 'Vacant', annualRent: 0, monthlyRent: 5300 })).toBe(true);
+    expect(isDeadLease({ status: 'Expired', annualRent: 0, monthlyRent: 5000 })).toBe(true);
+    expect(isDeadLease({ status: 'Vacant', annualRent: 0, monthlyRent: 5000 })).toBe(true);
   });
 });

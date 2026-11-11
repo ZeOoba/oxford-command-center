@@ -62,7 +62,7 @@ describe('computeDroppedLeaseClears', () => {
 
   it('zero-stamps a persisted lease whose tenant is absent from a newer same-series report', () => {
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const clears = computeDroppedLeaseClears(persisted, [report(newFile, new Date('2026-08-21'))], []);
     expect(clears['mlc-academy']).toEqual({
@@ -226,7 +226,7 @@ describe('applyWritesAndClears (correct write-then-clear ordering)', () => {
 
   it('a lease with no write this sweep and absent from the newer report is still cleared', () => {
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const { newArrears, clearedLeaseIds } = applyWritesAndClears(persisted, [report(newFile, new Date('2026-08-21'))], []);
     expect(clearedLeaseIds).toContain('mlc-academy');
@@ -249,7 +249,7 @@ describe('hadUnresolvedRow: a cached SKIP must not exempt a series (unlike a gen
     const oldFile = `${property} 7.15.2026.xlsx`;
     const newFile = `${property} 8.21.2026.xlsx`;
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     // 'REDACTED-696' is a cached SKIP on this report -- NOT counted toward
     // hadUnresolvedRow (only genuine review rows are).

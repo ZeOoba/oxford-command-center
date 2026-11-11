@@ -39,8 +39,8 @@ function reg(over: Record<string, unknown> = {}): unknown[] {
   const base: Record<string, unknown> = {
     'Report ID': 'R01', 'Property': '2800-2826 Banwick Rd', 'Location': 'Columbus OH', 'Consultant / report no.': 'Intertek',
     'Client (per report)': 'FVC LLC', 'ORA-commissioned?': 'Yes', 'Purpose': 'Refi', 'Inspection date': '2026-03-23',
-    'Report date': '2026-04-07', 'SF': 24000, 'Bldgs': 1, 'Year built': '1981', 'Immediate $': 1050, 'Short-term (Yr1-2) $': null,
-    'Reserves uninflated $': REDACTED-AMT, 'Reserves inflated $': REDACTED-AMT, 'Term (yrs)': 12, '$/SF/yr (as stated)': 0.77,
+    'Report date': '2026-04-07', 'SF': 24000, 'Bldgs': 1, 'Year built': '1981', 'Immediate $': 1234, 'Short-term (Yr1-2) $': null,
+    'Reserves uninflated $': 120000, 'Reserves inflated $': 126000.50, 'Term (yrs)': 12, '$/SF/yr (as stated)': 0.42,
     'Report age (yrs @2026)': 0, 'Usability for forecasting': 'CURRENT', 'Source file(s)': 'x.pdf', 'Notes': null, ...over,
   };
   return REG_HEADERS.map((h) => base[h] ?? null);
@@ -49,15 +49,15 @@ function reg(over: Record<string, unknown> = {}): unknown[] {
 function build(opts: { reg?: unknown[][]; comp?: unknown[][]; quote?: unknown[][]; asset?: unknown[][]; pair?: unknown[][]; flag?: unknown[][] } = {}): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   wb.addWorksheet('PCA_Register').addRows([REG_HEADERS, ...(opts.reg ?? [reg()])]);
-  wb.addWorksheet('Components').addRows([COMP_HEADERS, ...(opts.comp ?? [['R01', 'Banwick', 'Paving', 2230, 'SY', 42.5, '40%', 25, 24, 1, 37910, 'Yr1', 'Estimate', 'Poor']])]);
+  wb.addWorksheet('Components').addRows([COMP_HEADERS, ...(opts.comp ?? [['R01', 'Banwick', 'Paving', 2230, 'SY', 25, '40%', 25, 24, 1, 22300, 'Yr1', 'Estimate', 'Poor']])]);
   wb.addWorksheet('Quotes_Actuals').addRows([QUOTE_HEADERS, ...(opts.quote ?? [[
-    '55 New Plant roof', '55 New Plant Ct', 'REDACTED-713', 'Proposal', 'Completed', 'Roofing', '2017-02-03', REDACTED-AMT, null, 28700, 'SF', 2.85,
+    '55 New Plant roof', '55 New Plant Ct', 'REDACTED-713', 'Proposal', 'Completed', 'Roofing', '2017-02-03', 57400, null, 28700, 'SF', 2.00,
     'EPDM', 'SharePoint file', 'ref', 'Medium', 'No', 'Unknown', 'Unreviewed', null,
   ]])]);
   wb.addWorksheet('Asset_Facts').addRows([ASSET_HEADERS, ...(opts.asset ?? [[
     '55 New Plant Ct', 'Roof — EPDM', 'Completed 2017-12-05', 2017, 'JM 20-yr to 12-2037', 'warranty', null,
   ]])]);
-  wb.addWorksheet('Est_vs_Actual').addRows([PAIR_HEADERS, ...(opts.pair ?? [['55 New Plant Ct', 'Re-roof', 'PCI 2016', REDACTED-AMT, 7, 'REDACTED-713 2017', REDACTED-AMT, 2.85, -0.595, 'c']])]);
+  wb.addWorksheet('Est_vs_Actual').addRows([PAIR_HEADERS, ...(opts.pair ?? [['55 New Plant Ct', 'Re-roof', 'PCI 2016', REDACTED-AMT, 5, 'REDACTED-713 2017', 57400, 2.00, -0.6, 'c']])]);
   wb.addWorksheet('Flags_Open_Items').addRows([FLAG_HEADERS, ...(opts.flag ?? [[1, 'High', '3520 E Fulton', 'CBRE floor', 'Commission PCA']])]);
   return wb;
 }
@@ -69,13 +69,13 @@ describe('parseRegister', () => {
     expect(p.reports).toHaveLength(1);
     expect(p.reports[0]).toMatchObject({
       reportId: 'R01', propertyKey: 'banwick', propertyMasterId: 'sepich-portfolio-columbus-oh-8-props',
-      oraCommissioned: true, immediateUsd: 1050, shortTermUsd: null, usabilityClass: 'current',
+      oraCommissioned: true, immediateUsd: 1234, shortTermUsd: null, usabilityClass: 'current',
     });
-    expect(p.components[0]).toMatchObject({ rowSeq: 1, basis: 'estimate', totalUsd: 37910 });
-    expect(p.quotes[0]).toMatchObject({ propertyKey: 'new-plant', verified: false, quotedUsd: REDACTED-AMT, actualUsd: null });
+    expect(p.components[0]).toMatchObject({ rowSeq: 1, basis: 'estimate', totalUsd: 22300 });
+    expect(p.quotes[0]).toMatchObject({ propertyKey: 'new-plant', verified: false, quotedUsd: 57400, actualUsd: null });
     expect(p.assets[0]).toMatchObject({ installYear: 2017, warrantyEndYear: 2037 });
     expect(p.openItems[0]).toMatchObject({ itemNo: 1, severity: 'High' });
-    expect(p.pairs[0]).toMatchObject({ propertyKey: 'new-plant', estimateUsd: REDACTED-AMT, contractorPsf: 2.85 });
+    expect(p.pairs[0]).toMatchObject({ propertyKey: 'new-plant', estimateUsd: REDACTED-AMT, contractorPsf: 2 });
   });
 
   it('leaves property_master_id NULL when the mapped id is not a known master row', () => {
@@ -130,9 +130,9 @@ describe('parseRegister', () => {
 
 describe('real-register quirks', () => {
   it("keeps a range RUL ('1-2') as text with a null integer RUL", () => {
-    const p = parseRegister(build({ comp: [['R01', 'x', 'TPO re-roof', 28900, 'SF', 7, null, null, null, '1-2', REDACTED-AMT, 'Immediate', 'Estimate', null]] }), KNOWN);
+    const p = parseRegister(build({ comp: [['R01', 'x', 'TPO re-roof', 28900, 'SF', 5, null, null, null, '1-2', 144500, 'Immediate', 'Estimate', null]] }), KNOWN);
     expect(p.rejects).toEqual([]);
-    expect(p.components[0]).toMatchObject({ rul: null, rulRaw: '1-2', totalUsd: REDACTED-AMT });
+    expect(p.components[0]).toMatchObject({ rul: null, rulRaw: '1-2', totalUsd: 144500 });
   });
 
   it('accepts Med and Info severities as printed', () => {

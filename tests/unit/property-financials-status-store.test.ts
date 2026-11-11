@@ -123,14 +123,14 @@ describe('putInsightStatus / readInsightStatuses', () => {
 });
 
 describe('L4: records remember which version of the insight they were set against', () => {
-  const ins = { finding: 'TTM26 is +21.0% against TTM25.', annual_impact_usd: REDACTED-AMT, impact_basis: '8% savings [SPECULATIVE]' };
+  const ins = { finding: 'TTM26 is +21.0% against TTM25.', annual_impact_usd: 11111, impact_basis: '8% savings [SPECULATIVE]' };
 
   it('insightFingerprint is a sha256 of the finding + impact text; changes when either is restated', () => {
     const h = insightFingerprint(ins);
     expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(insightFingerprint({ ...ins })).toBe(h);
     expect(insightFingerprint({ ...ins, finding: 'TTM26 is -1.8% against TTM25.' })).not.toBe(h);
-    expect(insightFingerprint({ ...ins, annual_impact_usd: 13268 })).not.toBe(h);
+    expect(insightFingerprint({ ...ins, annual_impact_usd: 11112 })).not.toBe(h);
     expect(insightFingerprint({ ...ins, impact_basis: null })).not.toBe(h);
   });
 

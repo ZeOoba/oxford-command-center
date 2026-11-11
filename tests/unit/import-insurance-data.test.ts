@@ -438,8 +438,8 @@ describe('parsePoliciesPayload', () => {
     policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
-    premiumAnnual: REDACTED-AMT,
-    coverageTiv: REDACTED-AMT,
+    premiumAnnual: 1234,
+    coverageTiv: 1000000,
     policyType: 'Package (PCKG)',
     sourceDate: '2026-08-17',
   };
@@ -599,8 +599,8 @@ describe('importPolicyRows', () => {
     policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
-    premiumAnnual: REDACTED-AMT,
-    coverageTiv: REDACTED-AMT,
+    premiumAnnual: 1234,
+    coverageTiv: 1000000,
     policyType: 'Package (PCKG)',
     source: 'test-source.pdf',
     sourceDate: '2026-08-17',
@@ -619,8 +619,8 @@ describe('importPolicyRows', () => {
       `SELECT premium_annual, coverage_tiv FROM property_insurance_policies
        WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
     ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
-    expect(inserted.premium_annual).toBe(REDACTED-AMT);
-    expect(inserted.coverage_tiv).toBe(REDACTED-AMT);
+    expect(inserted.premium_annual).toBe(1234);
+    expect(inserted.coverage_tiv).toBe(1000000);
   });
 
   // Undocumented-but-real behavior flagged by the final whole-branch review: two rows sharing the
@@ -679,14 +679,14 @@ describe('importPolicyRows', () => {
       WHERE id = ?
     `).run(policyId);
 
-    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd'); // premiumAnnual: REDACTED-AMT
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd'); // premiumAnnual: 1234
     const result = importPolicyRows(db, rows, 'test-suite');
     expect(result).toEqual({ inserted: 0, updated: 1, unrecognized: 0, rejected: 0 });
 
     const row = db.prepare('SELECT id, premium_annual, deductible, coverage_limit FROM property_insurance_policies WHERE id = ?')
       .get(policyId) as { id: number; premium_annual: number; deductible: number; coverage_limit: number };
     expect(row.id).toBe(policyId); // same row, not delete-and-reinsert
-    expect(row.premium_annual).toBe(REDACTED-AMT); // updated
+    expect(row.premium_annual).toBe(1234); // updated
     expect(row.deductible).toBe(25000); // preserved
     expect(row.coverage_limit).toBe(5000000); // preserved
   });
@@ -732,7 +732,7 @@ describe('importPolicyRows', () => {
     const goodInserted = db.prepare(
       `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
     ).get('ins-fvc-pckg', 'POL-0005', '2024-02-03') as { premium_annual: number } | undefined;
-    expect(goodInserted?.premium_annual).toBe(REDACTED-AMT); // the good row still landed despite the bad row's failure
+    expect(goodInserted?.premium_annual).toBe(1234); // the good row still landed despite the bad row's failure
   });
 });
 
@@ -743,8 +743,8 @@ describe('importPolicies', () => {
     policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
-    premiumAnnual: REDACTED-AMT,
-    coverageTiv: REDACTED-AMT,
+    premiumAnnual: 1234,
+    coverageTiv: 1000000,
     policyType: 'Package (PCKG)',
     sourceDate: '2026-08-17',
   };
@@ -877,8 +877,8 @@ describe('parsePoliciesPayload — policy dates share the loader rule (refute wf
     policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
-    premiumAnnual: REDACTED-AMT,
-    coverageTiv: REDACTED-AMT,
+    premiumAnnual: 1234,
+    coverageTiv: 1000000,
     policyType: 'Package (PCKG)',
     sourceDate: '2026-08-17',
   };

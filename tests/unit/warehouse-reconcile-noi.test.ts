@@ -262,10 +262,10 @@ describe('structural-mismatch downgrade (OI-137 — ownership/tenancy changed si
   // fires without positive evidence (absence of acqDate/lease data is not evidence), and it must
   // NEVER fire on a sign-inverted disagreement (profit vs loss is always a genuine break regardless
   // of tenancy/ownership history).
-  const LARGE_DRIFT = { workbookOxfordNoi: 98550, warehouseOxfordNoi: 8638 }; // Livingston's real numbers, absDelta=$89,912, deltaPct=91.23%
+  const LARGE_DRIFT = { workbookOxfordNoi: 100000, warehouseOxfordNoi: 10000 }; // synthetic Livingston-shaped drift, absDelta=$90,000, deltaPct=90.00%
 
   it('ownership signal: acquired on/after the comparison period start, WITH some rent-roll corroboration → structural-mismatch/warn', () => {
-    // Corroboration deliberately below the standalone tenancy bar (50% of $89,912 ≈ $44,956) — the
+    // Corroboration deliberately below the standalone tenancy bar (50% of $90,000 = $45,000) — the
     // point of this test is that a SMALL amount of post-acquisition leasing, combined with the
     // acquisition date, is enough; ownership is not required to explain the full dollar gap alone.
     const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2025-06-01', recentTenancyAnnualRent: 5000 }), TOL);
@@ -302,16 +302,16 @@ describe('structural-mismatch downgrade (OI-137 — ownership/tenancy changed si
   });
 
   it('tenancy signal: recent-tenancy rent covers at least half the delta → structural-mismatch/warn', () => {
-    // absDelta=$89,912; $98,550 (100% of current rent) is well over half.
-    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 98550 }), TOL);
+    // absDelta=$90,000; $100,000 (100% of current rent) is well over half.
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 100000 }), TOL);
     expect(r.status).toBe('structural-mismatch');
     expect(r.severity).toBe('warn');
     expect(r.reason).toMatch(/OI-137/);
-    expect(r.reason).toMatch(/\$98,550/);
+    expect(r.reason).toMatch(/\$100,000/);
   });
 
   it('boundary: recent-tenancy rent exactly half the delta still counts (inclusive)', () => {
-    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 89912 * 0.5 }), TOL);
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 90000 * 0.5 }), TOL);
     expect(r.status).toBe('structural-mismatch');
   });
 
@@ -387,7 +387,7 @@ describe('structural-mismatch downgrade (OI-137 — ownership/tenancy changed si
     // Defensive: large-drift with both NOIs present but no period string should still classify
     // deterministically rather than throwing on a null period.slice().
     const r = classifyNoiReconciliation(
-      input({ ...LARGE_DRIFT, warehousePeriod: null, acqDate: '2025-06-01', recentTenancyAnnualRent: 98550 }),
+      input({ ...LARGE_DRIFT, warehousePeriod: null, acqDate: '2025-06-01', recentTenancyAnnualRent: 100000 }),
       TOL,
     );
     expect(r.status).toBe('large-drift'); // no period to compare against ⇒ no structural evidence possible

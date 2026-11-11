@@ -22,9 +22,9 @@ function writeFixtureSnapshot(): void {
     snapshotPath,
     JSON.stringify({
       leases: [
-        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', annualRent: 25500, unit: 'A1', propertyId: 'prop-a' },
-        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', annualRent: REDACTED-AMT, unit: 'A2', propertyId: 'prop-a' },
-        { id: '2207-northwood-c4-duketa-llc', tenantName: 'Duketa LLC', company: 'Duketa LLC', status: 'Expired', annualRent: REDACTED-AMT, unit: 'C4', propertyId: 'prop-a' },
+        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', annualRent: 24000, unit: 'A1', propertyId: 'prop-a' },
+        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', annualRent: 13500, unit: 'A2', propertyId: 'prop-a' },
+        { id: '2207-northwood-c4-duketa-llc', tenantName: 'Duketa LLC', company: 'Duketa LLC', status: 'Expired', annualRent: 4500, unit: 'C4', propertyId: 'prop-a' },
         { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown', annualRent: 100, unit: 'A3', propertyId: 'prop-a' },
         // 2026-09-14 sweep, Fix A: the two real zero-rent-but-Active rows plus a Vacant placeholder.
         // Shaped like the live snapshot records (tenantName is the person, company is the entity).
@@ -118,7 +118,7 @@ describe('loadLeasesFromSnapshot excludes Vacant and zero-rent-Active leases fro
     vi.resetModules();
     const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { partitionArRows } = await import('../../server/ar/partition-confidence');
-    const rows = [{ tenant: 'Pameta LLC', property: null, d30: REDACTED-AMT, d60: REDACTED-AMT, d90: REDACTED-AMT, d90plus: REDACTED-AMT }];
+    const rows = [{ tenant: 'Pameta LLC', property: null, d30: 1876.54, d60: 1765.43, d90: 1765.43, d90plus: 321.09 }];
     const p = partitionArRows(rows, loadLeasesFromSnapshot(), {}, loadAllLeaseIdsFromSnapshot());
     expect(p.write).toEqual([]);
     expect(p.review).toHaveLength(1);
@@ -147,7 +147,7 @@ describe('loadLeasesFromSnapshot excludes Vacant and zero-rent-Active leases fro
 describe('loadAllLeaseIdsFromSnapshot stays DELIBERATELY wide -- every lease id, dead or not (PR #302 invariant)', () => {
   // partitionArRows' cache-hit validation must keep recognising a previously human-CONFIRMED mapping
   // to a now-dead lease as still valid, not "lease removed". Narrowing this roster was a real
-  // regression once (PR #302 review: $9,596.90 + $REDACTED-AMT of live arrears froze). Fix A must not
+  // regression once (PR #302 review: two confirmed cache entries' worth of live arrears froze). Fix A must not
   // touch it: the real cache entry "pameta llc" -> 29000-information-lane-202-... is
   // exactly such a confirmed mapping to a lease that is now dead under the wider predicate.
   beforeEach(() => {
@@ -177,7 +177,7 @@ describe('loadAllLeaseIdsFromSnapshot stays DELIBERATELY wide -- every lease id,
     const { partitionArRows } = await import('../../server/ar/partition-confidence');
     const { cacheKey } = await import('../../server/ar/mapping-cache');
     const cache = { [cacheKey('Pameta LLC')]: '29000-information-lane-202-pameta-llc' };
-    const rows = [{ tenant: 'Pameta LLC', property: null, d30: REDACTED-AMT, d60: 0, d90: 0, d90plus: 0 }];
+    const rows = [{ tenant: 'Pameta LLC', property: null, d30: 1876.54, d60: 0, d90: 0, d90plus: 0 }];
     const p = partitionArRows(rows, loadLeasesFromSnapshot(), cache, loadAllLeaseIdsFromSnapshot());
     expect(p.write.map((w) => w.leaseId)).toEqual(['29000-information-lane-202-pameta-llc']);
     expect(p.review).toEqual([]);
@@ -211,13 +211,13 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
   });
 
   it('end-to-end (Fix A): Example Gymnastics, unit A15, Active but $0 rent -> NOT auto-attributed; falls to review', async () => {
-    // Real row: $REDACTED-AMT of AR at 2207 Northwood A15. The only lease on that unit is Active with
+    // Real row (amounts synthetic): $1,999.99 of AR at 2207 Northwood A15. The only lease on that unit is Active with
     // annualRent 0 -- not a billing tenant. Before Fix A this was a clean 'exact' unit hit and an
     // unattended write.
     vi.resetModules();
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
-    const res = resolveByUnit({ unit: 'A15', property: 'prop-a', d30: REDACTED-AMT, d30plus: REDACTED-AMT }, loadUnitLeasesFromSnapshot(), 'prop-a');
+    const res = resolveByUnit({ unit: 'A15', property: 'prop-a', d30: 765.43, d30plus: 1234.56 }, loadUnitLeasesFromSnapshot(), 'prop-a');
     expect(res.leaseId).toBeNull();
     expect(res.confidence).toBe('none');
   });
@@ -244,7 +244,7 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
     const leases = loadUnitLeasesFromSnapshot();
-    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.38, d30plus: 0 }, leases, 'prop-a');
+    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.42, d30plus: 0 }, leases, 'prop-a');
     // No LIVE candidate -> 'none' confidence -> falls through to human review, never an auto-write.
     expect(res.leaseId).toBeNull();
     expect(res.confidence).toBe('none');
@@ -267,7 +267,7 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
     const leases = loadUnitLeasesFromSnapshot();
-    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.38, d30plus: 0 }, leases, 'prop-a');
+    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.42, d30plus: 0 }, leases, 'prop-a');
     expect(res.leaseId).toBeNull();
     expect(res.ambiguous).toBe(true);
   });
