@@ -33,7 +33,7 @@ describe('InsuranceLossReport.unmatchedPolicyRefs', () => {
     eventId: 'e1',
     propertyId: 'p',
     property: 'P',
-    policyRef: ' mmf-TYPO 17962784 ',
+    policyRef: ' pol-TYPO 0010 ',
     lossDate: '2026-07-04',
     cause: null,
     grossIncurred: 42000,

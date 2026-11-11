@@ -13,12 +13,12 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import type * as Queries from '../../src/data/queries';
 
 const LEASES = [
-  { id: 'a', company: 'Eurosort', tenantName: 'Eurosort', propertyKey: 'P1', unit: '1', sf: 10000, annualRent: 100_000, rentPerSf: 10, leaseStart: '2020-01-01', leaseEnd: '2027-01-01', monthsToExpiry: 12, escalationPct: 0.03, status: 'Active' },
+  { id: 'a', company: 'Dibita LLC', tenantName: 'Dibita LLC', propertyKey: 'P1', unit: '1', sf: 10000, annualRent: 100_000, rentPerSf: 10, leaseStart: '2020-01-01', leaseEnd: '2027-01-01', monthsToExpiry: 12, escalationPct: 0.03, status: 'Active' },
   { id: 'b', company: 'Widgets Inc', tenantName: 'Widgets Inc', propertyKey: 'P2', unit: '2', sf: 5000, annualRent: 60_000, rentPerSf: 12, leaseStart: '2020-01-01', leaseEnd: '2026-01-01', monthsToExpiry: -3, escalationPct: 0.02, status: 'Expired' },
 ];
 const CRITICAL_DATES = [
   { id: 'c1', leaseId: 'b', daysToDate: -20, date: '2026-01-01', kind: 'Expiration', tenant: 'Widgets Inc', propertyKey: 'P2', unit: '2', annualRent: 60_000 },
-  { id: 'c2', leaseId: 'a', daysToDate: 40, date: '2026-12-01', kind: 'Notice Deadline', tenant: 'Eurosort', propertyKey: 'P1', unit: '1', annualRent: 100_000 },
+  { id: 'c2', leaseId: 'a', daysToDate: 40, date: '2026-12-01', kind: 'Notice Deadline', tenant: 'Dibita LLC', propertyKey: 'P1', unit: '1', annualRent: 100_000 },
 ];
 
 vi.mock('../../src/data/queries', async (importOriginal) => {
@@ -81,7 +81,7 @@ describe('LeasesModule — Rent roll / Critical dates SegmentedControl (R5)', ()
     expect(radio('Rent roll').checked).toBe(true);
     expect(radio('Critical dates').checked).toBe(false);
     expect(screen.getByText('Rent Roll')).toBeTruthy();
-    expect(screen.getAllByText('Eurosort').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Dibita LLC').length).toBeGreaterThan(0);
     // the sortable, labeled rent-roll table header the a11y spec looks for
     expect(document.querySelector('th[aria-sort]')).not.toBeNull();
     // the other view is not rendered
@@ -137,14 +137,14 @@ describe('LeasesModule — Rent roll / Critical dates SegmentedControl (R5)', ()
 
   it('rent-roll search and status filter survive a view round-trip', () => {
     renderLeases();
-    fireEvent.change(screen.getByLabelText('Search leases'), { target: { value: 'Euro' } });
+    fireEvent.change(screen.getByLabelText('Search leases'), { target: { value: 'Dibi' } });
     fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'Active' } });
     expect(screen.getByText('1 of 2')).toBeTruthy();
 
     fireEvent.click(radio('Critical dates'));
     fireEvent.click(radio('Rent roll'));
 
-    expect((screen.getByLabelText('Search leases') as HTMLInputElement).value).toBe('Euro');
+    expect((screen.getByLabelText('Search leases') as HTMLInputElement).value).toBe('Dibi');
     expect((screen.getByLabelText('Filter by status') as HTMLSelectElement).value).toBe('Active');
     expect(screen.getByText('1 of 2')).toBeTruthy();
   });

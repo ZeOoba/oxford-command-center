@@ -6,14 +6,14 @@ import { buildEntityItems } from '../../src/brain/searchIndex';
 function makeSnap(): PortfolioSnapshot {
   const snap = {
     properties: [
-      { id: 'p1', name: '1100 Rarig Ave', type: 'Flex', sf: 48000, noi: 511000, market: 'Columbus OH', lender: 'Symetra' },
+      { id: 'p1', name: '1100 Rarig Ave', type: 'Flex', sf: 48000, noi: 511000, market: 'Columbus OH', lender: 'Firm 03' },
     ],
     leases: [
-      { id: 'l1', company: 'Eurosort, INC.', tenantName: 'Eurosort', propertyKey: '1100', propertyId: 'p1', unit: 'A', annualRent: 100000, status: 'Active' },
+      { id: 'l1', company: 'Tenant 155 LLC, INC.', tenantName: 'Tenant 155 LLC', propertyKey: '1100', propertyId: 'p1', unit: 'A', annualRent: 100000, status: 'Active' },
       { id: 'l2', company: null, tenantName: 'Acme', propertyKey: '2207', propertyId: 'p1', unit: null, annualRent: 50000, status: 'Expiring Soon' },
     ],
     loans: [
-      { id: 'ln1', name: 'Restoration Church Trust', counterparty: 'Oxford Capital', direction: 'lender', absBalance: 980773, rate: 0.09, lender: null },
+      { id: 'ln1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', absBalance: 980773, rate: 0.09, lender: null },
     ],
     deals: [
       { id: 'd1', name: 'Easton Logistics', shortName: 'Easton', stage: 'LOI/PSA', location: 'Easton MD' },
@@ -27,11 +27,11 @@ function makeSnap(): PortfolioSnapshot {
     counterparties: [
       {
         id: 'cp1',
-        name: 'Symetra',
+        name: 'Firm 03',
         kind: 'lender',
-        firm: 'Symetra Financial',
+        firm: 'Firm 03 Financial',
         role: 'Relationship Manager',
-        email: 'rm@symetra.com',
+        email: 'rm@firm 03.com',
         links: { properties: ['p1'], loans: ['ln1'], deals: [], insurance: [] },
       },
     ],
@@ -61,8 +61,8 @@ describe('buildEntityItems', () => {
   it('prefers the lease company name but indexes the tenant name in the search value', () => {
     const items = buildEntityItems(makeSnap());
     const named = items.find((i) => i.ref.id === 'l1')!;
-    expect(named.title).toBe('Eurosort, INC.');
-    expect(named.value).toContain('Eurosort');
+    expect(named.title).toBe('Tenant 155 LLC, INC.');
+    expect(named.value).toContain('Tenant 155 LLC');
     // Falls back to tenantName when company is null.
     const fallback = items.find((i) => i.ref.id === 'l2')!;
     expect(fallback.title).toBe('Acme');
@@ -71,12 +71,12 @@ describe('buildEntityItems', () => {
   it('builds a lowercase-friendly value string so cmdk can fuzzy-match by market/lender', () => {
     const prop = buildEntityItems(makeSnap()).find((i) => i.ref.id === 'p1')!;
     expect(prop.value).toContain('Columbus OH');
-    expect(prop.value).toContain('Symetra');
+    expect(prop.value).toContain('Firm 03');
   });
 
   it('labels a counterparty by kind and counts its links', () => {
     const cp = buildEntityItems(makeSnap()).find((i) => i.group === 'Relationships')!;
-    expect(cp.title).toBe('Symetra');
+    expect(cp.title).toBe('Firm 03');
     // KIND_LABEL maps 'lender' → 'Lender'; 2 links (1 property + 1 loan).
     expect(cp.subtitle).toContain('Lender');
     expect(cp.subtitle).toContain('2 links');

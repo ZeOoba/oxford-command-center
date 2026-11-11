@@ -69,7 +69,7 @@ export function isAffiliateBorrowerLoan(l: {
  * text) is consulted ONLY when no lender is stored at all — a third-party lender row whose name
  * merely mentions an affiliate ("Refi of Oxford Capital note") stays third-party, exactly as
  * isAffiliateBorrowerLoan classifies the workbook row (independent review 2026-09-26, major).
- * Live stored string this must match: 'LAST Non / Oxford Capital — Oxford 50% share'.
+ * Live stored string this must match: 'Lender 05 / Oxford Capital — Oxford 50% share'.
  * DSCR / debt-service treatment is an OPEN ruling — this predicate must not be applied there.
  */
 export function isAffiliateDebtPosition(row: {

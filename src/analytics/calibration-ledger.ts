@@ -421,7 +421,7 @@ export const slugPropertyKey: PropertyKeyOf = (label) => label.toLowerCase().rep
 
 const VENDOR_SUFFIXES = new Set(['inc', 'incorporated', 'llc', 'pllc', 'co', 'corp', 'corporation', 'company', 'ltd', 'limited', 'lp', 'llp']);
 /**
- * "Able Roofing, Inc." / "ABLE ROOFING LLC" / "Able Roofing" → "ableroofing". Case, punctuation, spacing ("R.D." = "R. D." =
+ * "Vendor 22, Inc." / "VENDOR 22 LLC" / "Vendor 22" → "ableroofing". Case, punctuation, spacing ("R.D." = "R. D." =
  * "R D"), apostrophes, "&" vs "and" and trailing entity suffixes are not identity. Tokens are joined with no separator so
  * spaced and unspaced initials agree.
  */

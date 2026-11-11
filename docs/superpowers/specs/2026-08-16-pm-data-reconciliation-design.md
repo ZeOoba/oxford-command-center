@@ -116,8 +116,8 @@ Applies at Phase 1 exit. False-positive criteria are **blocking** (ruled 2026-08
 
 Replayed against a fixture corpus built from documented incidents, the engine must:
 
-- **(a)** flag the Suburan name mismatch and its $20,457 balance
-- **(b)** flag the 5 wrong `ora-pm` critical-date rows and the omitted CJ's Tint expiry
+- **(a)** flag the misspelled-tenant-name mismatch and its $20,457 balance
+- **(b)** flag the 5 wrong `ora-pm` critical-date rows and the omitted Example Tint expiry
 - **(c)** flag both 2026 holdovers
 - **(d)** emit **zero** deterioration alarms on the 2026-08-01 vacancy convention change
 - **(e)** emit **zero** "no action taken" claims across the six delinquency tenants

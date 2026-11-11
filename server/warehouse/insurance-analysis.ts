@@ -293,7 +293,7 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
  *       (e.g. 1900 Broadway: old exp 2026-08-27 == new eff 2026-08-27).
  *   (b) SAME-TERM REISSUE — effective_date and expiration_date are IDENTICAL on both rows, only
  *       policy_number/insurer/premium changed (a carrier renumbering/correcting mid-term — e.g.
- *       9620 State 350: MMF17962784 -> MMF17962784-002, both eff/exp 2025-10-18/2026-10-18).
+ *       9620 State 350: POL0010 -> POL-0010, both eff/exp 2025-10-18/2026-10-18).
  * Neither shape is safely detected by "pick the max effective_date" ALONE — (b) is a tie on
  * effective_date, and a downward correction to a previously-overstated effective_date (a typo
  * fix) would make the STALE row win permanently under a pure max-effective_date rule, which is

@@ -26,8 +26,8 @@ Need from you: the current dec pages / binders (carrier, effective, expiry, prem
 
 ## D. Rent roll — stale "Active" rows (2 × warn)
 
-- [ ] **2207 Northwood A8 — Richard Adkins (Adkins Towing)**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
-- [ ] **2207 Northwood C4 — Anibal Morales**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
+- [ ] **2207 Northwood A8 — Person 017 (Tenant 038 LLC)**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
+- [ ] **2207 Northwood C4 — Tenant 059 LLC**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
 
 Decision needed: vacated, holdover, or renewed? (Affects occupancy and rent roll NOI.)
 

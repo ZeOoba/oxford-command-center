@@ -5,8 +5,8 @@ import { isDeadLease } from '../../server/ar/lease-liveness';
 // weekly financial-code sweep). Before it existed, loadLeasesFromSnapshot and resolveByUnit each
 // carried their own `status !== 'Expired'` check -- which let an Active lease carrying $0 rent
 // (a roster placeholder, not a billing tenant) and a 'Vacant' record both pass as live candidates
-// and absorb an unattended auto-write. Real rows: Tyson Consulting Group (29000 Information Lane
-// #202, Active, $0) and Evans Gymnastics (2207 Northwood A15, Active, $0, $1,824.01 AR).
+// and absorb an unattended auto-write. Real rows: Tenant 072 LLC (29000 Information Lane
+// #202, Active, $0) and Example Gymnastics (2207 Northwood A15, Active, $0, $1,824.01 AR).
 describe('isDeadLease', () => {
   it('Expired -> dead (the original 2026-08-24 rule, unchanged)', () => {
     expect(isDeadLease({ status: 'Expired', annualRent: 4788 })).toBe(true);
@@ -17,7 +17,7 @@ describe('isDeadLease', () => {
     expect(isDeadLease({ status: 'Vacant', annualRent: 12000 })).toBe(true);
   });
 
-  it('Active with annualRent === 0 -> dead (Tyson Consulting Group / Evans Gymnastics real cases)', () => {
+  it('Active with annualRent === 0 -> dead (Tenant 072 LLC / Example Gymnastics real cases)', () => {
     expect(isDeadLease({ status: 'Active', annualRent: 0 })).toBe(true);
   });
 

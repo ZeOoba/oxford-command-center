@@ -6,14 +6,14 @@
 //   1. DUPLICATE: data/ar/review-queue.json held one row -- "C 4 (storage)", $0.38, Northwood,
 //      sourceFile "2203-2207 Northwood Delinquency 8.21.2026.xlsx" -- while portfolio.json's
 //      arBalances ALREADY carried that same source row, attributed to 2207-northwood-c4-anibal-
-//      morales: same sourceFile, same as-of (2026-08-21), same $0.38. The queue's dedup key
+//      duketa: same sourceFile, same as-of (2026-08-21), same $0.38. The queue's dedup key
 //      (`tenant::sourceFile::reason`) uses the RAW unit label, so the annotated "C 4 (storage)"
 //      and the roster's "C4" never matched. Before queuing, a Format B row is now keyed by
 //      (sourceFile, as-of date, CANONICAL unit tokens, amount) -- reusing resolve-by-unit.ts's
 //      expandUnitTokens, which already strips the '(storage)' annotation -- and skipped when this
 //      run already attributed the same source row, or the queue already holds it.
 //
-//   2. UNREACHABLE SKIP: data/ar-mapping-cache.json holds "anibal morales": "SKIP" -- a durable
+//   2. UNREACHABLE SKIP: data/ar-mapping-cache.json holds "tenant 059 llc": "SKIP" -- a durable
 //      human ruling keyed by tenant name (mapping-cache.ts cacheKey) -- but a Format B queue row
 //      carries NO tenant name, so nothing could ever consult that ruling against it. The queued
 //      row now names who the roster puts at that unit (any status), and shows the cache's ruling
@@ -40,17 +40,17 @@ const AS_OF = new Date('2026-08-21T00:00:00.000Z');
 const NOW = '2026-09-02T10:43:09.439Z';
 
 // Shaped like the real roster record (portfolio.json leases[]): Expired since 2024-09-01.
-const MORALES: UnitLease = {
-  id: '2207-northwood-c4-anibal-morales',
+const DUKETA: UnitLease = {
+  id: '2207-northwood-c4-tenant-059-llc',
   unit: 'C4',
   propertyId: NORTHWOOD,
   status: 'Expired',
   annualRent: 4788,
-  tenantName: 'Anibal Morales',
+  tenantName: 'Tenant 059 LLC',
 };
 const ROSTER: UnitLease[] = [
-  MORALES,
-  { id: '2207-northwood-a4-sky-shield', unit: 'A4', propertyId: NORTHWOOD, status: 'Active', annualRent: 13992, tenantName: 'Brett Lagana' },
+  DUKETA,
+  { id: '2207-northwood-a4-tenant-035-llc', unit: 'A4', propertyId: NORTHWOOD, status: 'Active', annualRent: 13992, tenantName: 'Person 015' },
 ];
 
 // The real Format B source row, as the export prints it.
@@ -112,7 +112,7 @@ describe('sourceRowKey -- identity of ONE real-world source row across the two p
 
 describe('buildBucketedReviewRow -- a Format B review row carries its source-row identity and the roster candidate', () => {
   it('the real "C 4 (storage)" row: still queued at none confidence (Expired-only unit), never auto-attributed', () => {
-    const r = buildStorageRow({ 'anibal morales': 'SKIP' });
+    const r = buildStorageRow({ 'tenant 059 llc': 'SKIP' });
     expect(r).toMatchObject({
       tenant: `${NBC_C} / C 4 (storage)`,
       property: NBC_C,
@@ -139,21 +139,21 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
 
   it('names who the roster puts at that unit -- including a DEAD lease -- so a human can see who it probably is', () => {
     const r = buildStorageRow();
-    expect(r.candidateTenant).toBe('Anibal Morales [Expired]');
-    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-anibal-morales']);
+    expect(r.candidateTenant).toBe('Tenant 059 LLC [Expired]');
+    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-tenant-059-llc']);
   });
 
-  it('surfaces the mapping cache\'s ruling for that candidate name (the real "anibal morales": "SKIP") -- display only', () => {
-    const r = buildStorageRow({ 'anibal morales': 'SKIP' });
-    expect(r.candidateCacheRuling).toBe('anibal morales → SKIP');
+  it('surfaces the mapping cache\'s ruling for that candidate name (the real "tenant 059 llc": "SKIP") -- display only', () => {
+    const r = buildStorageRow({ 'tenant 059 llc': 'SKIP' });
+    expect(r.candidateCacheRuling).toBe('tenant 059 llc → SKIP');
     // NOT auto-applied: the row is still a queued review at none confidence with no proposal.
     expect(r.proposedLeaseId).toBeNull();
     expect(r.confidence).toBe('none');
   });
 
   it('shows a confirmed-mapping ruling too, and null when the cache has no entry for the candidate', () => {
-    expect(buildStorageRow({ 'anibal morales': '2207-northwood-c4-anibal-morales' }).candidateCacheRuling).toBe(
-      'anibal morales → 2207-northwood-c4-anibal-morales',
+    expect(buildStorageRow({ 'tenant 059 llc': '2207-northwood-c4-tenant-059-llc' }).candidateCacheRuling).toBe(
+      'tenant 059 llc → 2207-northwood-c4-tenant-059-llc',
     );
     expect(buildStorageRow({}).candidateCacheRuling).toBeNull();
   });
@@ -180,7 +180,7 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
       res: resolveByUnit(row, ROSTER, NORTHWOOD),
       propertyId: NORTHWOOD,
       unitLeases: ROSTER,
-      cacheEntries: { 'anibal morales': 'SKIP' },
+      cacheEntries: { 'tenant 059 llc': 'SKIP' },
       sourceFile: SOURCE_FILE,
       asOfDate: AS_OF,
       queuedAt: NOW,
@@ -210,7 +210,7 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
 
   it('a re-let unit (dead + live sibling) names BOTH candidates with their status, and keeps the ambiguous reason', () => {
     const roster: UnitLease[] = [
-      MORALES,
+      DUKETA,
       { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' },
     ];
     const r = buildBucketedReviewRow({
@@ -225,16 +225,16 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
     });
     expect(r.ambiguous).toBe(true);
     expect(r.reason).toMatch(/more than one lease/);
-    expect(r.candidateTenant).toBe('Anibal Morales [Expired] | New Tenant LLC [Active]');
-    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-anibal-morales', 'new-tenant-c4']);
+    expect(r.candidateTenant).toBe('Tenant 059 LLC [Expired] | New Tenant LLC [Active]');
+    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-tenant-059-llc', 'new-tenant-c4']);
   });
 });
 
 describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is not also queued', () => {
   const attributedWrite = {
-    leaseId: '2207-northwood-c4-anibal-morales',
+    leaseId: '2207-northwood-c4-tenant-059-llc',
     arrears: { d30: 0.38, d60: 0, d90: 0, d90plus: 0, asOfDate: AS_OF, sourceFile: SOURCE_FILE },
-    tenant: 'Anibal Morales',
+    tenant: 'Tenant 059 LLC',
   };
 
   it('drops the "C 4 (storage)" review row when the same file/as-of/unit/amount was attributed to the C4 lease this run', () => {
@@ -260,7 +260,7 @@ describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is no
 
   it('keeps it when the attributed lease sits on a DIFFERENT unit (same money elsewhere is not this row)', () => {
     const review = buildStorageRow();
-    const a4 = { ...attributedWrite, leaseId: '2207-northwood-a4-sky-shield' };
+    const a4 = { ...attributedWrite, leaseId: '2207-northwood-a4-tenant-035-llc' };
     expect(dropReviewsAlreadyAttributed([review], [a4], ROSTER).kept).toEqual([review]);
   });
 
@@ -364,7 +364,7 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
   it('a queued new-schema "C 4 (storage)" row dedups a later "C4" row with a different label and reason (same source row)', () => {
     const queued = buildStorageRow();
     const plainRow: BucketedUnitRow = { unit: 'C4', property: NBC_C, d30: 0.38, d30plus: 0 };
-    const roster: UnitLease[] = [MORALES, { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' }];
+    const roster: UnitLease[] = [DUKETA, { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' }];
     const incoming = buildBucketedReviewRow({
       row: plainRow,
       res: resolveByUnit(plainRow, roster, NORTHWOOD), // ambiguous now -> a DIFFERENT reason text

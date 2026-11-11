@@ -8,7 +8,7 @@ const leases: LeaseLite[] = [
   { id: 'l-acme', tenantName: 'Acme Industrial', company: 'Acme Industrial, LLC' },
   { id: 'l-bbt', tenantName: 'Building Bridges Therapy Svcs', company: null },
   { id: 'l-foxwell', tenantName: 'Louis W. Foxwell', company: null },
-  { id: 'l-hobart', tenantName: 'Hobart Service', company: 'Hobart Service a division of ITW Food Equipment Group, LLC' },
+  { id: 'l-kelvar', tenantName: 'Kelvar Service', company: 'Kelvar Service a division of Kelvar Food Equipment Group, LLC' },
   { id: 'l-zeta', tenantName: 'Zeta Logistics', company: null },
   { id: 'l-qrt', tenantName: 'Dana Quill', company: 'Q.R.T LLC' },
 ];
@@ -16,7 +16,7 @@ const leases: LeaseLite[] = [
 describe('normalizeTokens', () => {
   it('strips entity suffixes and punctuation', () => {
     expect(normalizeTokens('Acme Industrial, LLC')).toEqual(['acme', 'industrial']);
-    expect(normalizeTokens('Hobart Service, Inc.')).toEqual(['hobart', 'service']);
+    expect(normalizeTokens('Kelvar Service, Inc.')).toEqual(['kelvar', 'service']);
   });
   it('reorders "Last, First" person names', () => {
     expect(normalizeTokens('FOXWELL, LOUIS W.')).toEqual(['louis', 'w', 'foxwell']);
@@ -56,8 +56,8 @@ describe('matchTenantToLease', () => {
   });
 
   it('matches against the company field, not just tenantName', () => {
-    const m = matchTenantToLease('ITW Food Equipment Group', leases);
-    expect(m.leaseId).toBe('l-hobart'); // overlaps the company string
+    const m = matchTenantToLease('Kelvar Food Equipment Group', leases);
+    expect(m.leaseId).toBe('l-kelvar'); // overlaps the company string
     expect(['high', 'low']).toContain(m.confidence);
   });
 
@@ -119,7 +119,7 @@ describe('matchTenantToLease', () => {
   // A same-day self-review of the FIRST fix attempt (which additionally made "exact" strictly
   // dominate any tied non-exact candidate) found that dominance rule itself introduces a DIFFERENT
   // silent mis-attribution: a report name that is exactly one lease's name and also a genuine
-  // token-subset of a different lease's longer name (the real "Hobart" vs "Hobart Service" wrap
+  // token-subset of a different lease's longer name (the real "Kelvar" vs "Kelvar Service" wrap
   // case this scorer exists to handle) is precisely the coin-flip the ambiguity flag is designed to
   // catch, and forcing exact to win regardless bypasses that human-review gate entirely. The correct
   // fix is narrower: bound the score to [0,1] so a non-exact candidate can at most TIE an exact
@@ -173,15 +173,15 @@ describe('matchTenantToLease', () => {
 
   // Real defect in the SAME earlier fix attempt (MEDIUM): making "exact" strictly dominate silently
   // removed the ambiguity flag for an exact-vs-genuine-subset tie between two DIFFERENT leases — the
-  // real wrap/truncation case (e.g. a PDF-truncated "Hobart" matching both "Hobart" exactly and
-  // "Hobart Service" as a 1.0 subset). That case must stay a human decision.
+  // real wrap/truncation case (e.g. a PDF-truncated "Kelvar" matching both "Kelvar" exactly and
+  // "Kelvar Service" as a 1.0 subset). That case must stay a human decision.
   it('an exact match for one lease that also subset-matches a DIFFERENT lease at 1.0 stays ambiguous, never auto-resolved', () => {
     const roster: LeaseLite[] = [
-      { id: 'l-short', tenantName: 'Hobart', company: null },
-      { id: 'l-long', tenantName: 'Hobart Service', company: null },
+      { id: 'l-short', tenantName: 'Kelvar', company: null },
+      { id: 'l-long', tenantName: 'Kelvar Service', company: null },
     ];
     for (const leases of [roster, [...roster].reverse()]) {
-      const m = matchTenantToLease('Hobart', leases);
+      const m = matchTenantToLease('Kelvar', leases);
       expect(m.ambiguous).toBe(true);
     }
   });
@@ -289,11 +289,11 @@ describe('matchTenantToLease — tie-break determinism against the committed lea
   it('synthetic: the tie-break carries the winning candidate\'s own exact flag (confidence follows the reported lease, deterministically)', () => {
     // 'l-a' is a 1.0 SUBSET match (not exact), 'l-b' is the exact match. Smaller id wins the
     // REPORT ('l-a', confidence 'high'), and the tie is still flagged -- exact does NOT dominate.
-    const subset: LeaseLite = { id: 'l-a', tenantName: 'Hobart Service', company: null };
-    const exact: LeaseLite = { id: 'l-b', tenantName: 'Hobart', company: null };
+    const subset: LeaseLite = { id: 'l-a', tenantName: 'Kelvar Service', company: null };
+    const exact: LeaseLite = { id: 'l-b', tenantName: 'Kelvar', company: null };
     for (const leases of [[subset, exact], [exact, subset]]) {
-      const m = matchTenantToLease('Hobart', leases);
-      expect(m).toEqual({ leaseId: 'l-a', confidence: 'high', score: 1, candidate: 'Hobart Service', ambiguous: true });
+      const m = matchTenantToLease('Kelvar', leases);
+      expect(m).toEqual({ leaseId: 'l-a', confidence: 'high', score: 1, candidate: 'Kelvar Service', ambiguous: true });
     }
   });
 

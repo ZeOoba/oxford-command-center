@@ -45,7 +45,7 @@ function policy(over: Partial<InsurancePolicy>): InsurancePolicy {
     effective: '2026-02-01',
     expires: '2027-02-01',
     policyNo: 'Q61-0000001',
-    carrier: 'Erie Insurance',
+    carrier: 'Carrier 01',
     premium: 10000,
     daysToExpiry: 100,
     status: 'Current',
@@ -319,7 +319,7 @@ describe('captureInsurance — TIV precedence (ruling 2026-09-24: dec page wins)
   }
   const base: WarehouseInsurancePolicy = {
     propertyId: 'ins-100main-pckg',
-    insurer: 'Erie Insurance',
+    insurer: 'Carrier 01',
     policyNumber: 'Q61-0000001',
     effectiveDate: '2026-02-01',
     expirationDate: '2027-02-01',
@@ -467,7 +467,7 @@ describe('own-book benchmark + rebid verdicts over captured TIV', () => {
   const book = (sourceDate: string): WarehouseInsurancePolicy[] =>
     [2000, 2500, 3000, 3500, 4000].map((premium, i) => ({
       propertyId: `ins-p${i}-pckg`,
-      insurer: 'Erie Insurance',
+      insurer: 'Carrier 01',
       policyNumber: `Q61-${i}`,
       effectiveDate: '2026-06-01',
       expirationDate: '2027-06-01',

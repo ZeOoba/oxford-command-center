@@ -36,7 +36,7 @@ describe('contracts accept real workbook records', () => {
       netCashFlow: 285673.54,
       capRate: 0.07,
       dscr: 2.2657,
-      lender: 'Symetra',
+      lender: 'Firm 03',
       loanBalance: 2773925.08,
       ltv: 0.3797,
       valuePerSf: 152.2,
@@ -55,9 +55,9 @@ describe('contracts accept real workbook records', () => {
       id: 'rarig-l',
       propertyKey: '1100 Rarig',
       propertyId: '1100-rarig-ave',
-      tenantName: 'Jerome Buckner',
+      tenantName: 'Person 009',
       unit: 'L',
-      company: 'Buckner and Sons Masonry',
+      company: 'Tenant 028 LLC',
       sf: 1800,
       monthlyRent: 1554.22,
       rentPerSf: 10.36,
@@ -72,11 +72,11 @@ describe('contracts accept real workbook records', () => {
     expect(r.status).toBe('Active');
   });
 
-  it('parses a real Loan row (Restoration Church Trust balloon)', () => {
+  it('parses a real Loan row (Note Party 02 balloon)', () => {
     const r = Loan.parse({
       id: 'restoration-church-trust',
-      name: 'Restoration Church Trust',
-      counterparty: 'Restoration Church Trust (Oxford Capital)',
+      name: 'Note Party 02',
+      counterparty: 'Note Party 02 (Oxford Capital)',
       direction: 'lender',
       originalPrincipal: null,
       currentBalance: -980772.99,
@@ -105,8 +105,8 @@ describe('contracts accept real workbook records', () => {
       coverage: 'Package (PCKG)',
       effective: '2025-03-19',
       expires: '2026-03-19',
-      policyNo: 'Q61-0380462',
-      carrier: 'Erie Insurance',
+      policyNo: 'POL-0020',
+      carrier: 'Carrier 01',
       premium: 5643,
       daysToExpiry: -74,
       status: 'Expired',

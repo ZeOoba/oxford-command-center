@@ -434,8 +434,8 @@ describe('parseDecPagesPayload — deductible must not exceed coverageLimit (P4c
 describe('parsePoliciesPayload', () => {
   const base = {
     propertyId: 'ins-3540fifth-pckg',
-    insurer: 'Erie Insurance',
-    policyNumber: 'Q61-0159747',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: 9478,
@@ -595,8 +595,8 @@ describe('importDecPageRows / importDecPages', () => {
 describe('importPolicyRows', () => {
   const rowFor = (propertyId: string, overrides: Partial<Parameters<typeof parsePoliciesPayload>[0]> = {}) => ({
     propertyId,
-    insurer: 'Erie Insurance',
-    policyNumber: 'Q61-0159747',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: 9478,
@@ -618,7 +618,7 @@ describe('importPolicyRows', () => {
     const inserted = db.prepare(
       `SELECT premium_annual, coverage_tiv FROM property_insurance_policies
        WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
     expect(inserted.premium_annual).toBe(9478);
     expect(inserted.coverage_tiv).toBe(4393500);
   });
@@ -641,7 +641,7 @@ describe('importPolicyRows', () => {
 
     const landed = db.prepare(
       `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { premium_annual: number };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { premium_annual: number };
     expect(landed.premium_annual).toBe(2222); // last row in the batch wins, not the first
   });
 
@@ -675,7 +675,7 @@ describe('importPolicyRows', () => {
     const policyId = insertPolicy(db, 'ins-3540fifth-pckg');
     db.prepare(`
       UPDATE property_insurance_policies
-      SET policy_number = 'Q61-0159747', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
+      SET policy_number = 'POL-0013', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
       WHERE id = ?
     `).run(policyId);
 
@@ -704,7 +704,7 @@ describe('importPolicyRows', () => {
 
     const count = db.prepare(
       `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { c: number };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { c: number };
     expect(count.c).toBe(1); // the one row this test wrote (fixture row has null policy_number/effective_date and doesn't match this specific key)
   });
 
@@ -718,7 +718,7 @@ describe('importPolicyRows', () => {
     insertPolicy(db, 'ins-3540fifth-pckg');
     insertPolicy(db, 'ins-fvc-pckg');
     const badRow = { ...rowFor('ins-3540fifth-pckg'), insurer: null as unknown as string };
-    const goodRow = rowFor('ins-fvc-pckg', { policyNumber: 'Q61-0076471', effectiveDate: '2024-02-03' });
+    const goodRow = rowFor('ins-fvc-pckg', { policyNumber: 'POL-0005', effectiveDate: '2024-02-03' });
 
     const result = importPolicyRows(db, [badRow, goodRow], 'test-suite');
     expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 1 });
@@ -726,12 +726,12 @@ describe('importPolicyRows', () => {
     const dq = db.prepare(`SELECT property_id, detail FROM data_quality_issues WHERE kind = 'insurance-policy-check-violation'`)
       .get() as { property_id: string; detail: string };
     expect(dq.property_id).toBe('ins-3540fifth-pckg');
-    expect(dq.detail).toMatch(/Q61-0159747/);
+    expect(dq.detail).toMatch(/POL-0013/);
     expect(dq.detail).toMatch(/2024-01-20/);
 
     const goodInserted = db.prepare(
       `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-fvc-pckg', 'Q61-0076471', '2024-02-03') as { premium_annual: number } | undefined;
+    ).get('ins-fvc-pckg', 'POL-0005', '2024-02-03') as { premium_annual: number } | undefined;
     expect(goodInserted?.premium_annual).toBe(9478); // the good row still landed despite the bad row's failure
   });
 });
@@ -739,8 +739,8 @@ describe('importPolicyRows', () => {
 describe('importPolicies', () => {
   const policyRow = {
     propertyId: 'ins-3540fifth-pckg',
-    insurer: 'Erie Insurance',
-    policyNumber: 'Q61-0159747',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: 9478,
@@ -758,7 +758,7 @@ describe('importPolicies', () => {
 
     const row = db.prepare(
       `SELECT ingested_by, source FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { ingested_by: string; source: string };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { ingested_by: string; source: string };
     expect(row.ingested_by).toBe('import-insurance-data.ts --policies');
     expect(row.source).toBe('payload-file.json'); // parsePoliciesPayload's own defaultSource fallback
   });
@@ -771,7 +771,7 @@ describe('importPolicies', () => {
 
     const row = db.prepare(
       `SELECT ingested_by FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { ingested_by: string };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { ingested_by: string };
     expect(row.ingested_by).toBe('import-insurance-data.ts --policies (Track A, 2026-08-22)');
   });
 
@@ -873,8 +873,8 @@ describe('parseLossEventsPayload — one validity rule shared with the loader (r
 describe('parsePoliciesPayload — policy dates share the loader rule (refute wf_873d0a1e-5a6)', () => {
   const base = {
     propertyId: 'ins-3540fifth-pckg',
-    insurer: 'Erie Insurance',
-    policyNumber: 'Q61-0159747',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: 9478,

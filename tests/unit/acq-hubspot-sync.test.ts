@@ -89,14 +89,14 @@ describe('syncHubSpotPipeline — insert path', () => {
   it('candidate ids are deal:hubspot:<dealId>, namespaced apart from Notion ids', async () => {
     const db = freshDb();
     await syncHubSpotPipeline(db, 'tok', {
-      fetchImpl: mockFetch([makeDeal({ id: 'abc-123', dealname: '6150 Avery Road' })]),
+      fetchImpl: mockFetch([makeDeal({ id: 'abc-123', dealname: '200 Example Pkwy' })]),
     });
     const row = db.prepare('SELECT id, source, address FROM acq_candidates WHERE id = ?')
       .get('deal:hubspot:abc-123') as { id: string; source: string; address: string } | undefined;
     expect(row).toBeDefined();
     expect(row!.id).toBe('deal:hubspot:abc-123');
     expect(row!.source).toBe('hubspot-pipeline');
-    expect(row!.address).toBe('6150 Avery Road');
+    expect(row!.address).toBe('200 Example Pkwy');
   });
 });
 

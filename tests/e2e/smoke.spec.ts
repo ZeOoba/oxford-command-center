@@ -33,7 +33,7 @@ test('leasing shows the rent roll', async ({ page }) => {
   await page.getByRole('tab', { name: /^Rent roll/ }).click();
   // exact:true — the tab strip and the view switch also carry "Rent roll" labels (different case).
   await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/Eurosort/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Tenant 155 LLC/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('entity drill-through opens and closes with Escape', async ({ page }) => {

@@ -89,9 +89,9 @@ describe('buildPremiumHistory', () => {
   it('collapses a same-term reissue (identical eff/exp, different premium) to the latest capture, per line', () => {
     const r = buildPremiumHistory([
       row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2628,
-        { id: 10, policy_number: 'MMF17962784', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
+        { id: 10, policy_number: 'POL0010', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
       row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2576,
-        { id: 11, policy_number: 'MMF17962784-002', expiration_date: '2026-10-18', source_date: '2026-02-10' }),
+        { id: 11, policy_number: 'POL-0010', expiration_date: '2026-10-18', source_date: '2026-02-10' }),
       row('ins-9620state350-prop', 'Property', '2025-10-18', 28071,
         { id: 12, policy_number: 'PRP1001', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
       row('ins-9620state350-prop', 'Property', '2025-10-18', 27609,
@@ -229,9 +229,9 @@ describe('GET /api/warehouse/insurance/analysis/history', () => {
   it('route SELECT carries the columns the same-term rule needs: a live-shape reissue collapses to the latest capture', async () => {
     const db = freshDb();
     insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2628,
-      { policyNumber: 'MMF17962784', expirationDate: '2026-10-18', sourceDate: '2025-11-03' });
+      { policyNumber: 'POL0010', expirationDate: '2026-10-18', sourceDate: '2025-11-03' });
     insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2576,
-      { policyNumber: 'MMF17962784-002', expirationDate: '2026-10-18', sourceDate: '2026-02-10' });
+      { policyNumber: 'POL-0010', expirationDate: '2026-10-18', sourceDate: '2026-02-10' });
 
     const res = await insuranceAnalysisApi(() => db).request('/history');
     expect(res.status).toBe(200);

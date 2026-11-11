@@ -2,7 +2,7 @@
 //
 // Pure comparison logic for cross-checking the Master Workbook's lease/tenant rows against the
 // Notion Tenant Database — the mechanism that was missing when portfolio.json's "Expired" rows
-// for Anibal Morales / Richard Adkins / Jonathan Amaya were already retired by the 2026-07-21
+// for Tenant 059 LLC / Person 017 / Jonathan Amaya were already retired by the 2026-07-21
 // Tenant DB rent-roll reconciliation, with no way for the workbook pipeline to ever notice.
 import { describe, expect, it } from 'vitest';
 import { reconcileLeaseSources, type NotionTenantLease } from '../../server/reconcile/lease-source-reconciliation';
@@ -42,19 +42,19 @@ function makeNotionTenant(overrides: Partial<NotionTenantLease> & { tenantName: 
 
 describe('reconcileLeaseSources', () => {
   it('flags a conflict when the workbook says Expired but Notion says Active (the exact 2026-07-21 case)', () => {
-    const workbook = [makeLease({ tenantName: 'Anibal Morales', status: 'Expired' })];
-    const notion = [makeNotionTenant({ tenantName: 'Anibal Morales', leaseStatus: 'Active' })];
+    const workbook = [makeLease({ tenantName: 'Tenant 059 LLC', status: 'Expired' })];
+    const notion = [makeNotionTenant({ tenantName: 'Tenant 059 LLC', leaseStatus: 'Active' })];
     const result = reconcileLeaseSources(workbook, notion);
     expect(result.divergences).toHaveLength(1);
-    expect(result.divergences[0]!.tenantName).toBe('Anibal Morales');
+    expect(result.divergences[0]!.tenantName).toBe('Tenant 059 LLC');
     expect(result.divergences[0]!.workbookStatus).toBe('Expired');
     expect(result.divergences[0]!.notionStatus).toBe('Active');
     expect(result.divergences[0]!.severity).toBe('workbook-stale-expired');
   });
 
   it('flags the mirror case: Notion says Expired but the workbook still shows Active', () => {
-    const workbook = [makeLease({ tenantName: 'Richard Adkins', status: 'Active' })];
-    const notion = [makeNotionTenant({ tenantName: 'Richard Adkins', leaseStatus: 'Expired' })];
+    const workbook = [makeLease({ tenantName: 'Person 017', status: 'Active' })];
+    const notion = [makeNotionTenant({ tenantName: 'Person 017', leaseStatus: 'Expired' })];
     const result = reconcileLeaseSources(workbook, notion);
     expect(result.divergences).toHaveLength(1);
     expect(result.divergences[0]!.severity).toBe('notion-ahead-expired');
@@ -129,8 +129,8 @@ describe('reconcileLeaseSources', () => {
   });
 
   it('is deterministic: identical inputs produce identical output', () => {
-    const workbook = [makeLease({ tenantName: 'Anibal Morales', status: 'Expired' })];
-    const notion = [makeNotionTenant({ tenantName: 'Anibal Morales', leaseStatus: 'Active' })];
+    const workbook = [makeLease({ tenantName: 'Tenant 059 LLC', status: 'Expired' })];
+    const notion = [makeNotionTenant({ tenantName: 'Tenant 059 LLC', leaseStatus: 'Active' })];
     const r1 = reconcileLeaseSources(workbook, notion);
     const r2 = reconcileLeaseSources(workbook, notion);
     expect(r1).toEqual(r2);
@@ -192,15 +192,15 @@ describe('reconcileLeaseSources', () => {
       const workbook = [
         makeLease({ tenantName: 'VACANT', propertyKey: '1100 Rarig', status: 'Vacant' }),
         makeLease({ tenantName: 'VACANT', propertyKey: '3540 E 5th Ave', status: 'Vacant' }),
-        makeLease({ tenantName: 'Anibal Morales', status: 'Expired' }),
+        makeLease({ tenantName: 'Tenant 059 LLC', status: 'Expired' }),
       ];
       const notion = [
         makeNotionTenant({ tenantName: 'Vacant', leaseStatus: 'Vacant' }),
-        makeNotionTenant({ tenantName: 'Anibal Morales', leaseStatus: 'Active' }),
+        makeNotionTenant({ tenantName: 'Tenant 059 LLC', leaseStatus: 'Active' }),
       ];
       const result = reconcileLeaseSources(workbook, notion);
       expect(result.divergences).toHaveLength(1);
-      expect(result.divergences[0]!.tenantName).toBe('Anibal Morales');
+      expect(result.divergences[0]!.tenantName).toBe('Tenant 059 LLC');
     });
   });
 
@@ -219,8 +219,8 @@ describe('reconcileLeaseSources', () => {
   });
 
   it('includes the Notion property address alongside the workbook property key in a divergence, so a reviewer can sanity-check the match', () => {
-    const workbook = [makeLease({ tenantName: 'Anibal Morales', propertyKey: '1100 Rarig', status: 'Expired' })];
-    const notion = [makeNotionTenant({ tenantName: 'Anibal Morales', leaseStatus: 'Active', propertyAddress: '1100 Rarig Ave, Columbus OH' })];
+    const workbook = [makeLease({ tenantName: 'Tenant 059 LLC', propertyKey: '1100 Rarig', status: 'Expired' })];
+    const notion = [makeNotionTenant({ tenantName: 'Tenant 059 LLC', leaseStatus: 'Active', propertyAddress: '1100 Rarig Ave, Columbus OH' })];
     const result = reconcileLeaseSources(workbook, notion);
     expect(result.divergences[0]!.notionPropertyAddress).toBe('1100 Rarig Ave, Columbus OH');
   });

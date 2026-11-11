@@ -97,10 +97,10 @@ describe('partitionArRows — headless auto-write policy', () => {
     // the separate validLeaseIds roster, this would wrongly reject a live, confirmed mapping as
     // "lease removed/vacated" -- exactly the bug PR #302's own review caught (2 real cache entries,
     // $9,596.90 + $13,019.92, were about to freeze this way).
-    const cache = { [cacheKey('Granite Tops More')]: 'expired-lease-still-owed' };
+    const cache = { [cacheKey('tenant 141 llc')]: 'expired-lease-still-owed' };
     const filteredLeases = [lease('L1', 'Some Other Tenant')]; // Expired lease already excluded here
     const fullRosterIds = new Set(['L1', 'expired-lease-still-owed']); // but it's still a real lease id
-    const p = partitionArRows([row('Granite Tops More', { d90plus: 9596.9 })], filteredLeases, cache, fullRosterIds);
+    const p = partitionArRows([row('tenant 141 llc', { d90plus: 9596.9 })], filteredLeases, cache, fullRosterIds);
     expect(p.write).toMatchObject([{ leaseId: 'expired-lease-still-owed', arrears: { d90plus: 9596.9 } }]);
     expect(p.review).toEqual([]);
   });

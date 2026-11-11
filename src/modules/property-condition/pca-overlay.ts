@@ -13,7 +13,7 @@ const REPORT_FILE = '2026-10-13_PCA_Command_Center_Report_v01.md';
 const REGISTER_FILE = '2026-10-06_PCA-Extraction_Register_v01_2.xlsx';
 
 const INFO_LANE_PROV: Provenance = {
-  sourceFile: `${REPORT_FILE} §2/§6; verified against Intertek PCR T1643.01 DRAFT 2025-10-29 (Business/29000 Information Lane, Loan Symetra 10.2025)`,
+  sourceFile: `${REPORT_FILE} §2/§6; verified against Intertek PCR T1643.01 DRAFT 2025-10-29 (Business/29000 Information Lane, Loan Firm 03 10.2025)`,
   sourceDate: '2025-10-29',
   priceBasis: 'PCA_CONSULTANT_ESTIMATE',
   status: 'DRAFT',
@@ -127,7 +127,7 @@ export const INFO_LANE_DETAIL: InfoLaneDetail = {
   provenance: INFO_LANE_PROV,
   facts: [
     { label: 'Report', value: 'Intertek PCR T1643.01 — DRAFT 2025-10-29 (site visit 2025-10-21; 117 pp; ASTM E2018-24)' },
-    { label: 'Purpose', value: 'Symetra loan (proposal 331168R0)' },
+    { label: 'Purpose', value: 'Firm 03 loan (proposal 331168R0)' },
     { label: 'Owner of record', value: '29000 Information Lane LLC — acquired 2016-12-27 at $2,000,000' },
     { label: 'Site', value: '5 buildings, 48,000 SF, 4.64 ac, 2 parcels' },
     { label: 'Vintage', value: 'Built 2001 (B2–B4); expanded 2007 (B1, B5)' },
@@ -255,9 +255,9 @@ export const PCA_ISSUES: PcaIssue[] = [
   issue(1, '3520 E Fulton', 'CBRE scope gaps',
     'CBRE had no roof access; the NW collapse is uncosted; the $22,500 partner PCA / roof / MEP package is unsigned.'),
   issue(2, 'Banwick / Morrison', 'Summary docx errors vs Intertek',
-    'Summary docx (4/28/2026) conflicts with Intertek: Morrison SF 37,300 vs 31,200; roof types; schedule totals; fire-code. Fix before it goes to Symetra.'),
+    'Summary docx (4/28/2026) conflicts with Intertek: Morrison SF 37,300 vs 31,200; roof types; schedule totals; fire-code. Fix before it goes to Firm 03.'),
   issue(3, 'Banwick', '"2518" appears in no source',
-    'All sources say 2800-2826 (parcel 010-181360-00). Close unless another source for "2518" exists.'),
+    'All sources say 2800-2826 (parcel 000-000003-00). Close unless another source for "2518" exists.'),
   issue(4, 'Raytown', 'EWI reserve understated $74,000',
     'Table has wrong address / year / SF. Use $292,500 (the report states $218,500; its year columns sum to $292,500).'),
   issue(5, 'Northwood', 'Roof conflict',

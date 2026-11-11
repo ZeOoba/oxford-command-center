@@ -146,7 +146,7 @@ describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
       INSERT INTO acq_candidates
         (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status, content_hash)
       VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, 'active', 'h1')
-    `).run('hubspot:123', '511 Industrial Mile Road — Columbus, OH');
+    `).run('hubspot:123', 'Pipeline Deal 21');
   }
 
   it('/acq/intel returns 200 and includes the row', async () => {
@@ -283,7 +283,7 @@ Also update the existing `'expiring < 60d is critical'` test body to:
 ```ts
   // Dedup (2026-09-23 review): inside the 0–90d no-renewal window the legacy `expiring-<id>` insight
   // and L-1 `lease-expiry-<id>` fire on the same lease with the same annualRent impact, so
-  // totalsBySpine() summed that rent twice (Soldier Trucking's $38K counted as $76K). L-1 carries the
+  // totalsBySpine() summed that rent twice (Example Trucking's $38K counted as $76K). L-1 carries the
   // stronger "no renewal signal" message and is always critical there — keep it, drop the legacy twin.
   {
     const l1Leases = new Set(out.filter((i) => i.id.startsWith('lease-expiry-')).map((i) => i.entityId));
@@ -408,10 +408,10 @@ describe('checkStaleLeaseRows', () => {
   const meta = { asOf: '2026-09-23' } as PortfolioSnapshot['meta'];
   const l = (o: Partial<Lease>) => ({ id: 'x', tenantName: 'T', status: 'Active', leaseEnd: null, ...o }) as Lease;
   it('flags a non-Expired row whose leaseEnd passed > 365d ago (retired tenant still on the rent roll)', () => {
-    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'adk', tenantName: 'Adkins Towing', leaseEnd: '2024-09-01' })] });
+    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'adk', tenantName: 'Tenant 038 LLC', leaseEnd: '2024-09-01' })] });
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ entity: 'reconciliation', field: 'lease.adk.leaseEnd', severity: 'warn' });
-    expect(flags[0]!.issue).toContain('Adkins Towing');
+    expect(flags[0]!.issue).toContain('Tenant 038 LLC');
   });
   it('ignores recent holdovers and rows already marked Expired', () => {
     expect(checkStaleLeaseRows({ meta, leases: [
@@ -433,7 +433,7 @@ const STALE_LEASE_ROW_DAYS = 365;
 /**
  * A lease row that is not marked Expired but ended more than a year ago is almost always a tenant
  * already retired in the Notion Tenant DB whose workbook row was never cleared (2026-09-23 review:
- * Adkins Towing / Anibal Morales, 752d past end, still inflating Calendar + Renewals). Warn so a human
+ * Tenant 038 LLC / Tenant 059 LLC, 752d past end, still inflating Calendar + Renewals). Warn so a human
  * fixes the workbook — nothing here edits or hides the row.
  */
 export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'>): DataQualityFlag[] {
@@ -2398,7 +2398,7 @@ git commit -m "fix(alerts): per-property LTV insight no longer reads as an aggre
 | R4 | Lease Market never computed | `npm run lease-market:ingest` (CoStar exports), then `npm run lease-market:compute`; schedule weekly | `register-scheduled-task` |
 | R5 | Document index from 2026-06-06 | `npm run index:docs` (reads OneDrive read-only); schedule monthly | `register-scheduled-task` |
 | R6 | Insurance: 8 policy lines show expired (1100 Rarig, ETC POA, 1851 S Club, 9050 Red Branch, 3034 Westerville); TIV null on all 30 | Confirm renewals were bound; import new terms + TIV from dec pages (`scripts/import-insurance-data.ts`). TIV unblocks rate benchmarking and re-bid/self-insure | Gabriel supplies dec pages; `insurance-declaration-checker` agent verifies |
-| R7 | Workbook rows: Tyson Consulting $0 rent "Active"; Adkins Towing / Anibal Morales ended 2024-09-01 | Fix in the Master Workbook (Task 5 surfaces these as flags) | Gabriel |
+| R7 | Workbook rows: Example Consulting $0 rent "Active"; Tenant 038 LLC / Tenant 059 LLC ended 2024-09-01 | Fix in the Master Workbook (Task 5 surfaces these as flags) | Gabriel |
 | R8 | Leasing velocity has no data (`lease_events` = 0 rows) | Spec an importer that derives vacate/commence events from historical rent rolls or the Notion Tenant DB history, then add the velocity trend chart | New spec (brainstorming → /plan) |
 
 ## Verification before calling this done

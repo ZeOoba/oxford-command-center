@@ -25,7 +25,7 @@ import type { WarehouseDb } from './db';
 export const SUNBURST_SEED: LeaseTerm = LeaseTerm.parse({
   propertyId: '401-sunburst-hwy-cambridge-md',
   suite: null,
-  tenant: 'The Bay Area Corporation (automotive service/tire)',
+  tenant: 'Tenant 092 LLC (automotive service/tire)',
   rentableSf: 5130,
   structure: 'absolute_nnn',
   commencement: '2019-12-23',
@@ -65,13 +65,13 @@ export const SUNBURST_SEED: LeaseTerm = LeaseTerm.parse({
 });
 
 // ── 7658 Fishel Dr N — Dublin, OH (NNN; 24,000 SF) ─────────────────────────────────────────
-// ALL base rent is hard data: Initial term (LY'26) + Renewal 1 exercised via SRS notice 3/11/2026
+// ALL base rent is hard data: Initial term (LY'26) + Renewal 1 exercised via tenant notice 3/11/2026
 // (LY'27–LY'31, locked through 9/30/2031) + Option 2 (LY'32–LY'36) at the lease's pre-agreed §2.2
 // FIXED rates. Opt 2 is unexercised but contractual-rate → option_contractual (data, NOT assumption).
 export const FISHEL_SEED: LeaseTerm = LeaseTerm.parse({
   propertyId: '7658-fishel-dr-n-dublin-oh',
   suite: null,
-  tenant: 'Heritage Pool Supply Group (SRS Distribution)',
+  tenant: 'Tenant 153 LLC',
   rentableSf: 24000,
   structure: 'nnn',
   commencement: '2021-10-01',
@@ -99,7 +99,7 @@ export const FISHEL_SEED: LeaseTerm = LeaseTerm.parse({
     'Confirm 24,000 SF against survey/rent roll.',
     'No security deposit or guaranty found.',
   ],
-  provenance: { sourceFile: '2026-06-14 lease-sweep (7658 Fishel lease + SRS renewal notice 3/11/2026)', abstractDate: '2026-06-14', note: 'NNN in economic effect; tenant carries casualty insurance.' },
+  provenance: { sourceFile: '2026-06-14 lease-sweep (7658 Fishel lease + tenant renewal notice 3/11/2026)', abstractDate: '2026-06-14', note: 'NNN in economic effect; tenant carries casualty insurance.' },
 });
 
 /** The v1 seed roster. Order is stable for deterministic seeding/rollup. */

@@ -31,7 +31,7 @@ export interface TenantMatch {
 // Entity suffixes stripped before comparison — they carry no disambiguating signal and differ freely
 // between a rent roll and a PM export.
 // True legal/entity suffixes only. Deliberately NOT 'service(s)' / 'division' — those are meaningful
-// words in real business names ("Hobart Service"); stripping them collapses distinct tenants and
+// words in real business names ("Kelvar Service"); stripping them collapses distinct tenants and
 // invites false matches. A trailing 'svcs'/'svc' abbreviation is left in too — the subset-overlap
 // scorer already absorbs it (a report name without it still scores 1.0 against the fuller name).
 const ENTITY_SUFFIXES = new Set([
@@ -58,7 +58,7 @@ export function normalizeTokens(raw: string): string[] {
   // Collapse a dotted initialism ('I.M.H', 'I.M.H.', 'P.U.P.S.') into one run of bare letters BEFORE
   // the generic punctuation strip below, which would otherwise turn every '.' into a space and split
   // it into isolated single-letter tokens ('i','m','h') — zero overlap against an undotted spelling
-  // of the same name ('IMH'). Requires 2+ consecutive single-letter-dot pairs, so a single first/
+  // of the same name ('QRT'). Requires 2+ consecutive single-letter-dot pairs, so a single first/
   // middle initial ('W.' in "Louis W. Foxwell") is deliberately left untouched — that stays its own
   // token, exactly as it always has.
   s = s.replace(/\b(?:[a-z]\.){2,}[a-z]?\b/g, (m) => m.replace(/\./g, ''));
@@ -109,11 +109,11 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
   // Compare on the raw score (unchanged from the original design, deliberately NOT an "exact
   // strictly dominates" rule): a report name that exactly equals one lease's name AND is also a
   // genuine token-subset of a DIFFERENT lease's longer name (the wrap/truncation case this module
-  // exists to handle, e.g. "Hobart" vs "Hobart Service") is exactly the kind of coin-flip the
+  // exists to handle, e.g. "Kelvar" vs "Kelvar Service") is exactly the kind of coin-flip the
   // ambiguity flag below exists to catch — a same-day adversarial re-review confirmed that an
   // earlier version of this fix which made exact strictly dominate silently converted that
   // legitimate human-review case into an unattended auto-write (real roster pair: "THE BAY AREA
-  // CORPORATION" vs "Bay Area Exteriors LLC"). Bounding `overlap()` to [0,1] above is sufficient on
+  // CORPORATION" vs "Tenant 086 LLC"). Bounding `overlap()` to [0,1] above is sufficient on
   // its own: a non-exact candidate can now at most TIE an exact match (never exceed it), and a tie
   // between two different leases already sets `ambiguous` below, which blocks any unattended write.
   //
@@ -122,7 +122,7 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
   // the lexicographically smaller leaseId. Before this, `best` was simply the tied lease the loop
   // met first, so the same report name produced a different review-queue row (leaseId, candidate
   // label, and -- because `exact` rides along -- `confidence`) depending on the order of the
-  // snapshot's leases array: real roster, "THE BAY AREA CORPORATION" reported as "exact ->
+  // snapshot's leases array: real roster, "TENANT 092 LLC" reported as "exact ->
   // 401-sunburst..." forward and "high -> 29000-information-lane..." reversed. This changes NOTHING
   // about WHICH ties are flagged: `topCount` still increments on every different-lease tie and is
   // never reset by the swap, so `ambiguous` (topCount > 1) is exactly what it was, and both

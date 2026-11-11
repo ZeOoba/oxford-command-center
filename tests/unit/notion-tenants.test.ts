@@ -3,7 +3,7 @@ import { mapNotionTenantPage } from '../../server/sources/notion-tenants';
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
-    'Tenant Name': { type: 'title', title: [{ plain_text: 'Anibal Morales' }] },
+    'Tenant Name': { type: 'title', title: [{ plain_text: 'Tenant 059 LLC' }] },
     'Property Address': { type: 'rich_text', rich_text: [{ plain_text: '1100 Rarig Ave, Columbus OH' }] },
     'Lease Status': { type: 'select', select: { name: 'Active' } },
     'Lease Start': { type: 'date', date: { start: '2023-01-01' } },
@@ -15,7 +15,7 @@ const page = (over: Record<string, unknown> = {}) => ({
 describe('mapNotionTenantPage', () => {
   it('maps a Notion Tenant Database page to a NotionTenantLease', () => {
     const t = mapNotionTenantPage(page())!;
-    expect(t.tenantName).toBe('Anibal Morales');
+    expect(t.tenantName).toBe('Tenant 059 LLC');
     expect(t.propertyAddress).toBe('1100 Rarig Ave, Columbus OH');
     expect(t.leaseStatus).toBe('Active');
     expect(t.leaseStart).toBe('2023-01-01');

@@ -36,7 +36,7 @@ const FIRST_PARTY_PERIL = /\b(?:water|wind|hail|fire|smoke|theft|burglary|vandal
 
 /** A loss-run cause that is a THIRD-PARTY claim. A property deductible never applies to one, so
  *  such an event stays EAL-only — even when its policy_ref is a bundled BOP number shared by the
- *  property line and the liability lines (live: Hartford '37 SBA CB6KKB' spans property, GL,
+ *  property line and the liability lines (live: Hartford 'POL 0011' spans property, GL,
  *  umbrella and EPLI at 9620 Raytown). Two tiers (refute wf_a4ae3c23-a46): STRONG wording always
  *  wins; bare 'liability' yields to a named peril. An unrecognised or null cause is first-party. */
 export function isThirdPartyLossCause(cause: string | null): boolean {

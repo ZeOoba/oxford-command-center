@@ -13,7 +13,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'eurosort', docName: 'Eurosort Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -42,7 +42,7 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     const info = await c.ready;
     expect(t.handled).toBe(1);
     expect(info.chunkCount).toBe(3);
-    expect(info.docs.map((d) => d.name)).toEqual(['Eurosort Lease.pdf', 'Roof Warranty.pdf', 'Rent Schedule.pdf']);
+    expect(info.docs.map((d) => d.name)).toEqual(['Tenant 155 LLC Lease.pdf', 'Roof Warranty.pdf', 'Rent Schedule.pdf']);
     expect(c.builtAt).toBe(info.builtAt);
   });
 
@@ -52,7 +52,7 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     clients.push(c);
     const [qv] = await fakeEmbedder(['renewal']);
     const rows = await c.knn(qv!, 3);
-    expect(rows[0]!.chunk.docId).toBe('eurosort');
+    expect(rows[0]!.chunk.docId).toBe('tenant 155 llc');
   });
 
   it('scoped resolves the chunks of exactly the named documents, and rejects after close', async () => {
@@ -60,12 +60,12 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     const c = DocIndexClient.start(p, inProcessDocIndexTransport());
     clients.push(c);
     const [qv] = await fakeEmbedder(['renewal']);
-    const rows = await c.scoped(qv!, ['Eurosort Lease.pdf'], 100);
-    expect(rows.map((r) => r.chunk.docName)).toEqual(['Eurosort Lease.pdf']);
+    const rows = await c.scoped(qv!, ['Tenant 155 LLC Lease.pdf'], 100);
+    expect(rows.map((r) => r.chunk.docName)).toEqual(['Tenant 155 LLC Lease.pdf']);
     expect(await c.scoped(qv!, ['No Such Document.pdf'], 100)).toEqual([]);
-    expect(await c.scoped(qv!, ['Eurosort Lease.pdf', 'Roof Warranty.pdf'], 1)).toEqual([]); // 2 chunks > maxChunks 1
+    expect(await c.scoped(qv!, ['Tenant 155 LLC Lease.pdf', 'Roof Warranty.pdf'], 1)).toEqual([]); // 2 chunks > maxChunks 1
     await c.close();
-    await expect(c.scoped(qv!, ['Eurosort Lease.pdf'], 100)).rejects.toThrow();
+    await expect(c.scoped(qv!, ['Tenant 155 LLC Lease.pdf'], 100)).rejects.toThrow();
   });
 
   it('a load failure rejects ready and every later knn', async () => {

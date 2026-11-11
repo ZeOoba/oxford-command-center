@@ -45,7 +45,7 @@ import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
  *  it to attach each loss event to the one policy whose term / policy number covers it.
  *  lineNumbers spans the row's whole LINE — every row sharing its raw property_id and policy_type
  *  (trim + lowercase, the key collapseToCurrentTerm groups on) — so a loss run citing a superseded
- *  or reissued number (live: 1310 'MMF17962784' → 1734 'MMF17962784-002') still names the surviving
+ *  or reissued number (live: 1310 'POL0010' → 1734 'POL-0010') still names the surviving
  *  current-term row. */
 function loadPolicyTerms(db: WarehouseDb): Map<string, PolicyTerm> {
   // SQLite affinities are not constraints: raw SQL can leave a BLOB or a number in any TEXT column

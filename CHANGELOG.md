@@ -147,8 +147,8 @@ the same day.
 - **HubSpot sync UI trigger (PR #221).** `syncHubSpotPipeline()` / `POST /acq/sync/hubspot` (PR #203)
   had no frontend trigger — unlike the symmetric Notion sync. Added `handleHubSpotSync()` + a "Sync
   from HubSpot" button in `AcquisitionsModule.tsx`, mirroring the Notion pattern exactly. Live-verified
-  against the real HubSpot Acquisitions pipeline: 4 real deals (6150 Avery Road, 1333 Research Road,
-  2146 Enterprise Pkwy, Pendleton Trade Center) currently have no path into `acq_candidates`. Button
+  against the real HubSpot Acquisitions pipeline: 4 real deals (200 Example Pkwy, Pipeline Deal 05,
+  Pipeline Deal 04, Pipeline Deal 06) currently have no path into `acq_candidates`. Button
   will 400 until Gabriel adds a `HUBSPOT_TOKEN` (Private App, `crm.objects.deals.read`) to `.env` —
   a credential, not something any PR sets. No scheduled/automatic sync added, matching Notion's
   existing manual-trigger-only design.
@@ -656,7 +656,7 @@ The intel module becomes an operating layer over the analytics engine — not an
 - **Value by Market shows value, not NOI (Defect 3).** Added `marketByValue` to the analytics bundle
   and bound it in `PortfolioModule`. Regression test in `tests/unit/analytics.test.ts`.
 - **Counterparty contact identity (Defect 4).** `deriveCounterparties` no longer copies a person's
-  email/notes onto a same-named derived firm (the lender "Symetra" no longer carries the title
+  email/notes onto a same-named derived firm (the lender "Firm 03" no longer carries the title
   coordinator's address). Regression test: `tests/unit/counterparties.test.ts`.
 - **Task banner ingestion (Defect 9, upgraded from Low).** `parseTasks` now rejects Monthly-Checklist
   banner/summary rows (`isTaskBannerRow`) that were ingested as junk task cards. Verified end-to-end:

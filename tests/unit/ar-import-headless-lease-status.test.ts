@@ -3,7 +3,7 @@
 // Regression coverage for the 2026-08-24 integrity-sweep incident: loadLeasesFromSnapshot() fed
 // EVERY lease -- including 'Expired' ones -- to the name matcher, so a delinquency export naming a
 // vacated tenant auto-attributed to their dead lease at 'exact' confidence with zero human review.
-// This silently reversed a ratified SKIP ruling on 2207-northwood-c4-anibal-morales (lease ended
+// This silently reversed a ratified SKIP ruling on 2207-northwood-c4-duketa-llc (lease ended
 // 2024-09-01) three days after it was made. Expired leases must never be auto-match candidates.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -24,12 +24,12 @@ function writeFixtureSnapshot(): void {
       leases: [
         { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', annualRent: 25500, unit: 'A1', propertyId: 'prop-a' },
         { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', annualRent: 13992, unit: 'A2', propertyId: 'prop-a' },
-        { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', annualRent: 4788, unit: 'C4', propertyId: 'prop-a' },
+        { id: '2207-northwood-c4-duketa-llc', tenantName: 'Duketa LLC', company: 'Duketa LLC', status: 'Expired', annualRent: 4788, unit: 'C4', propertyId: 'prop-a' },
         { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown', annualRent: 100, unit: 'A3', propertyId: 'prop-a' },
         // 2026-09-14 sweep, Fix A: the two real zero-rent-but-Active rows plus a Vacant placeholder.
         // Shaped like the live snapshot records (tenantName is the person, company is the entity).
-        { id: '29000-information-lane-202-tyson-consulting-group', tenantName: 'Dru Tyson', company: 'Tyson Consulting Group', status: 'Active', annualRent: 0, unit: '202', propertyId: 'prop-b' },
-        { id: '2207-northwood-a15-evans-gymnastics-and-dance-llc', tenantName: 'Christena  Evans', company: 'Evans Gymnastics and Dance LLC', status: 'Active', annualRent: 0, unit: 'A15', propertyId: 'prop-a' },
+        { id: '29000-information-lane-202-pameta-llc', tenantName: 'Zileta Kineta', company: 'Pameta LLC', status: 'Active', annualRent: 0, unit: '202', propertyId: 'prop-b' },
+        { id: '2207-northwood-a15-example-gymnastics-and-dance-llc', tenantName: 'Dana  Example', company: 'Example Gymnastics and Dance LLC', status: 'Active', annualRent: 0, unit: 'A15', propertyId: 'prop-a' },
         { id: 'vacant-lease-1', tenantName: 'VACANT', company: null, status: 'Vacant', annualRent: 0, unit: 'A9', propertyId: 'prop-a' },
       ],
     }),
@@ -41,11 +41,11 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
     writeFixtureSnapshot();
   });
 
-  it('drops the Expired lease (Anibal Morales) entirely', async () => {
+  it('drops the Expired lease (Duketa LLC) entirely', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const leases = loadLeasesFromSnapshot();
-    expect(leases.find((l) => l.id === '2207-northwood-c4-anibal-morales')).toBeUndefined();
+    expect(leases.find((l) => l.id === '2207-northwood-c4-duketa-llc')).toBeUndefined();
   }); // slow: first dynamic import of this module graph is transform-heavy
 
   it('keeps Active, Expiring Soon, and Unknown-status leases as match candidates', async () => {
@@ -57,12 +57,12 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
     );
   });
 
-  it('end-to-end: matchTenantToLease can no longer resolve "Anibal Morales" once his lease is Expired', async () => {
+  it('end-to-end: matchTenantToLease can no longer resolve "Duketa LLC" once his lease is Expired', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { matchTenantToLease } = await import('../../server/ar/match-tenant');
     const leases = loadLeasesFromSnapshot();
-    const match = matchTenantToLease('Anibal Morales', leases);
+    const match = matchTenantToLease('Duketa LLC', leases);
     // No candidate at all -> 'none' confidence -> falls through to human review, never an auto-write.
     expect(match.leaseId).toBeNull();
     expect(match.confidence).toBe('none');
@@ -70,8 +70,8 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
 });
 
 // 2026-09-14 weekly financial-code sweep, Fix A: the Expired-only guard was too narrow. An Active
-// lease carrying annualRent === 0 (a roster placeholder that bills nothing -- real rows: Tyson
-// Consulting Group, 29000 Information Lane #202; Evans Gymnastics, 2207 Northwood A15) and a
+// lease carrying annualRent === 0 (a roster placeholder that bills nothing -- real rows: Example Consulting
+// Consulting Group, 29000 Information Lane #202; Example Gymnastics, 2207 Northwood A15) and a
 // 'Vacant' record both passed as live fresh-match candidates, so an export naming either could
 // auto-attribute to a lease that is not a billing tenant with zero human review. The shared
 // predicate isDeadLease (server/ar/lease-liveness.ts) now gates BOTH fresh-match pools -- this
@@ -82,12 +82,12 @@ describe('loadLeasesFromSnapshot excludes Vacant and zero-rent-Active leases fro
     writeFixtureSnapshot();
   });
 
-  it('drops an Active lease whose annualRent is 0 (Tyson Consulting Group, Evans Gymnastics)', async () => {
+  it('drops an Active lease whose annualRent is 0 (Pameta LLC, Example Gymnastics)', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const ids = loadLeasesFromSnapshot().map((l) => l.id);
-    expect(ids).not.toContain('29000-information-lane-202-tyson-consulting-group');
-    expect(ids).not.toContain('2207-northwood-a15-evans-gymnastics-and-dance-llc');
+    expect(ids).not.toContain('29000-information-lane-202-pameta-llc');
+    expect(ids).not.toContain('2207-northwood-a15-example-gymnastics-and-dance-llc');
   });
 
   it('drops a Vacant lease', async () => {
@@ -96,29 +96,29 @@ describe('loadLeasesFromSnapshot excludes Vacant and zero-rent-Active leases fro
     expect(loadLeasesFromSnapshot().map((l) => l.id)).not.toContain('vacant-lease-1');
   });
 
-  it('end-to-end: "Tyson Consulting Group" no longer fresh-matches -- none confidence, routes to review', async () => {
+  it('end-to-end: "Pameta LLC" no longer fresh-matches -- none confidence, routes to review', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { matchTenantToLease } = await import('../../server/ar/match-tenant');
-    const match = matchTenantToLease('Tyson Consulting Group', loadLeasesFromSnapshot());
+    const match = matchTenantToLease('Pameta LLC', loadLeasesFromSnapshot());
     expect(match.leaseId).toBeNull();
     expect(match.confidence).toBe('none');
   });
 
-  it('end-to-end: "Evans Gymnastics and Dance LLC" no longer fresh-matches by name either', async () => {
+  it('end-to-end: "Example Gymnastics and Dance LLC" no longer fresh-matches by name either', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { matchTenantToLease } = await import('../../server/ar/match-tenant');
-    const match = matchTenantToLease('Evans Gymnastics and Dance LLC', loadLeasesFromSnapshot());
+    const match = matchTenantToLease('Example Gymnastics and Dance LLC', loadLeasesFromSnapshot());
     expect(match.leaseId).toBeNull();
     expect(match.confidence).toBe('none');
   });
 
-  it('end-to-end: partitionArRows routes the Tyson row to review, never to write (no cache entry)', async () => {
+  it('end-to-end: partitionArRows routes the Example Consulting row to review, never to write (no cache entry)', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { partitionArRows } = await import('../../server/ar/partition-confidence');
-    const rows = [{ tenant: 'Tyson Consulting Group', property: null, d30: 1932.97, d60: 1892.97, d90: 1892.97, d90plus: 344.18 }];
+    const rows = [{ tenant: 'Pameta LLC', property: null, d30: 1932.97, d60: 1892.97, d90: 1892.97, d90plus: 344.18 }];
     const p = partitionArRows(rows, loadLeasesFromSnapshot(), {}, loadAllLeaseIdsFromSnapshot());
     expect(p.write).toEqual([]);
     expect(p.review).toHaveLength(1);
@@ -148,7 +148,7 @@ describe('loadAllLeaseIdsFromSnapshot stays DELIBERATELY wide -- every lease id,
   // partitionArRows' cache-hit validation must keep recognising a previously human-CONFIRMED mapping
   // to a now-dead lease as still valid, not "lease removed". Narrowing this roster was a real
   // regression once (PR #302 review: $9,596.90 + $13,019.92 of live arrears froze). Fix A must not
-  // touch it: the real cache entry "tyson consulting group" -> 29000-information-lane-202-... is
+  // touch it: the real cache entry "pameta llc" -> 29000-information-lane-202-... is
   // exactly such a confirmed mapping to a lease that is now dead under the wider predicate.
   beforeEach(() => {
     writeFixtureSnapshot();
@@ -161,25 +161,25 @@ describe('loadAllLeaseIdsFromSnapshot stays DELIBERATELY wide -- every lease id,
     for (const id of [
       'active-lease-1',
       'expiring-soon-lease-1',
-      '2207-northwood-c4-anibal-morales',
+      '2207-northwood-c4-duketa-llc',
       'unknown-status-lease-1',
-      '29000-information-lane-202-tyson-consulting-group',
-      '2207-northwood-a15-evans-gymnastics-and-dance-llc',
+      '29000-information-lane-202-pameta-llc',
+      '2207-northwood-a15-example-gymnastics-and-dance-llc',
       'vacant-lease-1',
     ]) {
       expect(ids.has(id)).toBe(true);
     }
   });
 
-  it('end-to-end: a confirmed cache mapping to the (now dead) Tyson lease still writes -- unchanged', async () => {
+  it('end-to-end: a confirmed cache mapping to the (now dead) Example Consulting lease still writes -- unchanged', async () => {
     vi.resetModules();
     const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { partitionArRows } = await import('../../server/ar/partition-confidence');
     const { cacheKey } = await import('../../server/ar/mapping-cache');
-    const cache = { [cacheKey('Tyson Consulting Group')]: '29000-information-lane-202-tyson-consulting-group' };
-    const rows = [{ tenant: 'Tyson Consulting Group', property: null, d30: 1932.97, d60: 0, d90: 0, d90plus: 0 }];
+    const cache = { [cacheKey('Pameta LLC')]: '29000-information-lane-202-pameta-llc' };
+    const rows = [{ tenant: 'Pameta LLC', property: null, d30: 1932.97, d60: 0, d90: 0, d90plus: 0 }];
     const p = partitionArRows(rows, loadLeasesFromSnapshot(), cache, loadAllLeaseIdsFromSnapshot());
-    expect(p.write.map((w) => w.leaseId)).toEqual(['29000-information-lane-202-tyson-consulting-group']);
+    expect(p.write.map((w) => w.leaseId)).toEqual(['29000-information-lane-202-pameta-llc']);
     expect(p.review).toEqual([]);
   });
 });
@@ -194,23 +194,23 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
     writeFixtureSnapshot();
   });
 
-  it('includes the Expired lease (Anibal Morales, unit C4) in the loader output', async () => {
+  it('includes the Expired lease (Duketa LLC, unit C4) in the loader output', async () => {
     vi.resetModules();
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const leases = loadUnitLeasesFromSnapshot();
-    const morales = leases.find((l) => l.id === '2207-northwood-c4-anibal-morales');
-    expect(morales).toBeDefined();
-    expect(morales?.status).toBe('Expired');
+    const duketa = leases.find((l) => l.id === '2207-northwood-c4-duketa-llc');
+    expect(duketa).toBeDefined();
+    expect(duketa?.status).toBe('Expired');
   }); // slow: first dynamic import of this module graph is transform-heavy
 
   it('carries annualRent and tenantName so resolveByUnit can apply the shared dead-lease predicate and name a candidate', async () => {
     vi.resetModules();
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
-    const evans = loadUnitLeasesFromSnapshot().find((l) => l.id === '2207-northwood-a15-evans-gymnastics-and-dance-llc');
-    expect(evans).toMatchObject({ unit: 'A15', status: 'Active', annualRent: 0, tenantName: 'Christena  Evans' });
+    const gym = loadUnitLeasesFromSnapshot().find((l) => l.id === '2207-northwood-a15-example-gymnastics-and-dance-llc');
+    expect(gym).toMatchObject({ unit: 'A15', status: 'Active', annualRent: 0, tenantName: 'Dana  Example' });
   });
 
-  it('end-to-end (Fix A): Evans Gymnastics, unit A15, Active but $0 rent -> NOT auto-attributed; falls to review', async () => {
+  it('end-to-end (Fix A): Example Gymnastics, unit A15, Active but $0 rent -> NOT auto-attributed; falls to review', async () => {
     // Real row: $1,824.01 of AR at 2207 Northwood A15. The only lease on that unit is Active with
     // annualRent 0 -- not a billing tenant. Before Fix A this was a clean 'exact' unit hit and an
     // unattended write.
@@ -258,7 +258,7 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
       snapshotPath,
       JSON.stringify({
         leases: [
-          { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', unit: 'C4', propertyId: 'prop-a' },
+          { id: '2207-northwood-c4-duketa-llc', tenantName: 'Duketa LLC', company: 'Duketa LLC', status: 'Expired', unit: 'C4', propertyId: 'prop-a' },
           { id: 'new-tenant-c4', tenantName: 'New Tenant LLC', company: 'New Tenant LLC', status: 'Active', unit: 'C4', propertyId: 'prop-a' },
         ],
       }),

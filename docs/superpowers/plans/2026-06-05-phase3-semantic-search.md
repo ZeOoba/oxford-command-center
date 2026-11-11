@@ -53,7 +53,7 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
     expect(isExcludedPath('GDG Properties EG Properties and personal info/x.pdf')).toBe(true);
   });
   it('allows ordinary property lease/PSA paths', () => {
-    expect(isExcludedPath('1100 Rarig/Eurosort Lease.pdf')).toBe(false);
+    expect(isExcludedPath('1100 Rarig/Tenant 155 LLC Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
   });
 });
@@ -124,7 +124,7 @@ const fakeEmbedder: Embedder = async (texts) =>
   });
 
 const CHUNKS: DocChunk[] = [
-  { docId: 'eurosort', docName: 'Eurosort Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -133,8 +133,8 @@ describe('buildIndex / queryIndex — sqlite-vec vector search (fake embedder)',
   it('ranks the semantically nearest chunk first and shapes a cited, scored DocHit', async () => {
     const index = await buildIndex(CHUNKS, fakeEmbedder);
     const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
-    expect(hits[0]!.doc).toBe('Eurosort Lease.pdf');
-    expect(hits[0]!.docId).toBe('eurosort');
+    expect(hits[0]!.doc).toBe('Tenant 155 LLC Lease.pdf');
+    expect(hits[0]!.docId).toBe('tenant 155 llc');
     expect(hits[0]!.score).toBeGreaterThan(hits[1]!.score); // closer = higher score
     expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
     index.close();

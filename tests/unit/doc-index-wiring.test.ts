@@ -17,7 +17,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'eurosort', docName: 'Eurosort Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -62,7 +62,7 @@ describe('documents.ts over DocIndexClient (item 11)', () => {
     await diskIndexAtEnv();
     counting();
     const hits = await searchDocuments('renewal', 3, fakeEmbedder);
-    expect(hits[0]).toMatchObject({ doc: 'Eurosort Lease.pdf', docId: 'eurosort', chunkIdx: 0 });
+    expect(hits[0]).toMatchObject({ doc: 'Tenant 155 LLC Lease.pdf', docId: 'tenant 155 llc', chunkIdx: 0 });
     expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
     expect(hits[0]!.score).toBeGreaterThan(0);
     expect(hits[0]!.score).toBeLessThanOrEqual(1);
@@ -220,12 +220,12 @@ describe('searchDocuments — wide pool + entity-scoped pool + fusion (2026-10-1
 
   // 12 generic leases whose "renew + roof" chunk sits at vector distance 1 from a "renewal" query, plus a
   // named lease whose clause is FARTHER away (distance ~1.41) — so with a tiny vector pool it is invisible to
-  // plain KNN, exactly like the Eurosort clause that ranked 55th-127th of 150K chunks.
+  // plain KNN, exactly like the Tenant 155 LLC clause that ranked 55th-127th of 150K chunks.
   const generic = Array.from({ length: 12 }, (_, i): DocChunk => ({
     docId: `g${i}`, docName: `Business/G${i}/Lease G${i}.pdf`, idx: 0, text: `Tenant may renew once; the roof is repaired by landlord. Variant ${i}.`,
   }));
   const named: DocChunk = {
-    docId: 'euro', docName: 'Business/55 New Plant Court/Lease Eurosort 10-2022.pdf', idx: 96, text: 'Base rent steps up annually during the extension period.', // no "renew"/"roof": vector [0,0,1], distance sqrt(2) from a renewal query
+    docId: 'euro', docName: 'Business/55 New Plant Court/Lease Tenant 155 LLC 10-2022.pdf', idx: 96, text: 'Base rent steps up annually during the extension period.', // no "renew"/"roof": vector [0,0,1], distance sqrt(2) from a renewal query
   };
 
   async function indexOf(chunks: DocChunk[]): Promise<void> {
@@ -240,7 +240,7 @@ describe('searchDocuments — wide pool + entity-scoped pool + fusion (2026-10-1
   it('finds the chunk of a named document that the vector pool alone cannot reach, and ranks it first', async () => {
     await indexOf([...generic, named]);
     process.env.DOCUMENTS_SEARCH_POOL = '3';
-    const hits = await searchDocuments('renewal option in the Eurosort lease', 5, fakeEmbedder);
+    const hits = await searchDocuments('renewal option in the Tenant 155 LLC lease', 5, fakeEmbedder);
     expect(hits[0]!.doc).toBe(named.docName);
     expect(hits[0]!.chunkIdx).toBe(96);
   });
@@ -286,10 +286,10 @@ describe('searchDocuments — wide pool + entity-scoped pool + fusion (2026-10-1
 
   it('marks drafts, and every score stays within 0..1', async () => {
     await indexOf([
-      { docId: 'x', docName: 'Business/55 New Plant Court/Lease Eurosort -- 08-2022 EG Comments.pdf', idx: 0, text: 'Option to renew for five years. Roof. [EG comment: consider ten years.]' },
-      { docId: 'y', docName: 'Business/55 New Plant Court/Lease Eurosort -- 10-2022.pdf', idx: 0, text: 'Option to renew for five years. Roof.' },
+      { docId: 'x', docName: 'Business/55 New Plant Court/Lease Tenant 155 LLC -- 08-2022 EG Comments.pdf', idx: 0, text: 'Option to renew for five years. Roof. [EG comment: consider ten years.]' },
+      { docId: 'y', docName: 'Business/55 New Plant Court/Lease Tenant 155 LLC -- 10-2022.pdf', idx: 0, text: 'Option to renew for five years. Roof.' },
     ]);
-    const hits = await searchDocuments('Eurosort renewal option', 5, fakeEmbedder);
+    const hits = await searchDocuments('Tenant 155 LLC renewal option', 5, fakeEmbedder);
     expect(hits[0]!.doc).toContain('10-2022'); // executed beats the EG-comments draft
     expect(hits.find((h) => h.doc.includes('Comments'))!.draft).toBe(true);
     for (const h of hits) {
@@ -314,7 +314,7 @@ describe('searchDocuments — wide pool + entity-scoped pool + fusion (2026-10-1
         terminate: () => inner.terminate(),
       };
     });
-    const hits = await searchDocuments('renewal option in the Eurosort lease', 5, fakeEmbedder);
+    const hits = await searchDocuments('renewal option in the Tenant 155 LLC lease', 5, fakeEmbedder);
     expect(hits.length).toBeGreaterThan(0);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('scoped'), expect.anything());
   });

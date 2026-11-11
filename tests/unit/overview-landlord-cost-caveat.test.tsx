@@ -28,7 +28,7 @@ const base: Property = {
   id: 'p1', index: 1, name: 'Alpha Industrial', address: '1 Alpha Way', city: null, state: null, market: 'Columbus OH', type: 'Flex',
   sf: 40_000, tenantCount: 3, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 5_000_000,
   grossIncome: 500_000, expenses: 100_000, noi: 400_000, noiScenarioAdj: 400_000, debtService: 200_000, netCashFlow: 0,
-  capRate: 0.08, dscr: 2.0, lender: 'Symetra', loanBalance: 1_500_000, ltv: 0.3, valuePerSf: null, rentPerSf: null,
+  capRate: 0.08, dscr: 2.0, lender: 'Firm 03', loanBalance: 1_500_000, ltv: 0.3, valuePerSf: null, rentPerSf: null,
   equityInvested: 0, cashOnCash: null, holdYrs: null, encumbered: true, flags: [],
 } as Property;
 /** Levered, NNN-not-absolute, $0 expenses → flagged. */

@@ -119,7 +119,7 @@ describe('runBrief', () => {
     const inv = {
       id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex',
       sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000,
-      debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Symetra', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000,
+      debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Firm 03', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000,
       cashOnCash: null, holdYrs: null, encumbered: true, flags: [],
     };
     (snap.properties as unknown[]) = [

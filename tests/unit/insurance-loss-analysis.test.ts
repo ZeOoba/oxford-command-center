@@ -270,8 +270,8 @@ describe('buildInsuranceLossReport', () => {
 //
 // Live shape at 9620 E State Route 350, Raytown: two property-package policies in force at once,
 // both resolving to the same property_master id —
-//   1734 Westchester  2025-10-18 → 2026-10-18   (policy_number MMF17962784-002)
-//   1735 Hartford BOP 2026-05-28 → 2027-05-28   (policy_number 37 SBA CB6KKB)
+//   1734 Westchester  2025-10-18 → 2026-10-18   (policy_number POL-0010)
+//   1735 Hartford BOP 2026-05-28 → 2027-05-28   (policy_number POL 0011)
 // Matching events by propertyId alone and picking a "primary" policy by lexicographic policyId
 // ('1734' < '1735') books a loss inside the Hartford term against the Westchester deductible.
 // Each event now attaches to the one policy whose term covers it.
@@ -280,8 +280,8 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
   const WESTCHESTER = mkPolicy({ policyId: '1734', property: '9620 E State Route 350, Raytown MO', propertyId: RAYTOWN, premium: 6000 });
   const HARTFORD = mkPolicy({ policyId: '1735', property: '9620 E State Route 350, Raytown MO', propertyId: RAYTOWN, premium: 5000 });
   const TERMS = termsOf({
-    '1734': { policyNumber: 'MMF17962784-002', lineNumbers: ['MMF17962784-002'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
-    '1735': { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
+    '1734': { policyNumber: 'POL-0010', lineNumbers: ['POL-0010'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1735': { policyNumber: 'POL0011', lineNumbers: ['POL0011'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
   });
   // Distinct deductibles so a wrong attachment is visible in the split.
   const DECS = decPagesOf({
@@ -340,7 +340,7 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
   it('a policy_ref matching a policy_number wins over term recency', () => {
     // 2026-07-04 is inside both terms (recency would pick Hartford) but the loss run names the
     // Westchester policy: d=10,000, gross 42,000 → retained 10,000 / transferred 32,000.
-    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784-002')]);
+    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL-0010')]);
     expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
     expect(review(r, '1735').eventsN).toBe(0);
   });
@@ -402,7 +402,7 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     // in its term. d=10,000, gross 42,000 → retained 10,000 / transferred 32,000 on 1734 — not
     // 25,000 / 17,000 on Hartford.
     const w = { ...WESTCHESTER, cohort: 'excluded-null-tiv' as const, tiv: null };
-    const r = run([w, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-01-15', 42000, 'MMF17962784-002')]);
+    const r = run([w, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-01-15', 42000, 'POL-0010')]);
     expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
     expect(review(r, '1735').eventsN).toBe(0);
     expect(r.selfInsure).toMatchObject({ retainedUsd: 10000, transferredUsd: 32000 });
@@ -410,12 +410,12 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
 
   it('a policy_ref naming a NON-property line at the property leaves the loss EAL-only (never moved onto a property deductible)', () => {
     const gl = mkPolicy({ policyId: '1733', propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
-    const terms = new Map<string, PolicyTerm>([...TERMS, ['1733', { policyNumber: 'GLWF18677015-001', lineNumbers: ['GLWF18677015-001'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }]]);
+    const terms = new Map<string, PolicyTerm>([...TERMS, ['1733', { policyNumber: 'POL-0009', lineNumbers: ['POL-0009'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }]]);
     const r = buildInsuranceLossReport(inputs({
       policies: [gl, WESTCHESTER, HARTFORD],
       decPages: DECS,
       policyTerms: terms,
-      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'GLWF18677015-001')]),
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL-0009')]),
     }));
     expect(r.deductibleReviews.map((d) => d.policyId).sort()).toEqual(['1734', '1735']); // GL gets no review row
     expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
@@ -454,13 +454,13 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
 
   // Live Hartford Spectrum BOP at 9620: ONE policy number spans the property, GL, umbrella and
   // EPLI lines.
-  const BOP = '37 SBA CB6KKB';
+  const BOP = 'POL 0011';
   const BOP_GL = mkPolicy({ policyId: '1736', propertyId: RAYTOWN, cohort: 'excluded-null-tiv', tiv: null, policyType: 'Business Liability / GL (in BOP)' });
   const BOP_EPLI = mkPolicy({ policyId: '1738', propertyId: RAYTOWN, cohort: 'excluded-null-tiv', tiv: null, policyType: 'EPLI $25K (NEW — in bundled premium)' });
   const BOP_TERMS = new Map<string, PolicyTerm>([
     ...TERMS,
-    ['1736', { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
-    ['1738', { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ['1736', { policyNumber: 'POL0011', lineNumbers: ['POL0011'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ['1738', { policyNumber: 'POL0011', lineNumbers: ['POL0011'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
   ]);
   function runBop(events: LossEventRow[]) {
     return buildInsuranceLossReport(inputs({
@@ -493,7 +493,7 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     const bopGlLowId = mkPolicy({ policyId: '1700', propertyId: RAYTOWN, cohort: 'other', policyType: 'Business Liability / GL (in BOP)' });
     const terms = new Map<string, PolicyTerm>([
       ...TERMS,
-      ['1700', { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+      ['1700', { policyNumber: 'POL0011', lineNumbers: ['POL0011'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
     ]);
     const r = buildInsuranceLossReport(inputs({
       policies: [bopGlLowId, WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
@@ -513,16 +513,16 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
   });
 
   it('policy_ref matches a superseded number on the same line and is normalized (case / whitespace)', () => {
-    // Live: row 1310 'MMF17962784' was reissued as 1734 'MMF17962784-002' (same term); only 1734
+    // Live: row 1310 'POL0010' was reissued as 1734 'POL-0010' (same term); only 1734
     // survives the current-term collapse, so its line carries both numbers. 2026-07-04 is inside
     // both terms — recency alone would pick Hartford.
     const terms = new Map<string, PolicyTerm>([
       ...TERMS,
-      ['1734', { policyNumber: 'MMF17962784-002', lineNumbers: ['MMF17962784', 'MMF17962784-002'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
+      ['1734', { policyNumber: 'POL-0010', lineNumbers: ['POL0010', 'POL-0010'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
     ]);
     const r = buildInsuranceLossReport(inputs({
       policies: [WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
-      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, '  mmf17962784 ')]),
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, '  pol0010 ')]),
     }));
     expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
     expect(review(r, '1735').eventsN).toBe(0);
@@ -552,21 +552,21 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     // Both policies sit on one raw line, so each carries the other's number as a line alias. The
     // ref names Westchester exactly; recency alone (2026-07-04 inside both terms) would pick
     // Hartford. d=10,000, gross 42,000 → retained 10,000 / transferred 32,000 on 1734.
-    const both = ['37SBACB6KKB', 'MMF17962784-002'];
+    const both = ['POL0011', 'POL-0010'];
     const terms = new Map<string, PolicyTerm>([
-      ['1734', { policyNumber: 'MMF17962784-002', lineNumbers: both, effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
-      ['1735', { policyNumber: '37SBACB6KKB', lineNumbers: both, effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+      ['1734', { policyNumber: 'POL-0010', lineNumbers: both, effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
+      ['1735', { policyNumber: 'POL0011', lineNumbers: both, effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
     ]);
     const r = buildInsuranceLossReport(inputs({
       policies: [WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
-      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784-002')]),
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL-0010')]),
     }));
     expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
     expect(review(r, '1735').eventsN).toBe(0);
   });
 
-  it('policy_ref matching is whitespace-insensitive: "MMF 17962784-002" names Westchester', () => {
-    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'mmf 17962784 - 002')]);
+  it('policy_ref matching is whitespace-insensitive: "POL - 0010" names Westchester', () => {
+    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'pol - 0010')]);
     expect(review(r, '1734').eventsN).toBe(1);
     expect(review(r, '1735').eventsN).toBe(0);
   });
@@ -618,9 +618,9 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
   const GL = mkPolicy({ policyId: '1733', property: RAYTOWN_NAME, propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
   const FISHEL_POLICY = mkPolicy({ policyId: '1750', property: '7658 Fishel Dr N, Dublin OH', propertyId: FISHEL, premium: 4000 });
   const TERMS = termsOf({
-    '1734': { policyNumber: 'MMF17962784-002', lineNumbers: ['MMF17962784', 'MMF17962784-002'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
-    '1735': { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
-    '1733': { policyNumber: 'GLWF18677015-001', lineNumbers: ['GLWF18677015-001'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1734': { policyNumber: 'POL-0010', lineNumbers: ['POL0010', 'POL-0010'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1735': { policyNumber: 'POL0011', lineNumbers: ['POL0011'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
+    '1733': { policyNumber: 'POL-0009', lineNumbers: ['POL-0009'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
     '1750': { policyNumber: 'FISHEL-PROP-1', lineNumbers: ['FISHEL-PROP-1'], effectiveDate: '2026-01-01', expirationDate: '2027-01-01' },
   });
   const DECS = decPagesOf({
@@ -641,7 +641,7 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
 
   it('a ref matching nothing at the property is listed with the RAW ref, and the event still attaches by covering term', () => {
     // 2026-07-04 sits inside both Raytown terms → recency picks Hartford, exactly as with no ref.
-    const raw = ' mmf-TYPO 17962784 ';
+    const raw = ' pol-TYPO 0010 ';
     const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, raw, 'wind')]);
     expect(r.unmatchedPolicyRefs).toEqual([{
       eventId: 'e1',
@@ -675,19 +675,19 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
   });
 
   it("a ref matching a policy's OWN number is not listed", () => {
-    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784-002')]);
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL-0010')]);
     expect(r.unmatchedPolicyRefs).toEqual([]);
     expect(review(r, '1734').eventsN).toBe(1);
   });
 
   it('a ref matching only a lineNumbers alias (superseded number on the same line) is not listed', () => {
-    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784')]);
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL0010')]);
     expect(r.unmatchedPolicyRefs).toEqual([]);
     expect(review(r, '1734').eventsN).toBe(1);
   });
 
   it('a ref naming a NON-reviewable line at the property (GL) is not listed — it matched something', () => {
-    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'GLWF18677015-001')]);
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'POL-0009')]);
     expect(r.unmatchedPolicyRefs).toEqual([]);
     expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true); // EAL-only, unchanged
   });
@@ -729,8 +729,8 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
 
   it('a case / whitespace variant of an existing number is not listed', () => {
     const r = run([
-      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'mmf 17962784 - 002'),
-      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, '37 sba cb6kkb'),
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'pol - 0010'),
+      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, 'POL 0011'),
     ]);
     expect(r.unmatchedPolicyRefs).toEqual([]);
   });

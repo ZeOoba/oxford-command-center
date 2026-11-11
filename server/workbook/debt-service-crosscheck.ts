@@ -68,7 +68,7 @@ export interface CrossCheckInput {
   /** Oxford-share multiplier applied by the formula (1.0 or 0.5). */
   share: number;
   bookInterest: number;
-  /** null when the workbook's principal is synthetic (485 S Walnut: I16 = D16-E16). */
+  /** null when the workbook's principal is synthetic (100 Note Party St: I16 = D16-E16). */
   bookPrincipal: number | null;
   asOf: Date;
   /**
@@ -337,7 +337,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
 
   // ── 3. duplicate payment dates (the OI-096-shaped double-count) ──────────────────────────
   // A date-predicate SUMPRODUCT sums every matching ROW, so two rows sharing a date are both
-  // captured. 485 S Walnut's r45/r46 shape (final regular payment and payoff row both dated
+  // captured. 100 Note Party St's r45/r46 shape (final regular payment and payoff row both dated
   // 2028-09-26, both carrying that month's interest) is the reference case, since fixed at
   // source — but the check must still catch its recurrence anywhere else.
   const byDate = new Map<number, ScheduleRow[]>();
@@ -348,7 +348,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   for (const [, dupes] of byDate) {
     if (dupes.length < 2) continue;
     // Two rows CAN legitimately share a date: a balloon settles on the same day as the final
-    // regular payment (Restoration Church Trust r35/r36). That is not a double-count. The
+    // regular payment (Note Party 02 r35/r36). That is not a double-count. The
     // double-count signature is the SAME amount repeated in the SAME column — compared with
     // TOLERANCE, not bit-for-bit equality, since a payoff row is typically computed differently
     // from the amortizing rows above it and can land a cent off an otherwise-identical figure.
@@ -549,7 +549,7 @@ function cellText(ws: Worksheet, col: string, row: number): string | null {
  * `result` entirely whenever the cached value is `0` — making "cached 0" indistinguishable from
  * "never calculated". The underlying `cell.model.result` keeps it.
  *
- * This is not hypothetical: ELS `I16` (610 Northampton St. LLC / 485 S Walnut) is an interest-only
+ * This is not hypothetical: ELS `I16` (Note Party 03 LLC / 100 Note Party St) is an interest-only
  * position with no principal scheduled in the next 12 months, so its cached value is a real `0`
  * (`<v>0</v>` in the sheet XML). Reading the getter alone made the detector report "I16 is a
  * schedule formula but has no cached value — recalculate and save the workbook in Excel", which is
@@ -655,7 +655,7 @@ export function scanSchedule(
   // Reaching the sheet's PHYSICAL end counts as reaching the declared end. Rows past `rowCount` are
   // absent from the sheet XML, so there is nothing there to have missed -- claiming the loan is
   // "unverified" in that case is factually wrong. Without this, the sheet-extent cap above turned the
-  // ordinary over-declared range into a permanent false flag: Restoration Church Trust declares
+  // ordinary over-declared range into a permanent false flag: Note Party 02 declares
   // B11:B310 over a 60-row sheet, and the live workbook went from 0 flags to 1 on every refresh --
   // the exact shape ScanResult's own doc calls NORMAL and says must stay silent. Found by the refute
   // pass on this branch, reproduced against the real workbook; the first pass's own comment asserting
@@ -752,7 +752,7 @@ function formulaOf(ws: Worksheet, addr: string): string | null {
 const ELS_LOAN_ROWS = [6, 7, 8, 9, 10, 14, 15, 16];
 
 /**
- * The subset of `ELS_LOAN_ROWS` that IS schedule-backed today (excludes 10, the LAST Non note
+ * The subset of `ELS_LOAN_ROWS` that IS schedule-backed today (excludes 10, the NOTE PARTY 08 note
  * computed as `G10*E10`, and 14, the 1100 Rarig demand note computed as `-ABS(G14*E14)`).
  *
  * This is the coverage FLOOR, and it is deliberately NOT derived by re-parsing the live

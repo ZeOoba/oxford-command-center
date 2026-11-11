@@ -33,7 +33,7 @@ describe('diffCriticalAlerts', () => {
 // `[...currentCriticalIds]`, so the persisted set was OVERWRITTEN with the current set every
 // run. Any condition that transiently vanished from the snapshot was forgotten and re-alerted
 // on reappearance. Proof it was flapping rather than a wiped state file: on 2026-07-24 the
-// 14:00 run re-sent ONLY Granite Tops while CJ's/Hoodz/Sky Shield stayed quiet — Granite Tops
+// 14:00 run re-sent ONLY Fixture Countertops while Example Tint/Example Hood/Tenant 035 LLC stayed quiet — Fixture Countertops
 // dropped out of the 13:01 run and came back. The upstream snapshot is known-unstable
 // (parseleases phantom-lease and Notion seed-fallback regressions).
 // Ruling (Gabriel, 2026-08-11): sticky state + confirm-clear — a condition must be absent for
@@ -41,14 +41,14 @@ describe('diffCriticalAlerts', () => {
 describe('diffCriticalAlerts — confirm-clear before forgetting a condition', () => {
   // NOTE ON FIXTURES: every case below keeps a co-present 'anchor' condition in the current
   // set. That is not incidental — it models the incident accurately. At 13:01 on 07-24 the run
-  // DID produce criticals (Carlton alerted); Granite Tops alone dropped out. A fixture passing
+  // DID produce criticals (Tenant Kappa alerted); Fixture Countertops alone dropped out. A fixture passing
   // an EMPTY current set would instead exercise the total-outage guard further down, which
   // holds everything and would make these assertions meaningless.
   const withAnchor = (ids: string[]): AlertState => ({ ...emptyState, alertedCriticalIds: ['anchor', ...ids] });
   const step = (current: string[], prev: { nextAlerted: string[]; nextClearStreaks: Record<string, number> }) =>
     diffCriticalAlerts(current, { ...emptyState, alertedCriticalIds: prev.nextAlerted, clearStreaks: prev.nextClearStreaks });
 
-  it('a single-run dropout does NOT forget the condition (the 07-24 Granite Tops case)', () => {
+  it('a single-run dropout does NOT forget the condition (the 07-24 Fixture Countertops case)', () => {
     const r = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
     expect(r.nextAlerted).toContain('granite');
     expect(r.nextClearStreaks['granite']).toBe(1);

@@ -217,7 +217,7 @@ const SYSTEM = [
   'Answer using the TOOLS to query the company spine — never guess figures. Call tools as needed, then synthesize.',
   'Be concise and numbers-first; use $ and %. Match an institutional, direct tone — no preamble, no hedging.',
   'CITATIONS: when you reference a specific entity returned by a tool, cite it inline using the exact token',
-  '[[type:id|label]] — e.g. [[loan:lender-restoration-church-trust|Restoration Church Trust]] — using the id from',
+  '[[type:id|label]] — e.g. [[loan:lender-note-party-02|Note Party 02]] — using the id from',
   "the tool result's refs. The UI turns these into clickable links, so cite the real entities behind your numbers.",
   'DEBT BASIS: totalDebt/ltv (portfolio summary) are property loan balances; externalDebt (loans) is the loan schedule — different sources. Quote each with its basis and never put both in one sentence. If debtBasisFlags is present, say the two figures disagree and name the rows.',
   "If the tools do not contain the answer, say: \"I don't know — that is not in the current snapshot.\" Never invent firm data.",

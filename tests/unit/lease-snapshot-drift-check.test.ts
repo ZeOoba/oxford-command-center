@@ -113,10 +113,10 @@ describe('computeDrift — re-key detection (the incident case)', () => {
 
   it('surfaces a leaseEnd change hidden underneath a re-key -- the holdover that went unnoticed', () => {
     const previous = [
-      lease({ id: 'banwick-2802-105', company: 'Fully Equipped Cleaning', leaseEnd: '2027-04-30' }),
+      lease({ id: 'banwick-2802-105', company: 'Spotless Cleaning', leaseEnd: '2027-04-30' }),
     ];
     const current = [
-      lease({ id: 'banwick-2802-fully-equipped-cleaning', company: 'Fully Equipped Cleaning', leaseEnd: '2026-06-30' }),
+      lease({ id: 'banwick-2802-spotless-cleaning', company: 'Spotless Cleaning', leaseEnd: '2026-06-30' }),
     ];
 
     const drift = computeDrift(previous, current);
@@ -613,7 +613,7 @@ describe('loadPrevious', () => {
 });
 
 // formatDriftReport is the function that actually would have caught the 2026-07-25 incident
-// (Granite Tops & More / Columbus Suburban Construction leaseEnd corruption) -- evaluateAnomalyFloor
+// (Tenant 141 LLC / Example Construction leaseEnd corruption) -- evaluateAnomalyFloor
 // is count-based and stays silent when nothing is added or removed, only changed. This is the
 // regression cover for THAT gap specifically, not a restatement of computeDrift's own tests above.
 describe('formatDriftReport', () => {
@@ -650,8 +650,8 @@ describe('formatDriftReport', () => {
     // The incident: a tenant's id is unchanged (never added/removed -- computeDrift.removedIds and
     // .newIds both stay empty), only leaseEnd corrupts underneath it. evaluateAnomalyFloor alone
     // would see this as a completely clean run. This is the one place that must not.
-    const previous = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Granite Tops & More', leaseEnd: '2026-05-31' })];
-    const current = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Granite Tops & More', leaseEnd: '2026-07-31' })];
+    const previous = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Tenant 141 LLC', leaseEnd: '2026-05-31' })];
+    const current = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Tenant 141 LLC', leaseEnd: '2026-07-31' })];
     const drift = computeDrift(previous, current);
 
     // Confirm the incident's actual blind spot directly, not just by inference from empty arrays:
@@ -662,14 +662,14 @@ describe('formatDriftReport', () => {
     const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(true);
-    const dateLine = report.lines.find((l) => l.includes('Granite Tops & More'));
+    const dateLine = report.lines.find((l) => l.includes('Tenant 141 LLC'));
     expect(dateLine).toBeDefined();
     expect(dateLine).toMatch(/2026-05-31 -> 2026-07-31/);
   });
 
   it('surfaces a leaseEnd change hidden underneath a re-key, not just id-matched changes', () => {
-    const previous = [lease({ id: 'banwick-2802-105', company: 'Fully Equipped Cleaning', leaseEnd: '2027-04-30' })];
-    const current = [lease({ id: 'banwick-2802-fully-equipped-cleaning', company: 'Fully Equipped Cleaning', leaseEnd: '2026-06-30' })];
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Spotless Cleaning', leaseEnd: '2027-04-30' })];
+    const current = [lease({ id: 'banwick-2802-spotless-cleaning', company: 'Spotless Cleaning', leaseEnd: '2026-06-30' })];
     const drift = computeDrift(previous, current);
 
     const report = formatDriftReport(drift, previous, current);

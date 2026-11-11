@@ -4,7 +4,7 @@
 //
 // Why this file exists: the calendar shipped with a two-band window filter (90d / 12mo) and
 // fetched events at a fixed 12-month horizon. Against the live portfolio that hid 72.6% of
-// annual rent — including Eurosort, the single largest tenant by rent, expiring in ~15 months.
+// annual rent — including Tenant 155 LLC, the single largest tenant by rent, expiring in ~15 months.
 // A third 36-month band exposes it.
 //
 // The trap this file guards: criticalDateKpis() returns `next12mo: events.length`, i.e. it
@@ -41,7 +41,7 @@ const OVERDUE = '2026-08-19'; //  -30d  — holdover, must survive EVERY band
 const NEAR = '2026-11-17'; //   ~60d  — inside both bands
 const EDGE_IN = '2027-09-18'; //  365d  — exactly the 12-month cut, inclusive
 const EDGE_OUT = '2027-09-19'; // 366d  — one day past it
-const MID = '2027-12-31'; //     469d  — OUTSIDE 12mo, inside 36mo  (the Eurosort analogue)
+const MID = '2027-12-31'; //     469d  — OUTSIDE 12mo, inside 36mo  (the Tenant 155 LLC analogue)
 const FAR = '2030-06-30'; //    1381d  — outside both
 
 function snapshotFixture(): SnapshotResponse {

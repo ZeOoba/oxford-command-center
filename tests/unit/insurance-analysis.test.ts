@@ -618,7 +618,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'Q44-2750780',
+      policyNumber: 'POL-0017',
       effectiveDate: '2025-08-27',
       expirationDate: '2026-08-27',
       premiumAnnual: 11_166,
@@ -630,7 +630,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'Q44-2750780',
+      policyNumber: 'POL-0017',
       effectiveDate: '2026-08-27',
       expirationDate: '2027-08-27',
       premiumAnnual: 11_554,
@@ -673,7 +673,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-9620state350',
       policyType: 'Property',
       insurer: 'XPT Specialty',
-      policyNumber: 'MMF17962784',
+      policyNumber: 'POL0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
       premiumAnnual: 28_071,
@@ -685,8 +685,8 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     insertPolicy(db, {
       propertyId: 'p-9620state350',
       policyType: 'Property',
-      insurer: 'Westchester Surplus Lines (Chubb) via XPT Partners',
-      policyNumber: 'MMF17962784-002',
+      insurer: 'Carrier 03',
+      policyNumber: 'POL-0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
       premiumAnnual: 27_609,
@@ -699,7 +699,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620state350');
     expect(rows).toHaveLength(1);
     expect(rows[0]?.premium).toBe(27_609);
-    expect(rows[0]?.carrier).toBe('Westchester Surplus Lines (Chubb) via XPT Partners');
+    expect(rows[0]?.carrier).toBe('Carrier 03');
   });
 
   it('REGRESSION GUARD: removing the source_date tiebreak would silently restore the stale premium (pins why it is load-bearing)', () => {

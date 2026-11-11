@@ -76,7 +76,7 @@ export function dealJoinKey(name: string): string {
  * used to decide whether a merge was allowed to proceed — and that is exactly the role it must
  * never have again. Its only caller now is mergeDeals' published-duplicate detector, where it
  * SUPPRESSES a warning: two rows sharing a bare street name in demonstrably different states are
- * the documented steady state ("470 McCormick Blvd — Columbus, OH" vs "— Louisville, KY"), not a
+ * the documented steady state ("100 Example Blvd — Columbus, OH" vs "— Louisville, KY"), not a
  * duplicate. Suppressing a false alarm and authorizing a merge are different powers; this has only
  * the first.
  */
@@ -133,7 +133,7 @@ export function localityStateOf(name: string): string | null {
  *
  * Cross-metro namesakes are suppressed: two rows that both carry a locality tail, both name a
  * state, and disagree on every state, are the documented steady state (a bare street name
- * repeating across metros — "470 McCormick Blvd — Columbus, OH" vs "— Louisville, KY"), not a
+ * repeating across metros — "100 Example Blvd — Columbus, OH" vs "— Louisville, KY"), not a
  * duplicate. A row with NO tail cannot establish distinctness, so it never suppresses.
  */
 export function findDuplicateDealRows<T extends { id: string; name: string; notionDealId: string | null }>(

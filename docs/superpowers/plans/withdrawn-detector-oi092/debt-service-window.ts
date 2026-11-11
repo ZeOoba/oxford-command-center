@@ -121,8 +121,8 @@ export const SCHEDULE_SOURCES: Readonly<
   'borrower-9050-red-branch-road': { sheet: '9050 Red Branch Road', dateCol: 2, firstRow: 11, lastRow: 158 },
   'borrower-29000-information-lane': { sheet: '29000 Information Lane', dateCol: 1, firstRow: 9, lastRow: 69 },
   'borrower-banwick-morrison': { sheet: 'Banwick-Morrison', dateCol: 2, firstRow: 11, lastRow: 70 },
-  'lender-restoration-church-trust': { sheet: 'Restoration Church Trust', dateCol: 2, firstRow: 11, lastRow: 310 },
-  'lender-485-s-walnut-st': { sheet: '485 S Walnut St', dateCol: 2, firstRow: 10, lastRow: 46 },
+  'lender-note-party-02': { sheet: 'Note Party 02', dateCol: 2, firstRow: 11, lastRow: 310 },
+  'lender-note-party-03': { sheet: '100 Note Party St', dateCol: 2, firstRow: 10, lastRow: 46 },
 };
 
 /** Unwrap an ExcelJS cell value (formula cells arrive as `{ result }`). */
