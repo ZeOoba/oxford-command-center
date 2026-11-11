@@ -7,7 +7,7 @@ import { partitionArRows } from '../../server/ar/partition-confidence';
 const leases: LeaseLite[] = [
   { id: 'l-acme', tenantName: 'Acme Industrial', company: 'Acme Industrial, LLC' },
   { id: 'l-bbt', tenantName: 'Building Bridges Therapy Svcs', company: null },
-  { id: 'l-foxwell', tenantName: 'Louis W. Foxwell', company: null },
+  { id: 'l-brennick', tenantName: 'Lyle W. Brennick', company: null },
   { id: 'l-kelvar', tenantName: 'Kelvar Service', company: 'Kelvar Service a division of Kelvar Food Equipment Group, LLC' },
   { id: 'l-zeta', tenantName: 'Zeta Logistics', company: null },
   { id: 'l-qrt', tenantName: 'Dana Quill', company: 'Q.R.T LLC' },
@@ -19,7 +19,7 @@ describe('normalizeTokens', () => {
     expect(normalizeTokens('Kelvar Service, Inc.')).toEqual(['kelvar', 'service']);
   });
   it('reorders "Last, First" person names', () => {
-    expect(normalizeTokens('FOXWELL, LOUIS W.')).toEqual(['louis', 'w', 'foxwell']);
+    expect(normalizeTokens('BRENNICK, LYLE W.')).toEqual(['lyle', 'w', 'brennick']);
   });
   it('drops an entity suffix that follows a comma (not a person reorder)', () => {
     expect(normalizeTokens('Harbor Lane Designs, LTD')).toEqual(['harbor', 'lane', 'designs']);
@@ -38,13 +38,13 @@ describe('normalizeTokens', () => {
   });
 
   it('does NOT collapse a single dotted initial — only 2+ in a row', () => {
-    // Must not regress the existing 'FOXWELL, LOUIS W.' case two tests up: a lone middle initial
+    // Must not regress the existing 'BRENNICK, LYLE W.' case two tests up: a lone middle initial
     // stays its own token, exactly as a single first/middle initial before a full name always has.
     expect(normalizeTokens('A. Anderson')).toEqual(['a', 'anderson']);
   });
 
   it('collapses a longer dotted initialism (U.P.S. style)', () => {
-    expect(normalizeTokens('P.U.P.S. Dog Obedience Training')).toEqual(['pups', 'dog', 'obedience', 'training']);
+    expect(normalizeTokens('K.N.O.T. Dog Obedience Training')).toEqual(['knot', 'dog', 'obedience', 'training']);
   });
 });
 
@@ -70,8 +70,8 @@ describe('matchTenantToLease', () => {
   });
 
   it('reordered person name matches', () => {
-    const m = matchTenantToLease('Foxwell, Louis W.', leases);
-    expect(m.leaseId).toBe('l-foxwell');
+    const m = matchTenantToLease('Brennick, Lyle W.', leases);
+    expect(m.leaseId).toBe('l-brennick');
     expect(['exact', 'high']).toContain(m.confidence);
   });
 

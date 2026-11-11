@@ -37,7 +37,7 @@
 //   (a) v2 counted a cached SKIP the same as a review row for `hadUnresolvedRow`. A SKIP is a
 //   durable, ALREADY-RESOLVED human decision ("never attribute this name"), not an ambiguous one --
 //   and on the live data, a standing SKIP for a perpetually-reappearing non-tenant name ("(Past)
-//   Chesapeake Bay Movers, Inc.") exempted an entire series from clearing on EVERY sweep,
+//   Example Movers, Inc.") exempted an entire series from clearing on EVERY sweep,
 //   permanently blocking the very ghosts this fix exists to close. Only a REVIEW row (a name/unit
 //   the matcher genuinely could not attribute this sweep) triggers the series-wide exemption now;
 //   a SKIP is treated as resolved-as-omitted and does not block clearing.

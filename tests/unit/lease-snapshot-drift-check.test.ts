@@ -650,8 +650,8 @@ describe('formatDriftReport', () => {
     // The incident: a tenant's id is unchanged (never added/removed -- computeDrift.removedIds and
     // .newIds both stay empty), only leaseEnd corrupts underneath it. evaluateAnomalyFloor alone
     // would see this as a completely clean run. This is the one place that must not.
-    const previous = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Tenant 141 LLC', leaseEnd: '2026-05-31' })];
-    const current = [lease({ id: 'zettler-2000-2002-granite-tops', company: 'Tenant 141 LLC', leaseEnd: '2026-07-31' })];
+    const previous = [lease({ id: 'zettler-2000-2002-tenant-141-llc', company: 'Tenant 141 LLC', leaseEnd: '2026-05-31' })];
+    const current = [lease({ id: 'zettler-2000-2002-tenant-141-llc', company: 'Tenant 141 LLC', leaseEnd: '2026-07-31' })];
     const drift = computeDrift(previous, current);
 
     // Confirm the incident's actual blind spot directly, not just by inference from empty arrays:

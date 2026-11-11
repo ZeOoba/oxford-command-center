@@ -37,7 +37,7 @@ vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn(async () => null
 const LIVE_AFFILIATE_LENDER = 'Lender 05 / Oxford Capital — Oxford 50% share';
 const LIVE_AFFILIATE_LOAN_NAME = '3883 from Oxford (50%)';
 const LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER = 'Oxford / Lender 03';
-const LIVE_PARK_NATIONAL_LENDER = 'Lender 01';
+const LIVE_THIRD_PARTY_BANK_LENDER = 'Lender 01';
 const FIRM_STYLING_LENDER = 'Oxford Capital Partners (Lender 08 Bank)';
 
 const ASOF = '2026-07-18';
@@ -132,7 +132,7 @@ describe('isAffiliateDebtPosition — the one warehouse predicate, matched again
 
   it('does NOT match "Oxford / Firm 03…" or "…(Lender 08 Bank)" third-party rows', () => {
     expect(isAffiliateDebtPosition({ lender: LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER, loan_name: '29000 Information Lane' })).toBe(false);
-    expect(isAffiliateDebtPosition({ lender: LIVE_PARK_NATIONAL_LENDER, loan_name: '3540 E. Fifth Ave' })).toBe(false);
+    expect(isAffiliateDebtPosition({ lender: LIVE_THIRD_PARTY_BANK_LENDER, loan_name: '3540 E. Fifth Ave' })).toBe(false);
   });
 
   it('does NOT match the firm\'s own styling "Oxford Capital Partners (Lender 08 Bank)"', () => {
@@ -148,7 +148,7 @@ describe('isAffiliateDebtPosition — the one warehouse predicate, matched again
   it('a third-party lender row whose loan_name merely mentions an affiliate stays third-party', () => {
     // Mirrors isAffiliateBorrowerLoan: the lender field decides; free-text names never widen it.
     expect(
-      isAffiliateDebtPosition({ lender: LIVE_PARK_NATIONAL_LENDER, loan_name: 'Refi of Oxford Capital note' }),
+      isAffiliateDebtPosition({ lender: LIVE_THIRD_PARTY_BANK_LENDER, loan_name: 'Refi of Oxford Capital note' }),
     ).toBe(false);
   });
 });
@@ -161,7 +161,7 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
     const a = seedProperty(db, 'prop-a');
     const b = seedProperty(db, 'prop-b');
     // Third-party: $2.0M @ 0.35 → implied value $5.714M
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, balance: 2_000_000, ltv: 0.35 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 2_000_000, ltv: 0.35 });
     // Affiliate: $385K @ 0.90 — would drag the aggregate above the ceiling if counted
     seedLoan(db, {
       propertyId: b,
@@ -181,7 +181,7 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
 
     // Same verdict as a book that never had the affiliate row.
     const db2 = freshDb();
-    seedLoan(db2, { propertyId: seedProperty(db2, 'prop-a'), lender: LIVE_PARK_NATIONAL_LENDER, balance: 2_000_000, ltv: 0.35 });
+    seedLoan(db2, { propertyId: seedProperty(db2, 'prop-a'), lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 2_000_000, ltv: 0.35 });
     const ref = computePortfolioAggregateLtv(db2);
     expect(agg.aggregateLtv).toBe(ref.aggregateLtv);
     expect(agg.clearedConservatively).toBe(ref.clearedConservatively);
@@ -191,7 +191,7 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
   it('an affiliate note beside a third-party loan on the SAME property does not make it multi-loan', () => {
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, balance: 1_000_000, ltv: 0.3 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 1_000_000, ltv: 0.3 });
     seedLoan(db, { propertyId: a, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, ltv: 0.5 });
     const agg = computePortfolioAggregateLtv(db);
     expect(agg.complete).toBe(true);
@@ -213,7 +213,7 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
     const b = seedProperty(db, 'prop-b');
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, balance: 2_000_000, rate: null, ltv: 0.3 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 2_000_000, rate: null, ltv: 0.3 });
     seedLoan(db, { propertyId: b, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
     const agg = computePortfolioAggregateLtv(db);
     expect(agg.complete).toBe(false);
@@ -278,7 +278,7 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
   it('collision evidence on an AFFILIATE row still poisons the property D1 pick (snapshot column-drift)', () => {
     const db = freshDb();
     const p = seedProperty(db, 'prop-a');
-    seedLoan(db, { propertyId: p, lender: LIVE_PARK_NATIONAL_LENDER, balance: 800_000, rate: null, ltv: 0.3 });
+    seedLoan(db, { propertyId: p, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 800_000, rate: null, ltv: 0.3 });
     seedLoan(db, { propertyId: p, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
     const s = scoreDebtPositions(db, [yearMetric(p, 200_000)], null, ASOF).find((x) => x.propertyId === p);
     expect(s!.ltv).toBeNull();
@@ -291,7 +291,7 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
   it('a colliding affiliate row still lets a measured third-party BREACH through (one-directional poisoning)', () => {
     const db = freshDb();
     const p = seedProperty(db, 'prop-a');
-    seedLoan(db, { propertyId: p, lender: LIVE_PARK_NATIONAL_LENDER, balance: 800_000, rate: null, ltv: 0.55 });
+    seedLoan(db, { propertyId: p, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 800_000, rate: null, ltv: 0.55 });
     seedLoan(db, { propertyId: p, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
     const s = scoreDebtPositions(db, [yearMetric(p, 200_000)], null, ASOF).find((x) => x.propertyId === p);
     expect(s!.ltv).toBeCloseTo(0.55, 6);
@@ -301,7 +301,7 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
   it('a property with a third-party loan scores exactly as before', () => {
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, balance: 800_000, ltv: 0.3 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 800_000, ltv: 0.3 });
     const g = loadGovernors(db);
     const s = scoreDebtPositions(db, [yearMetric(a, 100_000)], null, ASOF).find((x) => x.propertyId === a);
     expect(s!.ltv).toBeCloseTo(0.3, 6);
@@ -311,7 +311,7 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
   it('D1 picks the highest-balance THIRD-PARTY loan even when the affiliate note is larger', () => {
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, balance: 500_000, ltv: 0.3 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 500_000, ltv: 0.3 });
     seedLoan(db, { propertyId: a, lender: LIVE_AFFILIATE_LENDER, balance: 900_000, ltv: 0.7 });
     const s = scoreDebtPositions(db, [yearMetric(a, 200_000)], null, ASOF).find((x) => x.propertyId === a);
     expect(s!.ltv).toBeCloseTo(0.3, 6);
@@ -336,7 +336,7 @@ describe('position views still list the affiliate position, labeled affiliate', 
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
     const b = seedProperty(db, 'prop-b');
-    seedLoan(db, { propertyId: a, lender: LIVE_PARK_NATIONAL_LENDER, loanName: '3540 E. Fifth Ave', ltv: 0.3 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, loanName: '3540 E. Fifth Ave', ltv: 0.3 });
     seedLoan(db, {
       propertyId: b,
       lender: LIVE_AFFILIATE_LENDER,

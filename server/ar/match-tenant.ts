@@ -55,11 +55,11 @@ export function normalizeTokens(raw: string): string[] {
       s = before; // entity suffix after the comma: drop it
     }
   }
-  // Collapse a dotted initialism ('I.M.H', 'I.M.H.', 'P.U.P.S.') into one run of bare letters BEFORE
+  // Collapse a dotted initialism ('Q.R.T', 'Q.R.T.', 'K.N.O.T.') into one run of bare letters BEFORE
   // the generic punctuation strip below, which would otherwise turn every '.' into a space and split
   // it into isolated single-letter tokens ('i','m','h') — zero overlap against an undotted spelling
   // of the same name ('QRT'). Requires 2+ consecutive single-letter-dot pairs, so a single first/
-  // middle initial ('W.' in "Louis W. Foxwell") is deliberately left untouched — that stays its own
+  // middle initial ('W.' in "Lyle W. Brennick") is deliberately left untouched — that stays its own
   // token, exactly as it always has.
   s = s.replace(/\b(?:[a-z]\.){2,}[a-z]?\b/g, (m) => m.replace(/\./g, ''));
   return s
@@ -112,7 +112,7 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
   // exists to handle, e.g. "Kelvar" vs "Kelvar Service") is exactly the kind of coin-flip the
   // ambiguity flag below exists to catch — a same-day adversarial re-review confirmed that an
   // earlier version of this fix which made exact strictly dominate silently converted that
-  // legitimate human-review case into an unattended auto-write (real roster pair: "THE BAY AREA
+  // legitimate human-review case into an unattended auto-write (real roster pair: "THE EXAMPLE
   // CORPORATION" vs "Tenant 086 LLC"). Bounding `overlap()` to [0,1] above is sufficient on
   // its own: a non-exact candidate can now at most TIE an exact match (never exceed it), and a tie
   // between two different leases already sets `ambiguous` below, which blocks any unattended write.

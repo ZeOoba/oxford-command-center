@@ -24,7 +24,7 @@ describe('cacheKey', () => {
   it('lowercases and normalizes punctuation but keeps entity suffixes', () => {
     // Suffixes are NOT stripped — 'Apex LLC' and 'Apex Inc' must stay distinct.
     expect(cacheKey('Acme Industrial, LLC')).toBe('acme industrial llc');
-    expect(cacheKey('FOXWELL, LOUIS W.')).toBe('foxwell louis w');
+    expect(cacheKey('BRENNICK, LYLE W.')).toBe('brennick lyle w');
   });
   it('is stable across case/whitespace variations of the same name', () => {
     expect(cacheKey('Building Bridges Therapy')).toBe(cacheKey('building bridges therapy'));

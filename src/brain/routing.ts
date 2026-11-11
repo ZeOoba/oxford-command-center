@@ -138,7 +138,7 @@ export interface RouteState {
   intelPropertyId: string | null;
 }
 
-/** Parse a pathname (e.g. "/debt/borrower-restoration") into module + selected entity. */
+/** Parse a pathname (e.g. "/debt/borrower-np02") into module + selected entity. */
 export function parseRoute(
   pathname: string,
   knownModuleIds: readonly string[],

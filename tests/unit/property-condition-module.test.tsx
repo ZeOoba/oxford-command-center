@@ -61,11 +61,11 @@ function report(over: Partial<PropertyConditionReport> = {}): PropertyConditionR
       { propertyKey: 'banwick', propertyLabel: 'Banwick', reportId: 'R01', reportDate: '2026-04-07', system: 'EPDM roof replacement', eul: 20, age: 17, rulRaw: '3', dueYear: 2029, totalUsd: 144000, timing: 'Yr3', basis: 'estimate' },
     ],
     calibration: [
-      { propertyKey: 'new-plant', propertyLabel: '55 New Plant Ct', scope: 'Re-roof', estimateSource: 'PCI 2016', estimateUsd: 202300, estimatePsf: 7, contractorSource: 'R.D. Bean 2017', contractorUsd: 81870, contractorPsf: 2.85, deltaPct: -0.595, deltaBasis: 'usd', comment: null },
+      { propertyKey: 'new-plant', propertyLabel: '55 New Plant Ct', scope: 'Re-roof', estimateSource: 'PCI 2016', estimateUsd: 200000, estimatePsf: 7, contractorSource: 'R.D. Bean 2017', contractorUsd: 80000, contractorPsf: 2.85, deltaPct: -0.6, deltaBasis: 'usd', comment: null },
       { propertyKey: 'e-fulton', propertyLabel: '3520 E Fulton', scope: 'Roof replacement', estimateSource: 'CBRE', estimateUsd: null, estimatePsf: 4, contractorSource: 'Able', contractorUsd: null, contractorPsf: 12.5, deltaPct: 2.125, deltaBasis: 'psf', comment: null },
     ],
     quotes: [
-      { quoteKey: 'q1', title: '3540 E Fifth — TPO re-roof (Contractors Inc.)', propertyKey: 'e-fifth', propertyLabel: '3540 E Fifth', vendor: 'Contractors Inc.', recordType: 'Contract', status: 'Awarded', trade: 'Roofing', docDate: '2022-04-14', quotedUsd: 243437.88, actualUsd: null, qty: 26700, uom: 'SF', unitPriceUsdPsf: 9.1177, evidenceClass: 'executed', scopeSummary: null, confidence: 'Medium', verified: false, fundingClass: 'Unknown', leaseRecovery: 'Unreviewed', notes: null },
+      { quoteKey: 'q1', title: '3540 E Fifth — TPO re-roof (Contractors Inc.)', propertyKey: 'e-fifth', propertyLabel: '3540 E Fifth', vendor: 'Contractors Inc.', recordType: 'Contract', status: 'Awarded', trade: 'Roofing', docDate: '2022-04-14', quotedUsd: 240300, actualUsd: null, qty: 26700, uom: 'SF', unitPriceUsdPsf: 9, evidenceClass: 'executed', scopeSummary: null, confidence: 'Medium', verified: false, fundingClass: 'Unknown', leaseRecovery: 'Unreviewed', notes: null },
     ],
     priceBook: [
       { reportId: 'R01', propertyKey: 'banwick', propertyLabel: 'Banwick', reportYear: 2026, system: 'Paving full-depth', uom: 'SY', unitCost: 42.5, basis: 'estimate' },

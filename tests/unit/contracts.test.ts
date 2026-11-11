@@ -50,7 +50,7 @@ describe('contracts accept real workbook records', () => {
     expect(r.flags).toEqual([]);
   });
 
-  it('parses a real Lease row (Buckner & Sons Masonry, 1100 Rarig)', () => {
+  it('parses a real Lease row (a masonry tenant, 1100 Rarig)', () => {
     const r = Lease.parse({
       id: 'rarig-l',
       propertyKey: '1100 Rarig',
@@ -74,7 +74,7 @@ describe('contracts accept real workbook records', () => {
 
   it('parses a real Loan row (Note Party 02 balloon)', () => {
     const r = Loan.parse({
-      id: 'restoration-church-trust',
+      id: 'note-party-02',
       name: 'Note Party 02',
       counterparty: 'Note Party 02 (Oxford Capital)',
       direction: 'lender',

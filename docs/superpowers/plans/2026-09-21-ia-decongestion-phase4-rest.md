@@ -83,7 +83,7 @@ PR-A must merge first. B–E are logically independent but all edit `routing.ts`
 ## 3. Pre-flight failure modes (assume each will happen)
 
 1. **Capital's early returns block Debt/Cash/Close** (`CapitalModule.tsx:239-251` returns a skeleton/"warehouse offline" card *before* the tab strip). Left as-is, the static mirror shows a dead Capital page and Debt/Cash/Close are unreachable. → Task 4 moves the gates inside the two warehouse-backed panels; test asserts Debt renders with the capital queries failing. **Same trap in Brain** (`CommandBrainModule.tsx:112-130`) → Task 13; and Leasing forecast → Task 10.
-2. **Entity drawer breaks on absorption.** `MODULE_PRIMARY_TYPE` is `moduleId → one EntityType`; Capital hosts `loan` *and* `cashEntity`. `/debt/borrower-restoration` → alias → `/capital/borrower-restoration?tab=debt` must open the loan drawer *on first render* (before the AppShell replace-redirect lands). → Task 1 (tab-aware `parseRoute` that also honors the alias's tab on first render).
+2. **Entity drawer breaks on absorption.** `MODULE_PRIMARY_TYPE` is `moduleId → one EntityType`; Capital hosts `loan` *and* `cashEntity`. `/debt/borrower-np02` → alias → `/capital/borrower-np02?tab=debt` must open the loan drawer *on first render* (before the AppShell replace-redirect lands). → Task 1 (tab-aware `parseRoute` that also honors the alias's tab on first render).
 3. **`?tab=` / `?view=` collisions.** `openEntity` currently appends the *current* `search`, so a stale `?tab=` from another module rides along (`/leases/x?tab=calendar`); once destinations share tab ids (`pipeline` exists in Capital and Acquisitions) a stale value becomes *valid-but-wrong*. → Task 1 `entityHref` clears `tab`/`view` on a cross-module jump and never yanks the tab on a same-module jump (Tenants → lease drawer must not flip the user to Rent roll behind the drawer).
 4. **e2e hard-codes the rail label.** `tests/e2e/smoke.spec.ts:33` and `a11y.spec.ts:14` click `button { name: 'Leases' }` and expect "Rent Roll". After PR-D that button is "Leasing" and the default tab is Rollover. → Task 12.
 5. **Deleted tab key = broken deep link.** `command-brain?tab=versions` becomes `memory` + `view=versions`; `LEGACY_TAB_ALIASES` currently can't set `view`. → Task 13.
@@ -386,7 +386,7 @@ Open PR-A; merge before starting PR-B.
     expect(byId('capital')!.tabs!.map((t) => t.id)).toEqual(['allocation', 'pipeline', 'debt', 'cash', 'close']);
     for (const id of ['debt', 'cash', 'close']) expect(IDS).not.toContain(id);
     expect(resolveLegacyRoute('/debt', '?tab=scorecard')).toBe('/capital?tab=debt&view=scorecard');
-    expect(resolveLegacyRoute('/debt/borrower-restoration', '')).toBe('/capital/borrower-restoration?tab=debt');
+    expect(resolveLegacyRoute('/debt/borrower-np02', '')).toBe('/capital/borrower-np02?tab=debt');
     expect(resolveLegacyRoute('/cash/acct-1', '?scenario=Downside')).toBe('/capital/acct-1?scenario=Downside&tab=cash');
     expect(resolveLegacyRoute('/close', '')).toBe('/capital?tab=close');
   });

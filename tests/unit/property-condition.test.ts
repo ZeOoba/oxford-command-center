@@ -215,7 +215,7 @@ describe('buildPropertyConditionReport — schedule, lifecycle, price book', () 
         components: [
           comp('OLD', 1, 'Old roof', 3, '3', 100),
           comp('NEW', 1, 'EPDM roof', 3, '3', 144000),
-          comp('NEW', 2, 'TPO re-roof', null, '1-2', 202300),
+          comp('NEW', 2, 'TPO re-roof', null, '1-2', 200000),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
@@ -258,14 +258,14 @@ describe('buildPropertyConditionReport — calibration and quotes', () => {
       });
       writeRegister(db, parsed({
         pairs: [
-          pair(1, { estimateUsd: 202300, estimatePsf: 7, contractorUsd: 81870, contractorPsf: 2.85 }),
+          pair(1, { estimateUsd: 200000, estimatePsf: 7, contractorUsd: 80000, contractorPsf: 2.85 }),
           pair(2, { estimatePsf: 4, contractorPsf: 12.5 }),
           pair(3, { estimateUsd: 144000, estimatePsf: 6 }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       expect(r.calibration[0]?.deltaBasis).toBe('usd');
-      expect(r.calibration[0]?.deltaPct).toBeCloseTo(-0.5953, 3);
+      expect(r.calibration[0]?.deltaPct).toBeCloseTo(-0.6, 3);
       expect(r.calibration[1]).toMatchObject({ deltaBasis: 'psf' });
       expect(r.calibration[1]?.deltaPct).toBeCloseTo(2.125, 3);
       expect(r.calibration[2]).toMatchObject({ deltaPct: null, deltaBasis: null });
@@ -284,18 +284,18 @@ describe('buildPropertyConditionReport — calibration and quotes', () => {
       });
       writeRegister(db, parsed({
         quotes: [
-          q('exec', { recordType: 'Contract', status: 'Awarded', quotedUsd: 243437.88, qty: 26700, uom: 'SF' }),
-          q('budget', { recordType: 'Estimate', status: 'Quoted', quotedUsd: 657000, qty: 52500, uom: 'SF' }),
-          q('super', { status: 'Superseded', quotedUsd: 25011.84, qty: 2376, uom: 'SF' }),
-          q('live', { quotedUsd: 29895, qty: 2376, uom: 'SF' }),
-          q('ls', { quotedUsd: 8300 }),
+          q('exec', { recordType: 'Contract', status: 'Awarded', quotedUsd: 240300, qty: 26700, uom: 'SF' }),
+          q('budget', { recordType: 'Estimate', status: 'Quoted', quotedUsd: 650000, qty: 52500, uom: 'SF' }),
+          q('super', { status: 'Superseded', quotedUsd: 24000, qty: 2376, uom: 'SF' }),
+          q('live', { quotedUsd: 30000, qty: 2376, uom: 'SF' }),
+          q('ls', { quotedUsd: 8000 }),
           q('sy', { quotedUsd: 1000, qty: 10, uom: 'SY' }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       const by = (k: string) => r.quotes.find((x) => x.quoteKey === k);
       expect(by('exec')).toMatchObject({ evidenceClass: 'executed' });
-      expect(by('exec')?.unitPriceUsdPsf).toBeCloseTo(9.12, 2);
+      expect(by('exec')?.unitPriceUsdPsf).toBeCloseTo(9.0, 2);
       expect(by('budget')?.evidenceClass).toBe('budget');
       expect(by('super')?.evidenceClass).toBe('superseded');
       expect(by('live')?.evidenceClass).toBe('quoted');
