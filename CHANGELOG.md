@@ -593,10 +593,10 @@ The intel module becomes an operating layer over the analytics engine — not an
 ## Phase 4 — Data-integrity polish (2026-06-03)
 
 - **#6 balloon precision (verified, then fixed).** Confirmed via the live Loan Index that it has **no
-  balloon-payment column** — the `$REDACTED-AMT` payoff lives only in a Monthly-Checklist task note, so a
+  balloon-payment column** — the `$490,000` payoff lives only in a Monthly-Checklist task note, so a
   typed `balloonPayment` field would be fabricated and was NOT added. Instead standardized the
-  current-balance figure to full precision ($REDACTED-AMT) in the balloon insight and the Debt "Balloon
-  watch" so it matches the loan drawer and never reads as two different numbers ($981K vs $REDACTED-AMT).
+  current-balance figure to full precision ($500,600) in the balloon insight and the Debt "Balloon
+  watch" so it matches the loan drawer and never reads as two different numbers ($501K vs $500,600).
   Test asserts the balloon metric is full precision.
 - **#7 count unit label.** Added an explicit caption to the Portfolio view: "N investment assets · the
   Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share."
@@ -660,7 +660,7 @@ The intel module becomes an operating layer over the analytics engine — not an
   coordinator's address). Regression test: `tests/unit/counterparties.test.ts`.
 - **Task banner ingestion (Defect 9, upgraded from Low).** `parseTasks` now rejects Monthly-Checklist
   banner/summary rows (`isTaskBannerRow`) that were ingested as junk task cards. Verified end-to-end:
-  banner smears gone, the legit `$REDACTED-AMT` balloon-payoff task preserved. Regression test in
+  banner smears gone, the legit `$490,000` balloon-payoff task preserved. Regression test in
   `tests/unit/parse.test.ts`.
 - **Scheduled freshness (local).** Added `scripts/deploy-mirror.ps1` (bake confidential → deploy →
   re-verify Access 302) and `scripts/register-mirror-task.ps1` (daily Windows scheduled task). Chosen

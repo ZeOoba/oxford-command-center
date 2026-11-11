@@ -15,7 +15,7 @@ function makeSnap(): PortfolioSnapshot {
       { id: 'lease1', propertyKey: '29000', propertyId: 'p1', tenantName: 'Tenant 155 LLC', unit: 'A', company: 'Tenant 155 LLC, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2028-01-01', escalationDate: null, escalationPct: null, status: 'Active', annualRent: 100000, monthsToExpiry: 18, flags: [] },
     ],
     loans: [
-      { id: 'l1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.785, lender: null, balloon: true, flags: [] },
+      { id: 'l1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', originalPrincipal: null, currentBalance: -500600, absBalance: 500600, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.785, lender: null, balloon: true, flags: [] },
     ],
     cash: { asOf: '2026-06-01', totalCash: REDACTED-AMT, activeEntities: 1, largestEntity: 'FVC', concentrationTopPct: 0.545, cagr: null, entities: [{ entity: 'FVC', id: 'fvc', currentBalance: 4000000, priorBalance: null, deltaDollar: null, deltaPct: null, avg3: null, minAllTime: null, maxAllTime: null, bal12moAgo: null, growth12Dollar: null, growth12Pct: null, pctOfPortfolio: 0.51, trend: 'up', flags: [] }], history: [] },
     insurance: [],

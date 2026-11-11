@@ -313,12 +313,12 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
 });
 
 describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling, 2026-08-05)', () => {
-  // Gabriel's FIRST ruling on RCT's balloon exclusion (~17:00, 2026-08-05) held it as
+  // Gabriel's FIRST ruling on Note Party 02's balloon exclusion (~17:00, 2026-08-05) held it as
   // intentional: "C = total payment, D/E = the itemized split a balloon legitimately doesn't
   // carry" — a principled borrower/lender asymmetry. That ruling was ITSELF superseded same-day
   // ("Turn 149"): the real root cause was I14/I15/I16 computing principal on three inconsistent
   // bases, not one deliberate design choice. All three were fixed to a single consistent
-  // forward-looking basis, and RCT's balloon is now genuinely included (I15 -$REDACTED-AMT,
+  // forward-looking basis, and Note Party 02's balloon is now genuinely included (I15 -$REDACTED-AMT,
   // confirmed live). The tracker records this explicitly as a detector constraint: "must NOT be
   // built to treat balloon-excluded lender principal as correct."
   //

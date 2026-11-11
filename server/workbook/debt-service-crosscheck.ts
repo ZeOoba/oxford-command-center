@@ -6,7 +6,7 @@
  * the count was 12. Independent review and an adversarial REFUTE pass both found it could not
  * detect the defect it was built for: reverting `External Loans Summary!H9` to the buggy
  * `SUMPRODUCT((dates>=TODAY())*(dates<TODAY()+366)*amount)` left its output byte-identical —
- * all clean — while annual debt service re-inflated to $REDACTED-AMT. It asserted a property of
+ * all clean — while annual debt service re-inflated to $250,000.00. It asserted a property of
  * the schedule DATA; the bug lived in the FORMULA, which it never read.
  *
  * So this is a CROSS-CHECK of two independent computations:
@@ -390,7 +390,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // and RCT's lender balloon not. That ruling was ITSELF superseded same-day ("Turn 149"): the
   // real root cause was that I14/I15/I16 computed principal on three inconsistent bases, not one
   // deliberate design choice. All three were fixed to a single consistent forward-looking basis,
-  // and RCT's balloon is now included (I15 -$REDACTED-AMT, confirmed live). The tracker records
+  // and Note Party 02's balloon is now included (I15 -$REDACTED-AMT, confirmed live). The tracker records
   // this explicitly as a detector constraint: "must NOT be built to treat balloon-excluded lender
   // principal as correct." A prior version of this check carried an `isLender` exemption built
   // against the first, superseded ruling — removed; it would have silently exempted a real

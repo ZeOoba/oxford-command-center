@@ -8,7 +8,7 @@ function snap(): PortfolioSnapshot {
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-06-01' },
     properties: [],
     leases: [{ id: 'lease1', propertyKey: '29000 Information Lane', propertyId: 'p1', tenantName: 'Jane', unit: 'A', company: 'Tenant 155 LLC, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2026-08-30', escalationDate: null, escalationPct: null, status: 'Expiring Soon', annualRent: 90000, monthsToExpiry: 2, flags: [] }],
-    loans: [{ id: 'l1', name: 'Note Party 02', counterparty: 'Oxford', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.78, lender: null, balloon: true, flags: [] }],
+    loans: [{ id: 'l1', name: 'Note Party 02', counterparty: 'Oxford', direction: 'lender', originalPrincipal: null, currentBalance: -500600, absBalance: 500600, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.78, lender: null, balloon: true, flags: [] }],
     cash: { asOf: '2026-06-01', totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
     insurance: [{ id: 'ins-1', property: 'Solar Field', entity: null, coverage: 'Package', effective: null, expires: '2026-07-01', policyNo: null, carrier: 'Erie', premium: 8000, daysToExpiry: 30, status: 'Renew Now', notes: null, flags: [] }],
     deals: [],
@@ -40,7 +40,7 @@ describe('buildDraft — draft-only emails', () => {
 
   it('refi draft uses full-precision balance and a maturity date', () => {
     const d = buildDraft(snap(), { kind: 'refi', entity: { type: 'loan', id: 'l1' } });
-    expect(d?.body).toContain('$REDACTED-AMT');
+    expect(d?.body).toContain('$500,600');
     expect(d?.subject).toContain('Note Party 02');
   });
 

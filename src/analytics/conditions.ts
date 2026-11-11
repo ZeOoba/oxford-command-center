@@ -296,7 +296,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         // intercompany accrual", with currentBalance signed negative for lender (capital
         // deployed). A maturing `lender` note is an ASSET arriving, not a liability coming
         // due; "Prepare refinance or payoff" inverts the fact, and `category: 'debt'` files
-        // a receivable under debt. Live defect: Note Party 02 ($979,772 @ 9%,
+        // a receivable under debt. Live defect: Note Party 02 ($500,600 @ 9%,
         // balloon 2027-02-20, direction 'lender') shipped in the 2026-07-16 Daily Brief
         // telling the reader to refinance money owed TO Oxford.
         //

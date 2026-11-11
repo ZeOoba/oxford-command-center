@@ -278,7 +278,7 @@ describe('disambiguateLeaseIds — lease id stability (row-position bug)', () =>
 });
 
 describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 regression)', () => {
-  const ALERT = '⚠ BALLOON ALERT: Note Party 02 — $REDACTED-AMT balloon due February 2027 (8 months) — Prepare refinance or payoff strategy';
+  const ALERT = '⚠ BALLOON ALERT: Note Party 02 — $500,600 balloon due February 2027 (8 months) — Prepare refinance or payoff strategy';
   it('rejects the smeared balloon-alert banner', () => {
     // The real failure mode: the alert text bled across label, section AND type.
     expect(isTaskBannerRow(ALERT, ALERT, ALERT)).toBe(true);
