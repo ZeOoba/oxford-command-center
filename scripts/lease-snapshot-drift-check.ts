@@ -15,6 +15,7 @@
 // apart from "crashed before doing anything useful" using the exit code alone (Round-3 REFUTE).
 //
 // Usage: npx tsx scripts/lease-snapshot-drift-check.ts
+import { refuseIfSynthetic } from '../server/real-data-status';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { LeaseStatus, PortfolioSnapshot } from '../src/contracts/index';
@@ -556,6 +557,9 @@ export function formatDriftReport(
 }
 
 async function main() {
+  // The baseline must be the real snapshot: a synthetic stand-in (ruling 2026-11-10) would read as
+  // near-total drift and, if forced, overwrite nothing real. Refused outright outside CI / tests.
+  refuseIfSynthetic('lease-snapshot-drift-check');
   const force = process.argv.includes('--force');
   const previousResult = loadPrevious();
   if (previousResult.corrupt) {

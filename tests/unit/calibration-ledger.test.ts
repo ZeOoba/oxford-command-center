@@ -3,6 +3,7 @@
 // Append-only calibration ledger: derivation of ratio / variance from $/unit, confidence-tier transitions as rows are
 // appended, per-component median / min / max, mean suppression below n=5, exclusion rules, promotion from the pending
 // file, the read-only proposal matcher, and the committed seed data.
+import { costGolden } from './golden-helpers';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -584,12 +585,17 @@ describe('committed seed data', () => {
     expect(banwick.every((o) => o.contractor_source.status === 'BID')).toBe(true);
   });
 
-  it('payload variances reproduce from $/unit (New Plant ≈ −59%, E Fifth ≈ −59%, Livingston ≈ +3%, Fulton 3.1×)', () => {
+  it('payload variances reproduce from $/unit and equal the value lock (data/cost-seg/golden.local.json)', () => {
     const by = (p: string) => ledger.find((o) => o.property === p)!;
-    expect(variancePct(by('55 New Plant Ct'))).toBeCloseTo(-0.5925, 2);
-    expect(variancePct(by('3540 E Fifth Ave'))).toBeCloseTo(-0.5856, 2);
-    expect(variancePct(by('3875-3883 E Livingston'))).toBeCloseTo(0.028, 2);
-    expect(ratio(by('3520 E Fulton St'))).toBeCloseTo(3.125, 3);
+    const G = costGolden().calibration;
+    for (const p of ['55 New Plant Ct', '3540 E Fifth Ave', '3875-3883 E Livingston', '3520 E Fulton St']) {
+      expect(G[p], p).toBeDefined();
+      expect(variancePct(by(p))).toBeCloseTo(G[p]!.variancePct!, 10);
+      expect(ratio(by(p))).toBeCloseTo(G[p]!.ratio!, 10);
+    }
+    // the stale-PCA rows read as savings and the Fulton quote as a multiple, whatever the copy
+    expect(variancePct(by('55 New Plant Ct'))).toBeLessThan(0);
+    expect(ratio(by('3520 E Fulton St'))).toBeGreaterThan(1);
   });
 
   it('every seed row has a stated qty and provenance; the only exclusions are the stale-PCA rows (New Plant 2016, E Fifth 2021)', () => {

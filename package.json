@@ -58,6 +58,7 @@
     "prepare": "node scripts/prepare-hooks.mjs",
     "postinstall": "tsx scripts/ensure-local-data.ts",
     "data:synthetic": "tsx scripts/fixtures/build-synthetic-data.ts",
+    "golden:ratify": "tsx scripts/ratify-golden.ts",
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
     "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:css-tokens && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",

@@ -2,9 +2,10 @@
 //
 // tests/unit/property-financials-model.test.ts — T5 of
 // docs/superpowers/plans/2026-10-05-property-financials-module.md. The pure view-model the
-// Property Financials module renders: Overview KPIs (tied to the calc lib + the golden +2.6% /
-// +6.6%), the computed lede (no hardcoded firm numbers), insight themes and ordering, entity
+// Property Financials module renders: Overview KPIs (tied to the calc lib + the value lock in
+// data/property-financials/golden.local.json), the computed lede (no hardcoded firm numbers), insight themes and ordering, entity
 // matching for leases / insights, and the Scorecard rows with n/m reasons.
+import { pfGolden } from './golden-helpers';
 import { describe, expect, it } from 'vitest';
 import { SAME_STORE, type PfDataset, type PfInsight, type PfMonthlyProperty } from '@contracts/property-financials';
 import { pctChange, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
@@ -60,11 +61,11 @@ describe('formatting helpers', () => {
 describe('overviewKpis (real dataset)', () => {
   const k = overviewKpis(D);
 
-  it('same-store base rent Jan-Sep: value from the portfolio view, change = calc-lib pctChange = golden +2.6%', () => {
+  it('same-store base rent Jan-Sep: value from the portfolio view, change = calc-lib pctChange = the value lock', () => {
     const v = D.portfolio.same_store_YTD26_vs_YTD25.view.base_rent;
     expect(k.baseRent.current).toBe(v.current);
     expect(k.baseRent.change).toEqual(pctChange(v.prior, v.current));
-    expect(pct(k.baseRent.change.value)).toBe('+2.6%');
+    expect(pct(k.baseRent.change.value)).toBe(pfGolden().sameStoreYtd.baseRent);
     // ties to the per-property sum the golden test uses
     const sum = (per: 'YTD25' | 'YTD26') => SAME_STORE.reduce((a, id) => a + monthlyProp(id).periods[per].base_rent, 0);
     expect(k.baseRent.current).toBeCloseTo(sum('YTD26'), 2);
@@ -72,13 +73,13 @@ describe('overviewKpis (real dataset)', () => {
     expect(k.periodLabel).toBe('Jan-Sep 2026');
   });
 
-  it('opex excl. RE tax Jan-Sep: golden +6.6%', () => {
+  it('opex excl. RE tax Jan-Sep: equals the value lock', () => {
     const v = D.portfolio.same_store_YTD26_vs_YTD25.view;
     const prior = v.opex.prior - v.opex_by[RE_TAX].prior;
     const current = v.opex.current - v.opex_by[RE_TAX].current;
     expect(k.opexExTax.current).toBeCloseTo(current, 6);
     expect(k.opexExTax.change).toEqual(pctChange(prior, current));
-    expect(pct(k.opexExTax.change.value)).toBe('+6.6%');
+    expect(pct(k.opexExTax.change.value)).toBe(pfGolden().sameStoreYtd.opexExTax);
   });
 
   it('NOI FY2025 on the PM-reported view; member count read from the data, change from the calc lib', () => {
@@ -113,12 +114,15 @@ describe('insight themes + lede', () => {
   it('lede states rent and opex-ex-tax growth from the calc lib and names the three biggest themes', () => {
     const lede = overviewLede(D);
     const k = overviewKpis(D);
-    expect(lede).toContain(pct(k.baseRent.change.value).replace('+', '')); // 2.6%
-    expect(lede).toContain(pct(k.opexExTax.change.value).replace('+', '')); // 6.6%
+    const G = pfGolden().sameStoreYtd;
+    const abs = (x: string): string => x.replace(/^[+-]/, '');
+    expect(lede).toContain(pct(k.baseRent.change.value).replace('+', ''));
+    expect(lede).toContain(pct(k.opexExTax.change.value).replace('+', ''));
     const themes = insightThemes(D.insights, 3);
     expect(themes).toHaveLength(3);
     for (const t of themes) expect(lede).toContain(t.phrase);
-    expect(lede).toMatch(/^Rent is growing 2\.6% on a same-store basis, while operating cost excluding real estate tax is up 6\.6%\. The biggest dollars sit in three places: .+, .+, and .+\.$/);
+    expect(lede.startsWith(`Rent is growing ${abs(G.baseRent)} on a same-store basis, while operating cost excluding real estate tax is up ${abs(G.opexExTax)}. The biggest dollars sit in three places: `)).toBe(true);
+    expect(lede).toMatch(/The biggest dollars sit in three places: .+, .+, and .+\.$/);
   });
 
   it('lede wording follows the sign and degrades to n/m honestly', () => {
@@ -233,13 +237,13 @@ describe('scorecardRows', () => {
       expect(s.opexRatio.value, `${ev.id}/opexRatio`).toBeCloseTo(t.opex / t.revenue, 12);
     }
     // The rounded fields really do differ from the raw ratios, so this test is not vacuous:
-    // 9620 TTM26 management fee REDACTED-AMT (rounded 5%), Livingston 4.467% (rounded 4%), Red Branch 3.500% (rounded 4%), 3540 E 5th 2.564% (rounded 3%).
+    // (the 9620 TTM26 management fee sits just above its rounded field on the real data); the raw
+    // ratios are pinned by the value lock (data/property-financials/golden.local.json).
     const fee = (id: string) => row(id).mgmtFee.value!;
     const rounded = (id: string) => (D.properties[id as keyof typeof D.properties] as PfMonthlyProperty).periods.TTM26.mgmt_fee_pct!;
-    expect(fee('9620 State 350')).toBeCloseTo(REDACTED-AMT, 5);
-    expect(fee('9620 State 350')).toBeGreaterThan(rounded('9620 State 350'));
-    expect(fee('3883 Livingston')).toBeCloseTo(0.04467, 4);
-    expect(fee('9050 Red Branch')).toBeCloseTo(0.035, 4);
+    const G = pfGolden().mgmtFeeTtm26;
+    for (const id of ['9620 State 350', '3883 Livingston', '9050 Red Branch']) expect(fee(id), id).toBeCloseTo(G[id]!, 10);
+    expect(['9620 State 350', '3883 Livingston', '9050 Red Branch', '3540 E 5th'].some((id) => fee(id) !== rounded(id))).toBe(true);
     expect(fee('9050 Red Branch')).toBeLessThan(rounded('9050 Red Branch'));
     expect(fee('3540 E 5th')).toBeCloseTo(REDACTED-AMT, 4);
     // Annual entities: FY2025 raw ratios.

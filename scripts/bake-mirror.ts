@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { refuseIfSynthetic } from '../server/real-data-status';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { mentionsAnyTerm } from '../server/briefing/confidential-normalize';
@@ -281,6 +282,8 @@ export function shouldBakeWarehouse(
  *  its confidentiality wiring (tests/unit/bake-mirror-main-wiring.test.ts); it runs on import only
  *  when this file is the invoked entry point (see the guard at the bottom). */
 export async function main() {
+  // A production mirror must never ship synthetic stand-in data (ruling 2026-11-10).
+  refuseIfSynthetic('bake-mirror');
   const includeConfidential = process.env.MIRROR_INCLUDE_CONFIDENTIAL === '1';
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });

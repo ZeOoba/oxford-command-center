@@ -4,6 +4,7 @@
 // account-mover list that compares a PARTIAL period must never print a YoY. The committed dataset has
 // every same-store member complete, so these tests mutate an in-memory copy (a member's n_months
 // lowered) and, for F1, also rebuild from a CSV with one member-month dropped (the refute repro).
+import { pfGolden } from './golden-helpers';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -24,14 +25,16 @@ function withMonths(entity: string, period: string, n: number): PfDataset {
 }
 
 describe('F1: Overview same-store views refuse a YoY when any member is partial', () => {
-  it('committed data: every member is complete, shipped numbers unchanged (+2.6% rent, +6.6% opex ex-tax)', () => {
+  it('committed data: every member is complete, shipped numbers equal the value lock', () => {
     expect(portfolioViewPartial(D, 'same_store_YTD26_vs_YTD25')).toBeNull();
     expect(portfolioViewPartial(D, 'pm_only_FY2025_vs_FY2024')).toBeNull();
     const k = overviewKpis(D);
-    expect(pct(k.baseRent.change.value)).toBe('+2.6%');
-    expect(pct(k.opexExTax.change.value)).toBe('+6.6%');
+    const G = pfGolden().sameStoreYtd;
+    expect(pct(k.baseRent.change.value)).toBe(G.baseRent);
+    expect(pct(k.opexExTax.change.value)).toBe(G.opexExTax);
     expect(k.noiFy.change.value).not.toBeNull();
-    expect(overviewLede(D)).toMatch(/^Rent is growing 2\.6% on a same-store basis, while operating cost excluding real estate tax is up 6\.6%\./);
+    const abs = (x: string): string => x.replace(/^[+-]/, '');
+    expect(overviewLede(D).startsWith(`Rent is growing ${abs(G.baseRent)} on a same-store basis, while operating cost excluding real estate tax is up ${abs(G.opexExTax)}.`)).toBe(true);
     for (const x of opexDeltaItems(D.portfolio.same_store_YTD26_vs_YTD25.view, portfolioViewPartial(D, 'same_store_YTD26_vs_YTD25'))) {
       // the change is whatever pctChange says on complete data (never a partial refusal)
       if (x.change.value === null) expect(x.change.reason).not.toMatch(/partial/);

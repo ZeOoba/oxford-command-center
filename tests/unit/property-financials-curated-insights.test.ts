@@ -10,6 +10,7 @@
 // 2. Every mechanically-derived curated impact (EXP-07 / 08 / 09 / 10) is recomputed from the dataset
 //    or computeLevers, so a mapping change cannot leave one behind; checked in the curated file AND in
 //    the committed dataset.json.
+import { isSynthetic } from './golden-helpers';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +21,7 @@ import { partialReason } from '@analytics/property-financials/periods';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
+const NARRATIVE_SYNTHETIC = isSynthetic('scripts/property-financials/config/curated/insights.json');
 const CURATED = JSON.parse(readFileSync(resolve(process.cwd(), 'scripts', 'property-financials', 'config', 'curated', 'insights.json'), 'utf8')) as {
   insights: PfInsight[];
 };
@@ -76,20 +78,22 @@ describe('curated insights: portfolio YoY recomputed from complete members', () 
     }
   });
 
-  it.each(PORTFOLIO_YOY)('$id: $window $category', ({ id, quote, window, category, digits }) => {
+  // The quotes live in the analyst narrative, which exists only in the real curated file (the
+  // synthetic copy replaces narrative with placeholder text): these three run where it is present.
+  it.skipIf(NARRATIVE_SYNTHETIC).each(PORTFOLIO_YOY)('$id: $window $category', ({ id, quote, window, category, digits }) => {
     const text = quote(pct(yoy(window, category), digits));
     expect(curated(id).finding).toContain(text);
     expect(shipped(id).finding).toContain(text);
   });
 
-  it('EXP-10 restated: no +21.0% TTM figure summed over partial members; the excluded assets are named', () => {
+  it.skipIf(NARRATIVE_SYNTHETIC)('EXP-10 restated: no +21.0% TTM figure summed over partial members; the excluded assets are named', () => {
     const f = curated('EXP-10').finding;
     expect(f).not.toContain('+21.0%');
     expect(f).toMatch(/Livingston \(3 of 12 months in TTM25\)/);
     expect(f).toMatch(/Westerville \(11 of 12\)/);
   });
 
-  it('every signed percentage in a Portfolio insight is registered (portfolio YoY) or allowlisted (single asset)', () => {
+  it.skipIf(NARRATIVE_SYNTHETIC)('every signed percentage in a Portfolio insight is registered (portfolio YoY) or allowlisted (single asset)', () => {
     const registered = PORTFOLIO_YOY.map((r) => ({ id: r.id, text: r.quote(pct(yoy(r.window, r.category), r.digits)) }));
     for (const ins of CURATED.insights.filter((i) => i.property === 'Portfolio')) {
       const text = `${ins.title} ${ins.finding} ${ins.action}`;
@@ -119,18 +123,16 @@ describe('curated insights: mechanically-derived impacts recomputed', () => {
   ];
 
   it.each(CASES)('$id = $why, in the curated file and in dataset.json', ({ id, expected }) => {
-    // Whole dollars. Within $1 rather than exact: the committed curated file and dataset are synthetic
-    // stand-ins (dollars scaled, then rounded), so a recomputation can land on the other side of .5.
-    // On the real files the two are equal.
+    // Exact, on the real files and on the synthetic copies (the generator recomputes these four from the
+    // perturbed dataset with the same formulas).
     const v = Math.round(expected());
-    expect(Number.isInteger(curated(id).annual_impact_usd)).toBe(true);
-    expect(Math.abs(curated(id).annual_impact_usd! - v)).toBeLessThanOrEqual(1);
-    expect(shipped(id).annual_impact_usd).toBe(curated(id).annual_impact_usd);
+    expect(curated(id).annual_impact_usd).toBe(v);
+    expect(shipped(id).annual_impact_usd).toBe(v);
   });
 
   it('EXP-07 after v03.2: the management-fee lever is 0.5% of TTM26 revenue across the PM properties', () => {
     const ttmRevenue = PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + (figures(id)?.TTM26?.revenue ?? 0), 0);
     expect(lever('mgmtFee')).toBeCloseTo(0.005 * ttmRevenue, 1);
-    expect(Math.abs(shipped('EXP-07').annual_impact_usd! - Math.round(lever('mgmtFee')))).toBeLessThanOrEqual(1);
+    expect(shipped('EXP-07').annual_impact_usd).toBe(Math.round(lever('mgmtFee')));
   });
 });
