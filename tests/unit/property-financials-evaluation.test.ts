@@ -15,6 +15,7 @@ import {
   type EvaluationTestId,
   type EvaluationThreshold,
 } from '@analytics/property-financials/thresholds';
+import { isSynthetic } from './golden-helpers';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
@@ -52,14 +53,14 @@ describe('generated threshold text', () => {
 
   it('formats a cell value by the test format', () => {
     expect(formatThresholdValue(THRESHOLDS.noiMargin, REDACTED-AMT)).toBe('66%');
-    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.0447)).toBe('4.5%');
+    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.0452)).toBe('4.5%');
     expect(formatThresholdValue(THRESHOLDS.rentRunRateGrowth, 0.0586)).toBe('+5.9%');
     expect(formatThresholdValue(THRESHOLDS.utilityGrowth, -0.123)).toBe('-12%');
   });
 
   it('a value that would print as a boundary it sits on the wrong side of gets one more digit', () => {
-    // 9620 State 350 TTM management fee REDACTED-AMT: red (> 5.0%), so it must not read "5.0%".
-    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, REDACTED-AMT)).toBe('5.01%');
+    // a management fee just above 5.0% is red (> 5.0%), so it must not read "5.0%".
+    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.050123)).toBe('5.01%');
     expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.05)).toBe('5.0%');
     expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.6496)).toBe('64.96%');
     expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.6504)).toBe('65%');
@@ -125,15 +126,18 @@ describe('evaluationResults (value + n/m reason)', () => {
   });
 });
 
-describe('pinned statuses (literal, computed from UNROUNDED figures)', () => {
+// Literal statuses of named assets are characterizations of the REAL figures (each pin is a real
+// ratio: a fee share, a margin, a recovery). The synthetic copy draws every amount independently, so
+// those ratios are not reproduced by design; the pins run where the real dataset is present.
+describe.skipIf(isSynthetic('data/property-financials/dataset.json'))('pinned statuses (literal, computed from UNROUNDED figures)', () => {
   // The reference artifact read the dataset's 2-dp rounded ratios; the module computes from the raw
   // figures, and so does the Scorecard table (scorecardRows via ratio(); Scorecard == Evaluation parity
   // is pinned in property-financials-model.test.ts). These three cells therefore differ from the artifact.
   it('the three cells where exact math departs from the artifact', () => {
     const st = (id: (typeof PF_MONTHLY_ENTITY_IDS)[number], t: EvaluationTestId) => ragStatus(t, evaluationResults(monthly(id), D.monthly[id])[t].value);
-    expect(st('3540 E 5th', 'rentRunRateGrowth')).toBe('r'); // -0.10%; artifact amber on a rounded 0
-    expect(st('3883 Livingston', 'mgmtFeePct')).toBe('a'); // 4.47%; artifact green on a rounded 4%
-    expect(st('9620 State 350', 'mgmtFeePct')).toBe('r'); // 5.01%; artifact amber on a rounded 5%
+    expect(st('3540 E 5th', 'rentRunRateGrowth')).toBe('r'); // just below 0; artifact amber on a rounded 0
+    expect(st('3883 Livingston', 'mgmtFeePct')).toBe('a'); // just above 4%; artifact green on a rounded 4%
+    expect(st('9620 State 350', 'mgmtFeePct')).toBe('r'); // just above 5%; artifact amber on a rounded 5%
   });
 
   it('a sample of cells that match the artifact', () => {
@@ -155,21 +159,33 @@ describe('mutating a cloned config flips exactly the right cells AND rewrites th
     clone.mgmtFeePct = { ...clone.mgmtFeePct, green: 0.035 };
     expect(thresholdText(clone.mgmtFeePct)).toBe('Green ≤ 3.5%, amber 3.5-5.0%, red > 5.0%');
     expect(thresholdText(THRESHOLDS.mgmtFeePct)).toBe('Green ≤ 4.0%, amber 4.0-5.0%, red > 5.0%');
-    let flipped = 0;
-    for (const id of PF_MONTHLY_ENTITY_IDS) {
-      const res = evaluationResults(monthly(id), D.monthly[id], clone);
-      for (const t of EVALUATION_TEST_IDS) {
-        const before = ragStatus(t, res[t].value, THRESHOLDS);
-        const after = ragStatus(t, res[t].value, clone);
-        const v = res[t].value;
-        const shouldFlip = t === 'mgmtFeePct' && v !== null && v > 0.035 && v <= 0.04;
-        expect(after !== before, `${id}/${t}`).toBe(shouldFlip);
-        if (shouldFlip) {
-          expect([before, after]).toEqual(['g', 'a']);
-          flipped++;
+    // The same exactness for a boundary placed just below the largest green fee in THIS dataset, so a
+    // flip is observed on any dataset (real or synthetic), never vacuously.
+    const fees = PF_MONTHLY_ENTITY_IDS.map((id) => evaluationResults(monthly(id), D.monthly[id]).mgmtFeePct.value).filter(
+      (v): v is number => v !== null && v > 0 && v <= THRESHOLDS.mgmtFeePct.green,
+    );
+    expect(fees.length).toBeGreaterThan(0);
+    const tight: Record<EvaluationTestId, EvaluationThreshold> = structuredClone(THRESHOLDS) as Record<EvaluationTestId, EvaluationThreshold>;
+    tight.mgmtFeePct = { ...tight.mgmtFeePct, green: Math.max(...fees) - 1e-9 };
+    const flips = (cfg: Record<EvaluationTestId, EvaluationThreshold>): number => {
+      let flipped = 0;
+      for (const id of PF_MONTHLY_ENTITY_IDS) {
+        const res = evaluationResults(monthly(id), D.monthly[id], cfg);
+        for (const t of EVALUATION_TEST_IDS) {
+          const before = ragStatus(t, res[t].value, THRESHOLDS);
+          const after = ragStatus(t, res[t].value, cfg);
+          const v = res[t].value;
+          const shouldFlip = t === 'mgmtFeePct' && v !== null && v > cfg.mgmtFeePct.green && v <= 0.04;
+          expect(after !== before, `${id}/${t}`).toBe(shouldFlip);
+          if (shouldFlip) {
+            expect([before, after]).toEqual(['g', 'a']);
+            flipped++;
+          }
         }
       }
-    }
-    expect(flipped).toBeGreaterThan(0);
+      return flipped;
+    };
+    flips(clone);
+    expect(flips(tight)).toBeGreaterThan(0);
   });
 });

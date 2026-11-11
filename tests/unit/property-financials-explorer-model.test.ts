@@ -149,10 +149,13 @@ describe('property cards', () => {
     }
   });
 
-  it('YoY chip: Rarig FY25 vs FY24 = +27.3%; Livingston (partial only) is n/m with the reason', () => {
+  it('YoY chip: Rarig FY25 vs FY24 from the full years; Livingston (partial only) is n/m with the reason', () => {
     const rarig = cards.find((c) => c.id === '1100 Rarig')!;
-    expect(rarig.change.value).toBeCloseTo(fy('1100 Rarig', '2025').noi / fy('1100 Rarig', '2024').noi - 1, 6);
-    expect(pct(rarig.change.value)).toBe('+27.3%'); // a ratio: identical on the real and the synthetic dataset
+    const v = fy('1100 Rarig', '2025').noi / fy('1100 Rarig', '2024').noi - 1;
+    expect(rarig.change.value).toBeCloseTo(v, 6);
+    // A ratio of two figures read in place: the synthetic copy draws its amounts independently of the
+    // real ones, so it does NOT reproduce the real ratio (and must not).
+    expect(pct(rarig.change.value)).toBe(pct(v));
     const liv = cards.find((c) => c.id === '3883 Livingston')!;
     expect(liv.change.value).toBeNull();
     expect(liv.partial).toBe(true);
@@ -191,9 +194,13 @@ describe('buildExplorer: every property', () => {
     expect(DEFAULT_EXPLORER_ENTITY).toBe('1900 Broadway');
   });
 
-  it('lede is computed: Rarig NOI rose 27.3% to $REDACTED-AMT in 2025', () => {
-    const noi = Math.round(fy('1100 Rarig', '2025').noi).toLocaleString('en-US');
-    expect(models['1100 Rarig'].lede).toBe(`1100 Rarig Ave: NOI rose 27.3% to $${noi} in 2025 (revenue +11.5%, operating expense -10.5%).`);
+  it('lede is computed: Rarig NOI change, level and the revenue / opex changes for 2025', () => {
+    const [a, b] = [fy('1100 Rarig', '2024'), fy('1100 Rarig', '2025')];
+    const noi = Math.round(b.noi).toLocaleString('en-US');
+    const word = b.noi >= a.noi ? 'rose' : 'fell';
+    expect(models['1100 Rarig'].lede).toBe(
+      `1100 Rarig Ave: NOI ${word} ${pctLevel(Math.abs(b.noi / a.noi - 1), 1)} to $${noi} in 2025 (revenue ${pct(b.rev / a.rev - 1)}, operating expense ${pct(b.opex / a.opex - 1)}).`,
+    );
   });
 
   it('lede for a short history says so', () => {
@@ -648,27 +655,32 @@ describe('M2: occupancy and leased SF from one basis on the Explorer', () => {
 describe('L1: recovery "+10 points" sensitivity is ONE number per entity', () => {
   // Decision: where a recovery lever exists the Explorer READS the lever (same period, same value as
   // Rent & NOI levers); every other entity's figure is labelled with the Explorer's own period.
+  // The sensitivity sentence is quoted only below rules.recovery.lowRatio. Whether an entity's ratio
+  // sits below it is a property of the figures (low on the real file for these entities; drawn on the
+  // synthetic copy), so these tests force the low branch and check WHAT is quoted.
+  const lowRules = { ...EXPLORER_RULES, recovery: { ...EXPLORER_RULES.recovery, lowRatio: Number.POSITIVE_INFINITY } };
+
   it('entities with a recovery lever quote the lever value and its period (9620: the TTM Sep-26 lever, not its own-period figure)', () => {
     const levers = computeLevers(D);
     let seen = 0;
     for (const def of LEVERS) {
       if (def.base.kind !== 'recoveryPool') continue;
       const lv = levers.find((l) => l.id === def.id)!;
-      const text = explorerInsights(D, def.base.entity).find((i) => i.heading === 'Recovery')!.text;
+      const text = explorerInsights(D, def.base.entity, lowRules).find((i) => i.heading === 'Recovery')!.text;
       expect(text, def.id).toContain(
         `Each ${describeLeverRate(def)} recovered is worth ${usd(lv.value.value!, 'f')} a year on the ${periodLabel(def.base.period)} pool (${usd(lv.base!, 'f')}), the Rent & NOI levers figure.`,
       );
       seen++;
     }
     expect(seen).toBe(3);
-    const t9620 = explorerInsights(D, '9620 State 350').find((i) => i.heading === 'Recovery')!.text;
+    const t9620 = explorerInsights(D, '9620 State 350', lowRules).find((i) => i.heading === 'Recovery')!.text;
     const lv9620 = levers.find((l) => LEVERS.some((d) => d.id === l.id && d.base.kind === 'recoveryPool' && d.base.entity === '9620 State 350'))!;
     expect(t9620).toContain(usd(lv9620.value.value!, 'f'));
     expect(t9620).toMatch(/the Rent & NOI levers figure/);
   });
 
   it('entities without a lever label the period of their own figure', () => {
-    const text = explorerInsights(D, '29000 Info Lane').find((i) => i.heading === 'Recovery')!.text;
+    const text = explorerInsights(D, '29000 Info Lane', lowRules).find((i) => i.heading === 'Recovery')!.text;
     expect(text).toContain(`Each 10 points recovered is worth ${usd(D.properties['29000 Info Lane'].periods.FY2025.pool * 0.1, 'f')} a year on the 2025 pool.`);
   });
 });

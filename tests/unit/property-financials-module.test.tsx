@@ -12,7 +12,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { pct, usd } from '@analytics/property-financials/format';
 import { PropertyFinancialsModule } from '../../src/modules/property-financials/PropertyFinancialsModule';
 import { PF_KEYS } from '../../src/modules/property-financials/hooks';
-import { overviewKpis, overviewLede, whereTheMoneyIs } from '../../src/modules/property-financials/model';
+import { opexDeltaItems, overviewKpis, overviewLede, whereTheMoneyIs } from '../../src/modules/property-financials/model';
 import type { PfDatasetResponse, PfInsightStatusResponse } from '../../src/modules/property-financials/types';
 import { loadDataset } from './property-financials-helpers';
 
@@ -157,10 +157,15 @@ describe('Overview (real dataset)', () => {
     // diverging bars: every bar is a focusable mark with a tooltip; both directions in the legend
     expect(screen.getByText('Cost up')).toBeTruthy();
     expect(screen.getByText('Cost down')).toBeTruthy();
-    const util = screen.getByRole('img', { name: /^Utilities: \+/ });
+    const util = screen.getByRole('img', { name: /^Utilities: [+-]/ });
     fireEvent.focus(util);
     expect(screen.getAllByRole('status').some((s) => s.textContent?.startsWith('Utilities'))).toBe(true);
-    expect(screen.getByTestId('pf-tax-note').textContent).toMatch(/cash basis/);
+    // The cash-basis caveat appears exactly when same-store RE tax reads down year to date (on the
+    // real file it does; the synthetic copy's direction is a draw).
+    const tax = opexDeltaItems(D.portfolio.same_store_YTD26_vs_YTD25.view, null).find((x) => x.category === 'Real estate & property tax')!;
+    const note = screen.getByTestId('pf-tax-note').textContent!;
+    if (tax.value < 0) expect(note).toMatch(/cash basis/);
+    else expect(note).not.toMatch(/cash basis/);
   });
 
   it('"Where the money is" lists High items by |impact| with icon+label severity pills', () => {
