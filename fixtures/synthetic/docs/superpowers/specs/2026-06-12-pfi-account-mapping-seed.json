@@ -2,7 +2,7 @@
   "_meta": {
     "generated": "2026-06-12",
     "source": "pfi-corpus-audit workflow wf_292578db-604 — 32 P&L files (2024/2025/2026 YTD), 339 distinct GL accounts",
-    "verification": "Adversarially reviewed; 2 corrections applied (Real Estate Tax Escrow, Insurance Escrow -> excluded). Verdict: structurally sound on distributions/debt/commissions/TI/capex/recovery classes. All 12 open rulings resolved by Syn022 2026-06-12.",
+    "verification": "Adversarially reviewed; 2 corrections applied (Real Estate Tax Escrow, Insurance Escrow -> excluded). Verdict: structurally sound on distributions/debt/commissions/TI/capex/recovery classes. All 12 open rulings resolved by Syn066 2026-06-12.",
     "corrections_applied": 2,
     "open_rulings": 0
   },
@@ -2762,7 +2762,7 @@
       "note": "H4 (2026-06-22): FVC 2025 ~$348.0k perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
     }
   ],
-  "needs_syn022_ruling": [],
+  "needs_syn066_ruling": [],
   "engine_rules_needed": [
     "Escrow-only books: for cash-basis entities where escrow funding is the ONLY tax/insurance record (lender pays from escrow), excluding the escrow lines zeroes out taxes/insurance and inflates NOI — the engine needs a rule to derive tax/insurance expense from escrow disbursements or lender statements for those entities. Related: confirm 'Mortgage Payment' 7405 is P&I only, not PITI; if escrow is embedded, taxes/insurance silently leak out of opex.",
     "Replacement Units and Parts (both charts, classified opex low-confidence): name says replacement units — pull GL detail and split whole-unit replacements (capex) from parts/consumables (opex); a blanket opex call mixes capital into NOI, a blanket capex call strips real R&M.",

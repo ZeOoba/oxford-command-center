@@ -57,6 +57,24 @@ describe('ensureLocalData', () => {
     expect(readFileSync(join(root, 'data/snapshots/portfolio.json'), 'utf8')).toBe('{"real":true}\n');
   });
 
+  it('an OPTIONAL file absent beside real data is skipped (never seeded); a required one still refuses', () => {
+    write('scripts/fixtures/real-data-manifest.json', JSON.stringify({
+      files: ['data/snapshots/portfolio.json', 'data/golden.local.json'], dirs: ['data/calibration/'], optional: ['data/golden.local.json'],
+    }));
+    write('fixtures/synthetic/data/golden.local.json', '{"synthetic":true}\n');
+    write('data/snapshots/portfolio.json', '{"real":true}\n');
+    write('data/calibration/observations.json', '[{"real":1}]\n');
+    write('data/calibration/calibration_pending.json', '[{"real":2}]\n');
+    const lines: string[] = [];
+    expect(ensureLocalData(root, (l) => lines.push(l), CI).seeded).toEqual([]);
+    expect(existsSync(join(root, 'data/golden.local.json'))).toBe(false);
+    expect(lines.join('\n')).toMatch(/optional file\(s\) absent and NOT seeded: data\/golden\.local\.json/);
+    expect(realDataStatus(root).find((s) => s.rel === 'data/golden.local.json')).toMatchObject({ state: 'absent', optional: true });
+    rmSync(join(root, 'data/snapshots/portfolio.json'));
+    expect(() => ensureLocalData(root, quiet, CI)).toThrow(/portfolio\.json/);
+    expect(existsSync(join(root, 'data/golden.local.json'))).toBe(false);
+  });
+
   it('never back-fills a partially present real directory', () => {
     write('data/calibration/observations.json', '[{"real":1}]\n');
     write('data/snapshots/portfolio.json', '{"real":true}\n');

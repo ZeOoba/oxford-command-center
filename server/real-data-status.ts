@@ -14,6 +14,8 @@ import type { DataQualityFlag } from '../src/contracts/common';
 export interface RealDataManifest {
   files: string[];
   dirs: string[];
+  /** Files that may be absent on a checkout holding real data (value locks, local operator tables). */
+  optional?: string[];
 }
 
 export const FIXTURE_DIR = join('fixtures', 'synthetic');
@@ -24,7 +26,7 @@ export const normPath = (p: string): string => p.replace(/\\/g, '/').replace(/^\
 
 export function loadManifest(root: string): RealDataManifest {
   const m = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf8')) as RealDataManifest;
-  return { files: m.files, dirs: m.dirs };
+  return { files: m.files, dirs: m.dirs, optional: m.optional ?? [] };
 }
 
 /** True when `rel` is a real-data path the manifest covers (case-insensitive, either slash style). */
@@ -55,6 +57,8 @@ export interface PathStatus {
   state: FileState;
   /** The manifest directory this file belongs to, if any. */
   dir: string | null;
+  /** Listed in the manifest's `optional` files. */
+  optional: boolean;
 }
 
 /** Every manifest path that has a synthetic stand-in, plus every real file found under a manifest
@@ -72,7 +76,7 @@ export function realDataStatus(root: string): PathStatus[] {
     const dir = m.dirs.find((d) => normPath(rel).startsWith(normPath(d))) ?? null;
     let state: FileState = 'absent';
     if (existsSync(target)) state = existsSync(fixture) && sha(target) === sha(fixture) ? 'synthetic' : 'real';
-    out.push({ rel, state, dir });
+    out.push({ rel, state, dir, optional: (m.optional ?? []).some((o) => normPath(o) === normPath(rel)) });
   }
   return out;
 }

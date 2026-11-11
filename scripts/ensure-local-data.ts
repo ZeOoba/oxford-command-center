@@ -59,6 +59,14 @@ export function ensureLocalData(root = ROOT, log: (line: string) => void = (l) =
 
   const real = status.filter((s) => s.state === 'real').map((s) => s.rel);
   if (real.length) {
+    // Optional files (value locks, local operator tables) may be absent beside real data: they are
+    // never seeded there (a synthetic lock would pin synthetic values), and their readers say what to do.
+    const required = absent.filter((rel) => !status.find((s) => s.rel === rel)?.optional);
+    if (required.length === 0) {
+      log(`[ensure-local-data] real data present; optional file(s) absent and NOT seeded: ${absent.join(', ')}`);
+      return result;
+    }
+    absent.splice(0, absent.length, ...required);
     throw new Error(
       `ensure-local-data: REFUSING to seed: this checkout holds real data (${real.length} file(s), e.g. ${real[0]}) but these ` +
         `manifest files are missing: ${absent.join(', ')}. Mixing synthetic records into real data is never done. Restore ` +

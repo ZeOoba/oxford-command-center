@@ -1,0 +1,43 @@
+[
+  {
+    "query": "Synthetic document question 01",
+    "expect": "Synthetic document 01",
+    "note": "Synthetic doc golden note 001. [OCR]"
+  },
+  {
+    "query": "Synthetic document question 02",
+    "expect": "Synthetic document 02"
+  },
+  {
+    "query": "Synthetic document question 03",
+    "expect": "Synthetic document 03"
+  },
+  {
+    "query": "Synthetic document question 04",
+    "expect": "Synthetic document 04"
+  },
+  {
+    "query": "Synthetic document question 05",
+    "expect": "Synthetic document 05"
+  },
+  {
+    "query": "Synthetic document question 06",
+    "expect": "Synthetic document 06"
+  },
+  {
+    "query": "Synthetic document question 07",
+    "expect": "Synthetic document 07"
+  },
+  {
+    "query": "Synthetic document question 08",
+    "expect": "Synthetic document 08"
+  },
+  {
+    "query": "Synthetic document question 09",
+    "expect": "Synthetic document 09"
+  },
+  {
+    "query": "Synthetic document question 10",
+    "expect": "Synthetic document 10"
+  }
+]
