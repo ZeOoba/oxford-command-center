@@ -5,9 +5,12 @@ name: CI
 # LOCAL-ONLY — it cannot run here (see full-gate-selfhosted.yml, which runs it but is
 # workflow_dispatch only, never automatic on push/PR). `npm run reconcile:snapshot`
 # (scripts/reconcile-snapshot.ts, added 2026-08-03 after the phantom-vacancy-lease incident —
-# see PR #250 — shipped to the committed snapshot uncaught) IS wired in below: it runs
-# checkSnapshot() against the COMMITTED data/snapshots/portfolio.json with zero workbook I/O, so
-# it's a strict subset of the full check but runs on every PR here. CI runs governance + typecheck +
+# see PR #250 — shipped to the then-committed snapshot uncaught) IS wired in below: it runs
+# checkSnapshot() against data/snapshots/portfolio.json with zero workbook I/O, so it's a strict
+# subset of the full check but runs on every PR here. Real firm data is never tracked (ruling
+# 2026-11-10): here that file is the SYNTHETIC stand-in fixtures/synthetic/data/snapshots/portfolio.json,
+# seeded by `npm ci`'s postinstall (scripts/ensure-local-data.ts), as is every other real-data path
+# in scripts/fixtures/real-data-manifest.json. CI runs governance + typecheck +
 # lint + check:dev-css + check:schema-drift + tests + the snapshot reconciliation + a production
 # build + the bundle-size budget (governance and check:schema-drift are pure repo-text checks).
 on:

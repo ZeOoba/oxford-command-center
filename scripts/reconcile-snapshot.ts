@@ -10,8 +10,9 @@
 //
 // This script closes that gap WITHOUT touching the workbook: it runs checkSnapshot()
 // (server/reconcile-runtime.ts -- already the in-process check every brain.refresh() call runs,
-// already unit-tested in tests/unit/reconcile-runtime.test.ts) against the COMMITTED
-// data/snapshots/portfolio.json. Zero workbook I/O, so it runs on every PR via gate:ci, not just
+// already unit-tested in tests/unit/reconcile-runtime.test.ts) against data/snapshots/portfolio.json
+// (local-only real data on the live machine; in CI and on a fresh clone the synthetic stand-in from
+// fixtures/synthetic/, ruling 2026-11-10). Zero workbook I/O, so it runs on every PR via gate:ci, not just
 // on the self-hosted runner. It is deliberately a SUBSET of the full workbook-backed reconcile --
 // it can only catch what's already inconsistent within the snapshot itself (e.g. Σ lease
 // annualRent vs the workbook's own declared total, captured into the snapshot at parse time), not
