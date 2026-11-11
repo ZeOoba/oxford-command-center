@@ -37,6 +37,12 @@ describe('governance: real firm data is never tracked (checkRealDataUntracked)',
     expect(checkRealDataUntracked(REPO, ['data\\cost-seg\\cost-seg.json']).pass).toBe(false);
   });
 
+  it('catches case variants of manifest paths (NTFS / core.ignorecase)', () => {
+    expect(checkRealDataUntracked(REPO, ['data/snapshots/Portfolio.json']).pass).toBe(false);
+    expect(checkRealDataUntracked(REPO, ['DATA/Building-Specs/reports.json']).pass).toBe(false);
+    expect(checkRealDataUntracked(REPO, ['FIXTURES/synthetic/data/snapshots/portfolio.json']).pass).toBe(true);
+  });
+
   it('fails closed when the manifest is missing or lists nothing', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gov-real-data-'));
     try {

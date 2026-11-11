@@ -693,6 +693,14 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     expect(isRealDataPath('data/snapshots/other.json', manifest)).toBe(false);
   });
 
+  it('matches case variants (NTFS / core.ignorecase) and normalizes separators', () => {
+    expect(isRealDataPath('data/snapshots/Portfolio.json', manifest)).toBe(true);
+    expect(isRealDataPath('DATA/calibration/observations.json', manifest)).toBe(true);
+    expect(isRealDataPath('.\\SRC\\data\\seed-deals.ts', manifest)).toBe(true);
+    expect(parseRealDataPaths('A\tdata/snapshots/Portfolio.json\nA\tDATA/calibration/observations.json', manifest)).toHaveLength(2);
+    expect(isRealDataPath('Fixtures/Synthetic/data/snapshots/portfolio.json', manifest)).toBe(false);
+  });
+
   it('parses --name-status output: added/modified/renamed-to paths hit, deletions do not', () => {
     const text = [
       'A\tdata/snapshots/portfolio.json',

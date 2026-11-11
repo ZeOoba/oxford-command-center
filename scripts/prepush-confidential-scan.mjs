@@ -146,9 +146,12 @@ export function loadRealDataManifest(pathOverride) {
  * @param {{files: string[], dirs: string[]}} manifest
  */
 export function isRealDataPath(path, manifest) {
-  const p = String(path).replace(/\\/g, '/').replace(/^\.\//, '');
+  // Case-insensitive and normalized: the checkout lives on NTFS (core.ignorecase), so a case variant
+  // of a manifest path is the same file there and must be caught too.
+  const norm = (x) => String(x).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+  const p = norm(path);
   if (p.startsWith(SYNTHETIC_PREFIX)) return false;
-  return manifest.files.includes(p) || manifest.dirs.some((d) => p.startsWith(d));
+  return manifest.files.some((f) => norm(f) === p) || manifest.dirs.some((d) => p.startsWith(norm(d)));
 }
 
 /**

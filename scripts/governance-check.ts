@@ -484,10 +484,13 @@ export function checkRealDataUntracked(root: string, tracked?: readonly string[]
     errors.push(`REAL_DATA: could not list tracked files (git ls-files: ${(e as Error).message.split('\n')[0]}); cannot verify real data is untracked`);
     return { pass: false, errors, warnings: [] };
   }
+  // Case-insensitive and normalized (NTFS, core.ignorecase): a case variant is the same file there.
+  const norm = (x: string): string => x.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
   for (const raw of files) {
     const f = raw.replace(/\\/g, '/');
-    if (f.startsWith('fixtures/synthetic/')) continue;
-    if (manifest.files.includes(f) || manifest.dirs.some((d) => f.startsWith(d))) {
+    const nf = norm(f);
+    if (nf.startsWith('fixtures/synthetic/')) continue;
+    if (manifest.files.some((m) => norm(m) === nf) || manifest.dirs.some((d) => nf.startsWith(norm(d)))) {
       errors.push(
         `REAL_DATA_TRACKED: ${f} is real firm data (scripts/fixtures/real-data-manifest.json, ruling 2026-11-10) and must not be tracked. ` +
           'Untrack it (git rm --cached) and keep the synthetic stand-in under fixtures/synthetic/.',
