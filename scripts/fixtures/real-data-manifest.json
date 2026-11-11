@@ -1,5 +1,5 @@
 {
-  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them.",
+  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them. 'optional' files may be absent on a checkout that holds real data (they are seeded only on an all-synthetic checkout and are never deploy inputs): the value locks, ratified with `npm run golden:ratify`, and local operator tables.",
   "ruling": "2026-11-10",
   "files": [
     "data/snapshots/portfolio.json",
@@ -19,7 +19,15 @@
     "tests/fixtures/property-financials/reference-artifact.html",
     "scripts/data/2026-08-22-insurance-premium-history.json",
     "data/property-financials/golden.local.json",
-    "data/cost-seg/golden.local.json"
+    "data/cost-seg/golden.local.json",
+    "config/local/ar-seed-mappings.json",
+    "config/local/doc-search-golden.json"
+  ],
+  "optional": [
+    "data/property-financials/golden.local.json",
+    "data/cost-seg/golden.local.json",
+    "config/local/ar-seed-mappings.json",
+    "config/local/doc-search-golden.json"
   ],
   "dirs": [
     "data/building-specs/",

@@ -50,7 +50,7 @@ import { slug } from '../../src/contracts/common';
 import { canonicalAttribute } from '../../src/analytics/building-specs';
 import { rentStepEvents } from '../../src/analytics/property-financials/metrics';
 import { computeLevers } from '../../src/analytics/property-financials/levers';
-import { decimalsOf, makePerturber, roundNative, roundTo, type Perturber } from './perturb';
+import { decimalsOf, makePerturber, roundTo, type Perturber } from './perturb';
 import { GOLDEN_COST, GOLDEN_PF, computeCostGolden, computePfGolden } from '../golden/compute-golden';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -185,9 +185,21 @@ function wordTokens(s: string): string[] {
   return (s.match(/[A-Za-z][A-Za-z']*/g) ?? []).map((t) => t.toLowerCase().replace(/'s$/, '').replace(/'/g, ''));
 }
 
+/** The firm's own affiliate labels are firm identity, not counterparty data, and code keys on them
+ *  (src/analytics/debt-basis.ts AFFILIATE_LENDER_NAMES): an aliased lender / loan-party name keeps them. */
+function firmSuffix(real: string): string {
+  const parts: string[] = [];
+  if (/\(Oxford Capital\)/i.test(real)) parts.push(' (Oxford Capital)');
+  else if (/(^|[^a-z])Oxford Capital([^a-z]|$)/i.test(real)) parts.push(' / Oxford Capital');
+  if (/Oxford 50% share/i.test(real)) parts.push(' — Oxford 50% share');
+  return parts.join('');
+}
+
 class Aliases {
   private counters = new Map<Category, number>();
   private byReal = new Map<string, string>(); // `${cat}|${real}` -> fake
+  /** Real string -> [category, fake], for --dump-terms (local scrub lists). */
+  readonly registry = new Map<string, [string, string]>();
   /** lowercased variant -> replacement (exact, slug and normalized forms). */
   private phrases = new Map<string, string>();
   private tokens = new Map<string, string>();
@@ -218,16 +230,18 @@ class Aliases {
       } else {
         const n = (this.counters.get(cat) ?? 0) + 1;
         this.counters.set(cat, n);
-        fake = FORMAT[cat](n);
+        fake = (/^Oxford \/ /i.test(r) && !/Oxford Capital/i.test(r) ? 'Oxford / ' : '') + FORMAT[cat](n) + firmSuffix(r);
       }
       this.byReal.set(key, fake);
+      if (!this.registry.has(r)) this.registry.set(r, [cat, fake]);
       // A name that is nothing but an owned property's words (a closing or refinance recorded as a
       // deal, an LLC named for its building) aliases its own field but is not hunted elsewhere:
       // the property identity it shares is kept everywhere on purpose.
-      if (!this.namesOnlyProperty(r)) {
-        this.addPhrase(r, fake);
-        if (TOKEN_SOURCES.has(cat)) for (const t of wordTokens(r)) this.addToken(t);
-      }
+      // Lender, affiliate, loan-party and person names are always hunted as whole phrases (their
+      // words may also name a property, so their single tokens are not).
+      const propertyWords = this.namesOnlyProperty(r);
+      if (!propertyWords || !['deal', 'dealShort'].includes(cat)) this.addPhrase(r, fake);
+      if (!propertyWords && TOKEN_SOURCES.has(cat)) for (const t of wordTokens(r)) this.addToken(t);
     }
     return fake;
   }
@@ -240,6 +254,7 @@ class Aliases {
   /** Register an explicit real -> fake mapping (ids recomputed by the caller). */
   map(real: string, fake: string): void {
     if (real === fake) return;
+    if (!this.registry.has(real)) this.registry.set(real, ['id', fake]);
     this.addPhrase(real, fake, false);
   }
 
@@ -345,6 +360,7 @@ class Ctx {
       f = `contact-${pad(this.emails.size + 1, 2)}@example.com`;
       this.emails.set(k, f);
       this.a.realTerms.add(e);
+      if (!this.a.registry.has(e)) this.a.registry.set(e, ['email', f]);
     }
     return f;
   }
@@ -485,6 +501,17 @@ function leaseId(ctx: Ctx, ids: Ids, l: Obj): string {
   } else {
     fake = ctx.t(real) ?? real;
   }
+  ids.lease.set(real, fake);
+  ctx.a.map(real, fake);
+  return fake;
+}
+
+/** A lease id referenced without its lease record (an orphan key in arrears, AR or the mapping
+ *  cache). Its tenant slug cannot be located without the record, so the whole id is replaced. */
+function refLeaseId(ctx: Ctx, ids: Ids, real: string): string {
+  const existing = ids.lease.get(real);
+  if (existing) return existing;
+  const fake = `orphan-lease-${pad(ids.lease.size + 1, 3)}`;
   ids.lease.set(real, fake);
   ctx.a.map(real, fake);
   return fake;
@@ -818,21 +845,25 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   out['counterparties'] = arr('counterparties').map((c) => transformCounterparty(ctx, ids, c));
   const remapKeys = (o: Json | undefined, m: Map<string, string>, valueFn: (v: Json) => Json = (v) => v): Obj => {
     const r: Obj = {};
-    for (const [k, v] of Object.entries((o as Obj | undefined) ?? {})) r[m.get(k) ?? ctx.t(k)!] = valueFn(v);
+    for (const [k, v] of Object.entries((o as Obj | undefined) ?? {})) r[m.get(k) ?? refLeaseId(ctx, ids, k)] = valueFn(v);
     return r;
   };
-  out['renewalStages'] = remapKeys(s['renewalStages'], ids.lease);
-  out['tenantNotes'] = remapKeys(s['tenantNotes'], ids.lease, (v) => (typeof v === 'string' ? ctx.free('tenant note', v) : v));
-  out['tenantArrears'] = remapKeys(s['tenantArrears'], ids.lease, (v) => walk(ctx, v, 'arrears', SNAP_MONEY, SNAP_KEEP));
-  out['arBalances'] = arr('arBalances').map((b) => {
+  // AR balances carry their tenant/company, so an orphan lease id there keeps its prefix (leaseId);
+  // they are mapped before the bare-keyed maps below so those reuse the same fake id.
+  const arBalances = arr('arBalances').map((b) => {
     const q = walk(ctx, b, 'arBalance', SNAP_MONEY, SNAP_KEEP) as Obj;
-    q['leaseId'] = ids.lease.get(String(b['leaseId'])) ?? ctx.t(String(b['leaseId']));
+    q['leaseId'] = b['leaseId'] == null ? null
+      : leaseId(ctx, ids, { id: String(b['leaseId']), company: b['company'] ?? null, tenantName: b['tenantName'] ?? null });
     q['tenantName'] = ctx.a.alias('person', str(b['tenantName']));
     q['company'] = b['company'] ? ctx.a.alias('company', str(b['company'])) : (b['company'] ?? null);
     q['propertyKey'] = b['propertyKey'] ?? null;
     q['propertyId'] = b['propertyId'] ?? null;
     return q;
   });
+  out['renewalStages'] = remapKeys(s['renewalStages'], ids.lease);
+  out['tenantNotes'] = remapKeys(s['tenantNotes'], ids.lease, (v) => (typeof v === 'string' ? ctx.free('tenant note', v) : v));
+  out['tenantArrears'] = remapKeys(s['tenantArrears'], ids.lease, (v) => walk(ctx, v, 'arrears', SNAP_MONEY, SNAP_KEEP));
+  out['arBalances'] = arBalances;
   // Deal comps: keyed by the pipeline deal; comp addresses and source links are replaced.
   let comp = 0;
   const dealComps: Obj = {};
@@ -1591,7 +1622,7 @@ function transformCalibration(ctx: Ctx, rows: Json, obsIds: Map<string, string>)
 function transformArCache(ctx: Ctx, ids: Ids, c: Obj): Obj {
   const entries: Obj = {};
   for (const [k, v] of Object.entries((c['entries'] as Obj | undefined) ?? {})) {
-    entries[normKey(ctx.a.alias('arName', k)!)] = v === 'SKIP' ? 'SKIP' : (ids.lease.get(String(v)) ?? ctx.t(String(v)));
+    entries[normKey(ctx.a.alias('arName', k)!)] = v === 'SKIP' ? 'SKIP' : (refLeaseId(ctx, ids, String(v)));
   }
   return { ...c, entries };
 }
@@ -1600,7 +1631,7 @@ function transformReviewQueue(ctx: Ctx, ids: Ids, rows: Json): Json {
   if (!Array.isArray(rows)) return rows;
   return (rows as Obj[]).map((r) => {
     const q = walk(ctx, r, 'review', SNAP_MONEY, SNAP_KEEP, set('reason')) as Obj;
-    if (typeof r['proposedLeaseId'] === 'string') q['proposedLeaseId'] = ids.lease.get(r['proposedLeaseId']) ?? ctx.t(r['proposedLeaseId']);
+    if (typeof r['proposedLeaseId'] === 'string') q['proposedLeaseId'] = refLeaseId(ctx, ids, r['proposedLeaseId']);
     return q;
   });
 }
@@ -1681,6 +1712,25 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
     if (!f.startsWith('data/cost-seg/')) protectProps(d);
     registerVendors(ctx, d);
   }
+  // Tenant names that appear only in report narrative (rent-roll attributes of the PCA extractions,
+  // cost-seg tenant lists): registered so they are hunted in kept text and land on the scrub list.
+  const registerTenants = (v: Json): void => {
+    if (Array.isArray(v)) v.forEach(registerTenants);
+    else if (v && typeof v === 'object') {
+      const o = v as Obj;
+      const attr = typeof o['attribute'] === 'string' ? o['attribute'] : '';
+      if (/^(tenant|tenants|tenant_space|tenant_roster_per_rent_roll)$/.test(attr)) {
+        const vals = Array.isArray(o['value']) ? (o['value'] as Json[]) : [o['value']];
+        for (const x of vals) {
+          if (typeof x !== 'string') continue;
+          const name = x.replace(/\s*\(.*$/, '').replace(/^[A-Z]?\d[\w-]*\s+/, '').replace(/[.,;]+$/, '').trim();
+          if (name.length >= 4 && /[A-Za-z]{3}/.test(name) && !/^(vacant|available|landlord|owner|office|storage|common|n\/a|none|unknown)\b/i.test(name)) ctx.a.alias('company', name);
+        }
+      }
+      Object.values(o).forEach(registerTenants);
+    }
+  };
+  for (const f of [...specFiles, 'data/cost-seg/cost-seg.json'].filter(have)) registerTenants(readJson(root, f));
   const dataset = have('data/property-financials/dataset.json') ? (readJson(root, 'data/property-financials/dataset.json') as Obj) : null;
   if (dataset) {
     for (const k of Object.keys((dataset['properties'] as Obj | undefined) ?? {})) ctx.a.protect(k);
@@ -1763,6 +1813,26 @@ async function build(root: string, write: boolean): Promise<{ ctx: Ctx; outputs:
     const p2 = { ...(walk(ctx, { ...prem, policies: [] }, 'premiumHistory', set('premiumAnnual', 'coverageTiv'), set()) as Obj), policies };
     outputs.push([premRel, () => json(p2)]);
   }
+  // Local operator tables moved out of tracked code (config/local/, gitignored).
+  const arSeedRel = 'config/local/ar-seed-mappings.json';
+  if (have(arSeedRel)) {
+    const t = readJson(root, arSeedRel) as Obj;
+    const confirmed = ((t['confirmed'] as Obj[] | undefined) ?? []).map((c) => ({
+      name: ctx.a.alias('arName', str(c['name'])),
+      leaseId: refLeaseId(ctx, ids, String(c['leaseId'])),
+      why: ctx.free('ar seed reason', c['why']),
+    }));
+    outputs.push([arSeedRel, () => json({ confirmed } as unknown as Json)]);
+  }
+  const docGoldenRel = 'config/local/doc-search-golden.json';
+  if (have(docGoldenRel)) {
+    const g = (readJson(root, docGoldenRel) as Obj[]).map((q, i) => ({
+      query: `Synthetic document question ${pad(i + 1, 2)}`,
+      expect: `Synthetic document ${pad(i + 1, 2)}`,
+      ...(q['note'] ? { note: ctx.free('doc golden note', q['note']) } : {}),
+    }));
+    outputs.push([docGoldenRel, () => json(g as unknown as Json)]);
+  }
   if (arCache) {
     const c = transformArCache(ctx, ids, arCache);
     outputs.push(['data/ar-mapping-cache.json', () => json(c)]);
@@ -1830,6 +1900,16 @@ async function main(): Promise<void> {
   // outside the checkout) instead of from the checkout itself.
   const srcRoot = srcAt >= 0 && argv[srcAt + 1] ? resolve(argv[srcAt + 1]!) : ROOT;
   const { ctx, outputs } = await build(srcRoot, !checkOnly);
+  // --dump-terms <file>: write the registered real names (term, category, synthetic replacement) as
+  // JSON to a LOCAL file of the operator's choosing (never inside the checkout). For building scrub /
+  // history replace-text lists; the file holds real names, so keep it out of every repo.
+  const dumpAt = argv.indexOf('--dump-terms');
+  if (dumpAt >= 0 && argv[dumpAt + 1]) {
+    const target = resolve(argv[dumpAt + 1]!);
+    if (!relative(ROOT, target).startsWith('..')) throw new Error('--dump-terms must point outside the checkout');
+    writeFileSync(target, JSON.stringify([...ctx.a.registry].map(([term, [category, fake]]) => ({ term, category, fake })), null, 1));
+    console.log(`[synthetic] wrote ${ctx.a.registry.size} registered terms to ${target}`);
+  }
   const terms = leakTerms(ctx, !phrasesOnly);
   const fixtureFiles = checkOnly ? listFiles(OUT_ROOT).map((p) => relative(ROOT, p).replace(/\\/g, '/')) : outputs;
   // --tracked: scan every tracked text file of the checkout instead (real-data manifest paths are

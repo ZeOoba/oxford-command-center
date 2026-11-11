@@ -234,8 +234,8 @@ function Copy-RealDataIntoBuildRoot {
   }
 
   foreach ($rel in $rels) {
-    # The value locks (golden.local.json) are test inputs, never bake inputs.
-    if ($rel -like '*golden.local.json') { continue }
+    # Optional manifest files (value locks, local operator tables) are never bake inputs.
+    if (@($manifest.optional) -contains $rel) { continue }
     $src = Join-Path $RepoRoot ($rel -replace '/', '\')
     if (-not (Test-Path -LiteralPath $src)) { throw "Real-data file missing from the canonical checkout: $rel -- refusing to bake (restore it; see docs/ops/2026-11-11-real-data-untrack-pull-runbook.md)." }
     if ($seeded -contains $rel) { throw "Canonical $rel is listed in data\.synthetic-seeded.json (synthetic stand-in) -- refusing to bake." }

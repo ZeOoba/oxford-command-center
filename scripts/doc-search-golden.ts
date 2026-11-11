@@ -22,17 +22,19 @@ import { docIndexPath, realEmbedder, searchDocuments, shapeHits } from '../serve
  *
  *   npx tsx scripts/doc-search-golden.ts [--env <path-to-.env>] [--index <doc-index.sqlite>] [--top 8]
  *
- * For each question in scripts/doc-search-golden.json it reports where the expected document first appears
+ * For each question in config/local/doc-search-golden.json (local-only: the queries name real tenants and
+ * documents; real firm data is never tracked, ruling 2026-11-10 — the committed copy under
+ * fixtures/synthetic/ is a placeholder) it reports where the expected document first appears
  * (a case-insensitive substring of the path) under (a) the OLD behavior — plain vector top-5 — and (b) the
  * current `searchDocuments` pipeline (wide pool + entity-scoped pool + fusion). Exit 1 if the current
  * pipeline misses any question within the top N. Caveat: all but the first expectation are derived from file
- * names (so they exercise the path boost); only the Eurosort case is a pure content check.
+ * names (so they exercise the path boost); only the first case is a pure content check.
  */
 interface Golden { query: string; expect: string; note?: string }
 
 async function main(): Promise<void> {
   const top = Number(arg('--top')) || 8;
-  const golden = JSON.parse(readFileSync(new URL('./doc-search-golden.json', import.meta.url), 'utf8')) as Golden[];
+  const golden = JSON.parse(readFileSync(new URL('../config/local/doc-search-golden.json', import.meta.url), 'utf8')) as Golden[];
   const client = DocIndexClient.start(docIndexPath(), inProcessDocIndexTransport());
   await client.ready;
   const rankOf = (docs: string[], expect: string): number => {

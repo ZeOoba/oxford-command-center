@@ -1,45 +1,39 @@
 /**
  * scripts/seed-ar-mappings.ts
  *
- * One-shot: seed the AR mapping cache with tenant→lease mappings Gabriel
- * confirmed by hand on 2026-08-16, after the P4 Phase 0 Task 1 dry run put them
- * in the review queue.
+ * One-shot: seed the AR mapping cache with the tenant -> lease mappings confirmed by hand on
+ * 2026-08-16, after the P4 Phase 0 Task 1 dry run put them in the review queue.
  *
- * Uses the REAL cacheKey()/saveCache() so the keys match exactly what
- * partition-confidence.ts will look up. Hand-normalising the names here would
- * risk an entry that silently never matches.
+ * The confirmed table names real tenants and contacts, so it lives in the gitignored local file
+ * config/local/ar-seed-mappings.json (real firm data is never tracked, ruling 2026-11-10; the
+ * committed copy under fixtures/synthetic/ is a synthetic stand-in). Behavior on the real table is
+ * unchanged.
  *
- * Only mappings corroborated on PROPERTY are seeded — a name match alone is
- * never sufficient. Deliberately NOT seeded:
- *   - Buckeyes Best Transport: proposed lease is 2207 Northwood MD while the AR
- *     row is 3034 Westerville OH. False match on the token "Best".
- *   - IMH LLC ($32,291.95), Columbus Suburan Construction ($20,457.24): no lease
- *     exists — departed tenants. Reported as uncollected-balance findings, not
- *     mapped (Gabriel's ruling 2026-08-16).
- *   - The Perez Company, Don's Local Garage Door: held for a closer look.
+ * Uses the REAL cacheKey()/saveCache() so the keys match exactly what partition-confidence.ts will
+ * look up. Hand-normalising the names here would risk an entry that silently never matches.
+ *
+ * Only mappings corroborated on PROPERTY are seeded — a name match alone is never sufficient. The
+ * deliberately-not-seeded cases (a cross-property false match on a shared token, departed tenants
+ * reported as uncollected-balance findings, rows held for a closer look) are recorded with the
+ * ruling in the local table's notes, not here.
  *
  * Run:  npx tsx scripts/seed-ar-mappings.ts
  */
+import { readFileSync } from 'node:fs';
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
 
-/** [PM export name, Lease.id, why it is safe] */
-const CONFIRMED: ReadonlyArray<readonly [string, string, string]> = [
-  [
-    'Lamar Advantage GP Co.',
-    '3034-westerville-road-billboard-lamar-advertising-columbus',
-    'AR property 3034 Westerville Rd == lease property; billboard lease',
-  ],
-  [
-    'GRANITETOPS AND MORE LLC.',
-    'zettler-2000-2002-granite-tops-more',
-    'AR property 2000 Zettler Rd == lease unit 2000-2002',
-  ],
-  [
-    'Gyurcsik Construction Inc.',
-    '1100-rarig-d-i-dig-ditches',
-    'AR property 1100 Rarig Ave == lease property; lease contact of record IS Chris Gyurcsik',
-  ],
-];
+interface Confirmed {
+  /** PM export name, exactly as the export spells it. */
+  name: string;
+  leaseId: string;
+  /** Why it is safe (the property corroboration). */
+  why: string;
+}
+
+/** [PM export name, Lease.id, why it is safe], from the local table. */
+const CONFIRMED: ReadonlyArray<readonly [string, string, string]> = (
+  JSON.parse(readFileSync(new URL('../config/local/ar-seed-mappings.json', import.meta.url), 'utf8')) as { confirmed: Confirmed[] }
+).confirmed.map((c) => [c.name, c.leaseId, c.why] as const);
 
 async function main(): Promise<void> {
   const cache = loadCache();
