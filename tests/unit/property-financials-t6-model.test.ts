@@ -122,7 +122,12 @@ describe('Evaluation matrix = calc-lib outputs', () => {
 
   it('a cloned config with a moved boundary changes exactly that column', () => {
     const clone = structuredClone(THRESHOLDS) as Record<EvaluationTestId, EvaluationThreshold>;
-    clone.noiMargin = { ...clone.noiMargin, green: 0.7 };
+    // just above the smallest green margin in this dataset, so the column really moves on any dataset
+    const greens = evaluationMatrix(D)
+      .map((r) => r.cells.noiMargin.result.value)
+      .filter((v): v is number => v !== null && v >= THRESHOLDS.noiMargin.green);
+    expect(greens.length).toBeGreaterThan(0);
+    clone.noiMargin = { ...clone.noiMargin, green: Math.min(...greens) + 1e-9 };
     const a = evaluationMatrix(D);
     const b = evaluationMatrix(D, clone);
     let moved = 0;

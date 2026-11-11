@@ -520,8 +520,13 @@ describe('THRESHOLDS + ragStatus', () => {
   it('changing ONE threshold flips exactly the cells it governs and nothing else', () => {
     const inputs = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, evaluationInputs(monthlyProp(id), D.monthly[id])]));
     const before = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, ragMatrix(inputs[id]!, THRESHOLDS)])) as Record<string, Record<string, RagStatus>>;
-    // Raise the NOI-margin green floor from 65% to 70%.
-    const tweaked = { ...THRESHOLDS, noiMargin: { ...THRESHOLDS.noiMargin, green: 0.7 } };
+    // Raise the NOI-margin green floor from 65% to just above the smallest green margin in THIS
+    // dataset (real or synthetic, whose margins are its own draws), so the
+    // flip is observed on any dataset.
+    const greens = PF_MONTHLY_ENTITY_IDS.map((id) => inputs[id]!.noiMargin).filter((v): v is number => v !== null && v >= THRESHOLDS.noiMargin.green);
+    expect(greens.length).toBeGreaterThan(0);
+    const bump = Math.min(...greens) + 1e-9;
+    const tweaked = { ...THRESHOLDS, noiMargin: { ...THRESHOLDS.noiMargin, green: bump } };
     const after = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, ragMatrix(inputs[id]!, tweaked)])) as Record<string, Record<string, RagStatus>>;
     let flipped = 0;
     for (const id of PF_MONTHLY_ENTITY_IDS) {
@@ -533,7 +538,7 @@ describe('THRESHOLDS + ragStatus', () => {
           continue;
         }
         const v = inputs[id]![test];
-        const shouldFlip = v !== null && v >= 0.65 && v < 0.7;
+        const shouldFlip = v !== null && v >= 0.65 && v < bump;
         expect(a !== b, `${id}/noiMargin flip`).toBe(shouldFlip);
         if (shouldFlip) {
           expect(b).toBe('g');
@@ -542,9 +547,9 @@ describe('THRESHOLDS + ragStatus', () => {
         }
       }
     }
-    // The portfolio really has margins in [65%, 70%), so the flip is observed, not vacuous.
+    // At least the smallest green margin flips, so the check is observed, not vacuous.
     expect(flipped).toBeGreaterThan(0);
-    expect(flipped).toBe(PF_MONTHLY_ENTITY_IDS.filter((id) => { const v = inputs[id]!.noiMargin; return v !== null && v >= 0.65 && v < 0.7; }).length);
+    expect(flipped).toBe(PF_MONTHLY_ENTITY_IDS.filter((id) => { const v = inputs[id]!.noiMargin; return v !== null && v >= 0.65 && v < bump; }).length);
   });
 });
 

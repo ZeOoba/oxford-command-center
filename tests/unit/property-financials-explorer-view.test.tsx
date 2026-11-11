@@ -11,7 +11,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { PF_ENTITY_IDS } from '@contracts/property-financials';
-import { usd } from '@analytics/property-financials/format';
+import { pctLevel, usd } from '@analytics/property-financials/format';
 import { PropertyFinancialsModule } from '../../src/modules/property-financials/PropertyFinancialsModule';
 import { StackedBars } from '../../src/modules/property-financials/charts/PeriodBars';
 import { PF_KEYS } from '../../src/modules/property-financials/hooks';
@@ -81,9 +81,11 @@ describe('card grid', () => {
     for (const c of propertyCards(D)) if (c.noi !== null) expect(card(c.id).textContent).toContain(usd(c.noi));
   });
 
-  it('YoY chip on the card: Rarig ▲ 27.3%; Livingston (partial only) n/m with a reason', () => {
+  it('YoY chip on the card: Rarig FY25 vs FY24 as arrow + |percent|; Livingston (partial only) n/m with a reason', () => {
     renderExplorer();
-    expect(card('1100 Rarig').textContent).toContain('▲ 27.3%');
+    // The chip is computed from the dataset in place (a ratio of two drawn figures on the synthetic copy).
+    const v = D.history['1100 Rarig'].yr['2025']!.noi / D.history['1100 Rarig'].yr['2024']!.noi - 1;
+    expect(card('1100 Rarig').textContent).toContain(`${v > 0 ? '▲ ' : '▼ '}${pctLevel(Math.abs(v), 1)}`);
     const nm = within(card('3883 Livingston')).getByLabelText(/^not meaningful: partial period/);
     expect(nm.textContent).toBe('n/m');
   });

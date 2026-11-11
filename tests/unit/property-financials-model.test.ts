@@ -5,7 +5,7 @@
 // Property Financials module renders: Overview KPIs (tied to the calc lib + the value lock in
 // data/property-financials/golden.local.json), the computed lede (no hardcoded firm numbers), insight themes and ordering, entity
 // matching for leases / insights, and the Scorecard rows with n/m reasons.
-import { pfGolden } from './golden-helpers';
+import { isSynthetic, pfGolden } from './golden-helpers';
 import { describe, expect, it } from 'vitest';
 import { SAME_STORE, type PfDataset, type PfInsight, type PfMonthlyProperty } from '@contracts/property-financials';
 import { pctChange, recoveryRatio, runRateQ3Table } from '@analytics/property-financials/metrics';
@@ -244,8 +244,12 @@ describe('scorecardRows', () => {
     const G = pfGolden().mgmtFeeTtm26;
     for (const id of ['9620 State 350', '3883 Livingston', '9050 Red Branch']) expect(fee(id), id).toBeCloseTo(G[id]!, 10);
     expect(['9620 State 350', '3883 Livingston', '9050 Red Branch', '3540 E 5th'].some((id) => fee(id) !== rounded(id))).toBe(true);
-    expect(fee('9050 Red Branch')).toBeLessThan(rounded('9050 Red Branch'));
-    expect(fee('3540 E 5th')).toBeCloseTo(0.02564, 4);
+    // Literal real ratios (a fee share and its rounding direction): real file only. The synthetic copy
+    // draws fees and revenue independently, so it does not (and must not) reproduce them.
+    if (!isSynthetic('data/property-financials/dataset.json')) {
+      expect(fee('9050 Red Branch')).toBeLessThan(rounded('9050 Red Branch'));
+      expect(fee('3540 E 5th')).toBeCloseTo(0.02564, 4);
+    }
     // Annual entities: FY2025 raw ratios.
     for (const id of ['55 New Plant (EGFLLC)', '1851 South Club Solar'] as const) {
       const fy = D.properties[id].periods.FY2025;
