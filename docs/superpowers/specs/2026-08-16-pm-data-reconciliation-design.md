@@ -135,7 +135,7 @@ Each carries its citation so a later session cannot re-derive the wrong inferenc
 - **Static 90+ AR balance ≠ no collection action.** Collection status lives in Outlook threads no export can see. When `Lease Default / Cure Status` is null, report *"collection status not recorded — verify in Outlook"*. Null = unknown, never no-action. (`reference_delinquency_report_collection_status_blindspot.md` — the inferred version was wrong on 4 of 6 tenants.)
 - **Negative entity cash balance ≠ distress.** The Cash Data tab covers ORA-held accounts only; negatives are usually property-tax timing covered by PM-held funds. (`reference_cash_data_excludes_pm_held_accounts.md`)
 - **Retired-row filtering splits on the `Row Retired` field, never the ⛔ARCHIVED title prefix.** (`reference_tenant_db_completeness_gap.md`)
-- **Vacate date ≠ contract expiry.** Both can be correct. Flag the state; do not reconcile the dates to each other. (`REDACTED-710_2026-07-28.md`)
+- **Vacate date ≠ contract expiry.** Both can be correct. Flag the state; do not reconcile the dates to each other. (`tenant_default_2026-07-28.md`)
 - **A PARKED or ruled state behaving as instructed is never Critical.**
 - **Severity is a judgment per instance, never a count.** The report headlines top items with dollars, never `N exceptions found`. (`reference_cc_snapshot_refresh_dq_flag_alert_is_count_not_severity.md`)
 

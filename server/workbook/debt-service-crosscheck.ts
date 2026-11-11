@@ -95,8 +95,8 @@ export interface ScanResult {
   firstRowBeyondGap: number | null;
   /**
    * Whether the walk actually inspected every row up to the formula's declared range end.
-   * A schedule that simply stops early inside a generously over-declared range (Restoration
-   * Church Trust declares B11:B310 for a 26-row schedule) is NORMAL and must stay silent; the
+   * A schedule that simply stops early inside a generously over-declared range (Note Party 02
+   * declares B11:B310 for a 26-row schedule) is NORMAL and must stay silent; the
    * real hazard is running out of probe budget before reaching the declared end, which would
    * leave the truncation check unable to fire.
    */
@@ -378,8 +378,8 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   }
 
   // ── 4. principal reconciliation against the remaining-balance column ─────────────────────
-  // The one check that can see a balloon parked outside the principal column. Restoration Church
-  // Trust's $REDACTED-AMT balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
+  // The one check that can see a balloon parked outside the principal column. Note Party 02's
+  // balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
   // missed it and the workbook and a naive recomputation agreed while both understated Oxford's
   // returning capital by $REDACTED-AMT. Only the balance column exposes that shape.
   //

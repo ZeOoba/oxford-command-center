@@ -58,7 +58,7 @@ describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/di
   });
   it('keeps real leases and legitimate lease components', () => {
     expect(isLikelyNonLease('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf')).toBe(false);
-    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A REDACTED-699 Lease 01-2025.pdf')).toBe(false);
+    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A Example Sports Lease 01-2025.pdf')).toBe(false);
     expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
   });
   it('matches via separator normalization (Windows backslash paths)', () => {

@@ -59,8 +59,8 @@ function schedule(
 const ASOF = d(2026, 8, 31);
 
 /**
- * A schedule whose final balloon is recorded OUTSIDE the principal column (the Restoration Church
- * Trust shape: the balloon sits in Payment Amount, with the principal/interest cells empty), so a
+ * A schedule whose final balloon is recorded OUTSIDE the principal column (the Note Party 02
+ * shape: the balloon sits in Payment Amount, with the principal/interest cells empty), so a
  * principal-column sum misses it and only the remaining-balance column exposes the gap.
  */
 function balloonOutsidePrincipalColumn(): ScheduleRow[] {
@@ -167,7 +167,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
     // is CORRECT here, and over-capture is structurally impossible — no 13th payment exists.
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -182,7 +182,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
     // 100 Note Party St: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
     const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -259,7 +259,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
     rows.splice(6, 0, { ...dupe, row: dupe.row + 100 });
 
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: Math.max(...rows.map((r) => r.row)),
       share: 1,
@@ -327,7 +327,7 @@ describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling
   // column is now a real defect and must fire, exactly like a borrower row's would.
   it('FIRES on a lender-row balloon excluded from the principal column', () => {
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows: balloonOutsidePrincipalColumn(),
       declaredRangeEnd: 17,
       share: 0.5,
@@ -342,7 +342,7 @@ describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling
   it('still cross-checks a lender row TOTAL the same as any other row', () => {
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -1105,12 +1105,12 @@ describe('crossCheckSchedule — REFUTE: the origination path must be permutatio
 
 describe('crossCheckSchedule — D: duplicate-date detection tolerates a rounding cent', () => {
   it('still FIRES when the repeated amount is one cent off, not bit-identical', () => {
-    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 0); // interest-only, matches REDACTED-704's shape
+    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 0); // interest-only, matches Note Party 03's shape
     const dupeDate = rows[2]!.date;
     rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 1365.01, principal: null, balance: 0 });
 
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,

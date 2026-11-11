@@ -23,7 +23,7 @@ describe('parseRoute', () => {
       selected: { type: 'property', id: '9050-red-branch' },
       intelPropertyId: null,
     });
-    expect(parseRoute('/capital/REDACTED-702', MODS, 'debt').selected).toEqual({ type: 'loan', id: 'REDACTED-702' });
+    expect(parseRoute('/capital/borrower-np02', MODS, 'debt').selected).toEqual({ type: 'loan', id: 'borrower-np02' });
   });
 
   it('ignores an entity segment for modules without a primary entity', () => {

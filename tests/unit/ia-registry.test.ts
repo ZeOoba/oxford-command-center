@@ -114,7 +114,7 @@ describe('every existing entity deep link still works', () => {
 
   it('entity + intel deep links parse against the real registry', () => {
     expect(parseRoute('/portfolio/9050-red-branch', IDS).selected).toEqual({ type: 'property', id: '9050-red-branch' });
-    expect(parseRoute('/debt/REDACTED-702', IDS).selected).toEqual({ type: 'loan', id: 'REDACTED-702' });
+    expect(parseRoute('/debt/borrower-np02', IDS).selected).toEqual({ type: 'loan', id: 'borrower-np02' });
     expect(parseRoute('/leases/x', IDS).selected).toEqual({ type: 'lease', id: 'x' });
     expect(parseRoute('/intel/9050-red-branch', IDS)).toMatchObject({ moduleId: 'intel', intelPropertyId: '9050-red-branch', selected: null });
     // /health still resolves although it left the rail.
@@ -174,7 +174,7 @@ describe('rail composition', () => {
     expect(byId('capital')!.tabs!.map((t) => t.id)).toEqual(['allocation', 'pipeline', 'debt', 'cash', 'close']);
     for (const id of ['debt', 'cash', 'close']) expect(IDS).not.toContain(id);
     expect(resolveLegacyRoute('/debt', '?tab=scorecard')).toBe('/capital?tab=debt&view=scorecard');
-    expect(resolveLegacyRoute('/debt/REDACTED-702', '')).toBe('/capital/REDACTED-702?tab=debt');
+    expect(resolveLegacyRoute('/debt/borrower-np02', '')).toBe('/capital/borrower-np02?tab=debt');
     expect(resolveLegacyRoute('/cash/acct-1', '?scenario=Downside')).toBe('/capital/acct-1?scenario=Downside&tab=cash');
     expect(resolveLegacyRoute('/close', '')).toBe('/capital?tab=close');
   });

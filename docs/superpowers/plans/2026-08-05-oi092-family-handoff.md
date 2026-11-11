@@ -114,7 +114,7 @@ Warn-severity, not blocking.
 
 ## OPEN 4 — Morrison 386 (not a code task)
 
-REDACTED-703 took only the 388 half (1,800 SF); the remaining 1,800 SF at 386 has **no lease row at
+A tenant took only the 388 half (1,800 SF); the remaining 1,800 SF at 386 has **no lease row at
 all** in `portfolio.json` — it left the rent roll rather than appearing as vacant. Occupancy math is
 unaffected (Sepich Portfolio property SF is the denominator, so the space correctly reads as unleased);
 what is missing is unit-level visibility of which space is dark.

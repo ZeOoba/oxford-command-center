@@ -131,7 +131,7 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
   it('does NOT exclude business look-alikes (commercial deed of trust, family LLC, tenant trust)', () => {
     expect(isExcludedPath('2203-2207 Northwood/Deed of Trust 9.19.2024 Clean -- 2203 Northwood.docx')).toBe(false);
     expect(isExcludedPath('Corporate and Settlement and Legal Documents/Eric Goldberg Family, LLC Corp Documents/Deed of Trust -- 55 New Plant.pdf')).toBe(false);
-    expect(isExcludedPath('Loans External/Loan 5600/Certificates of Insurance -- REDACTED-700 02-2025.pdf')).toBe(false);
+    expect(isExcludedPath('Loans External/Loan 5600/Certificates of Insurance -- Note Party Trust Church 02-2025.pdf')).toBe(false);
   });
 });
 
@@ -241,7 +241,7 @@ describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/di
   });
   it('keeps real leases and legitimate lease components', () => {
     expect(isLikelyNonLease('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf')).toBe(false);
-    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A REDACTED-699 Lease 01-2025.pdf')).toBe(false);
+    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A Example Sports Lease 01-2025.pdf')).toBe(false);
     expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
   });
   it('matches via separator normalization (Windows backslash paths)', () => {

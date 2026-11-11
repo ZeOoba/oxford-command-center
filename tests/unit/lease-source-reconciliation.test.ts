@@ -2,7 +2,7 @@
 //
 // Pure comparison logic for cross-checking the Master Workbook's lease/tenant rows against the
 // Notion Tenant Database — the mechanism that was missing when portfolio.json's "Expired" rows
-// for Tenant 059 LLC / Person 017 / REDACTED-691 were already retired by the 2026-07-21
+// for Tenant 059 LLC / Person 017 / Jordan Example were already retired by the 2026-07-21
 // Tenant DB rent-roll reconciliation, with no way for the workbook pipeline to ever notice.
 import { describe, expect, it } from 'vitest';
 import { reconcileLeaseSources, type NotionTenantLease } from '../../server/reconcile/lease-source-reconciliation';
@@ -61,8 +61,8 @@ describe('reconcileLeaseSources', () => {
   });
 
   it('does not flag a match when both sources agree the lease is Expired', () => {
-    const workbook = [makeLease({ tenantName: 'REDACTED-691', status: 'Expired' })];
-    const notion = [makeNotionTenant({ tenantName: 'REDACTED-691', leaseStatus: 'Expired' })];
+    const workbook = [makeLease({ tenantName: 'Jordan Example', status: 'Expired' })];
+    const notion = [makeNotionTenant({ tenantName: 'Jordan Example', leaseStatus: 'Expired' })];
     const result = reconcileLeaseSources(workbook, notion);
     expect(result.divergences).toHaveLength(0);
   });

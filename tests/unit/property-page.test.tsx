@@ -48,7 +48,7 @@ const lease: Lease = {
   id: 'L1',
   propertyKey: '9050 Red Branch',
   propertyId: 'p1',
-  tenantName: 'REDACTED-688',
+  tenantName: 'Example Imaging',
   unit: 'O',
   company: null,
   sf: 5000,
@@ -125,7 +125,7 @@ describe('PropertyPage', () => {
 
   it('lists the lease in the rollover ladder with an unsourced market rent', async () => {
     await renderAt('/property/p1');
-    expect(screen.getByText('REDACTED-688')).toBeTruthy();
+    expect(screen.getByText('Example Imaging')).toBeTruthy();
     expect(screen.getByText('0–12 months')).toBeTruthy();
     expect(screen.getByText('not yet sourced')).toBeTruthy();
   });

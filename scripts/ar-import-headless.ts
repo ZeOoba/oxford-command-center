@@ -702,7 +702,7 @@ async function main(): Promise<void> {
     // Real defect fix (2026-09-06 round-3 self-review, MEDIUM): a cached SKIP is a durable,
     // already-resolved human decision ("never attribute this name"), not an ambiguous row — do
     // NOT fold `part.skipped` into hadUnresolvedRow, or a standing SKIP for a perpetually
-    // reappearing non-tenant name (real example: "REDACTED-696") would
+    // reappearing non-tenant name (real example: "(Past) Example Movers, Inc.") would
     // exempt its whole series from clearing forever. Only a genuine review row counts.
     sweepReportInfos.push({ sourceFile, asOfDate, hadUnresolvedRow: part.review.length > 0 });
     console.log(`  ✓ ${sourceFile} [${format}] — ${part.write.length} auto · ${part.review.length} review · ${part.skipped} skip`);

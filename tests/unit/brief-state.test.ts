@@ -49,37 +49,37 @@ describe('diffCriticalAlerts — confirm-clear before forgetting a condition', (
     diffCriticalAlerts(current, { ...emptyState, alertedCriticalIds: prev.nextAlerted, clearStreaks: prev.nextClearStreaks });
 
   it('a single-run dropout does NOT forget the condition (the 07-24 Fixture Countertops case)', () => {
-    const r = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    expect(r.nextAlerted).toContain('granite');
-    expect(r.nextClearStreaks['granite']).toBe(1);
+    const r = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    expect(r.nextAlerted).toContain('counters');
+    expect(r.nextClearStreaks['counters']).toBe(1);
   });
 
   it('the condition reappearing after a one-run dropout does NOT re-alert', () => {
-    const afterDropout = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    const onReturn = step(['anchor', 'granite'], afterDropout);
+    const afterDropout = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    const onReturn = step(['anchor', 'counters'], afterDropout);
     expect(onReturn.toAlert).toEqual([]); // this is the whole defect
   });
 
   it('absent for K consecutive runs → genuinely forgotten', () => {
-    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
+    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
     const run2 = step(['anchor'], run1);
-    expect(run2.nextAlerted).not.toContain('granite');
-    expect(run2.nextClearStreaks['granite']).toBeUndefined();
+    expect(run2.nextAlerted).not.toContain('counters');
+    expect(run2.nextClearStreaks['counters']).toBeUndefined();
   });
 
   it('a genuinely-resolved condition re-alerts if it later recurs', () => {
-    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
+    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
     const run2 = step(['anchor'], run1);
-    const recurrence = step(['anchor', 'granite'], run2);
-    expect(recurrence.toAlert).toEqual(['granite']);
+    const recurrence = step(['anchor', 'counters'], run2);
+    expect(recurrence.toAlert).toEqual(['counters']);
   });
 
   it('a reappearance RESETS the clear streak (no slow leak to forgotten)', () => {
-    const dropout = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    const back = step(['anchor', 'granite'], dropout);
-    expect(back.nextClearStreaks['granite']).toBeUndefined();
+    const dropout = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    const back = step(['anchor', 'counters'], dropout);
+    expect(back.nextClearStreaks['counters']).toBeUndefined();
     const dropAgain = step(['anchor'], back);
-    expect(dropAgain.nextAlerted).toContain('granite'); // streak restarted at 1, not 2
+    expect(dropAgain.nextAlerted).toContain('counters'); // streak restarted at 1, not 2
   });
 
   it('tracks several conditions independently', () => {

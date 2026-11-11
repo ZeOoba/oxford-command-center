@@ -205,7 +205,7 @@ describe('fuseCandidates', () => {
 
   it('a document naming ALL the entity words beats ones naming only some, even when those are semantically closer ("Example Grill")', () => {
     // semantic 0.62 / 0.54: without the all-words boost the closer tattoo-shop chunk (one word) would win.
-    const tattoo = row('Business\\FVC\\Lease Unit 14 REDACTED-690.pdf', 0, 'Term five years renewal option.', 1 / 0.62 - 1);
+    const tattoo = row('Business\\FVC\\Lease Unit 14 Westminster Ink.pdf', 0, 'Term five years renewal option.', 1 / 0.62 - 1);
     const grill = row('Business\\FVC\\Lease Unit 19 Westminster Example Grill Lease Extension 2015.pdf', 0, 'Extension of the term.', 1 / 0.54 - 1);
     const out = fuseCandidates({ terms: ['grill', 'westminster'], knn: [tattoo], scoped: [grill], limit: 8 });
     expect(out[0]!.row.chunk.docName).toBe(grill.chunk.docName);

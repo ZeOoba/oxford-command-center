@@ -68,15 +68,15 @@ describe('parseRentManagerRows — bucket computation', () => {
     expect(r.rows).toEqual([{ tenant: 'T', property: null, d30: 30, d60: 31 + 60, d90: 61 + 90, d90plus: 91 }]);
   });
 
-  it('sums multiple charges across a tenant block into the right buckets (mirrors the real Pedro\'s Flooring block)', () => {
+  it('sums multiple charges across a tenant block into the right buckets (mirrors a real multi-charge tenant block)', () => {
     const cells = [
-      tenantCharge('Pedro', { other: 33.33 }, 'Water', new Date(Date.UTC(2026, 5, 23))), // 22d -> d30
+      tenantCharge('Flooring', { other: 33.33 }, 'Water', new Date(Date.UTC(2026, 5, 23))), // 22d -> d30
       tenantCharge(null, { rent: 1111.5 }, 'Rent Charge', new Date(Date.UTC(2026, 6, 1))), // 14d -> d30
       tenantCharge(null, { other: 111.15 }, 'Late Charge', new Date(Date.UTC(2026, 6, 10))), // 5d -> d30
       subtotal(1111.5, 144.48),
     ];
     const r = parseRentManagerRows(cells, ASOF);
-    expect(r.rows).toEqual([{ tenant: 'Pedro', property: null, d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 }]);
+    expect(r.rows).toEqual([{ tenant: 'Flooring', property: null, d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 }]);
     expect(r.subtotalMismatches).toEqual([]);
   });
 
@@ -101,11 +101,11 @@ describe('parseRentManagerRows — bucket computation', () => {
 
   it('handles an explicit K=0 subtotal (all delinquency in Other) — matches the real Sepich file', () => {
     const cells = [
-      tenantCharge('Granite', { other: 123.45 }, 'Water', new Date(Date.UTC(2025, 11, 24))),
+      tenantCharge('Counters', { other: 123.45 }, 'Water', new Date(Date.UTC(2025, 11, 24))),
       subtotal(0, 123.45),
     ];
     const r = parseRentManagerRows(cells, ASOF);
-    expect(r.rows[0]).toMatchObject({ tenant: 'Granite', d90plus: 123.45 });
+    expect(r.rows[0]).toMatchObject({ tenant: 'Counters', d90plus: 123.45 });
   });
 
   it('skips property-header rows and attaches the current property to subsequent tenants', () => {
@@ -196,11 +196,11 @@ describe('parseRentManagerRows — bucket computation', () => {
   // the write behind a false ambiguousTies conflict. Verified on the real archived exports.
   it('sums to the same cent-precise total regardless of charge-row order (float-drift regression)', () => {
     const chargesForward = [
-      tenantCharge('REDACTED-689', { other: 234.56 }, 'Late Fee', new Date(ASOF.getTime() - 5 * 86400000)),
+      tenantCharge('Example Dance', { other: 234.56 }, 'Late Fee', new Date(ASOF.getTime() - 5 * 86400000)),
       tenantCharge(null, { rent: 400 }, 'Rent Charge', new Date(ASOF.getTime() - 10 * 86400000)),
       tenantCharge(null, { other: 100.3 }, 'Water', new Date(ASOF.getTime() - 15 * 86400000)),
     ];
-    const chargesReversed = [chargesForward[2]!, chargesForward[1]!, { ...chargesForward[0]!, tenantName: 'REDACTED-689' }];
+    const chargesReversed = [chargesForward[2]!, chargesForward[1]!, { ...chargesForward[0]!, tenantName: 'Example Dance' }];
     // The order-dependence is real for these inputs (asserted so a future edit cannot silently lose it).
     expect(234.56 + 400 + 100.3).not.toBe(100.3 + 400 + 234.56);
     const forward = parseRentManagerRows([...chargesForward, subtotal(400, 334.86)], ASOF);
@@ -234,7 +234,7 @@ function buildRealShapeWorksheet(): ExcelJS.Worksheet {
   // rather than only the un-merged shape a hand-built fixture would otherwise default to.
   ws.getCell('A5').value = '1100 Rarig Ave';
   ws.mergeCells('A5:C5');
-  ws.getCell('C6').value = "REDACTED-698";
+  ws.getCell('C6').value = "EXAMPLE FLOORING LLC";
   ws.getCell('D6').value = '18387';
   ws.getCell('F6').value = '1100 Rarig Ave #B';
   ws.getCell('H6').value = 'Commercial unit';
@@ -278,7 +278,7 @@ describe('parseRentManagerWorksheet — real ExcelJS adapter (mirrors the live 1
     const r = parseRentManagerWorksheet(buildRealShapeWorksheet());
     expect(r.unsupportedReason).toBeUndefined();
     expect(r.rows).toEqual([
-      { tenant: "REDACTED-698", property: '1100 Rarig Ave', d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 },
+      { tenant: "EXAMPLE FLOORING LLC", property: '1100 Rarig Ave', d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 },
     ]);
     expect(r.subtotalMismatches).toEqual([]);
   });
@@ -288,7 +288,7 @@ describe('parseRentManagerWorksheet — real ExcelJS adapter (mirrors the live 1
     // Property:", and "Report Summary" label rows merge their text across columns A-C, so ExcelJS's
     // per-cell .value echoes the SAME string into the tenant-name column — indistinguishable from a
     // genuine tenant unless explicitly filtered. Before the fix, this fixture produced TWO rows:
-    // the real "REDACTED-698" tenant AND a phantom "1100 Rarig Ave" (property name) tenant
+    // the real "EXAMPLE FLOORING LLC" tenant AND a phantom "1100 Rarig Ave" (property name) tenant
     // with an all-zero bucket vector.
     const r = parseRentManagerWorksheet(buildRealShapeWorksheet());
     expect(r.rows).toHaveLength(1);

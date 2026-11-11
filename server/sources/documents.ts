@@ -61,7 +61,7 @@ const DEFAULT_EXCLUDE: RegExp[] = [
   /\bpersonal\b/i,
   // Personal / family estate & financial material that lives inside otherwise-business folders (the
   // folder allowlist can't separate it). Deliberately precise so business look-alikes STAY indexed:
-  // a commercial "Deed of Trust", "Real Estate" tax bills/forms, and the "REDACTED-700"
+  // a commercial "Deed of Trust", "Real Estate" tax bills/forms, and the "Note Party Trust Church"
   // tenant are NOT matched. (2026-06-06 corpus audit: these slipped in via Loans/Muirkirk/Corporate.)
   /revocable trust/i, //         GDG Revocable Trust
   /irrevocable trust/i, //       Eric Goldberg Family Irrevocable Trust
