@@ -62,7 +62,8 @@ describe('gapsForEntity — data_quality matcher over the 11 entities', () => {
   it('3540 E 5th: lease OCR partial; the FVC E 5th addresses never leak into it', () => {
     const g = gapsForEntity(D, '3540 E 5th');
     const lease = g.find((x) => x.source === 'lease');
-    expect(lease?.text).toMatch(/REDACTED-667/);
+    // names the lease's tenant (read from the dataset; never a hardcoded tenant name)
+    expect(lease?.text).toContain(D.leases.find((l) => l.property === '3540 E 5th')!.tenant);
     expect(lease?.text).toMatch(/OCR of scan, first pages only/);
     expect(g.some((x) => x.source === 'mapping')).toBe(false);
   });

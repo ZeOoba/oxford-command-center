@@ -86,7 +86,11 @@ describe('evaluationResults (value + n/m reason)', () => {
   });
 
   it('a partial period never produces a YoY, even when the prior base clears the floor (rule 1 before the $1,000 guard)', () => {
-    const liv = monthly('3883 Livingston');
+    const liv0 = monthly('3883 Livingston');
+    // Pin both prior bases above the $1,000 floor so it is the PARTIAL rule, not the floor, that refuses
+    // (the committed dataset is synthetic with dollars scaled, so its own bases are not relied on).
+    const ob = liv0.periods.YTD25.opex_by;
+    const liv = { ...liv0, periods: { ...liv0.periods, YTD25: { ...liv0.periods.YTD25, opex_by: { ...ob, Utilities: Math.max(2_000, ob.Utilities), 'Repairs & maintenance': Math.max(2_000, ob['Repairs & maintenance']) } } } };
     expect(liv.periods.YTD25.n_months).toBe(3);
     expect(liv.periods.YTD25.opex_by.Utilities).toBeGreaterThan(1000);
     expect(liv.periods.YTD25.opex_by['Repairs & maintenance']).toBeGreaterThan(1000);

@@ -59,25 +59,24 @@ function monthlyProp(id: (typeof PF_MONTHLY_ENTITY_IDS)[number]): PfMonthlyPrope
 // -------------------------------------------------------------------------------------------------
 
 describe('golden normalized NOI (USD, rounded)', () => {
-  const GOLDEN: Record<string, [fy24: number, fy25: number]> = {
-    '1100 Rarig': [129_656, REDACTED-AMT],
-    // v03.2 (Gabriel ruling 2026-10-06, mapping v3): Yardi "Prepaid Rental Income" is excluded from revenue
-    // like AppFolio unallocated prepays. Was [360_191, 365_562] when it counted as contra-revenue.
-    '1900 Broadway': [358_852, 366_902],
-    '29000 Info Lane': [466_052, 487_373],
-    '3540 E 5th': [271_807, 279_963],
-    // v03.2 prepaid-rent ruling: was [837_125, 905_390].
-    '9050 Red Branch': [838_196, 912_337],
-    FVC: [793_335, 837_090],
-    '55 New Plant (EGFLLC)': [404_495, 422_488],
-    '1851 South Club Solar': [630_825, 507_472],
-  };
+  // The hardcoded per-entity NOI table was removed 2026-11-10: real firm data is never tracked, and the
+  // committed dataset is a synthetic stand-in (dollars scaled). The golden checks are now the
+  // dataset's own independent blocks agreeing with each other: the FY period figure, the full-history
+  // year, and (monthly entities) the sum of the twelve months.
+  const GOLDEN_IDS = ['1100 Rarig', '1900 Broadway', '29000 Info Lane', '3540 E 5th', '9050 Red Branch', 'FVC', '55 New Plant (EGFLLC)', '1851 South Club Solar'] as const;
 
-  for (const [id, [fy24, fy25]] of Object.entries(GOLDEN)) {
-    it(`${id}: FY2024 ${fy24.toLocaleString()} / FY2025 ${fy25.toLocaleString()}`, () => {
-      const p = D.properties[id as (typeof PF_ENTITY_IDS)[number]];
-      expect(Math.round(p.periods.FY2024.noi)).toBe(fy24);
-      expect(Math.round(p.periods.FY2025.noi)).toBe(fy25);
+  for (const id of GOLDEN_IDS) {
+    it(`${id}: FY2024 / FY2025 NOI agree across the period, history and monthly blocks`, () => {
+      const p = D.properties[id];
+      for (const [per, y] of [['FY2024', '2024'], ['FY2025', '2025']] as const) {
+        const noi = p.periods[per].noi;
+        expect(Math.round(D.history[id].yr[y]!.noi), `${id}/${per} history`).toBe(Math.round(noi));
+        if (p.kind === 'monthly') {
+          const months = Object.entries(D.monthly[id as keyof typeof D.monthly] ?? {}).filter(([m]) => m.startsWith(`${y}-`));
+          expect(months, `${id}/${per} months`).toHaveLength(12);
+          expect(months.reduce((a, [, f]) => a + f.noi, 0), `${id}/${per} monthly sum`).toBeCloseTo(noi, 1);
+        }
+      }
     });
   }
 
@@ -229,7 +228,7 @@ describe('per-SF', () => {
     const ytd = perSf(r.periods.YTD26.base_rent, r.sf);
     expect(ytd.value).toBeCloseTo(r.periods.YTD26.base_rent / 21_000, 10);
     const fy = perSf(r.periods.FY2025.base_rent, r.sf);
-    expect(fy.value).toBeCloseTo(REDACTED-AMT / 21_000, 10);
+    expect(fy.value).toBeCloseTo(r.periods.FY2025.base_rent / 21_000, 10);
     // 9-month figure is ~3/4 of the annual, not scaled up to it.
     expect((ytd.value ?? 0) < (fy.value ?? 0)).toBe(true);
   });
@@ -404,7 +403,9 @@ describe('rent-step events', () => {
       });
       total += got.length;
     }
-    expect(total).toBe(62);
+    // every monthly entity's persisted steps are reproduced (the count is the dataset's own)
+    expect(total).toBe(PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + D.history[id].ev.length, 0));
+    expect(total).toBeGreaterThan(0);
   });
 
   it('ignores a step below $500 or below 2% and enforces the 4-month gap', () => {
@@ -480,22 +481,22 @@ describe('THRESHOLDS + ragStatus', () => {
     expect(v.recoveryRatio).toBeCloseTo((t.recoveries + t.utility_reimb) / t.pool, 10);
     expect(v.mgmtFeePct).toBeCloseTo(t.opex_by['Management fees'] / t.revenue, 10);
     expect(v.contraRevenue).toBeCloseTo(Math.abs(t.vacancy_waivers) / t.base_rent, 10);
-    expect(v.rentRunRateGrowth).toBeCloseTo(REDACTED-AMT / REDACTED-AMT - 1, 6);
+    expect(v.rentRunRateGrowth).toBeCloseTo(r.base_rent_runrate_q3.q3_2026! / r.base_rent_runrate_q3.q3_2025! - 1, 6);
     // Without the cube the artifact's displayed (2-dp) run-rate growth is used.
     expect(evaluationInputs(r).rentRunRateGrowth).toBe(r.base_rent_runrate_q3.yoy_2026);
     expect(v.utilityGrowth).toBeCloseTo(r.periods.YTD26.opex_by.Utilities / r.periods.YTD25.opex_by.Utilities - 1, 10);
     expect(v.repairsGrowth).toBeCloseTo(r.periods.YTD26.opex_by['Repairs & maintenance'] / r.periods.YTD25.opex_by['Repairs & maintenance'] - 1, 10);
     // Livingston: no Q3-2025 -> run-rate n/m. Its Jan-Sep 2025 window holds only 3 of 9 months, so the
-    // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which both prior
-    // bases clear (utilities $REDACTED-AMT, repairs $REDACTED-AMT). A 3-month vs 9-month comparison would
-    // have read +489.6% / -66.8%; the partial rule refuses before any arithmetic.
+    // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which the repairs
+    // prior base clears. A 3-month vs 9-month comparison would have read +489.6% / -66.8%; the partial
+    // rule refuses before any arithmetic.
     const liv = monthlyProp('3883 Livingston');
     const l = evaluationInputs(liv, D.monthly['3883 Livingston']);
     expect(l.rentRunRateGrowth).toBeNull();
     const ly = liv.periods.YTD25.opex_by;
     expect(liv.periods.YTD25.n_months).toBe(3);
-    expect(ly.Utilities).toBeCloseTo(REDACTED-AMT, 2);
-    expect(ly['Repairs & maintenance']).toBeCloseTo(REDACTED-AMT, 2);
+    expect(ly.Utilities).toBeGreaterThan(0);
+    expect(ly['Repairs & maintenance']).toBeGreaterThan(THRESHOLDS.repairsGrowth.minPriorBase ?? 0);
     expect(l.utilityGrowth).toBeNull();
     expect(l.repairsGrowth).toBeNull();
     const lr = evaluationResults(liv, D.monthly['3883 Livingston']);

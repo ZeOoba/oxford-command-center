@@ -34,6 +34,12 @@ import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
 
+// The committed dataset is SYNTHETIC in CI (real firm data is never tracked, ruling 2026-11-10) and
+// real on a machine that has it, so dollar expectations are read from the dataset, never hardcoded.
+const fy = (id: PfEntityId, y: string) => D.history[id].yr[y]!;
+const ytd = (id: PfEntityId, y: string) => D.history[id].ytd[y]!;
+const schedule = (l: (typeof D.leases)[number]) => (l as unknown as { rent_schedule_monthly: Array<[string, string | null, number]> }).rent_schedule_monthly;
+
 /** Every string anywhere inside a value (deep), for the no-NaN / no-undefined sweep. */
 function strings(x: unknown, out: string[] = [], seen = new Set<unknown>()): string[] {
   if (typeof x === 'string') out.push(x);
@@ -129,33 +135,24 @@ describe('property cards', () => {
   });
 
   it('golden latest FULL-year NOI on each card (rounded dollars)', () => {
-    const golden: Record<PfEntityId, [string, number]> = {
-      '1100 Rarig': ['2025', REDACTED-AMT],
-      // v03.2 (prepaid-rent ruling 2026-10-06): Yardi Prepaid Rental Income excluded from revenue; was 365_562.
-      '1900 Broadway': ['2025', 366_902],
-      '29000 Info Lane': ['2025', 487_373],
-      '3034 Westerville': ['2025', REDACTED-AMT],
-      '3540 E 5th': ['2025', 279_963],
-      '3883 Livingston': ['2026 (9 mo)', REDACTED-AMT],
-      // v03.2 prepaid-rent ruling: was 905_390.
-      '9050 Red Branch': ['2025', 912_337],
-      // REDACTED-AMT since the v03.1 correction (2026-10-05): the 2025-09 recap's $REDACTED-AMT of expense lines,
-      // previously read as revenue, are opex now (was REDACTED-AMT = REDACTED-AMT + 2 x REDACTED-AMT).
-      '9620 State 350': ['2025', REDACTED-AMT],
-      FVC: ['2025', 837_090],
-      '55 New Plant (EGFLLC)': ['2025', 422_488],
-      '1851 South Club Solar': ['2025', 507_472],
+    // Latest FULL year per entity (Livingston has only a partial 2026); the NOI is that year's.
+    const latest: Record<PfEntityId, string> = {
+      '1100 Rarig': '2025', '1900 Broadway': '2025', '29000 Info Lane': '2025', '3034 Westerville': '2025', '3540 E 5th': '2025',
+      '3883 Livingston': '2026 (9 mo)', '9050 Red Branch': '2025', '9620 State 350': '2025', FVC: '2025',
+      '55 New Plant (EGFLLC)': '2025', '1851 South Club Solar': '2025',
     };
     for (const c of cards) {
-      const [label, noi] = golden[c.id];
+      const label = latest[c.id];
       expect(c.periodLabel, c.id).toBe(label);
-      expect(Math.round(c.noi!), c.id).toBe(noi);
+      const noi = label === '2026 (9 mo)' ? ytd(c.id, '2026').noi : fy(c.id, label).noi;
+      expect(Math.round(c.noi!), c.id).toBe(Math.round(noi));
     }
   });
 
   it('YoY chip: Rarig FY25 vs FY24 = +27.3%; Livingston (partial only) is n/m with the reason', () => {
     const rarig = cards.find((c) => c.id === '1100 Rarig')!;
-    expect(rarig.change.value).toBeCloseTo(REDACTED-AMT / D.history['1100 Rarig'].yr['2024']!.noi - 1, 6);
+    expect(rarig.change.value).toBeCloseTo(fy('1100 Rarig', '2025').noi / fy('1100 Rarig', '2024').noi - 1, 6);
+    expect(pct(rarig.change.value)).toBe('+27.3%'); // a ratio: identical on the real and the synthetic dataset
     const liv = cards.find((c) => c.id === '3883 Livingston')!;
     expect(liv.change.value).toBeNull();
     expect(liv.partial).toBe(true);
@@ -195,7 +192,8 @@ describe('buildExplorer: every property', () => {
   });
 
   it('lede is computed: Rarig NOI rose 27.3% to $REDACTED-AMT in 2025', () => {
-    expect(models['1100 Rarig'].lede).toBe('1100 Rarig Ave: NOI rose 27.3% to $REDACTED-AMT in 2025 (revenue +11.5%, operating expense -10.5%).');
+    const noi = Math.round(fy('1100 Rarig', '2025').noi).toLocaleString('en-US');
+    expect(models['1100 Rarig'].lede).toBe(`1100 Rarig Ave: NOI rose 27.3% to $${noi} in 2025 (revenue +11.5%, operating expense -10.5%).`);
   });
 
   it('lede for a short history says so', () => {
@@ -204,7 +202,7 @@ describe('buildExplorer: every property', () => {
 
   it('RULE: NOI per SF uses CURRENT total SF and the full-year figure (never annualized)', () => {
     const k = models['1100 Rarig'].kpis.find((x) => x.id === 'noiPerSf')!;
-    expect(k.value).toBe(`$${(REDACTED-AMT / 21_000).toFixed(2)}`);
+    expect(k.value).toBe(`$${(fy('1100 Rarig', '2025').noi / 21_000).toFixed(2)}`);
     const y = models['1100 Rarig'].yoy;
     const s26 = y.columns.findIndex((c) => c.key === 'S26');
     const row = y.perSf.find((r) => r.label === 'NOI per SF')!;
@@ -272,7 +270,7 @@ describe('buildExplorer: every property', () => {
     const c = models['1100 Rarig'].categories;
     const total = c.totals.find((r) => r.label === 'Total operating expense')!;
     const i25 = c.columns.findIndex((x) => x.key === '2025');
-    expect(total.cells[i25]!.value).toBeCloseTo(REDACTED-AMT, 2);
+    expect(total.cells[i25]!.value).toBeCloseTo(fy('1100 Rarig', '2025').opex, 2);
     expect(c.revenue.map((r) => r.label)).toContain('Base rent');
   });
 });
@@ -302,10 +300,11 @@ describe('chart data (series slots, tooltips)', () => {
 
   it('F3: a net-credit category tooltip shows the signed value, the categoryTable change and no fake -100%', () => {
     const cases = [
-      { id: '9620 State 350' as const, col: 'S26', cat: 'Real estate & property tax' as const, value: -REDACTED-AMT },
-      { id: '3540 E 5th' as const, col: '2024', cat: 'Grounds / snow / lot' as const, value: -230 },
+      { id: '9620 State 350' as const, col: 'S26', cat: 'Real estate & property tax' as const, value: ytd('9620 State 350', '2026').cats['Real estate & property tax']! },
+      { id: '3540 E 5th' as const, col: '2024', cat: 'Grounds / snow / lot' as const, value: fy('3540 E 5th', '2024').cats['Grounds / snow / lot']! },
     ];
     for (const c of cases) {
+      expect(c.value, `${c.id} ${c.cat} must be a net credit for this case`).toBeLessThan(0);
       const gs = periodGroups(D, c.id);
       const s = opexStack(gs);
       const i = s.columns.findIndex((x) => x.key === c.col);
@@ -349,8 +348,10 @@ describe('chart data (series slots, tooltips)', () => {
     const k = s.series.findIndex((x) => x.id === 'Insurance');
     const cats = gs[i]!.row.cats;
     const gross = Object.values(cats).reduce((a, v) => a + Math.max(0, v ?? 0), 0);
-    expect(gross).toBeCloseTo(71_496.78, 2);
-    expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / gross)} of gross charges, before the ${usd(-REDACTED-AMT, 'f')} credit`);
+    const credit = cats['Real estate & property tax'] ?? 0;
+    expect(credit).toBeLessThan(0);
+    expect(gross).toBeCloseTo(gs[i]!.row.opex - credit, 2); // gross charges = signed opex + the credit
+    expect(s.tips[i]![k]!.at(-1)).toBe(`${pctLevel((cats.Insurance ?? 0) / gross)} of gross charges, before the ${usd(credit, 'f')} credit`);
     // a column without a credit keeps the plain wording (gross = net there)
     const j = s.columns.findIndex((x) => x.key === 'S25');
     expect(s.tips[j]![k]!.at(-1)).toMatch(/^\d+% of operating expense$/);
@@ -375,15 +376,18 @@ describe('chart data (series slots, tooltips)', () => {
 
   it('M1: net-credit columns are marked explicitly in the total text', () => {
     const cases = [
-      { id: '9620 State 350' as const, col: 'S26', text: 'Total $64.9K (incl. -$6.6K credit)', table: '$REDACTED-AMT (incl. -$REDACTED-AMT credit)', note: 'incl. -$6.6K credit' },
-      { id: '3540 E 5th' as const, col: '2024', text: 'Total $42K (incl. -$230 credit)', table: '$42,033 (incl. -$230 credit)', note: 'incl. -$230 credit' },
+      { id: '9620 State 350' as const, col: 'S26', row: ytd('9620 State 350', '2026') },
+      { id: '3540 E 5th' as const, col: '2024', row: fy('3540 E 5th', '2024') },
     ];
     for (const c of cases) {
       const s = opexStack(periodGroups(D, c.id));
       const i = s.columns.findIndex((x) => x.key === c.col);
-      expect(s.stack!.text[i]).toBe(c.text);
-      expect(s.stack!.tableText[i]).toBe(c.table);
-      expect(s.stack!.creditNote[i]).toBe(c.note);
+      const credit = Object.values(c.row.cats).reduce((a, v) => a + Math.min(0, v ?? 0), 0);
+      expect(credit).toBeLessThan(0);
+      // compact credit wording (small credits are not abbreviated), full figures in the table
+      expect(s.stack!.creditNote[i]).toMatch(/^incl\. -\$[\d.,]+K? credit$/);
+      expect(s.stack!.text[i]).toBe(`Total ${usd(c.row.opex, 'k')} (${s.stack!.creditNote[i]})`);
+      expect(s.stack!.tableText[i]).toBe(`${usd(c.row.opex, 'f')} (incl. ${usd(credit, 'f')} credit)`);
     }
     // a column without a credit has no note and a plain total
     const s = opexStack(periodGroups(D, '1100 Rarig'));
@@ -404,13 +408,13 @@ describe('rent schedule normalization (lease panel)', () => {
   it('ISO rows pass through; year rows become calendar years', () => {
     const np = D.leases.find((l) => l.property.startsWith('55 New Plant'))!;
     const s = normalizeRentSchedule(np);
-    expect(s[0]).toEqual({ from: '2023-01-01', to: '2023-12-31', value: REDACTED-AMT });
+    expect(s[0]).toEqual({ from: '2023-01-01', to: '2023-12-31', value: schedule(np)[0]![2] });
   });
 
   it('relative rows (Y1 / LY1) anchor on the rent start parsed from the lease term', () => {
     const liv = D.leases.find((l) => l.property.includes('Livingston'))!;
     const s = normalizeRentSchedule(liv);
-    expect(s[0]).toEqual({ from: '2026-09-01', to: '2027-08-31', value: REDACTED-AMT });
+    expect(s[0]).toEqual({ from: '2026-09-01', to: '2027-08-31', value: schedule(liv)[0]![2] });
     const e5 = D.leases.find((l) => l.property === '3540 E 5th')!;
     expect(normalizeRentSchedule(e5)[0]!.from).toBe('2023-08-01');
     expect(normalizeRentSchedule(e5)[1]!.from).toBe('2024-08-01');
@@ -418,10 +422,13 @@ describe('rent schedule normalization (lease panel)', () => {
 
   it('current and next step relative to the dataset date', () => {
     const m = buildExplorer(D, '3034 Westerville');
-    expect(m.lease!.current?.value).toBe(REDACTED-AMT);
+    const rows = schedule(D.leases.find((l) => l.property === '3034 Westerville')!);
+    const cur = rows.find((r) => r[0] === '2026-04-01')![2];
+    const nxt = rows.find((r) => r[0] === '2027-04-01')![2];
+    expect(m.lease!.current?.value).toBe(cur);
     expect(m.lease!.next?.from).toBe('2027-04-01');
-    expect(m.lease!.next?.change.value).toBeCloseTo(REDACTED-AMT / REDACTED-AMT - 1, 10);
-    expect(m.lease!.currentPerSf.value).toBeCloseTo((REDACTED-AMT * 12) / 18_360, 10);
+    expect(m.lease!.next?.change.value).toBeCloseTo(nxt / cur - 1, 10);
+    expect(m.lease!.currentPerSf.value).toBeCloseTo((cur * 12) / 18_360, 10);
   });
 });
 
@@ -641,7 +648,7 @@ describe('M2: occupancy and leased SF from one basis on the Explorer', () => {
 describe('L1: recovery "+10 points" sensitivity is ONE number per entity', () => {
   // Decision: where a recovery lever exists the Explorer READS the lever (same period, same value as
   // Rent & NOI levers); every other entity's figure is labelled with the Explorer's own period.
-  it('entities with a recovery lever quote the lever value and its period (9620: $REDACTED-AMT on TTM Sep-26, not $REDACTED-AMT)', () => {
+  it('entities with a recovery lever quote the lever value and its period (9620: the TTM Sep-26 lever, not its own-period figure)', () => {
     const levers = computeLevers(D);
     let seen = 0;
     for (const def of LEVERS) {
@@ -655,12 +662,13 @@ describe('L1: recovery "+10 points" sensitivity is ONE number per entity', () =>
     }
     expect(seen).toBe(3);
     const t9620 = explorerInsights(D, '9620 State 350').find((i) => i.heading === 'Recovery')!.text;
-    expect(t9620).toContain('$REDACTED-AMT');
-    expect(t9620).not.toContain('$REDACTED-AMT');
+    const lv9620 = levers.find((l) => LEVERS.some((d) => d.id === l.id && d.base.kind === 'recoveryPool' && d.base.entity === '9620 State 350'))!;
+    expect(t9620).toContain(usd(lv9620.value.value!, 'f'));
+    expect(t9620).toMatch(/the Rent & NOI levers figure/);
   });
 
   it('entities without a lever label the period of their own figure', () => {
     const text = explorerInsights(D, '29000 Info Lane').find((i) => i.heading === 'Recovery')!.text;
-    expect(text).toContain('Each 10 points recovered is worth $REDACTED-AMT a year on the 2025 pool.');
+    expect(text).toContain(`Each 10 points recovered is worth ${usd(D.properties['29000 Info Lane'].periods.FY2025.pool * 0.1, 'f')} a year on the 2025 pool.`);
   });
 });
