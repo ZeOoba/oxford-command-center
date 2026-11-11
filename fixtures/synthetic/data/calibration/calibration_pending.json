@@ -5,7 +5,7 @@
     "component": "roof_other",
     "unit": "SF",
     "qty": 2376,
-    "pca_unit_cost": 7.3536,
+    "pca_unit_cost": 10,
     "pca_source": {
       "consultant": "Vendor 16",
       "report_date": "2025-04-10",
@@ -14,7 +14,7 @@
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "DRAFT"
     },
-    "contractor_unit_cost": 7.710293,
+    "contractor_unit_cost": 10.13,
     "contractor_source": {
       "vendor": "Vendor 17",
       "doc_date": "2025-03-26",
