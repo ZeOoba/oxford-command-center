@@ -73,12 +73,11 @@ describe('card grid', () => {
     expect(cards).toHaveLength(11);
     const pressed = [...cards].filter((c) => c.getAttribute('aria-pressed') === 'true');
     expect(pressed.map((c) => c.getAttribute('data-entity'))).toEqual(['1900 Broadway']);
-    expect(card('1100 Rarig').textContent).toContain('$165,024');
+    // Figures come from the dataset (synthetic in CI, real where present: ruling 2026-11-10).
+    const fy25 = (id: (typeof PF_ENTITY_IDS)[number]) => usd(D.history[id].yr['2025']!.noi);
+    expect(card('1100 Rarig').textContent).toContain(fy25('1100 Rarig'));
     expect(card('1100 Rarig').textContent).toContain('NOI 2025');
-    expect(card('9050 Red Branch').textContent).toContain('$912,337'); // was $905,390 before the v03.2 prepaid-rent ruling
-    expect(card('FVC').textContent).toContain('$837,090');
-    expect(card('55 New Plant (EGFLLC)').textContent).toContain('$422,488');
-    expect(card('1851 South Club Solar').textContent).toContain('$507,472');
+    for (const id of ['9050 Red Branch', 'FVC', '55 New Plant (EGFLLC)', '1851 South Club Solar'] as const) expect(card(id).textContent).toContain(fy25(id));
     for (const c of propertyCards(D)) if (c.noi !== null) expect(card(c.id).textContent).toContain(usd(c.noi));
   });
 
@@ -146,8 +145,11 @@ describe('rules on the page', () => {
 
   it('lease panel: current rent, $/SF on the lease SF, next step, step chart with today marker', () => {
     renderExplorer(`?view=explorer&p=${encodeURIComponent('3034 Westerville')}`);
-    expect(screen.getByTestId('pf-lease-current').textContent).toBe(`Current rent ${usd(13_005 * 12, 'f')} a year, $${((13_005 * 12) / 18_360).toFixed(2)} per SF.`);
-    expect(screen.getByTestId('pf-lease-next').textContent).toMatch(/^Next step 2027-04-01 to \$13,464 per month/);
+    const rows = (D.leases.find((l) => l.property === '3034 Westerville') as unknown as { rent_schedule_monthly: Array<[string, string | null, number]> }).rent_schedule_monthly;
+    const cur = rows.find((r) => r[0] === '2026-04-01')![2];
+    const nxt = rows.find((r) => r[0] === '2027-04-01')![2];
+    expect(screen.getByTestId('pf-lease-current').textContent).toBe(`Current rent ${usd(cur * 12, 'f')} a year, $${((cur * 12) / 18_360).toFixed(2)} per SF.`);
+    expect(screen.getByTestId('pf-lease-next').textContent).toContain(`Next step 2027-04-01 to ${usd(nxt, 'f')} per month`);
     expect(within(screen.getByTestId('pf-step-chart')).getByText('today')).toBeTruthy();
   });
 
@@ -188,16 +190,20 @@ describe('rules on the page', () => {
 });
 
 describe('M1: stacked opex total is signed', () => {
-  it('9620 State 350 Jan-Sep 26: label and data-table Total show $64.9K net of the -$6.6K tax credit, not the $71.5K gross stack', () => {
+  it('9620 State 350 Jan-Sep 26: label and data-table Total show the opex NET of the tax credit, not the gross stack', () => {
     renderExplorer(`?view=explorer&p=${encodeURIComponent('9620 State 350')}`);
     const chart = screen.getByTestId('pf-stacked-bars');
     const row = [...chart.querySelectorAll('details tbody tr')].find((r) => r.firstElementChild!.textContent === 'Jan-Sep 26')!;
-    expect(row.lastElementChild!.textContent).toBe('$64,914 (incl. -$6,583 credit)');
+    // Figures come from the dataset (synthetic in CI, real where present: ruling 2026-11-10).
+    const y = D.history['9620 State 350'].ytd['2026']!;
+    const credit = y.cats['Real estate & property tax']!;
+    const gross = y.opex - credit;
+    expect(credit).toBeLessThan(0);
+    expect(row.lastElementChild!.textContent).toBe(`${usd(y.opex, 'f')} (incl. ${usd(credit, 'f')} credit)`);
     const labels = [...chart.querySelectorAll('svg text')].map((t) => t.textContent);
-    expect(labels).toContain('$65K');
-    expect(labels).toContain('incl. -$6.6K credit');
-    expect(labels).not.toContain('$71K');
-    expect(chart.textContent).not.toContain('71,497');
+    expect(labels).toContain(`$${Math.round(y.opex / 1000)}K`); // the bar label is whole thousands
+    expect(labels.some((l) => /^incl\. -\$[\d.,]+K? credit$/.test(l ?? ''))).toBe(true);
+    expect(chart.textContent).not.toContain(Math.round(gross).toLocaleString('en-US'));
   });
 
   it('a category present only as a credit keeps its legend entry, marked as a credit', () => {

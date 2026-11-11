@@ -10,7 +10,7 @@ const leases: LeaseLite[] = [
   { id: 'l-foxwell', tenantName: 'Louis W. Foxwell', company: null },
   { id: 'l-hobart', tenantName: 'Hobart Service', company: 'Hobart Service a division of ITW Food Equipment Group, LLC' },
   { id: 'l-zeta', tenantName: 'Zeta Logistics', company: null },
-  { id: 'l-imh', tenantName: 'Hanan Malul', company: 'I.M.H LLC' },
+  { id: 'l-qrt', tenantName: 'Dana Quill', company: 'Q.R.T LLC' },
 ];
 
 describe('normalizeTokens', () => {
@@ -25,16 +25,16 @@ describe('normalizeTokens', () => {
     expect(normalizeTokens('Curtis Elliott Designs, LTD')).toEqual(['curtis', 'elliott', 'designs']);
   });
 
-  // Real defect (found 2026-08-16 reconciling the IMH LLC AR balance against the real lease roster):
-  // a dotted initialism like 'I.M.H' tokenized to THREE single-letter tokens ['i','m','h'] instead of
-  // one ['imh'], because the generic punctuation strip turns every period into a space regardless of
-  // context. The AR export's own spelling ('IMH LLC', no dots) tokenized to ['imh'] -- zero overlap
+  // Real defect (found 2026-08-16 reconciling the a tenant's AR balance against the real lease roster):
+  // a dotted initialism like 'Q.R.T' tokenized to THREE single-letter tokens ['i','m','h'] instead of
+  // one ['qrt'], because the generic punctuation strip turns every period into a space regardless of
+  // context. The AR export's own spelling ('QRT LLC', no dots) tokenized to ['qrt'] -- zero overlap
   // between the two, so a real $32,291.95 balance with an EXACT lease match sitting in the company
-  // field ('I.M.H LLC') was reported as 'no match', reading as an orphan balance with no lease at all.
+  // field ('Q.R.T LLC') was reported as 'no match', reading as an orphan balance with no lease at all.
   it('collapses a dotted initialism (2+ single-letter dots) into one token', () => {
-    expect(normalizeTokens('I.M.H LLC')).toEqual(['imh']);
-    expect(normalizeTokens('I.M.H. LLC')).toEqual(['imh']); // trailing dot on the last initial too
-    expect(normalizeTokens('IMH LLC')).toEqual(['imh']); // the AR export's own undotted spelling
+    expect(normalizeTokens('Q.R.T LLC')).toEqual(['qrt']);
+    expect(normalizeTokens('Q.R.T. LLC')).toEqual(['qrt']); // trailing dot on the last initial too
+    expect(normalizeTokens('QRT LLC')).toEqual(['qrt']); // the AR export's own undotted spelling
   });
 
   it('does NOT collapse a single dotted initial — only 2+ in a row', () => {
@@ -102,18 +102,18 @@ describe('matchTenantToLease', () => {
   });
 
   it('matches a dotted-initialism company field against an undotted AR spelling — real case', () => {
-    // The company field ('I.M.H LLC') carries the dots; the PM export's own name ('IMH LLC') doesn't.
+    // The company field ('Q.R.T LLC') carries the dots; the PM export's own name ('QRT LLC') doesn't.
     // Real balance: $32,291.95, previously reported as an orphan with no lease at all.
-    const m = matchTenantToLease('IMH LLC', leases);
-    expect(m.leaseId).toBe('l-imh');
+    const m = matchTenantToLease('QRT LLC', leases);
+    expect(m.leaseId).toBe('l-qrt');
     expect(m.confidence).toBe('exact');
   });
 
   // Real defect (2026-09-06 adversarial review): overlap() counted a report-name token once PER
-  // OCCURRENCE instead of once, so a report name with a repeated token ("Syed" appears twice in
-  // "Ahmed Kareem Syed & Karishma Syed") produced an intersection count larger than either side's
+  // OCCURRENCE instead of once, so a report name with a repeated token ("Pell" appears twice in
+  // "Avery Jon Pell & Morgan Pell") produced an intersection count larger than either side's
   // token-set size, pushing the score above 1.0. That let a SHORTER, non-exact candidate ("Karishma
-  // Syed") outscore the true EXACT candidate (score exactly 1) and WIN OUTRIGHT (no ambiguity flag
+  // Pell") outscore the true EXACT candidate (score exactly 1) and WIN OUTRIGHT (no ambiguity flag
   // at all), silently attributing the report row's balance to the wrong lease.
   //
   // A same-day self-review of the FIRST fix attempt (which additionally made "exact" strictly
@@ -128,22 +128,22 @@ describe('matchTenantToLease', () => {
   // write (partitionArRows requires `!ambiguous` to auto-accept).
   it('bounds a repeated report-name token to score <=1 and flags the tie ambiguous (never silently picks a side)', () => {
     const dup: LeaseLite[] = [
-      { id: 'l-exact', tenantName: 'Ahmed Kareem Syed & Karishma Syed', company: null },
-      { id: 'l-wrong', tenantName: 'Karishma Syed', company: null },
+      { id: 'l-exact', tenantName: 'Avery Jon Pell & Morgan Pell', company: null },
+      { id: 'l-wrong', tenantName: 'Morgan Pell', company: null },
     ];
-    const m = matchTenantToLease('Ahmed Kareem Syed & Karishma Syed', dup);
+    const m = matchTenantToLease('Avery Jon Pell & Morgan Pell', dup);
     expect(m.score).toBeLessThanOrEqual(1);
     expect(m.ambiguous).toBe(true); // a human must confirm — never auto-written either way
   });
 
   it('the same tie is flagged ambiguous regardless of roster order (order affects the label only, never the safety outcome)', () => {
     const forward: LeaseLite[] = [
-      { id: 'l-exact', tenantName: 'Ahmed Kareem Syed & Karishma Syed', company: null },
-      { id: 'l-wrong', tenantName: 'Karishma Syed', company: null },
+      { id: 'l-exact', tenantName: 'Avery Jon Pell & Morgan Pell', company: null },
+      { id: 'l-wrong', tenantName: 'Morgan Pell', company: null },
     ];
     const reversed = [...forward].reverse();
     for (const roster of [forward, reversed]) {
-      const m = matchTenantToLease('Ahmed Kareem Syed & Karishma Syed', roster);
+      const m = matchTenantToLease('Avery Jon Pell & Morgan Pell', roster);
       expect(m.score).toBeLessThanOrEqual(1);
       expect(m.ambiguous).toBe(true);
     }
@@ -151,10 +151,10 @@ describe('matchTenantToLease', () => {
 
   it('minimal repeated-token case: a duplicated-word report name still bounds at 1.0 and is flagged ambiguous', () => {
     const dup: LeaseLite[] = [
-      { id: 'l-exact', tenantName: 'Syed Syed Consulting', company: null },
-      { id: 'l-wrong', tenantName: 'Syed', company: null },
+      { id: 'l-exact', tenantName: 'Pell Pell Consulting', company: null },
+      { id: 'l-wrong', tenantName: 'Pell', company: null },
     ];
-    const m = matchTenantToLease('Syed Syed Consulting', dup);
+    const m = matchTenantToLease('Pell Pell Consulting', dup);
     expect(m.score).toBeLessThanOrEqual(1);
     expect(m.ambiguous).toBe(true);
   });
@@ -197,14 +197,26 @@ describe('matchTenantToLease', () => {
 // depending on snapshot array order. The fix is a secondary tie-break to the lexicographically
 // smaller leaseId for the REPORTED best only -- the exact-vs-subset rule (PR #320) and the
 // ambiguity computation are untouched, and a tie can never stop being flagged.
-describe('matchTenantToLease — tie-break determinism against the REAL lease roster (Fix C)', () => {
-  // Real regression guard: load the committed snapshot's roster, not a hand-built fixture. Read
-  // directly by path -- tests/setup.ts redirects SNAPSHOT_PATH to a tmp sandbox for WRITERS; this
-  // is a read of tracked repo content and never writes.
+describe('matchTenantToLease — tie-break determinism against the committed lease roster (Fix C)', () => {
+  // Regression guard over the whole committed roster, not a hand-built fixture. The committed snapshot
+  // is SYNTHETIC (real firm data is never tracked, ruling 2026-11-10): tenant names are aliased, so the
+  // identical-name pair is derived from the roster, and the exact-vs-1.0-subset company pair (two
+  // distinct names whose tokens nest) is injected with made-up names. Read directly by path --
+  // tests/setup.ts redirects SNAPSHOT_PATH to a tmp sandbox for WRITERS; this never writes.
   const snapshot = JSON.parse(readFileSync(join(process.cwd(), 'data', 'snapshots', 'portfolio.json'), 'utf8')) as {
     leases: Array<{ id: string; tenantName: string; company: string | null }>;
   };
-  const roster: LeaseLite[] = snapshot.leases.map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+  const SUBSET_EXACT = 'THE HARBOR VIEW CORPORATION';
+  const SUBSET_WIDER = 'Harbor View Exteriors LLC';
+  const roster: LeaseLite[] = [
+    ...snapshot.leases.map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null })),
+    { id: 'zz-synthetic-harbor-view-corporation', tenantName: 'Synthetic Contact A', company: SUBSET_EXACT },
+    { id: 'zz-synthetic-harbor-view-exteriors-llc', tenantName: 'Synthetic Contact B', company: SUBSET_WIDER },
+  ];
+  // A tenantName that appears on two or more leases (the real roster has one such pair; aliasing keeps it).
+  const counts = new Map<string, number>();
+  for (const l of roster) counts.set(l.tenantName, (counts.get(l.tenantName) ?? 0) + 1);
+  const DUP_NAME = [...counts].filter(([, n]) => n >= 2).map(([name]) => name).sort()[0] ?? '';
 
   // Deterministic PRNG (mulberry32) + Fisher-Yates so the shuffles are reproducible from the seed.
   function seededShuffle<T>(items: readonly T[], seed: number): T[] {
@@ -230,36 +242,36 @@ describe('matchTenantToLease — tie-break determinism against the REAL lease ro
     ...[1, 2, 3, 4, 5].map((seed): [string, LeaseLite[]] => [`shuffle seed ${seed}`, seededShuffle(roster, seed)]),
   ];
 
-  it('the real roster carries the two tie pairs this guard depends on (fails loudly if the snapshot drifts)', () => {
-    const lagana = roster.filter((l) => l.tenantName === 'Brett Lagana');
-    expect(lagana.length).toBeGreaterThanOrEqual(2);
-    expect(roster.some((l) => l.company === 'THE BAY AREA CORPORATION')).toBe(true);
-    expect(roster.some((l) => l.company === 'Bay Area Exteriors LLC')).toBe(true);
+  it('the roster carries the two tie shapes this guard depends on (fails loudly if the snapshot drifts)', () => {
+    expect(DUP_NAME, 'no tenantName appears on two leases').not.toBe('');
+    expect(roster.filter((l) => l.tenantName === DUP_NAME).length).toBeGreaterThanOrEqual(2);
+    expect(roster.some((l) => l.company === SUBSET_EXACT)).toBe(true);
+    expect(roster.some((l) => l.company === SUBSET_WIDER)).toBe(true);
   });
 
-  for (const name of ['Brett Lagana', 'THE BAY AREA CORPORATION', 'Bay Area Exteriors LLC']) {
-    it(`"${name}": forward, reversed, and five seeded shuffles of the roster return DEEP-EQUAL results`, () => {
-      const reference = matchTenantToLease(name, roster);
-      for (const [label, ordered] of orderings()) {
-        expect(matchTenantToLease(name, ordered), label).toEqual(reference);
+  for (const [label, name] of [['identical-name pair', () => DUP_NAME], ['exact company', () => SUBSET_EXACT], ['subset company', () => SUBSET_WIDER]] as const) {
+    it(`${label}: forward, reversed, and five seeded shuffles of the roster return DEEP-EQUAL results`, () => {
+      const reference = matchTenantToLease(name(), roster);
+      for (const [order, ordered] of orderings()) {
+        expect(matchTenantToLease(name(), ordered), order).toEqual(reference);
       }
     });
   }
 
-  it('"Brett Lagana" (two leases, identical tenantName) is ambiguous and reports the smaller leaseId in every order', () => {
-    const ids = roster.filter((l) => l.tenantName === 'Brett Lagana').map((l) => l.id).sort();
+  it('the identical-name pair (two leases, identical tenantName) is ambiguous and reports the smaller leaseId in every order', () => {
+    const ids = roster.filter((l) => l.tenantName === DUP_NAME).map((l) => l.id).sort();
     for (const [label, ordered] of orderings()) {
-      const m = matchTenantToLease('Brett Lagana', ordered);
+      const m = matchTenantToLease(DUP_NAME, ordered);
       expect(m.ambiguous, label).toBe(true);
       expect(m.leaseId, label).toBe(ids[0]);
     }
   });
 
-  it('"THE BAY AREA CORPORATION" stays ambiguous (exact vs 1.0-subset, PR #320) and still routes to review in every order', () => {
+  it('an exact company name that is also a 1.0 subset of another stays ambiguous (PR #320) and routes to review in every order', () => {
     for (const [label, ordered] of orderings()) {
-      const m = matchTenantToLease('THE BAY AREA CORPORATION', ordered);
+      const m = matchTenantToLease(SUBSET_EXACT, ordered);
       expect(m.ambiguous, label).toBe(true);
-      const p = partitionArRows([{ tenant: 'THE BAY AREA CORPORATION', property: null, d30: 1, d60: 0, d90: 0, d90plus: 0 }], ordered);
+      const p = partitionArRows([{ tenant: SUBSET_EXACT, property: null, d30: 1, d60: 0, d90: 0, d90plus: 0 }], ordered);
       expect(p.write, label).toEqual([]);
       expect(p.review, label).toHaveLength(1);
     }

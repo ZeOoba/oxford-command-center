@@ -119,13 +119,18 @@ describe('curated insights: mechanically-derived impacts recomputed', () => {
   ];
 
   it.each(CASES)('$id = $why, in the curated file and in dataset.json', ({ id, expected }) => {
+    // Whole dollars. Within $1 rather than exact: the committed curated file and dataset are synthetic
+    // stand-ins (dollars scaled, then rounded), so a recomputation can land on the other side of .5.
+    // On the real files the two are equal.
     const v = Math.round(expected());
-    expect(curated(id).annual_impact_usd).toBe(v);
-    expect(shipped(id).annual_impact_usd).toBe(v);
+    expect(Number.isInteger(curated(id).annual_impact_usd)).toBe(true);
+    expect(Math.abs(curated(id).annual_impact_usd! - v)).toBeLessThanOrEqual(1);
+    expect(shipped(id).annual_impact_usd).toBe(curated(id).annual_impact_usd);
   });
 
-  it('EXP-07 after v03.2: 0.5% of TTM26 revenue is 25,151.90 -> 25152 (was 25155)', () => {
-    expect(lever('mgmtFee')).toBeCloseTo(25_151.9, 1);
-    expect(shipped('EXP-07').annual_impact_usd).toBe(25_152);
+  it('EXP-07 after v03.2: the management-fee lever is 0.5% of TTM26 revenue across the PM properties', () => {
+    const ttmRevenue = PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + (figures(id)?.TTM26?.revenue ?? 0), 0);
+    expect(lever('mgmtFee')).toBeCloseTo(0.005 * ttmRevenue, 1);
+    expect(Math.abs(shipped('EXP-07').annual_impact_usd! - Math.round(lever('mgmtFee')))).toBeLessThanOrEqual(1);
   });
 });

@@ -3,11 +3,17 @@ import { deriveCounterparties } from '../../server/workbook/counterparties';
 import { SEED_PEOPLE } from '../../src/data/seed-counterparties';
 import type { Loan } from '../../src/contracts/index';
 
+// The scenario needs a seed PERSON whose firm is also a lender firm in the loan book. Taken from the
+// seed itself (real locally, synthetic in CI: real firm data is never tracked, ruling 2026-11-10)
+// rather than naming anyone here.
+const PERSON = SEED_PEOPLE.find((p) => !!p.email && !!p.firm && p.firm !== p.name)!;
+const FIRM = PERSON.firm!;
+
 function loan(l: Partial<Loan>): Loan {
   return {
     id: 'l1',
-    name: 'Symetra Note',
-    counterparty: 'Symetra',
+    name: `${FIRM} Note`,
+    counterparty: FIRM,
     direction: 'borrower',
     originalPrincipal: null,
     currentBalance: 980773,
@@ -22,7 +28,7 @@ function loan(l: Partial<Loan>): Loan {
     maturity: '2027-02-20',
     monthsToMaturity: 8,
     ltv: null,
-    lender: 'Symetra',
+    lender: FIRM,
     balloon: true,
     flags: [],
     collateralProperty: null,
@@ -38,10 +44,14 @@ describe('deriveCounterparties — person vs firm identity (Defect 4 regression)
     deals: [],
   });
 
-  it('the derived lender firm "Symetra" does NOT carry an individual\'s email', () => {
-    const symetra = cps.find((c) => c.kind === 'lender' && c.name === 'Symetra');
-    expect(symetra).toBeDefined();
-    expect(symetra!.email).toBeNull();
+  it('the seed has a person whose firm doubles as a lender (the Defect 4 shape)', () => {
+    expect(PERSON).toBeDefined();
+  });
+
+  it('the derived lender firm does NOT carry an individual\'s email', () => {
+    const firm = cps.find((c) => c.kind === 'lender' && c.name === FIRM);
+    expect(firm).toBeDefined();
+    expect(firm!.email).toBeNull();
   });
 
   it('no derived firm shares a seed person\'s email (no cross-contamination)', () => {
@@ -53,7 +63,7 @@ describe('deriveCounterparties — person vs firm identity (Defect 4 regression)
   });
 
   it('the person keeps their own email', () => {
-    const tamara = cps.find((c) => c.id === 'cp-tamara-lucas');
-    expect(tamara?.email).toBe('tamara.lucas@symetra.com');
+    const person = cps.find((c) => c.id === PERSON.id);
+    expect(person?.email).toBe(PERSON.email);
   });
 });
