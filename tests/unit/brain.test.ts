@@ -6,6 +6,7 @@ import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { brain as BrainSingleton } from '../../server/brain';
 import type * as ReconcileRuntimeModule from '../../server/reconcile-runtime';
 import type * as RenameRetryModule from '../../server/lib/rename-retry';
+import type * as RealDataStatusModule from '../../server/real-data-status';
 
 /**
  * Orchestration tests for the live Brain (server/brain.ts) — the in-memory single source of
@@ -99,7 +100,7 @@ vi.mock('../../server/reconcile-runtime', async (importOriginal) => ({
 }));
 
 vi.mock('../../server/real-data-status', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../server/real-data-status')>()),
+  ...(await importOriginal<typeof RealDataStatusModule>()),
   syntheticDataFlags: vi.fn(() => h.syntheticFlags),
 }));
 

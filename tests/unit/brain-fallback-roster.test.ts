@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Deal } from '../../src/contracts/index';
 import type * as ConfigModule from '../../server/config';
+import type * as RealDataStatusModule from '../../server/real-data-status';
 
 // Hard Invariant 3 regression (2026-10-13 re-verification, regression-sweep lens): when the workbook
 // parse throws, Brain.refresh serves loadFallback()'s on-disk snapshot. A stored deal with
@@ -41,7 +42,7 @@ vi.mock('../../server/workbook/parse', () => ({
 }));
 vi.mock('chokidar', () => ({ watch: vi.fn(() => ({ on: vi.fn() })) }));
 vi.mock('../../server/real-data-status', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../server/real-data-status')>()),
+  ...(await importOriginal<typeof RealDataStatusModule>()),
   syntheticDataFlags: vi.fn(() => h.synthetic),
 }));
 
