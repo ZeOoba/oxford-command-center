@@ -12,7 +12,8 @@
 //
 // Never overwrites an existing file. See docs/ops/2026-11-11-real-data-untrack-pull-runbook.md.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -59,7 +60,7 @@ async function importFromRef(root: string, ref: string, path: string): Promise<R
   try {
     return (await import(pathToFileURL(tmp).href)) as Record<string, unknown>;
   } finally {
-    renameSync(tmp, join(tmpdir(), `occ-extract-${process.pid}-${Date.now()}-${basename(path)}`));
+    renameSyncWithRetry(tmp, join(tmpdir(), `occ-extract-${process.pid}-${Date.now()}-${basename(path)}`));
   }
 }
 
