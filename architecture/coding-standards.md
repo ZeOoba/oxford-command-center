@@ -75,6 +75,8 @@ function makeTestDb() {
 - **Never import `vitest.config.ts` into a test.** Importing it pulls in Vite, which trips a `TextEncoder/Uint8Array` invariant under the jsdom environment. To assert on config, read the file as text and match the setting (see the regression guard).
 - **Detect order fragility with `npm run test:shuffle`.** It randomizes both file and test order (`--sequence.shuffle.files --sequence.shuffle.tests`). `isolate: true` covers *cross-file* leakage; shuffling also surfaces *within-file* ordering bugs (a test depending on state another test set up). On failure vitest prints the seed — re-run with `--sequence.seed=<N>` to reproduce deterministically.
 
+**Real firm data in tests:** the manifest paths (`scripts/fixtures/real-data-manifest.json`) hold synthetic stand-ins in CI and real data on the operator's machine, and the full suite must pass on both. Derive expectations from the data in place, or read exact values through `tests/unit/golden-helpers.ts` (`pfGolden()`, `costGolden()`: the ratified local golden on real data, the committed synthetic golden otherwise). Never hardcode a real amount, tenant, person, lender, loan or policy number in a tracked file; use pseudonyms (distinct single words where token matching is under test). Gate assertions that only hold on one data set with `isSynthetic(rel)`, never by deleting them.
+
 **Gate requirement:** `npm run gate` must stay green. Never commit with failing tests.
 
 **Financial-decision code — mandatory adversarial pass.** A green gate proves the code matches its

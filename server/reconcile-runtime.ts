@@ -32,8 +32,9 @@ const UNRESOLVED_RENT_SHARE_THRESHOLD = 0.01;
  * Lives here, beside checkSnapshot, because there are FOUR publication paths and PR #252 wired the
  * policy into only two of them (the CLI writers) by inlining a severity filter. Brain.persist and
  * scripts/bake-mirror.ts were left ungated, so every live-server refresh republished exactly the
- * inconsistencies those writers refuse, to a git-tracked mirror that is auto-committed and pushed
- * off-machine. One exported predicate so a fifth writer cannot quietly disagree about what
+ * inconsistencies those writers refuse, to the shared on-disk mirror every reader trusts (gitignored,
+ * untracked since 2026-11-10; it was auto-committed and pushed until then). One exported
+ * predicate so a fifth writer cannot quietly disagree about what
  * "publishable" means. (Catch-up sweep 2026-07-28..08-04, H2.)
  */
 export function hasReconciliationError(flags: readonly DataQualityFlag[]): boolean {
@@ -56,7 +57,7 @@ const ESTIMATE_MIN_ROUND = 3;
  * entity fields, which only exist parsed, so a second implementation there would just be a copy
  * that can drift. One detector, two reachable call sites (same doctrine as findDuplicateDealRows).
  *
- * What it closes, found live in the committed snapshot:
+ * What it closes, found live in the persisted snapshot:
  *  - cash.asOf read 2026-09-10 while cash.history's last row was 2026-07-10, and that July slot's
  *    total was bit-identical to the September headline -- a clobbered history slot. The only
  *    history check then in force ("latest point = current total") PASSED on exactly that shape,
@@ -359,7 +360,7 @@ export function annualRentGapIsExplainedByAbatement(
  * The snapshot as every writer should persist it: its parse flags plus the runtime reconciliation
  * flags (stale lease rows, debt basis, cash invariants, totals tie-outs). Brain.refresh/rederive
  * already persist this shape; the two CLI writers (extract-workbook, lease-snapshot-drift-check)
- * used to only GATE on these flags and write without them, so the committed and mirrored snapshot,
+ * used to only GATE on these flags and write without them, so the persisted snapshot,
  * and the read-only Health page reading it, never showed them (roadmap 2026-10-30, item 1.6).
  * Call it on a FRESH parse only: re-running it on an already-persisted snapshot would duplicate.
  */
@@ -459,8 +460,8 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   }
 
   // Task.id is the React list key and the overlay row identity. Added 2026-09-30 after 56 M365 rows
-  // shared one id in the committed snapshot (truncated source id) with nothing to catch it.
-  // SEVERITY IS 'warn' UNTIL THE SNAPSHOT IS RE-BAKED: the committed data/snapshots/portfolio.json
+  // shared one id in the persisted snapshot (truncated source id) with nothing to catch it.
+  // SEVERITY IS 'warn' UNTIL THE SNAPSHOT IS RE-BAKED: the on-disk data/snapshots/portfolio.json
   // still carries the 56 colliding ids, and regenerating it needs live Graph. An 'error' here would
   // turn reconcile:snapshot (and so the gate) red on merge. Flip to 'error' in the commit that
   // lands the first snapshot written with hashed ids.
@@ -485,7 +486,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // Deal rows must not near-duplicate each other by NAME either — restored 2026-08-13 (code
   // review). This stood here as findNearDuplicateNames until 2026-08-12, when it was retired on
   // the argument that mergeDeals' migration tripwire replaced it. That argument covered the
-  // WRONG PATH: checkSnapshot also runs over the COMMITTED snapshot via
+  // WRONG PATH: checkSnapshot also runs over the ON-DISK snapshot via
   // scripts/reconcile-snapshot.ts's `npm run gate:ci` — zero Notion I/O, zero call into
   // mergeDeals — which exists PRECISELY to catch corruption independent of how the file was
   // produced (its own header cites the 2026-08-03 phantom-vacancy-lease incident that shipped
@@ -519,7 +520,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
             `them here.`
           : ` and the SAME Deal ID (${ids[0]}, name digest ${keyDigest(key)}) — this looks like the ` +
             `same row duplicated verbatim, not two deals. The likely cause is a merge conflict or a ` +
-            `hand-edit to the committed snapshot; restore it from the last good bake rather than ` +
+            `hand-edit to the on-disk snapshot; restore it from the last good bake rather than ` +
             `editing Notion.`),
     );
   }
