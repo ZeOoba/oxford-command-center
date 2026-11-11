@@ -1,11 +1,11 @@
 // src/analytics/property-financials/pyfloat.ts
 //
 // Python float semantics for the two places the Property Financials rebuild must match a Python-made
-// artifact byte for byte (plan T9a): monthly-long.csv amounts carry Python's float repr ("141.0",
-// "1508.25"), and every rounded figure in dataset.json came from Python's round(), which rounds the
-// EXACT binary value half-to-even (8950.5 -> 8950, 0.125 -> 0.12). JavaScript's Math.round /
+// artifact byte for byte (plan T9a): monthly-long.csv amounts carry Python's float repr ("123.0",
+// "1234.25"), and every rounded figure in dataset.json came from Python's round(), which rounds the
+// EXACT binary value half-to-even (4444.5 -> 4444, 0.125 -> 0.12). JavaScript's Math.round /
 // toFixed round half away from zero / up, so a naive port drifts by a cent or a dollar on exact
-// halves — invisible in the suite until a rent of $8,950.50 shows as 8951.
+// halves — invisible in the suite until a rent of $4,444.50 shows as 4445.
 //
 // Pure TypeScript: no fs.
 

@@ -42,8 +42,8 @@
    - `2026-10-06_PCA-Extraction_Register_v01_2.xlsx` was imported into the live warehouse in one transaction: 17 reports, 50 components, 13 quotes, 20 asset facts, 5 calibration pairs, 16 open items.
    - 13 of the 17 reports mapped to the property master. The 4 unmapped (E. Fulton, St. Michaels, Muirkirk, Sheriff Rd) are not in it.
    - The six target tables were empty beforehand, no other table changed, and `quick_check` passed.
-   - The Property Condition page now shows immediate repairs of $52K, short-term $625K and capex reserves of $1.75M (uninflated), with 8 of 16 properties carrying dollar figures and 6 report-currency alerts.
-   - Those page totals are the register plus the curated correction overlay (`src/modules/property-condition/pca-overlay.ts`, from the 2026-10-13 PCA Command Center report). The raw register totals from `/api/warehouse/property-condition/report` are $105K, $641K and $1.68M. Both exclude stale reports.
+   - The Property Condition page now shows immediate-repair, short-term and capex-reserve (uninflated) totals, with 8 of 16 properties carrying dollar figures and 6 report-currency alerts.
+   - Those page totals are the register plus the curated correction overlay (`src/modules/property-condition/pca-overlay.ts`, from the 2026-10-13 PCA Command Center report). The raw register totals from `/api/warehouse/property-condition/report` differ from those page totals. Both exclude stale reports.
    - Ruling 2026-10-30 makes PCA the only allowed source for the landlord structural costs of the 6 NNN-not-absolute properties. Two of them, 55 New Plant and 9050 Red Branch, hold only pre-2024 reports, which are excluded from totals as stale.
 2. **The P&L ledger is frozen.** The Property Financials folder holds only 2026-06-12 exports. A scheduled backfill (roadmap 1.8) would be a no-op until Track 0.2 exports exist.
 3. **Capital allocation mislabels live macro.** `capital-allocation.ts:1331` maps `source: 'live-fred'` to `'mock'`. The live server returns `live-fred`, so the allocation report's macro context reads "mock" today. In the same function, the comment "FRED down = null DGS5 = refi signal suppressed" (`:978`) is false: `getMacro()` never returns null. It falls back to June-2026 seeded rates, while `debt-api.ts` does suppress. So during a FRED outage the two refi surfaces disagree.
@@ -55,7 +55,7 @@
 
 ### 2c. Design (10-31 review): what was still open
 
-- #6: the NOI and cap-rate tiles had no landlord-cost marker. Six of 13 properties, about $1.57M of $3.82M workbook NOI, carry $0 expenses.
+- #6: the NOI and cap-rate tiles had no landlord-cost marker. Six of 13 properties, about 41% of workbook NOI, carry $0 expenses.
 - #7: two timestamps with no labels.
 - #8: NOI basis unlabelled on Ownership, Property, Portfolio and the filter bar.
 - #12: the empty Leasing Velocity panel.
@@ -66,7 +66,7 @@
 | Change | Files |
 |---|---|
 | **Landlord-cost caveat on headline figures.** "LL costs not sourced · 6 of 13" appears on the Overview NOI tile, whose caveat covers the weighted cap in its sublabel. Portfolio's separate NOI and cap-rate tiles each get their own. "LL costs not sourced on 2 of 5 levered" appears on the DSCR governor tile in neutral text, since colour there means a governor state; the weakest-DSCR property (3540 E. 5th, 1.48x) is one of the two. Labels only; nothing is restated (ruling 2026-10-30). | `src/modules/overview/landlord-cost-caveat.ts`, `LandlordCostChip.tsx`, `widgets.tsx`, `GovernorTiles.tsx`, `src/primitives/KpiStat.tsx` (`caveat` slot), `src/modules/portfolio/PortfolioModule.tsx` |
-| **One `BasisChip` primitive** using the spine vocabulary. Ownership now reads "$4.60M · Ledger · FY2025 · entity 100%" (a YTD period adds "partial"), against the Overview "$3.82M · Oxford share · workbook" and Portfolio "$3.82M · Workbook · Oxford share". Before, the two sat 20% apart with no basis shown. Also on Property NOI, the Portfolio NOI KPI, the cap-rate tile and the "NOI · workbook" column, plus "workbook NOI" in the filter readout. | `src/primitives/BasisChip.tsx`, `OwnershipView.tsx`, `PropertyIntelView.tsx`, `PortfolioModule.tsx`, `PortfolioFilterBar.tsx` |
+| **One `BasisChip` primitive** using the spine vocabulary. Ownership now reads "$1.20M · Ledger · FY2025 · entity 100%" (a YTD period adds "partial"), against the Overview "$1.00M · Oxford share · workbook" and Portfolio "$1.00M · Workbook · Oxford share" (illustrative figures). Before, the two sat 20% apart with no basis shown. Also on Property NOI, the Portfolio NOI KPI, the cap-rate tile and the "NOI · workbook" column, plus "workbook NOI" in the filter readout. | `src/primitives/BasisChip.tsx`, `OwnershipView.tsx`, `PropertyIntelView.tsx`, `PortfolioModule.tsx`, `PortfolioFilterBar.tsx` |
 | TopBar "Workbook as of …" (data date), distinct from the pill's "updated … ago" (server read). | `src/shell/TopBar.tsx` |
 | Leasing Velocity: a one-line "Not yet sourced" note that says no feed exists, instead of an empty panel. | `LeaseForecastModule.tsx` |
 
@@ -110,6 +110,6 @@ New tests: `overview-landlord-cost-caveat`, `basis-chip`. Surface coverage was a
 3. Approve a learning-loops track (items 5–6) as a roadmap addition, with item 5 (acquisition screen packets) first?
 4. `architecture/status.json` claims are blocked by the file guard without your architect sentinel. Its stale `wave-b-ui` entry still names this worktree. Flip it to merged?
 5. **Should Portfolio Value and LTV carry the landlord-cost caveat too?** This came from an independent reviewer pass and predates this branch.
-   - In the committed snapshot, workbook value equals NOI ÷ cap for 4 of the 6 $0-expense properties (e.g. 76,950 / 0.08 = 961,875).
+   - In the committed snapshot, workbook value equals NOI ÷ cap for 4 of the 6 $0-expense properties (e.g. NOI 80,000 / cap 0.08 = value 1,000,000, illustrative).
    - So the unsourced landlord costs also overstate Portfolio Value and understate aggregate LTV, and neither tile says so today.
    - This branch labels only the NOI, cap-rate and DSCR figures.

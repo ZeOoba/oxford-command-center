@@ -12,8 +12,8 @@ import type { TenantArrears } from '../../src/contracts/index';
 
 /** Round to the nearest cent. Real defect (2026-09-06 adversarial review, MEDIUM): summing
  *  multi-unit rows with plain float addition is sensitive to row order (float non-associativity —
- *  verified on real exports: 225.66+385+142.20 summed in different orders lands on
- *  752.8599999999999 vs 752.86). resolve-latest.ts's sameBuckets compares with `===`, so that
+ *  e.g. 234.56+400+100.30 summed in different orders lands on
+ *  734.8599999999999 vs 734.86). resolve-latest.ts's sameBuckets compares with `===`, so that
  *  drift made an identical re-import look like two DIFFERENT totals and stranded the write behind
  *  a false "conflicting reports" tie. */
 function toCents(n: number): number {

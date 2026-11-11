@@ -17,7 +17,7 @@
 // collections alert, so an honest "unsupported" beats a plausible-but-wrong number.
 //
 // Bucket semantics (the contract): d30 = 1–30 days, d60 = 31–60, d90 = 61–90, d90plus = 90+.
-// Negative bucket values (clearing credits / prepayments, e.g. AppFolio "-398.00") are clamped to
+// Negative bucket values (clearing credits / prepayments, e.g. an AppFolio "-100.00") are clamped to
 // 0 — a credit is not a past-due balance — matching the overlay's per-bucket salvage (overlay.ts).
 
 /** A single tenant's parsed arrears, with the source context needed for the later Lease.id mapping. */

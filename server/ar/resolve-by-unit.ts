@@ -158,7 +158,7 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
  *
  * "Dead" widened from Expired-only to the shared isDeadLease predicate on 2026-09-14 (weekly
  * financial-code sweep, Fix A): a 'Vacant' record and an Active lease with annualRent 0 (real row:
- * Example Gymnastics, 2207 Northwood A15, $1,824.01 AR -- a placeholder that bills nothing) were
+ * Example Gymnastics, 2207 Northwood A15, with a live AR balance -- a placeholder that bills nothing) were
  * still counted as LIVE here and took a clean 'exact' hit with no review. Both the single-hit
  * refusal and the dead-sibling downgrade now apply to every dead status, and the same predicate
  * gates the name-matcher's roster (scripts/ar-import-headless.ts loadLeasesFromSnapshot) so the two

@@ -12,7 +12,7 @@ import {
  * `[TODAY(), TODAY()+366)`. On a loan's payment day-of-month that half-open 366-day
  * span swallowed BOTH this month's payment and next year's anniversary payment —
  * 13 payments, not 12 — inflating annual debt service by exactly one payment and
- * depressing DSCR. Banwick / Morrison: $297,950.51 vs. the correct $275,031.24.
+ * depressing DSCR. Banwick / Morrison: 13 payments' worth vs. the correct 12.
  *
  * The window is now `(asOf, EDATE(asOf,12)]`, anchored on month-end. These tests
  * pin the payment-count invariant that detects the defect class regardless of how

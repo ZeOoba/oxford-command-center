@@ -66,11 +66,11 @@ describe('warehouse contracts', () => {
       period: '2025',
       rawAccount: 'Rent',
       glCode: '5064',
-      amount: 214557.21,
+      amount: 111111.11,
       normalizedCategory: 'Rental Revenue',
       classification: 'revenue',
     });
-    expect(e.amount).toBeCloseTo(214557.21);
+    expect(e.amount).toBeCloseTo(111111.11);
     expect(ImportStatus.parse('pending-review')).toBe('pending-review');
   });
 
@@ -83,9 +83,9 @@ describe('warehouse contracts', () => {
       grain: 'year',
       basis: 'cash',
       sourceSystem: 'quickbooks',
-      accounts: [{ code: '5064', name: 'Rent', section: 'INCOME', parent: 'RENTAL INCOME', total: 214557.21 }],
-      totalIncome: 231187.84,
-      totalExpense: 125539.93,
+      accounts: [{ code: '5064', name: 'Rent', section: 'INCOME', parent: 'RENTAL INCOME', total: 111111.11 }],
+      totalIncome: 113333.33,
+      totalExpense: 25444.44,
     });
     expect(s.accounts).toHaveLength(1);
   });
@@ -755,21 +755,21 @@ async function buildFixture(path: string): Promise<void> {
     [null, null, null, null],
     [null, 'INCOME', null, null],
     [null, null, '     5002 RENTAL INCOME', null],
-    [null, null, '          5064 Rent', 214557.21],
-    [null, null, '          5002 Total RENTAL INCOME', 214557.21],
+    [null, null, '          5064 Rent', 111111.11],
+    [null, null, '          5002 Total RENTAL INCOME', 111111.11],
     [null, null, '     5090 MISC INCOME', null],
-    [null, null, '          5046 Miscellaneous', 1904.19],
-    [null, null, '          5090 Total MISC INCOME', 1904.19],
+    [null, null, '          5046 Miscellaneous', 2222.22],
+    [null, null, '          5090 Total MISC INCOME', 2222.22],
     [null, 'TOTAL', null, null],
-    [null, null, null, 216461.4],
+    [null, null, null, 113333.33],
     [null, 'EXPENSE', null, null],
     [null, null, '     6160 REPAIR', null],
-    [null, null, '          6285 HVAC Repair', 630.95],
-    [null, null, '          6160 Total REPAIR', 630.95],
+    [null, null, '          6285 HVAC Repair', 444.44],
+    [null, null, '          6160 Total REPAIR', 444.44],
     [null, 'NON OPERATING EXPENSE', null, null],
     [null, null, '          7402 Distribution to Owner', 25000],
     [null, 'TOTAL', null, null],
-    [null, null, null, 25630.95],
+    [null, null, null, 25444.44],
   ];
   for (const r of rows) ws.addRow(r);
   await wb.xlsx.writeFile(path);
@@ -792,7 +792,7 @@ describe('qb-excel adapter', () => {
     expect(rent.code).toBe('5064');
     expect(rent.section).toBe('INCOME');
     expect(rent.parent).toBe('RENTAL INCOME');
-    expect(rent.total).toBeCloseTo(214557.21);
+    expect(rent.total).toBeCloseTo(111111.11);
     const dist = s.accounts[3]!;
     expect(dist.section).toBe('NON OPERATING EXPENSE');
   });
