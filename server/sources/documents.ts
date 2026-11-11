@@ -14,7 +14,7 @@ import { buildPathVocab, fuseCandidates, pickEntities, type FusedRow, type PathV
 
 /**
  * Document RAG (Phase 3 — semantic) — vector search over lease/PSA/OM text so the agent can
- * answer "what's the renewal option in the REDACTED-659 lease" with a cited passage. Embeddings via
+ * answer "what's the renewal option in the Tenant 155 LLC lease" with a cited passage. Embeddings via
  * transformers.js (Xenova/all-MiniLM-L6-v2, 384-dim, mean-pooled + normalized) stored in an
  * in-memory sqlite-vec index. No API cost; server-only.
  *
@@ -436,7 +436,7 @@ export function shapeFused(rows: readonly FusedRow[], query: string): DocHit[] {
 }
 
 /** Vector candidates fetched BEFORE re-ranking (env `DOCUMENTS_SEARCH_POOL`, default 200). Measured on the
- *  150K-chunk index: the REDACTED-659 renewal clause ranks 55th-127th for every phrasing, so a top-5 never saw it. */
+ *  150K-chunk index: the Tenant 155 LLC renewal clause ranks 55th-127th for every phrasing, so a top-5 never saw it. */
 export function searchPool(): number {
   const n = Number(process.env.DOCUMENTS_SEARCH_POOL);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 200;
@@ -596,7 +596,7 @@ export function maxDepth(): number {
 
 /** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 120). Bounds the
  * worst case from a long PDF that slipped past the non-lease filter. Chunks advance ~1,380 chars
- * (1,500 size − 120 overlap), so 120 chunks ≈ 165K chars. Measured on the REDACTED-659 executed lease: 129K
+ * (1,500 size − 120 overlap), so 120 chunks ≈ 165K chars. Measured on the Tenant 155 LLC executed lease: 129K
  * chars OCR'd ≈ 87 chunks, with its "Option to Renew" clause at 90% of the text — the old 25-chunk cap kept
  * ~14 pages and an 80-chunk cap (~110K chars) still cut the clause off. */
 export function maxChunksPerDoc(): number {

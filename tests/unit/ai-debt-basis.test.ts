@@ -17,7 +17,7 @@ function aiSnap(over: Record<string, unknown> = {}): PortfolioSnapshot {
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-09-13' },
     properties: [
       prop({ id: 'rarig', name: '1100 Rarig Ave, Columbus OH', lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: 0.4614, oxfordValue: 2_374_719 }),
-      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'REDACTED-672', loanBalance: REDACTED-AMT, ltv: 0.3896, oxfordValue: 7_086_263 }),
+      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: REDACTED-AMT, ltv: 0.3896, oxfordValue: 7_086_263 }),
     ],
     leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
     renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
@@ -39,8 +39,8 @@ describe('get_property — per-property LTV on the investment basis', () => {
 
 const basisFlag = { entity: 'debt', field: 'debt.basis.property.easton', issue: '29000 Information Lane, Easton MD: … gap $39,388', severity: 'warn' };
 const loans = [
-  { id: 'b-easton', name: '29000 Information Lane', counterparty: 'REDACTED-672', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.045, monthlyPmt: 17_362, lender: 'REDACTED-672', maturity: '2031-01-01', balloon: false, isDemand: false, collateralProperty: '29000 Information Lane, Easton MD' },
-  { id: 'b-3883', name: '3883 from Oxford (50%)', counterparty: 'REDACTED-676', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.06, monthlyPmt: 3_991, lender: 'REDACTED-676', maturity: '2035-06-01', balloon: false, isDemand: false, collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' },
+  { id: 'b-easton', name: '29000 Information Lane', counterparty: 'Firm 03', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.045, monthlyPmt: 17_362, lender: 'Firm 03', maturity: '2031-01-01', balloon: false, isDemand: false, collateralProperty: '29000 Information Lane, Easton MD' },
+  { id: 'b-3883', name: '3883 from Oxford (50%)', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.06, monthlyPmt: 3_991, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', maturity: '2035-06-01', balloon: false, isDemand: false, collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' },
 ];
 
 describe('AI tools — each debt figure carries its basis; the gap is surfaced (item 13)', () => {

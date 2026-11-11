@@ -236,8 +236,8 @@ describe('checkSnapshot — runtime reconciliation', () => {
     it('suppresses a genuine cross-metro namesake, but only when the states actually differ', () => {
       const suppressed = checkSnapshot(base({
         deals: [
-          { id: 'a', name: 'REDACTED-185', notionDealId: 'DEAL-1' },
-          { id: 'b', name: 'REDACTED-401 — Louisville, KY', notionDealId: 'DEAL-2' },
+          { id: 'a', name: '100 Example Blvd — Columbus, OH', notionDealId: 'DEAL-1' },
+          { id: 'b', name: '100 Example Blvd — Louisville, KY', notionDealId: 'DEAL-2' },
         ],
       }));
       expect(suppressed.some((f) => f.field === 'deals.name')).toBe(false);
@@ -566,13 +566,13 @@ type L = { id: string; name: string; direction: string; absBalance: number; lend
 const debtSnap = (properties: P[], loans: L[]) => ({ properties, loans }) as never;
 
 // Live shape (data/snapshots/portfolio.json, asOf 2026-09-13), trimmed to the rows that matter.
-const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'REDACTED-672', loanBalance: REDACTED-AMT };
+const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'Firm 03', loanBalance: REDACTED-AMT };
 const RARIG: P = { id: 'p-rarig', name: '1100 Rarig Ave, Columbus OH', type: 'Flex', lender: 'Oxford Capital', loanBalance: REDACTED-AMT };
 const LIVINGSTON: P = { id: 'p-liv', name: '3875-3883 E Livingston Ave, Columbus OH', type: 'Flex', lender: null, loanBalance: 0 };
 const RESIDENCE: P = { id: 'p-res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', lender: null, loanBalance: 0 };
-const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'REDACTED-077', counterparty: 'REDACTED-077', collateralProperty: '29000 Information Lane, Easton MD' };
-const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'REDACTED-676', counterparty: 'REDACTED-676', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
-const RARIG_NOTE: L = { id: 'n-rarig', name: 'REDACTED-378', direction: 'lender', absBalance: REDACTED-AMT, lender: null, counterparty: 'REDACTED-026', collateralProperty: null };
+const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'Oxford / Lender 03', counterparty: 'Oxford / Lender 03', collateralProperty: '29000 Information Lane, Easton MD' };
+const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
+const RARIG_NOTE: L = { id: 'n-rarig', name: 'Note Party 01', direction: 'lender', absBalance: REDACTED-AMT, lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share', collateralProperty: null };
 
 describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (2026-09-24)', () => {
   it('the live shape reconciles per row: Rarig (affiliate property row) and 3883 (affiliate borrower loan) drop out of the third-party comparison; only the affiliate-total flag remains', () => {
@@ -597,7 +597,7 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
   });
 
   it('a property row with a balance but no attributed loan is listed', () => {
-    const flags = checkDebtBasis(debtSnap([{ id: 'p-a', name: 'Alpha Flex', type: 'Flex', lender: 'REDACTED-545', loanBalance: 1_000_000 }], []));
+    const flags = checkDebtBasis(debtSnap([{ id: 'p-a', name: 'Alpha Flex', type: 'Flex', lender: 'Lender 08', loanBalance: 1_000_000 }], []));
     expect(flags.map((f) => f.field)).toEqual(['debt.basis.property.p-a']);
     expect(flags[0]!.issue).toContain('(no third-party loan attributed)');
     expect(flags[0]!.issue).toContain('gap $1,000,000');
@@ -685,7 +685,7 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
   });
 
   it('lender and internal directions never count on the loan side', () => {
-    const internal: L = { id: 'i', name: 'Internal', direction: 'internal', absBalance: 2_900_000, counterparty: 'REDACTED-493' };
+    const internal: L = { id: 'i', name: 'Internal', direction: 'internal', absBalance: 2_900_000, counterparty: 'Firm 08' };
     expect(checkDebtBasis(debtSnap([EASTON], [EASTON_LOAN, RARIG_NOTE, internal]))).toEqual([]);
   });
 
@@ -713,8 +713,8 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
 
   it('is wired into checkSnapshot and stays warn there', () => {
     const flags = checkSnapshot(base({
-      properties: [{ id: 'p1', name: 'Alpha Flex', type: 'Flex', lender: 'REDACTED-545', loanBalance: 11_300_000 }],
-      loans: [{ id: 'n1', name: 'Alpha Loan', direction: 'borrower', absBalance: 10_600_000, lender: 'REDACTED-545', counterparty: 'REDACTED-545', collateralProperty: 'Alpha Flex' }],
+      properties: [{ id: 'p1', name: 'Alpha Flex', type: 'Flex', lender: 'Lender 08', loanBalance: 11_300_000 }],
+      loans: [{ id: 'n1', name: 'Alpha Loan', direction: 'borrower', absBalance: 10_600_000, lender: 'Lender 08', counterparty: 'Lender 08', collateralProperty: 'Alpha Flex' }],
     }));
     const f = flags.find((x) => x.field === 'debt.basis.property.p1');
     expect(f).toBeDefined();

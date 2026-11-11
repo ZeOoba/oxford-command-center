@@ -14,7 +14,7 @@ The draft detects the OI-092 defect by **counting payment rows in a window**. Th
 > and this detector still reports 12 / all-clean while annual debt service re-inflates to
 > $REDACTED-AMT. It tests the schedule **data**; the bug lived in the **formula**.
 
-It also false-fired "13 payments" on 2027-09-30, because `REDACTED-457` rows 45 and 46 both hold
+It also false-fired "13 payments" on 2027-09-30, because `100 Note Party St` rows 45 and 46 both hold
 `2028-09-26` and the draft counted rows rather than distinct dates.
 
 ## What the retry should do instead
@@ -49,7 +49,7 @@ authoritative — this table is a snapshot, not a live source.**
 | OI-092 | detector (this draft) | WITHDRAWN, rebuild queued (this doc) |
 | OI-094 | Banwick range truncated at row 70, balloon at 71 | RESOLVED — extended to `B11:B71` |
 | OI-095 | RCT balloon absent from `I15` | RESOLVED — **INCLUDED**, not excluded. Root cause was not a design choice: `I14`/`I15`/`I16` computed principal on three inconsistent bases (paid-to-date vs. forward-looking); all three fixed to one consistent forward basis. An earlier same-day ruling called the exclusion intentional — that was superseded within the day; do not build against it. |
-| OI-096 | REDACTED-554 double-counts $REDACTED-AMT (rows 45/46 both `2028-09-26`) | RESOLVED — r46 corrected to a pure balloon (`D`=252,000, `E`=0); TOTALS reconciled |
+| OI-096 | 100 Note Party St double-counts $REDACTED-AMT (rows 45/46 both `2028-09-26`) | RESOLVED — r46 corrected to a pure balloon (`D`=252,000, `E`=0); TOTALS reconciled |
 
 Detail on each, including exact formula text and verification numbers, is in the tracker entries and in
 `memory/reference_workbook_annual_debt_service_366day_overcapture.md`.

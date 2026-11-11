@@ -21,21 +21,21 @@ describe('namesAffiliateLender — explicit Oxford lending-entity list, whole ph
   it.each([
     ['Oxford Capital', true], // 1100 Rarig Property NOI row lender
     ['oxford capital', true],
-    ['REDACTED-676', true], // "3883 from Oxford (50%)" borrower lender
-    ['REDACTED-026', true], // lender-direction note (name matches; direction rule excludes it)
+    ['Lender 05 / Oxford Capital — Oxford 50% share', true], // "3883 from Oxford (50%)" borrower lender
+    ['Firm 04 (Oxford Capital) — Oxford 50% share', true], // lender-direction note (name matches; direction rule excludes it)
     ['Oxford  Capital', true], // internal whitespace collapsed
     ['Oxford\u00a0Capital', true], // NBSP collapsed
     ['Oxford\nCapital', true], // newline collapsed
-    ['Oxford Capital Partners LLC (REDACTED-545 Bank)', false], // the firm's own styling borrowing from a bank = third party
-    ['OXFORD CAPITAL PARTNERS (REDACTED-672)', false],
+    ['Oxford Capital Partners LLC (Lender 08 Bank)', false], // the firm's own styling borrowing from a bank = third party
+    ['OXFORD CAPITAL PARTNERS (Firm 03)', false],
     ['Oxford Capital Partners', false],
-    ['REDACTED-077', false], // 29000 Information Lane — third party
-    ['Muirkirk Properties (REDACTED-655/REDACTED-672) — Oxford 50% share', false], // 9050 Red Branch — third party
-    ['REDACTED-030', false],
-    ['REDACTED-111', false],
+    ['Oxford / Lender 03', false], // 29000 Information Lane — third party
+    ['Muirkirk Properties (Servicer 01/Firm 03) — Oxford 50% share', false], // 9050 Red Branch — third party
+    ['Lender 04', false],
+    ['Lender 01', false],
     ['Oxford Capitalist Fund', false], // no partial-word match after
     ['NotOxford Capital', false], // no partial-word match before
-    ['REDACTED-672', false],
+    ['Firm 03', false],
     ['', false],
   ])('%s → %s', (text, expected) => {
     expect(namesAffiliateLender(text)).toBe(expected);
@@ -61,7 +61,7 @@ describe('isAffiliateNoteProperty — property row whose outstanding loan is owe
     expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: Number.POSITIVE_INFINITY })).toBe(false);
   });
   it('third-party lender → false', () => {
-    expect(isAffiliateNoteProperty({ lender: 'REDACTED-672', loanBalance: REDACTED-AMT })).toBe(false);
+    expect(isAffiliateNoteProperty({ lender: 'Firm 03', loanBalance: REDACTED-AMT })).toBe(false);
   });
   it('no lender → false', () => {
     expect(isAffiliateNoteProperty({ lender: null, loanBalance: 0 })).toBe(false);
@@ -72,8 +72,8 @@ describe('isAffiliateNoteProperty — property row whose outstanding loan is owe
 describe('isAffiliateBorrowerLoan — borrower direction only', () => {
   const live3883 = {
     direction: 'borrower',
-    lender: 'REDACTED-676',
-    counterparty: 'REDACTED-676',
+    lender: 'Lender 05 / Oxford Capital — Oxford 50% share',
+    counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share',
   };
   it('live "3883 from Oxford (50%)" → true', () => {
     expect(isAffiliateBorrowerLoan(live3883)).toBe(true);
@@ -82,28 +82,28 @@ describe('isAffiliateBorrowerLoan — borrower direction only', () => {
     expect(isAffiliateBorrowerLoan({ ...live3883, lender: null })).toBe(true);
   });
   it('a LENDER-direction note naming Oxford Capital is capital deployed, never an affiliate debt → false', () => {
-    expect(isAffiliateBorrowerLoan({ direction: 'lender', lender: null, counterparty: 'REDACTED-026' })).toBe(false);
+    expect(isAffiliateBorrowerLoan({ direction: 'lender', lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share' })).toBe(false);
   });
   it('internal-direction accrual → false (already outside External Debt)', () => {
-    expect(isAffiliateBorrowerLoan({ direction: 'internal', lender: null, counterparty: 'REDACTED-373' })).toBe(false);
+    expect(isAffiliateBorrowerLoan({ direction: 'internal', lender: null, counterparty: 'Firm 10' })).toBe(false);
   });
   it('third-party borrower → false', () => {
-    const easton = 'REDACTED-077';
+    const easton = 'Oxford / Lender 03';
     expect(isAffiliateBorrowerLoan({ direction: 'borrower', lender: easton, counterparty: easton })).toBe(false);
   });
 });
 
 describe('investment-basis helpers', () => {
   const rarig = { lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
-  const easton = { lender: 'REDACTED-672', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
+  const easton = { lender: 'Firm 03', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
   it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
     expect(investmentLoanBalance(rarig)).toBe(0);
     expect(investmentLoanBalance(easton)).toBe(REDACTED-AMT);
     expect(investmentLoanBalance({ lender: null, loanBalance: null })).toBe(0);
   });
   it('investmentLoanBalance coerces a non-finite balance to 0', () => {
-    expect(investmentLoanBalance({ lender: 'REDACTED-672', loanBalance: Number.POSITIVE_INFINITY })).toBe(0);
-    expect(investmentLoanBalance({ lender: 'REDACTED-672', loanBalance: Number.NaN })).toBe(0);
+    expect(investmentLoanBalance({ lender: 'Firm 03', loanBalance: Number.POSITIVE_INFINITY })).toBe(0);
+    expect(investmentLoanBalance({ lender: 'Firm 03', loanBalance: Number.NaN })).toBe(0);
   });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();

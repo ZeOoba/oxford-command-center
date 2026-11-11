@@ -25,7 +25,7 @@ Nothing in `src/modules/` models building condition, reserves, asset age, or cap
 | Flags_Open_Items | 16 | Data-quality worklist (7 items are decisions for Gabriel, not data) | — |
 | File_Index | 57 | Document provenance | — |
 
-Source-data issues that must be resolved or carried as flags before ingest (from the summary): E Fulton CBRE reserve likely understated (no roof access, collapse uncosted) — treat $REDACTED-AMT as a floor; Banwick/Morrison summary docx has errors vs Intertek (fix before it goes to REDACTED-672); Raytown reserve $74,000 understated vs its own columns (the `*` row); Northwood PCI "good" vs REDACTED-711 "Poor, 2–4 yrs"; Fairground Village DECA is 2013.
+Source-data issues that must be resolved or carried as flags before ingest (from the summary): E Fulton CBRE reserve likely understated (no roof access, collapse uncosted) — treat $REDACTED-AMT as a floor; Banwick/Morrison summary docx has errors vs Intertek (fix before it goes to Firm 03); Raytown reserve $74,000 understated vs its own columns (the `*` row); Northwood PCI "good" vs REDACTED-711 "Poor, 2–4 yrs"; Fairground Village DECA is 2013.
 
 ## 3. Where it lands (digestible sections)
 
@@ -77,7 +77,7 @@ Import: new `scripts/import-pca-register.ts` reading the xlsx directly (xlsx is 
 | 2 — Read-only surface — **BUILT 2026-10-07** | `GET /api/warehouse/property-condition/report` (`server/warehouse/property-condition.ts`: latest-report-per-property read model, warranty status, lifecycle due year, calibration deltas, evidence-classed quotes, separate estimate price book); `src/modules/property-condition/` with views Capex outlook · Replacement schedule · Estimate vs actual · Quotes & prices · Open items. `Est_vs_Actual` added to the Phase 1 importer (migration 035 amended pre-merge: `capex_calibration_pairs`, `pca_components.rul_raw`). Verified in the browser against the real register (KPIs $477K / $918K / $2.79M; calibration −60 / −69 / +2 / +213%). Not yet in the static bake mirror → deployed mirror reads as offline. Open items live in their own view; the DataQuality-tab fold-in is deferred. | typecheck/lint/governance/schema-drift + 41 new tests + IA registry tests green |
 | 3 — Alerts | New conditions (warranty, stale-with-immediate, contradiction) | Gate; defensive coercion tests |
 | 4 — Engine wiring | capital-allocation + CapexIrrCalc consume PCA capex; `capexBasis` flag | **refute-financial-change workflow**; ratify rule that PCA-derived replaces proxy only for CURRENT reports |
-| 5 — Backfill | The unread batch: roof proposals/warranties/invoices for 1100 Rarig, 1851 South Club, 5242 Angola, 5600 Sunnyside, 55 New Plant (HVAC, paving, mezzanine, REDACTED-659); Livingston final PCA; 29000 Info Ln final | Data work in Cowork, not code |
+| 5 — Backfill | The unread batch: roof proposals/warranties/invoices for 1100 Rarig, 1851 South Club, 5242 Angola, 5600 Sunnyside, 55 New Plant (HVAC, paving, mezzanine, Tenant 155 LLC); Livingston final PCA; 29000 Info Ln final | Data work in Cowork, not code |
 
 Phases 1–3 are low-risk and independently shippable (read-only, additive). Phase 4 is the only one touching financial-decision code.
 

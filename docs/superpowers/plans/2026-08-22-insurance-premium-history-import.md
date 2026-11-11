@@ -36,8 +36,8 @@ Insert into `tests/unit/import-insurance-data.test.ts`, after the existing `pars
 describe('parsePoliciesPayload', () => {
   const base = {
     propertyId: 'ins-3540fifth-pckg',
-    insurer: 'REDACTED-494',
-    policyNumber: 'REDACTED-614',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: REDACTED-AMT,
@@ -292,8 +292,8 @@ Insert a new `describe` block in `tests/unit/import-insurance-data.test.ts`, aft
 describe('importPolicyRows', () => {
   const rowFor = (propertyId: string, overrides: Partial<Parameters<typeof parsePoliciesPayload>[0]> = {}) => ({
     propertyId,
-    insurer: 'REDACTED-494',
-    policyNumber: 'REDACTED-614',
+    insurer: 'Carrier 01',
+    policyNumber: 'POL-0013',
     effectiveDate: '2024-01-20',
     expirationDate: '2025-01-20',
     premiumAnnual: REDACTED-AMT,
@@ -315,7 +315,7 @@ describe('importPolicyRows', () => {
     const inserted = db.prepare(
       `SELECT premium_annual, coverage_tiv FROM property_insurance_policies
        WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
     expect(inserted.premium_annual).toBe(REDACTED-AMT);
     expect(inserted.coverage_tiv).toBe(REDACTED-AMT);
   });
@@ -350,7 +350,7 @@ describe('importPolicyRows', () => {
     const policyId = insertPolicy(db, 'ins-3540fifth-pckg');
     db.prepare(`
       UPDATE property_insurance_policies
-      SET policy_number = 'REDACTED-614', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
+      SET policy_number = 'POL-0013', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
       WHERE id = ?
     `).run(policyId);
 
@@ -379,7 +379,7 @@ describe('importPolicyRows', () => {
 
     const count = db.prepare(
       `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
-    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { c: number };
+    ).get('ins-3540fifth-pckg', 'POL-0013', '2024-01-20') as { c: number };
     expect(count.c).toBe(2); // the fixture row from insertPolicy (blank key) + the one row this test wrote
   });
 });
@@ -748,8 +748,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
   "policies": [
     {
       "propertyId": "ins-1900broadway-ufx",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-612",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0017",
       "effectiveDate": "2024-08-27",
       "expirationDate": "2025-08-27",
       "premiumAnnual": REDACTED-AMT,
@@ -760,8 +760,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-1900broadway-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-608",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0018",
       "effectiveDate": "2024-08-27",
       "expirationDate": "2025-08-27",
       "premiumAnnual": 1992,
@@ -772,8 +772,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-3540fifth-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-614",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0013",
       "effectiveDate": "2024-01-20",
       "expirationDate": "2025-01-20",
       "premiumAnnual": REDACTED-AMT,
@@ -784,8 +784,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-3540fifth-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-603",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0014",
       "effectiveDate": "2024-01-20",
       "expirationDate": "2025-01-20",
       "premiumAnnual": 878,
@@ -796,8 +796,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-3540fifth-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-614",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0013",
       "effectiveDate": "2025-01-20",
       "expirationDate": "2026-01-20",
       "premiumAnnual": REDACTED-AMT,
@@ -808,8 +808,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-3540fifth-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-603",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0014",
       "effectiveDate": "2025-01-20",
       "expirationDate": "2026-01-20",
       "premiumAnnual": 964,
@@ -820,8 +820,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-fvc-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-613",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0005",
       "effectiveDate": "2024-02-03",
       "expirationDate": "2025-02-03",
       "premiumAnnual": REDACTED-AMT,
@@ -832,8 +832,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-fvc-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-604",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0006",
       "effectiveDate": "2024-02-03",
       "expirationDate": "2025-02-03",
       "premiumAnnual": 1813,
@@ -844,8 +844,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-3034westerville-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-617",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0012",
       "effectiveDate": "2024-09-24",
       "expirationDate": "2025-09-24",
       "premiumAnnual": REDACTED-AMT,
@@ -856,8 +856,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-55newplant-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-615",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0003",
       "effectiveDate": "2024-01-01",
       "expirationDate": "2025-01-01",
       "premiumAnnual": 7907,
@@ -868,8 +868,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-55newplant-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-602",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0004",
       "effectiveDate": "2024-01-01",
       "expirationDate": "2025-01-01",
       "premiumAnnual": 536,
@@ -880,8 +880,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-55newplant-pckg",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-615",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0003",
       "effectiveDate": "2025-01-01",
       "expirationDate": "2026-01-01",
       "premiumAnnual": 8236,
@@ -892,8 +892,8 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
     },
     {
       "propertyId": "ins-55newplant-bcl",
-      "insurer": "REDACTED-494",
-      "policyNumber": "REDACTED-602",
+      "insurer": "Carrier 01",
+      "policyNumber": "POL-0004",
       "effectiveDate": "2025-01-01",
       "expirationDate": "2026-01-01",
       "premiumAnnual": 584,
@@ -908,7 +908,7 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
 
 **Why only 13 rows across 5 of the 7 `PROPS` properties, not ~19–20 across all 7 — one property needed zero rows, two items deferred, none guessed:**
 
-0. **3875-3883 Livingston needed zero new rows — not a gap, verified against the live DB.** `PROPS['3883']` has only two policy years (`2025-2026`, `2026-2027`) because the property is new business (Source Index: "New business 06/11/2025" — there is no 2024-25 term to have ever existed). Both years are already present in `property_insurance_policies` exactly matching `PROPS`: `ins-3883livingston-pckg`/`-bcl`, policy numbers `REDACTED-622`/`REDACTED-607`, `2025-06-11`→5815/614 and `2026-06-11`→5687/614. Re-confirmed against the live warehouse before closing this track (2026-08-22) after the whole-branch review flagged Livingston's absence from the payload as unexplained — it's fully covered, not missed.
+0. **3875-3883 Livingston needed zero new rows — not a gap, verified against the live DB.** `PROPS['3883']` has only two policy years (`2025-2026`, `2026-2027`) because the property is new business (Source Index: "New business 06/11/2025" — there is no 2024-25 term to have ever existed). Both years are already present in `property_insurance_policies` exactly matching `PROPS`: `ins-3883livingston-pckg`/`-bcl`, policy numbers `POL-0024`/`POL-0025`, `2025-06-11`→5815/614 and `2026-06-11`→5687/614. Re-confirmed against the live warehouse before closing this track (2026-08-22) after the whole-branch review flagged Livingston's absence from the payload as unexplained — it's fully covered, not missed.
 1. **3034 Westerville's 2025-26 and 2026-27 terms are withheld.** The *existing* `ins-3034westerville-pckg` row (`effective_date '2025-09-18'`, `premium_annual REDACTED-AMT`) pairs a 2024-25 premium ($REDACTED-AMT, confirmed by Source Index's "new dec 09/24/2024; premium $REDACTED-AMT") with what looks like a 2025-26-dated key. Inserting the true 2025-26 term ($REDACTED-AMT) at the same `2025-09-18` date this importer would treat as an UPDATE to that existing (likely mis-dated) row — silently overwriting a discrepancy instead of surfacing it. Task 5 logs this as a `data_quality_issues` row for Gabriel/a follow-up session to resolve against the source PDF; this plan does not guess at the true date. **Update (2026-08-22, post-merge-review):** the Track A import also added a *new* row for the confirmed 2024-25 term (`effective_date '2024-09-24'`, same premium $REDACTED-AMT, id 1360) — two rows now carry the same $REDACTED-AMT figure at different dates. `data_quality_issues` id=3's detail was amended to name both rows explicitly so a follow-up session isn't misled by the original text, which predated the second row.
 2. **9620 State 350 is entirely out of scope for this payload**, per spec §3 — it has a documented carrier-naming discrepancy (broker name recorded where a carrier name belongs, in the 2 existing 2025-10-18 rows), an unresolved mid-term cancellation (superseded 05/28/2026, `expiration_date` on the existing row still shows the original term end), and a Hartford 2026-27 bundle whose GL/Umbrella/fees breakdown doesn't cleanly map ($329 GL + $336 new umbrella + an unexplained $599 remainder ≠ the dashboard's single $1,264 "umbrella" figure). All three are already tracked in `reference_insurance_9620_state350_and_deductible_ladder_2026-08-17.md` — this track does not reopen them.
 
@@ -947,7 +947,7 @@ const db = new Database('data/warehouse/finance.sqlite');
 db.prepare(\`INSERT INTO data_quality_issues (property_id, kind, detail, severity)
   VALUES (?, 'insurance-policy-suspected-year-mismatch', ?, 'warn')\`).run(
   'ins-3034westerville-pckg',
-  'Existing row (policy REDACTED-617, effective_date 2025-09-18, premium_annual REDACTED-AMT) pairs a 2024-25 premium figure (Source Index: new dec 09/24/2024, premium \$REDACTED-AMT) with what should likely be a 2025-09-18-or-later key. The confirmed 2025-26 term (\$REDACTED-AMT, renewal cert 07/05/2025) and 2026-27 term (\$REDACTED-AMT, renewal cert 07/05/2026, deductible raised to \$25,000) from ora-insurance-premium-dashboard were withheld from the 2026-08-22 Track A import rather than risk silently overwriting this row via upsert. Needs the source PDF (2425 Package 3034 Westerville New.pdf) checked against the actual policy anniversary before the 2025-26/2026-27 rows are added.'
+  'Existing row (policy POL-0012, effective_date 2025-09-18, premium_annual REDACTED-AMT) pairs a 2024-25 premium figure (Source Index: new dec 09/24/2024, premium \$REDACTED-AMT) with what should likely be a 2025-09-18-or-later key. The confirmed 2025-26 term (\$REDACTED-AMT, renewal cert 07/05/2025) and 2026-27 term (\$REDACTED-AMT, renewal cert 07/05/2026, deductible raised to \$25,000) from ora-insurance-premium-dashboard were withheld from the 2026-08-22 Track A import rather than risk silently overwriting this row via upsert. Needs the source PDF (2425 Package 3034 Westerville New.pdf) checked against the actual policy anniversary before the 2025-26/2026-27 rows are added.'
 );
 console.log('logged');
 "

@@ -53,7 +53,7 @@ describe('resolvePropertyId', () => {
 
   // OI-184: '3034 Westerville ROAD' matched '1900 N Broadway, Baltimore MD' on the substring
   // 'road' ("b-ROAD-way"), purely because Baltimore's entry sat earlier in the properties array —
-  // both of Westerville's real leases (REDACTED-294 $REDACTED-AMT/mo, Lamar Advertising
+  // both of Westerville's real leases (Tenant 088 LLC $REDACTED-AMT/mo, Lamar Advertising
   // billboard $300/mo) were mis-tagged to a property in a different state. Whole-token equality
   // means 'road' as a standalone key token never equals 'broadway' as a whole address token, so
   // Baltimore scores 0 here regardless of row order; Westerville scores 2 ('3034' + 'westerville')

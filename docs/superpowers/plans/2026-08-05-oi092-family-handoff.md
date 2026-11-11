@@ -12,7 +12,7 @@ authoritative — re-verify against it before acting on anything below.**
 |---|---|
 | **OI-092** window defect | Fixed. `[TODAY(), TODAY()+366)` → `(Assumptions!$B$30, EOMONTH(Assumptions!$B$30,12)]` on all six cells. Zero `TODAY()+366` remain. |
 | **OI-092** February pair fix | Landed with the above: `B30` = `IF(B31="Auto (current month-end)",EOMONTH(TODAY(),0),IF(ISNUMBER(B32),EOMONTH(B32,0),EOMONTH(TODAY(),0)))`. |
-| **OI-094** Banwick truncation | Fixed. Ranges extended `B11:B70` → `B11:B71`, capturing the 2031-06-05 balloon. `J9` = $REDACTED-AMT, `Loan Index!F9` = $REDACTED-AMT — matches REDACTED-672 loan 11153's own schedule. |
+| **OI-094** Banwick truncation | Fixed. Ranges extended `B11:B70` → `B11:B71`, capturing the 2031-06-05 balloon. `J9` = $REDACTED-AMT, `Loan Index!F9` = $REDACTED-AMT — matches Firm 03 loan 11153's own schedule. |
 | Six-range audit | Complete, run independently by two sessions with identical conclusions. Banwick was the only truncated range. |
 | Warehouse contamination | None. `debt_positions` was clean — all 8 snapshot dates fell on non-payment days. Nothing backfilled. |
 | Snapshot remediation | `61cc346` → `51d4039` → `63992e0` → `f269986`, all pushed. |
@@ -48,7 +48,7 @@ All of `H6:I9`, `H15:I15`, `H16` use `EOMONTH(Assumptions!$B$30,12)`. `B33` repo
 
 ---
 
-## OPEN 1 — OI-096, REDACTED-554 duplicate-date over-count  [ruled; needs the edit]
+## OPEN 1 — OI-096, 100 Note Party St duplicate-date over-count  [ruled; needs the edit]
 
 Rows 45 and 46 both carry `2028-09-26`:
 
@@ -82,9 +82,9 @@ created* during the EXTERNAL→INTERNAL reclassification. It is not there. Eithe
 completed, or it was created and later removed — and those imply different things about whether the
 **rest** of that reclassification landed. Establish which, then create the sheet.
 
-Existing internal-loan journals, for naming reference: `REDACTED-438`, `REDACTED-409`,
-`3883 from Oxford & LAST Non`, `1100 From Fenton`, `REDACTED-337+ REDACTED-668`,
-`REDACTED-372`.
+Existing internal-loan journals, for naming reference: `NOTE PARTY 05`, `NOTE PARTY 06`,
+`3883 from Oxford & NOTE PARTY 08`, `1100 From Fenton`, `Note Party 04+ NOTEPARTY08`,
+`Note Party 07`.
 
 ## OPEN 3 — Detector rebuild  [queued, unblocked]
 

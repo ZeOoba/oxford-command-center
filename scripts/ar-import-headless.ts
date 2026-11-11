@@ -114,11 +114,11 @@ export interface QueuedReview extends ArReviewRow {
   propertyId?: string | null;
   /** The unit label exactly as the export printed it (annotation included), e.g. 'C 4 (storage)'. */
   unit?: string | null;
-  /** Who the lease roster puts at this unit, ANY status ('REDACTED-486 [Expired]'), joined with
+  /** Who the lease roster puts at this unit, ANY status ('Tenant 059 LLC [Expired]'), joined with
    *  ' | ' when several -- DISPLAY ONLY. Never a matching input. */
   candidateTenant?: string | null;
   candidateLeaseIds?: string[];
-  /** The mapping cache's standing ruling for the candidate name(s), e.g. 'REDACTED-486 → SKIP'
+  /** The mapping cache's standing ruling for the candidate name(s), e.g. 'tenant 059 llc → SKIP'
    *  -- surfaced so a durable name-keyed human decision is VISIBLE from a unit-keyed row. Never
    *  auto-applied: a SKIP ruled on a name-matched row has different provenance than this one. */
   candidateCacheRuling?: string | null;
@@ -128,7 +128,7 @@ export interface QueuedReview extends ArReviewRow {
  *  lease (server/ar/lease-liveness.ts's isDeadLease: status 'Expired' or 'Vacant', or annualRent 0).
  *  An exact tenant-name hit against a dead lease auto-writes at 'exact' confidence with no human
  *  review (matchTenantToLease has no status awareness) -- the 2026-08-24 integrity-sweep incident:
- *  a human SKIP ruling on an Expired lease's residual delinquency (REDACTED-197,
+ *  a human SKIP ruling on an Expired lease's residual delinquency (2207-northwood-c4-tenant-059-llc,
  *  "no current occupant") was silently reversed the next time this loader fed that same dead lease
  *  back into the matcher. Dropping dead leases from the candidate pool entirely means a
  *  current-period export naming a vacated tenant can no longer auto-attribute -- it falls through
@@ -136,7 +136,7 @@ export interface QueuedReview extends ArReviewRow {
  *  human to re-confirm a SKIP or re-attribute to whatever now occupies the unit.
  *
  *  Widened from Expired-only on 2026-09-14 (weekly financial-code sweep, Fix A): an Active lease
- *  carrying $0 rent (REDACTED-348 #202, Evans Gymnastics A15 -- roster placeholders that
+ *  carrying $0 rent (Tenant 072 LLC #202, Example Gymnastics A15 -- roster placeholders that
  *  bill nothing) and a 'Vacant' record were still live candidates here. The predicate is shared
  *  with resolveByUnit so the two fresh-match pools cannot drift apart again. */
 export function loadLeasesFromSnapshot(): LeaseLite[] {
@@ -160,7 +160,7 @@ export function loadLeasesFromSnapshot(): LeaseLite[] {
  *  behind a resolver-less review queue.
  *
  *  DELIBERATELY NOT narrowed by isDeadLease (2026-09-14 sweep, Fix A): the same reasoning applies
- *  verbatim to the wider dead set -- the real cache entry "REDACTED-348" maps to a lease
+ *  verbatim to the wider dead set -- the real cache entry "tenant 072 llc" maps to a lease
  *  that is Active with $0 rent, and that confirmed mapping must keep writing. */
 export function loadAllLeaseIdsFromSnapshot(): Set<string> {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as { leases?: Array<{ id: string }> };
@@ -302,7 +302,7 @@ function reviewSourceRowKey(r: QueuedReview): string | null {
  *  reason text is exactly what the inline branch produced before (2026-09-14 sweep, Fix B lifted
  *  it out so it can be unit-tested), plus the source-row identity fields and the roster candidate:
  *  Format B carries NO tenant name, so a durable name-keyed SKIP ruling in the mapping cache
- *  (real: "REDACTED-486": "SKIP") was invisible from the queue. The candidate is whoever the
+ *  (real: "tenant 059 llc": "SKIP") was invisible from the queue. The candidate is whoever the
  *  roster puts at that unit at ANY status -- a dead lease is precisely the case a human needs to
  *  see -- and the cache's ruling for that name is shown beside it. DISPLAY ONLY: the row stays a
  *  'none'-confidence review with no proposal; nothing here auto-applies a SKIP or a mapping. */

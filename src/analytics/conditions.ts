@@ -162,10 +162,10 @@ function annualDebtService(l: {
   // applied to a row with a populated monthlyPmt.
   //
   // The workbook signs lender-side payments negative (mirroring currentBalance, "negative
-  // for lender (capital deployed)"). Live proof: REDACTED-306 carries
+  // for lender (capital deployed)"). Live proof: Note Party 02 carries
   // monthlyPmt -REDACTED-AMT, which Path 1 turned into an impactAnnualUsd of
   // -$REDACTED-AMT — a negative dollar figure on a ranking field. The sign is not even
-  // internally consistent among lender rows (REDACTED-415 is +REDACTED-AMT), so trusting it
+  // internally consistent among lender rows (Note Party 03 is +REDACTED-AMT), so trusting it
   // is unsound in both directions.
   //
   // Borrower rows are unaffected: all five in the live snapshot carry positive monthlyPmt,
@@ -296,7 +296,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         // intercompany accrual", with currentBalance signed negative for lender (capital
         // deployed). A maturing `lender` note is an ASSET arriving, not a liability coming
         // due; "Prepare refinance or payoff" inverts the fact, and `category: 'debt'` files
-        // a receivable under debt. Live defect: REDACTED-306 ($979,772 @ 9%,
+        // a receivable under debt. Live defect: Note Party 02 ($979,772 @ 9%,
         // balloon 2027-02-20, direction 'lender') shipped in the 2026-07-16 Daily Brief
         // telling the reader to refinance money owed TO Oxford.
         //
@@ -332,7 +332,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           // Severity is CAPPED AT 'warning' — a lender note never goes critical. The
           // balloonCriticalDays=180 window is calibrated to REFINANCING lead time; confirming
           // a borrower's repayment needs nothing like six months. Reusing that ladder would
-          // flip REDACTED-306 to critical on 2026-08-24, and brief/run.ts sends an
+          // flip Note Party 02 to critical on 2026-08-24, and brief/run.ts sends an
           // individual outbound email per new critical id — i.e. a CRITICAL-branded alert
           // about money arriving. Inbound capital is not an emergency.
           out.push({

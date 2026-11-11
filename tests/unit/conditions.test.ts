@@ -73,7 +73,7 @@ describe('evaluateConditions — debt', () => {
   // A `lender`-direction loan is money ORA is OWED (contracts/loan.ts: "Lender = Oxford
   // receives"; currentBalance is negative = capital deployed). Telling the reader to
   // "prepare refinance or payoff" on an asset inverts the fact. Live case that motivated
-  // this: REDACTED-306 — $979,772 @ 9%, balloon 2027-02-20, direction 'lender'
+  // this: Note Party 02 — $979,772 @ 9%, balloon 2027-02-20, direction 'lender'
   // — shipped in the 2026-07-16 Daily Brief as a debt obligation.
   //
   // Convention follows the refi-spread precedent already in this file (test (f)):
@@ -96,7 +96,7 @@ describe('evaluateConditions — debt', () => {
 
   it('a maturing lender-direction note fires its own insight, distinct from the balloon one', () => {
     const out = evaluateConditions(
-      snap({ loans: [loan({ id: 'lend2', name: 'REDACTED-306', direction: 'lender', balloon: true, maturity: iso(120), absBalance: 979_772 })] }),
+      snap({ loans: [loan({ id: 'lend2', name: 'Note Party 02', direction: 'lender', balloon: true, maturity: iso(120), absBalance: 979_772 })] }),
       opts,
     );
     const note = out.find((i) => i.id === 'note-maturity-lend2');
@@ -114,13 +114,13 @@ describe('evaluateConditions — debt', () => {
   // annualDebtService returned null, impactAnnualUsd was null, and the suite was green while
   // the real row produced -$REDACTED-AMT. A fixture must carry the data that breaks, not the
   // label of the thing that broke.
-  it('the live REDACTED-306 row yields a POSITIVE impact (signed workbook pmt must not leak through)', () => {
+  it('the live Note Party 02 row yields a POSITIVE impact (signed workbook pmt must not leak through)', () => {
     const out = evaluateConditions(
       snap({
         loans: [
           loan({
             id: 'rct',
-            name: 'REDACTED-306',
+            name: 'Note Party 02',
             direction: 'lender',
             balloon: true,
             maturity: iso(120),
@@ -1045,7 +1045,7 @@ describe('evaluateConditions — affiliate notes are outside per-property LTV (r
     expect(out.some((i) => i.id === 'ltv-p1')).toBe(false);
   });
   it('the same LTV on a third-party loan still fires the info governor insight (id unchanged)', () => {
-    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'REDACTED-545', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Lender 08', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
     expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
   });
 });

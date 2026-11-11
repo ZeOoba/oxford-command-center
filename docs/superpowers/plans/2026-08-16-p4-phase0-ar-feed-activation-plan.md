@@ -110,7 +110,7 @@ npx tsx scripts/ar-import-headless.ts
 
 Expected: exit 0, log showing `5 file(s) · 138 lease(s) loaded`. Any file landing in `data/ar-dryrun/failed/` is a finding — record the quarantine reason verbatim and stop.
 
-**Actual result, 2026-08-16 (run completed):** all five parsed as `rent-manager-delinquency`, `18 lease(s) written · 8 queued for review · 0 skipped · 5/5 archived` — 26 rows total, exactly matching `_pipeline`'s count for these five files. Written $54,762.78; review queue $75,213.11; combined **$129,975.89**, leaving $74,812.59 for Formats B and C. **`REDACTED-238` surfaced in the review queue at $20,457.24**, matching the documented balance to the cent — acceptance criterion (a) satisfied. Both real files verified byte-identical before and after.
+**Actual result, 2026-08-16 (run completed):** all five parsed as `rent-manager-delinquency`, `18 lease(s) written · 8 queued for review · 0 skipped · 5/5 archived` — 26 rows total, exactly matching `_pipeline`'s count for these five files. Written $54,762.78; review queue $75,213.11; combined **$129,975.89**, leaving $74,812.59 for Formats B and C. **`AR Tenant 022` surfaced in the review queue at $20,457.24**, matching the documented balance to the cent — acceptance criterion (a) satisfied. Both real files verified byte-identical before and after.
 
 - [ ] **Step 5: Verify what was written**
 

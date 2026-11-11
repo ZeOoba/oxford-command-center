@@ -41,8 +41,8 @@
 //   • policy_ref (normalizePolicyNumber'd — case- and whitespace-insensitive) matches a policy's OWN
 //     number first (PolicyTerm.policyNumber). Only when no policy at the property carries it as its
 //     own number does it fall back to the line aliases (PolicyTerm.lineNumbers — every number the
-//     same raw line + policy_type has carried, e.g. a same-term reissue's base number 'REDACTED-600'
-//     for the surviving 'REDACTED-477'). Own-first keeps an exact ref authoritative when one line
+//     same raw line + policy_type has carried, e.g. a same-term reissue's base number 'POL0010'
+//     for the surviving 'POL-0010'). Own-first keeps an exact ref authoritative when one line
 //     carries two surviving policies (refute wf_4af14459-c62).
 // Ties break on the most recent effective date, then policyId, as a total order — so the
 // attachment never depends on input order. A property can carry several concurrently in-force
@@ -96,7 +96,7 @@ export interface PolicyTerm {
 }
 
 /** Canonical policy-number form for matching a loss run's policy_ref: upper-case with ALL
- *  whitespace removed ('REDACTED-519' ≡ 'REDACTED-584'). Null for a missing/blank number. */
+ *  whitespace removed ('POL 0011' ≡ 'POL0011'). Null for a missing/blank number. */
 export function normalizePolicyNumber(n: string | null | undefined): string | null {
   const t = n?.replace(/\s+/g, '').toUpperCase();
   return t ? t : null;

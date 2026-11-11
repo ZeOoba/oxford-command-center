@@ -91,7 +91,7 @@ export const FIRM_CASH_ENTITY = { id: 'oxford', name: 'Oxford' } as const;
  * ownershipPct, excluding lender escrows / lockboxes. The snapshot cannot compute it today (Cash
  * Balances carries no escrow/lockbox split and no per-entity ownership), and no deployable-capacity
  * engine exists yet. INTERIM PROXY (Gabriel, 2026-11-02): the "Oxford" Cash Balances entity balance.
- * Replace this with the sweepable-cash figure when the deployable-capacity plan lands. Matched exactly on id or trimmed name, never a substring ("Oxford Capital", "REDACTED-665"
+ * Replace this with the sweepable-cash figure when the deployable-capacity plan lands. Matched exactly on id or trimmed name, never a substring ("Oxford Capital", "FIRM 13"
  * and property accounts are not firm cash). Returns null — unknown, never a breach and never OK —
  * when no entity or more than one matches, or the balance is non-finite.
  */

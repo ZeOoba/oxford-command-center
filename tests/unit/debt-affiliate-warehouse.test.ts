@@ -9,9 +9,9 @@
 // debt-service treatment is an OPEN ruling and is deliberately unchanged here.
 //
 // Fixture strings mirror what the live warehouse actually stores (read-only query 2026-09-26):
-//   lender = 'REDACTED-676'   (the '3883 from Oxford (50%)' note)
-//   lender = 'REDACTED-077'  (third-party — NOT affiliate)
-//   lender = 'REDACTED-111'        (third-party)
+//   lender = 'Lender 05 / Oxford Capital — Oxford 50% share'   (the '3883 from Oxford (50%)' note)
+//   lender = 'Oxford / Lender 03'  (third-party — NOT affiliate)
+//   lender = 'Lender 01'        (third-party)
 // debt_positions has NO counterparty column — only lender + loan_name are persisted.
 //
 // All tests use a fresh SQLite warehouse in tmpdir — never touches finance.sqlite.
@@ -34,11 +34,11 @@ import type { PeriodMetrics } from '../../src/contracts/warehouse';
 
 vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn(async () => null) }));
 
-const LIVE_AFFILIATE_LENDER = 'REDACTED-676';
+const LIVE_AFFILIATE_LENDER = 'Lender 05 / Oxford Capital — Oxford 50% share';
 const LIVE_AFFILIATE_LOAN_NAME = '3883 from Oxford (50%)';
-const LIVE_REDACTED-672_LENDER = 'REDACTED-077';
-const REDACTED-707 = 'REDACTED-111';
-const FIRM_STYLING_LENDER = 'Oxford Capital Partners (REDACTED-545 Bank)';
+const LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER = 'Oxford / Lender 03';
+const REDACTED-707 = 'Lender 01';
+const FIRM_STYLING_LENDER = 'Oxford Capital Partners (Lender 08 Bank)';
 
 const ASOF = '2026-07-18';
 const dbs: WarehouseDb[] = [];
@@ -130,12 +130,12 @@ describe('isAffiliateDebtPosition — the one warehouse predicate, matched again
     ).toBe(true);
   });
 
-  it('does NOT match "Oxford / REDACTED-672…" or "…(REDACTED-545 Bank)" third-party rows', () => {
-    expect(isAffiliateDebtPosition({ lender: LIVE_REDACTED-672_LENDER, loan_name: '29000 Information Lane' })).toBe(false);
+  it('does NOT match "Oxford / Firm 03…" or "…(Lender 08 Bank)" third-party rows', () => {
+    expect(isAffiliateDebtPosition({ lender: LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER, loan_name: '29000 Information Lane' })).toBe(false);
     expect(isAffiliateDebtPosition({ lender: REDACTED-707, loan_name: '3540 E. Fifth Ave' })).toBe(false);
   });
 
-  it('does NOT match the firm\'s own styling "Oxford Capital Partners (REDACTED-545 Bank)"', () => {
+  it('does NOT match the firm\'s own styling "Oxford Capital Partners (Lender 08 Bank)"', () => {
     expect(isAffiliateDebtPosition({ lender: FIRM_STYLING_LENDER, loan_name: 'Firm line' })).toBe(false);
   });
 
@@ -222,9 +222,9 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
     expect(agg.note).toMatch(/affiliate/i);
   });
 
-  it('"Oxford / REDACTED-672…" and "Oxford Capital Partners (REDACTED-545 Bank)" stay in the basis', () => {
+  it('"Oxford / Firm 03…" and "Oxford Capital Partners (Lender 08 Bank)" stay in the basis', () => {
     const db = freshDb();
-    seedLoan(db, { propertyId: seedProperty(db, 'prop-a'), lender: LIVE_REDACTED-672_LENDER, balance: 1_000_000, ltv: 0.4 });
+    seedLoan(db, { propertyId: seedProperty(db, 'prop-a'), lender: LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER, balance: 1_000_000, ltv: 0.4 });
     seedLoan(db, { propertyId: seedProperty(db, 'prop-b'), lender: FIRM_STYLING_LENDER, balance: 1_000_000, ltv: 0.4 });
     const agg = computePortfolioAggregateLtv(db);
     expect(agg.totalLoanCount).toBe(2);
@@ -317,11 +317,11 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
     expect(s!.ltv).toBeCloseTo(0.3, 6);
   });
 
-  it('"Oxford / REDACTED-672…" and "Oxford Capital Partners (…)" lenders still drive D1 LTV', () => {
+  it('"Oxford / Firm 03…" and "Oxford Capital Partners (…)" lenders still drive D1 LTV', () => {
     const db = freshDb();
     const a = seedProperty(db, 'prop-a');
     const b = seedProperty(db, 'prop-b');
-    seedLoan(db, { propertyId: a, lender: LIVE_REDACTED-672_LENDER, balance: 800_000, ltv: 0.5 });
+    seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_OXFORD_PREFIX_LENDER, balance: 800_000, ltv: 0.5 });
     seedLoan(db, { propertyId: b, lender: FIRM_STYLING_LENDER, balance: 800_000, ltv: 0.5 });
     const scores = scoreDebtPositions(db, [], null, ASOF);
     expect(scores.find((x) => x.propertyId === a)!.ltv).toBeCloseTo(0.5, 6);

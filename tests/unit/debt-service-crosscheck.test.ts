@@ -163,7 +163,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
   });
 
   it('does not flag a loan whose schedule legitimately ends inside the window', () => {
-    // REDACTED-306 shape: matures 2027-02-20, only 6 payments left. A short count
+    // Note Party 02 shape: matures 2027-02-20, only 6 payments left. A short count
     // is CORRECT here, and over-capture is structurally impossible — no 13th payment exists.
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
@@ -179,7 +179,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
   });
 
   it('compares interest only when the workbook principal is synthetic', () => {
-    // REDACTED-554: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
+    // 100 Note Party St: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
     const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
     const flags = crossCheckSchedule({
       id: 'REDACTED-708',
@@ -252,7 +252,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
     expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
   });
 
-  it('FIRES on duplicate payment dates (the REDACTED-554 double-count)', () => {
+  it('FIRES on duplicate payment dates (the 100 Note Party St double-count)', () => {
     const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
     // rows 45/46 both carry the same date — September interest counted twice.
     const dupe = rows[5]!;
@@ -514,7 +514,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     const wb = buildFixtureWorkbook({
       loans: [
         { row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 4000, n: 24, payDay: 1 },
-        { row: 15, label: 'REDACTED-306', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 24, payDay: 20, wrapInAbs: true },
+        { row: 15, label: 'Note Party 02', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 24, payDay: 20, wrapInAbs: true },
       ],
     });
     const flags = crossCheckDebtService(wb);
@@ -552,7 +552,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     // exempt design choice — and the -ABS(...) sign wrapper must not matter either way.
     const wb = buildFixtureWorkbook({
       loans: [
-        { row: 15, label: 'REDACTED-306', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 6, payDay: 20, wrapInAbs: true },
+        { row: 15, label: 'Note Party 02', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 6, payDay: 20, wrapInAbs: true },
       ],
     });
     const sched = wb.getWorksheet('Sched-RCT')!;
@@ -587,7 +587,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
   });
 
   it('does not claim "no cached value" when the cached principal is legitimately 0', () => {
-    // Live defect, 2026-08-09: REDACTED-312 (REDACTED-554, ELS row 16) is an
+    // Live defect, 2026-08-09: Note Party 03 LLC (100 Note Party St, ELS row 16) is an
     // interest-only position — no principal is contractually scheduled in the next 12 months, so
     // I16's cached value is a real 0 (`<v>0</v>` in the sheet XML). ExcelJS's public `cell.value`
     // getter OMITS `result` whenever it is falsy, so cellNumber() read undefined and the detector
@@ -994,8 +994,8 @@ describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent'
   /**
    * REFUTE-PASS REGRESSION (HIGH, confirmed by execution against the live Master Workbook).
    *
-   * The first version of the L3 cap made REDACTED-306 — H15 declares
-   * 'REDACTED-306'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
+   * The first version of the L3 cap made Note Party 02 — H15 declares
+   * 'Note Party 02'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
    * budget ... this loan's total and its truncation check are both unverified" on EVERY refresh.
    * Old code: 0 flags. New code: 1 permanent false flag on a real loan, in the DSCR-denominator
    * audit channel. That over-declared shape is the exact one ScanResult's own doc calls NORMAL and
@@ -1023,7 +1023,7 @@ describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent'
 
     // And end-to-end: no scheduleRange flag of any kind for this loan.
     const flags = crossCheckSchedule({
-      id: 'REDACTED-306', rows: out.rows, declaredRangeEnd: 310, share: 1,
+      id: 'Note Party 02', rows: out.rows, declaredRangeEnd: 310, share: 1,
       bookInterest: 0, bookPrincipal: null, asOf: ASOF,
       scanReachedDeclaredEnd: out.reachedDeclaredEnd,
       scanFirstRowBeyondGap: out.firstRowBeyondGap,

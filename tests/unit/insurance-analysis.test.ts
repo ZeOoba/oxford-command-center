@@ -618,7 +618,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'REDACTED-612',
+      policyNumber: 'POL-0017',
       effectiveDate: '2025-08-27',
       expirationDate: '2026-08-27',
       premiumAnnual: REDACTED-AMT,
@@ -630,7 +630,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'REDACTED-612',
+      policyNumber: 'POL-0017',
       effectiveDate: '2026-08-27',
       expirationDate: '2027-08-27',
       premiumAnnual: REDACTED-AMT,
@@ -673,7 +673,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-9620state350',
       policyType: 'Property',
       insurer: 'XPT Specialty',
-      policyNumber: 'REDACTED-600',
+      policyNumber: 'POL0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
       premiumAnnual: REDACTED-AMT,
@@ -685,8 +685,8 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     insertPolicy(db, {
       propertyId: 'p-9620state350',
       policyType: 'Property',
-      insurer: 'REDACTED-047',
-      policyNumber: 'REDACTED-477',
+      insurer: 'Carrier 03',
+      policyNumber: 'POL-0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
       premiumAnnual: REDACTED-AMT,
@@ -699,7 +699,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620state350');
     expect(rows).toHaveLength(1);
     expect(rows[0]?.premium).toBe(REDACTED-AMT);
-    expect(rows[0]?.carrier).toBe('REDACTED-047');
+    expect(rows[0]?.carrier).toBe('Carrier 03');
   });
 
   it('REGRESSION GUARD: removing the source_date tiebreak would silently restore the stale premium (pins why it is load-bearing)', () => {

@@ -10,7 +10,7 @@ const loan = (o: Partial<Loan>) =>
 describe('portfolioKpis — affiliate notes excluded from Total Debt and aggregate LTV (ratified 2026-09-24)', () => {
   const s = {
     properties: [
-      p({ id: 'bank', oxfordValue: 10_000_000, loanBalance: 2_000_000, lender: 'REDACTED-672' }),
+      p({ id: 'bank', oxfordValue: 10_000_000, loanBalance: 2_000_000, lender: 'Firm 03' }),
       p({ id: 'rarig', oxfordValue: 2_000_000, loanBalance: 1_000_000, lender: 'Oxford Capital' }),
     ],
     leases: [], cash: { totalCash: 0, history: [] }, meta: { asOf: '2026-09-24' },
@@ -38,12 +38,12 @@ describe('portfolioKpis — affiliate notes excluded from Total Debt and aggrega
 });
 
 describe('debtSummary — External Debt is third-party only; affiliate notes carried separately', () => {
-  const affName = 'REDACTED-676';
+  const affName = 'Lender 05 / Oxford Capital — Oxford 50% share';
   const loans = [
-    loan({ id: 'bank', absBalance: 2_000_000, rate: 0.05, monthlyPmt: 10_000, lender: 'REDACTED-672', counterparty: 'REDACTED-672', maturity: '2030-01-01' }),
+    loan({ id: 'bank', absBalance: 2_000_000, rate: 0.05, monthlyPmt: 10_000, lender: 'Firm 03', counterparty: 'Firm 03', maturity: '2030-01-01' }),
     loan({ id: 'aff', absBalance: 400_000, rate: 0.06, monthlyPmt: 4_000, lender: affName, counterparty: affName, maturity: '2035-06-01' }),
-    loan({ id: 'rcv', direction: 'lender', absBalance: 500_000, counterparty: 'REDACTED-013', maturity: '2027-02-20', balloon: true }),
-    loan({ id: 'int', direction: 'internal', absBalance: 300_000, counterparty: 'REDACTED-493' }),
+    loan({ id: 'rcv', direction: 'lender', absBalance: 500_000, counterparty: 'Firm 05 (Oxford Capital) — Oxford 50% share', maturity: '2027-02-20', balloon: true }),
+    loan({ id: 'int', direction: 'internal', absBalance: 300_000, counterparty: 'Firm 08' }),
   ];
 
   it('externalDebt / annualDebtService / weightedAvgRate exclude the affiliate borrower loan', () => {

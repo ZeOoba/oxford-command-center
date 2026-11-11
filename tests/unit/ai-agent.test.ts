@@ -9,13 +9,13 @@ function makeSnap(): PortfolioSnapshot {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: '2026-06-01T00:00:00.000Z', source: 't', scenario: 'Base' },
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-06-01' },
     properties: [
-      { id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex', sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000, debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'REDACTED-672', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000, cashOnCash: null, holdYrs: null, encumbered: true, flags: [] },
+      { id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex', sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000, debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Firm 03', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000, cashOnCash: null, holdYrs: null, encumbered: true, flags: [] },
     ],
     leases: [
-      { id: 'lease1', propertyKey: '29000', propertyId: 'p1', tenantName: 'REDACTED-659', unit: 'A', company: 'REDACTED-659, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2028-01-01', escalationDate: null, escalationPct: null, status: 'Active', annualRent: 100000, monthsToExpiry: 18, flags: [] },
+      { id: 'lease1', propertyKey: '29000', propertyId: 'p1', tenantName: 'Tenant 155 LLC', unit: 'A', company: 'Tenant 155 LLC, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2028-01-01', escalationDate: null, escalationPct: null, status: 'Active', annualRent: 100000, monthsToExpiry: 18, flags: [] },
     ],
     loans: [
-      { id: 'l1', name: 'REDACTED-306', counterparty: 'Oxford Capital', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.785, lender: null, balloon: true, flags: [] },
+      { id: 'l1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.785, lender: null, balloon: true, flags: [] },
     ],
     cash: { asOf: '2026-06-01', totalCash: REDACTED-AMT, activeEntities: 1, largestEntity: 'FVC', concentrationTopPct: 0.545, cagr: null, entities: [{ entity: 'FVC', id: 'fvc', currentBalance: 4000000, priorBalance: null, deltaDollar: null, deltaPct: null, avg3: null, minAllTime: null, maxAllTime: null, bal12moAgo: null, growth12Dollar: null, growth12Pct: null, pctOfPortfolio: 0.51, trend: 'up', flags: [] }], history: [] },
     insurance: [],
@@ -42,7 +42,7 @@ describe('tool definitions + executors', () => {
 
   it('get_loans(balloon_only) filters to balloons and carries a citation ref', () => {
     const r = runTool('get_loans', makeSnap(), { balloon_only: true });
-    expect(r.refs).toEqual([{ type: 'loan', id: 'l1', label: 'REDACTED-306' }]);
+    expect(r.refs).toEqual([{ type: 'loan', id: 'l1', label: 'Note Party 02' }]);
   });
 
   it('get_portfolio_summary market slices use the same investment-only basis as the headline value (residence excluded)', () => {
@@ -109,7 +109,7 @@ describe('tool definitions + executors', () => {
   });
 
   it('search_documents falls back honestly when no index is on this surface', () => {
-    const r = runTool('search_documents', makeSnap(), { query: 'REDACTED-659 renewal' });
+    const r = runTool('search_documents', makeSnap(), { query: 'tenant 155 llc renewal' });
     expect(JSON.stringify(r.data)).toMatch(/no documents are indexed/i);
   });
 
@@ -331,7 +331,7 @@ describe('runAgent — streaming tool loop', () => {
     const turn2 = sse(
       { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '1 balloon: ' } },
-      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '[[loan:l1|REDACTED-306]]' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '[[loan:l1|Note Party 02]]' } },
       { type: 'content_block_stop', index: 0 },
       { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
       { type: 'message_stop' },
@@ -352,7 +352,7 @@ describe('runAgent — streaming tool loop', () => {
     expect(bodies[0]).toContain('"stream":true');
     expect(events.some((e) => e.type === 'tool' && e.name === 'get_alerts')).toBe(true);
     const text = events.filter((e): e is Extract<AgentEvent, { type: 'text' }> => e.type === 'text').map((e) => e.delta).join('');
-    expect(text).toContain('[[loan:l1|REDACTED-306]]');
+    expect(text).toContain('[[loan:l1|Note Party 02]]');
     // The second request must echo the tool_result back to the model.
     expect(bodies[1]).toContain('tool_result');
     expect(bodies[1]).toContain('toolu_1');
@@ -418,7 +418,7 @@ describe('runAgent — streaming tool loop', () => {
     const bodies: string[] = [];
     const turn1 = sse(
       { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_d', name: 'search_documents' } },
-      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":"renewal option in the REDACTED-659 lease"}' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":"renewal option in the Tenant 155 LLC lease"}' } },
       { type: 'content_block_stop', index: 0 },
       { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
       { type: 'message_stop' },
@@ -435,16 +435,16 @@ describe('runAgent — streaming tool loop', () => {
       return new Response(bodies.length === 1 ? turn1 : turn2, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }));
     const docSearch = vi.fn(async () => [
-      { doc: 'Business/55 New Plant Court/Lease REDACTED-659 10-2022.pdf', snippet: 'Option to Renew ... Renewal Term', alsoIn: ['Business/Master Lease Database/15/Lease REDACTED-659 10-2022.pdf'], draft: false },
+      { doc: 'Business/55 New Plant Court/Lease Tenant 155 LLC 10-2022.pdf', snippet: 'Option to Renew ... Renewal Term', alsoIn: ['Business/Master Lease Database/15/Lease Tenant 155 LLC 10-2022.pdf'], draft: false },
     ]);
-    await runAgent({ question: 'renewal option in the REDACTED-659 lease', snapshot: makeSnap(), apiKey: 'test-key', docSearch, emit: () => undefined });
+    await runAgent({ question: 'renewal option in the Tenant 155 LLC lease', snapshot: makeSnap(), apiKey: 'test-key', docSearch, emit: () => undefined });
     vi.unstubAllGlobals();
 
     expect(docSearch).toHaveBeenCalledTimes(1);
-    expect(docSearch).toHaveBeenCalledWith('renewal option in the REDACTED-659 lease', 8); // was 5 — see doc-rank.ts
+    expect(docSearch).toHaveBeenCalledWith('renewal option in the Tenant 155 LLC lease', 8); // was 5 — see doc-rank.ts
     expect(bodies[1]).toContain('alsoIn');
     expect(bodies[1]).toContain('Master Lease Database');
-    expect(bodies[1]).toContain('Lease REDACTED-659 10-2022.pdf');
+    expect(bodies[1]).toContain('Lease Tenant 155 LLC 10-2022.pdf');
   });
 });
 

@@ -42,7 +42,7 @@ describe('ratified constants', () => {
 });
 
 describe('dscrHeadroom', () => {
-  const a = prop({ id: 'a', name: 'Alpha', noi: 300_000, debtService: 150_000, dscr: 2.0, lender: 'REDACTED-672', loanBalance: 2_000_000 });
+  const a = prop({ id: 'a', name: 'Alpha', noi: 300_000, debtService: 150_000, dscr: 2.0, lender: 'Firm 03', loanBalance: 2_000_000 });
   const b = prop({ id: 'b', name: 'Bravo', noi: 120_000, debtService: 100_000, dscr: 1.2, lender: 'Huntington', loanBalance: 1_000_000 });
   const unlevered = prop({ id: 'u', name: 'Free & Clear', noi: 500_000, debtService: 0, dscr: null, lender: null, loanBalance: 0 });
   const affiliate = prop({ id: 'f', name: 'Affiliate', noi: 10_000, debtService: 50_000, dscr: 0.2, lender: 'Oxford Capital', loanBalance: 400_000 });
@@ -137,7 +137,7 @@ describe('firmCashBalance (interim sweepable-cash proxy, Gabriel 2026-11-02)', (
     expect(firmCashBalance([e(' Oxford ', 'x1', 900_000)])).toBe(900_000);
   });
   it('never substring-matches another entity', () => {
-    expect(firmCashBalance([e('Oxford Capital', 'oxford-capital', 5_000_000), e('REDACTED-665', 'eg-5600', 212_000)])).toBeNull();
+    expect(firmCashBalance([e('Oxford Capital', 'oxford-capital', 5_000_000), e('FIRM 13', 'eg-5600', 212_000)])).toBeNull();
   });
   it('is unknown (null) when absent, ambiguous or non-finite', () => {
     expect(firmCashBalance([])).toBeNull();

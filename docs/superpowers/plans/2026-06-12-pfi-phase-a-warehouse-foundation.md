@@ -643,7 +643,7 @@ describe('filename detection', () => {
   });
 
   it('returns null for non-financial files and unknown tokens', () => {
-    expect(detectFromFilename('Lease REDACTED-659 -- 55 New Plant Court 10-2022.pdf')).toBeNull();
+    expect(detectFromFilename('Lease Tenant 155 LLC -- 55 New Plant Court 10-2022.pdf')).toBeNull();
     const unknown = detectFromFilename('P&L 2025 -- Mystery Building.xlsx');
     expect(unknown?.propertyId).toBeNull();
     expect(unknown?.confidence).toBeLessThan(0.85);

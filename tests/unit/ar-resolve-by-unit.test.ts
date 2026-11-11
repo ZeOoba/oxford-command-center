@@ -155,11 +155,11 @@ describe('resolveByUnit', () => {
 
   // 2026-09-14 sweep, Fix A: the live-hit filter used `status !== 'Expired'` only. A 'Vacant'
   // record and an Active lease carrying annualRent === 0 (a roster placeholder that bills nothing
-  // -- real row: Evans Gymnastics, 2207 Northwood A15, $REDACTED-AMT AR) both counted as LIVE and took
+  // -- real row: Example Gymnastics, 2207 Northwood A15, $REDACTED-AMT AR) both counted as LIVE and took
   // a clean 'exact' unit hit with no human review. The shared isDeadLease predicate now gates the
   // live set; the dead-sibling downgrade (PR #302's re-let hole) applies to every dead status.
   it('does NOT treat an Active lease with annualRent 0 as a live candidate -- routes to review (Fix A)', () => {
-    const roster: UnitLease[] = [{ id: 'L-A15-EVANS', unit: 'A15', propertyId: 'northwood', status: 'Active', annualRent: 0 }];
+    const roster: UnitLease[] = [{ id: 'L-A15-EXAMPLE', unit: 'A15', propertyId: 'northwood', status: 'Active', annualRent: 0 }];
     const r = resolveByUnit({ unit: 'A15', property: 'nbc-a', d30: REDACTED-AMT, d30plus: REDACTED-AMT }, roster, 'northwood');
     expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: false });
   });

@@ -404,7 +404,7 @@ describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
       INSERT INTO acq_candidates
         (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status, content_hash)
       VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, 'active', 'h1')
-    `).run('hubspot:123', 'REDACTED-116');
+    `).run('hubspot:123', 'Pipeline Deal 21');
   }
 
   it('/acq/intel returns 200 and includes the row', async () => {

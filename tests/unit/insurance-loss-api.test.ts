@@ -285,7 +285,7 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys attach loss eve
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop',
       policyType: 'Property',
-      policyNumber: 'REDACTED-477',
+      policyNumber: 'POL-0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
       premiumAnnual: 6000,
@@ -296,7 +296,7 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys attach loss eve
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property (Hartford Spectrum BOP)',
-      policyNumber: 'REDACTED-519',
+      policyNumber: 'POL 0011',
       effectiveDate: '2026-05-28',
       expirationDate: '2027-05-28',
       premiumAnnual: 5000,
@@ -333,7 +333,7 @@ describe('GET /api/warehouse/insurance/loss — NULL loss-event id with an unmat
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property Package',
-      policyNumber: 'REDACTED-584',
+      policyNumber: 'POL0011',
       premiumAnnual: 5000,
       coverageTiv: 1_000_000,
       deductible: 25_000,
@@ -368,7 +368,7 @@ describe('GET /api/warehouse/insurance/loss — NULL loss-event id with an unmat
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property Package',
-      policyNumber: 'REDACTED-584',
+      policyNumber: 'POL0011',
       premiumAnnual: 5000,
       coverageTiv: 1_000_000,
       deductible: 25_000,
@@ -409,7 +409,7 @@ describe('GET /api/warehouse/insurance/loss — loosely-typed SQL text columns (
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property Package',
-      policyNumber: 'REDACTED-584',
+      policyNumber: 'POL0011',
       premiumAnnual: 5000,
       coverageTiv: 1_000_000,
       deductible: 25_000,
@@ -478,12 +478,12 @@ describe('GET /api/warehouse/insurance/loss — live-shaped book with no TIV on 
     // coverageTiv 0 → the analysis engine's 'excluded-null-tiv' cohort (same branch as NULL; the
     // fixture helper defaults a null TIV to 1,000,000).
     insertPolicy(db, {
-      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: 'REDACTED-519',
+      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: 'POL 0011',
       effectiveDate: '2026-05-28', expirationDate: '2027-05-28', premiumAnnual: 5000, coverageTiv: 0,
       deductible: 25_000, coverageLimit: 2_000_000,
     });
     insertPolicy(db, {
-      propertyId: 'ins-9620state350-gl', policyType: 'General Liability (GL)', policyNumber: 'REDACTED-446',
+      propertyId: 'ins-9620state350-gl', policyType: 'General Liability (GL)', policyNumber: 'POL-0009',
       effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 900, coverageTiv: 0,
     });
     insertPolicy(db, {
@@ -518,21 +518,21 @@ describe('GET /api/warehouse/insurance/loss — policy_ref resolves superseded n
     // Same line + same term, reissued under a new number and captured later: the current-term
     // collapse keeps only the -002 row.
     insertPolicy(db, {
-      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'REDACTED-600',
+      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'POL0010',
       effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 6000, coverageTiv: 0,
       deductible: 10_000, coverageLimit: 2_000_000, sourceDate: '2026-08-16',
     });
     insertPolicy(db, {
-      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'REDACTED-477',
+      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'POL-0010',
       effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 6000, coverageTiv: 0,
       deductible: 10_000, coverageLimit: 2_000_000, sourceDate: '2026-09-23',
     });
     insertPolicy(db, {
-      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: 'REDACTED-519',
+      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: 'POL 0011',
       effectiveDate: '2026-05-28', expirationDate: '2027-05-28', premiumAnnual: 5000, coverageTiv: 0,
       deductible: 25_000, coverageLimit: 2_000_000,
     });
-    insertLossEvent(db, { id: 'L1', propertyId: RAYTOWN, lossDate: '2026-07-01', grossIncurred: 40_000, policyRef: 'REDACTED-600' });
+    insertLossEvent(db, { id: 'L1', propertyId: RAYTOWN, lossDate: '2026-07-01', grossIncurred: 40_000, policyRef: 'POL0010' });
 
     const res = await makeApp(db).request('/');
     expect(res.status).toBe(200);
@@ -560,7 +560,7 @@ describe('GET /api/warehouse/insurance/loss — #383 refute follow-ups: every lo
     insertPolicy(db, {
       propertyId: POLICY_KEY,
       policyType: 'Property Package',
-      policyNumber: 'REDACTED-584',
+      policyNumber: 'POL0011',
       premiumAnnual: 5000,
       coverageTiv: 1_000_000,
       deductible: 25_000,
@@ -573,7 +573,7 @@ describe('GET /api/warehouse/insurance/loss — #383 refute follow-ups: every lo
   function insertLoss(db: WarehouseDb, id: string, lossDateSql: string, grossSql: string, cause = 'wind'): void {
     db.prepare(
       `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
-       VALUES (?, ?, 'REDACTED-584', ${lossDateSql}, ?, ${grossSql}, 0, 0, 'test-loss-run')`,
+       VALUES (?, ?, 'POL0011', ${lossDateSql}, ?, ${grossSql}, 0, 0, 'test-loss-run')`,
     ).run(id, RAYTOWN, cause);
   }
 
@@ -693,7 +693,7 @@ describe('GET /api/warehouse/insurance/loss — partial dec data still takes the
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property Package',
-      policyNumber: 'REDACTED-584',
+      policyNumber: 'POL0011',
       deductible: 25_000,
       coverageLimit: null,
     });

@@ -36,7 +36,7 @@ describe('contracts accept real workbook records', () => {
       netCashFlow: 285673.54,
       capRate: 0.07,
       dscr: 2.2657,
-      lender: 'REDACTED-672',
+      lender: 'Firm 03',
       loanBalance: REDACTED-AMT,
       ltv: 0.3797,
       valuePerSf: 152.2,
@@ -55,9 +55,9 @@ describe('contracts accept real workbook records', () => {
       id: 'rarig-l',
       propertyKey: '1100 Rarig',
       propertyId: '1100-rarig-ave',
-      tenantName: 'REDACTED-497',
+      tenantName: 'Person 009',
       unit: 'L',
-      company: 'REDACTED-295',
+      company: 'Tenant 028 LLC',
       sf: 1800,
       monthlyRent: 1554.22,
       rentPerSf: 10.36,
@@ -72,11 +72,11 @@ describe('contracts accept real workbook records', () => {
     expect(r.status).toBe('Active');
   });
 
-  it('parses a real Loan row (REDACTED-306 balloon)', () => {
+  it('parses a real Loan row (Note Party 02 balloon)', () => {
     const r = Loan.parse({
       id: 'REDACTED-701',
-      name: 'REDACTED-306',
-      counterparty: 'REDACTED-306 (Oxford Capital)',
+      name: 'Note Party 02',
+      counterparty: 'Note Party 02 (Oxford Capital)',
       direction: 'lender',
       originalPrincipal: null,
       currentBalance: -980772.99,
@@ -105,8 +105,8 @@ describe('contracts accept real workbook records', () => {
       coverage: 'Package (PCKG)',
       effective: '2025-03-19',
       expires: '2026-03-19',
-      policyNo: 'REDACTED-616',
-      carrier: 'REDACTED-494',
+      policyNo: 'POL-0020',
+      carrier: 'Carrier 01',
       premium: 5643,
       daysToExpiry: -74,
       status: 'Expired',

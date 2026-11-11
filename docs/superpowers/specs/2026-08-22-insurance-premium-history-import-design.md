@@ -47,7 +47,7 @@ Add a third mode to `scripts/import-insurance-data.ts`: `--policies <payload.jso
 
 ```json
 { "policies": [
-  { "propertyId": "ins-3540fifth-pckg", "insurer": "REDACTED-494", "policyNumber": "26-27-commercial-package-renewal",
+  { "propertyId": "ins-3540fifth-pckg", "insurer": "Carrier 01", "policyNumber": "26-27-commercial-package-renewal",
     "effectiveDate": "2026-01-20", "expirationDate": null, "premiumAnnual": REDACTED-AMT, "coverageTiv": REDACTED-AMT,
     "policyType": "Package (PCKG)", "source": "ora-insurance-premium-dashboard (Cowork artifact)", "sourceDate": "2026-08-17" }
 ] }

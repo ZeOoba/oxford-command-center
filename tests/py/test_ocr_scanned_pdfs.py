@@ -21,7 +21,7 @@ spec.loader.exec_module(ocr)
 class TierAndSafety(unittest.TestCase):
     def test_tier1_covers_clause_bearing_documents(self):
         for rel in [
-            r"Business\55 New Plant Court\Lease REDACTED-659 -- 55 New Plant Court 10-2022.pdf",
+            r"Business\55 New Plant Court\Lease Tenant 155 LLC -- 55 New Plant Court 10-2022.pdf",
             r"Business\X\Amendment to Lease.pdf",
             r"Business\Loans External\Loan Agreement.pdf",
             r"Business\X\Insurance Certificate.pdf",
@@ -35,7 +35,7 @@ class TierAndSafety(unittest.TestCase):
             self.assertEqual(ocr.tier_of(rel), 2, rel)
 
     def test_w9_and_taxpayer_files_are_never_ocrd(self):
-        for rel in [r"Business\W9s\Acme.pdf", r"Business\X\W-9 REDACTED-659.pdf", r"Business\X\w9.pdf",
+        for rel in [r"Business\W9s\Acme.pdf", r"Business\X\W-9 Tenant 155 LLC.pdf", r"Business\X\w9.pdf",
                     r"Business\X\Taxpayer ID form.pdf"]:
             self.assertTrue(ocr.is_sensitive(rel), rel)
 
@@ -51,7 +51,7 @@ class TierAndSafety(unittest.TestCase):
             self.assertTrue(ocr.is_sensitive(rel), rel)
 
     def test_sensitive_filter_does_not_overmatch(self):
-        for rel in [r"Business\X\Lease 1099 REDACTED-659.pdf", r"Business\X\Window9 Report.pdf", r"Business\X\Lease.pdf",
+        for rel in [r"Business\X\Lease 1099 Tenant 155 LLC.pdf", r"Business\X\Window9 Report.pdf", r"Business\X\Lease.pdf",
                     r"Business\X\Lease 109 Main St.pdf", r"Business\X\W91 Report.pdf",
                     r"Business\123 W 9th St\Lease.pdf", r"Business\X\500 W 9 Mile Rd Lease.pdf",
                     r"Business\X\Syntax ID Guide.pdf", r"Business\X\Lease Tax Bill 2025.pdf",
@@ -394,7 +394,7 @@ class EndToEnd(unittest.TestCase):
             self._make_scanned_pdf(short, "Tenant shall have an option to renew")
             deep = os.path.join(root, *["segment-of-a-deliberately-long-folder-name"] * 7)
             os.makedirs("\\\\?\\" + deep)
-            long_pdf = os.path.join(deep, "Lease REDACTED-659 long path copy.pdf")
+            long_pdf = os.path.join(deep, "Lease Tenant 155 LLC long path copy.pdf")
             shutil.copyfile("\\\\?\\" + short, "\\\\?\\" + long_pdf)
             self.assertGreater(len(long_pdf), 260)
             r = ocr.ocr_one(self._job(root, cache, "Business/Lease Long.pdf", "b" * 40, long_pdf))

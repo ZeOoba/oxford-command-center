@@ -99,7 +99,7 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
     expect(isExcludedPath('deals/Secret-Codename DD Items/phase-ii.pdf', patterns)).toBe(true);
   });
   it('allows ordinary property lease/PSA paths', () => {
-    expect(isExcludedPath('1100 Rarig/REDACTED-659 Lease.pdf')).toBe(false);
+    expect(isExcludedPath('1100 Rarig/Tenant 155 LLC Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
   });
   it('excludes the GDG/CRG estate folder and the Pictures tree (hardened)', () => {
@@ -113,7 +113,7 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
   });
   it('excludes personal/family estate docs filed inside business folders (2026-06-06 audit)', () => {
     expect(isExcludedPath('Muirkirk/GDG Revocable Trust.pdf')).toBe(true);
-    expect(isExcludedPath('Loans External/Loan REDACTED-672/Tax Return -- Eric Goldberg Family Irrevocable Trust 2024.pdf')).toBe(true);
+    expect(isExcludedPath('Loans External/Loan Firm 03/Tax Return -- Eric Goldberg Family Irrevocable Trust 2024.pdf')).toBe(true);
     expect(isExcludedPath('Corporate and Settlement and Legal Documents/ATRCI Sale Docs/Private Annuity Agreements between Trust LLCs.pdf')).toBe(true);
     expect(isExcludedPath('Eulogy -- CRG.docx')).toBe(true);
     expect(isExcludedPath('Muirkirk 2013 Refinancing/GDG 1031 Deposit w IPX 6-19-13.pdf')).toBe(true);
@@ -182,9 +182,9 @@ describe('isExcludedPath — W-9 / taxpayer-ID forms (2026-10-14: 31 W-9 PDFs we
 
   it('does NOT exclude business look-alikes (1099 reports, "Window9", ordinary leases, "W9" inside a word)', () => {
     for (const p of [
-      'Business\\55 New Plant Court\\1099 REDACTED-659 2025 -- 55 New Plant Ct.pdf',
+      'Business\\55 New Plant Court\\1099 Tenant 155 LLC 2025 -- 55 New Plant Ct.pdf',
       'Business\\X\\Window9 Report.pdf',
-      'Business\\55 New Plant Court\\Lease REDACTED-659 -- 55 New Plant Court 10-2022.pdf',
+      'Business\\55 New Plant Court\\Lease Tenant 155 LLC -- 55 New Plant Court 10-2022.pdf',
       'Business\\Master Lease Database\\15 - 55 New Plant Court (Owings Mills MD)\\Lease.pdf',
       'Business\\X\\Lease 109 Main St.pdf',
       'Business\\X\\Rent Roll 2019.pdf',
@@ -223,7 +223,7 @@ describe('matchesIndexFilters — extension + optional path-include filter', () 
   it('drops non-lease docs even under a Leases folder', () => {
     expect(matchesIndexFilters('Sepich Portfolio/Leases/2019 Sepich I- P&L.pdf', LEASES_RE)).toBe(false);
     expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
-    expect(matchesIndexFilters('1100 Rarig/Leases/REDACTED-659 Lease.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf', LEASES_RE)).toBe(true);
   });
   it('keeps financials/rent-rolls when the non-lease filter is OFF (general OneDrive mode)', () => {
     const pnl = '6300 Sherriff Road/2018 6300 Sheriff Road LLC P&L.pdf';
@@ -240,7 +240,7 @@ describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/di
     expect(isLikelyNonLease('Sepich Portfolio/Leases/2012 Zettler Agency Disclosure.pdf')).toBe(true);
   });
   it('keeps real leases and legitimate lease components', () => {
-    expect(isLikelyNonLease('1100 Rarig/Leases/REDACTED-659 Lease.pdf')).toBe(false);
+    expect(isLikelyNonLease('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf')).toBe(false);
     expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A REDACTED-699 Lease 01-2025.pdf')).toBe(false);
     expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
   });
@@ -286,7 +286,7 @@ describe('maxChunksPerDoc — per-document chunk cap', () => {
   afterEach(() => {
     restoreEnv('DOCUMENTS_MAX_CHUNKS_PER_DOC', prev);
   });
-  // 120 (not 25, not 80): the REDACTED-659 executed lease OCRs to ~129K chars = ~87 chunks and its "Option to
+  // 120 (not 25, not 80): the Tenant 155 LLC executed lease OCRs to ~129K chars = ~87 chunks and its "Option to
   // Renew" clause (§43) sits at 90% of the text — a 25-chunk cap kept ~14 pages and an 80-chunk cap still
   // cut the clause off (measured 2026-10-14). 120 chunks ≈ 165K chars.
   it('defaults to 120 and honors a valid override; ignores nonsense', () => {
@@ -718,11 +718,11 @@ describe('extractXlsxText — flat cell-text dump for search', () => {
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('RentRoll');
       ws.addRow(['Tenant', 'Suite', 'Annual Rent']);
-      ws.addRow(['REDACTED-659', '100', 123450]);
+      ws.addRow(['Tenant 155 LLC', '100', 123450]);
       await wb.xlsx.writeFile(file);
       const text = await extractXlsxText(file);
       expect(text).toContain('RentRoll');
-      expect(text).toContain('REDACTED-659');
+      expect(text).toContain('Tenant 155 LLC');
       expect(text).toContain('123450');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -742,7 +742,7 @@ const fakeEmbedder: Embedder = async (texts) =>
   });
 
 const CHUNKS: DocChunk[] = [
-  { docId: 'REDACTED-659', docName: 'REDACTED-659 Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -751,8 +751,8 @@ describe('buildIndex / queryIndex — sqlite-vec vector search (fake embedder)',
   it('ranks the semantically nearest chunk first and shapes a cited, scored DocHit', async () => {
     const index = await buildIndex(CHUNKS, fakeEmbedder);
     const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
-    expect(hits[0]!.doc).toBe('REDACTED-659 Lease.pdf');
-    expect(hits[0]!.docId).toBe('REDACTED-659');
+    expect(hits[0]!.doc).toBe('Tenant 155 LLC Lease.pdf');
+    expect(hits[0]!.docId).toBe('tenant 155 llc');
     expect(hits[0]!.score).toBeGreaterThan(hits[1]!.score); // closer = higher score
     expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
     index.close();
@@ -778,12 +778,12 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
 
       const { index, docs, builtAt } = loadDiskIndex(dbPath);
       expect(index.chunks.length).toBe(3);
-      expect(docs.length).toBe(3); // REDACTED-659, Roof, Rent
+      expect(docs.length).toBe(3); // Tenant 155 LLC, Roof, Rent
       expect(builtAt).toMatch(/\d{4}-\d{2}-\d{2}T/); // ISO timestamp persisted
 
       const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
-      expect(hits[0]!.doc).toBe('REDACTED-659 Lease.pdf');
-      expect(hits[0]!.docId).toBe('REDACTED-659');
+      expect(hits[0]!.doc).toBe('Tenant 155 LLC Lease.pdf');
+      expect(hits[0]!.docId).toBe('tenant 155 llc');
       expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
       index.close();
     } finally {
@@ -843,7 +843,7 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
       const { index, docs } = loadDiskIndex(dbPath);
       expect(docs.length).toBe(3);
       const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
-      expect(hits[0]!.doc).toBe('REDACTED-659 Lease.pdf');
+      expect(hits[0]!.doc).toBe('Tenant 155 LLC Lease.pdf');
       index.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

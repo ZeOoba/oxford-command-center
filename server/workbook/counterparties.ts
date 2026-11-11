@@ -28,7 +28,7 @@ const KIND_ORDER: Record<CounterpartyKind, number> = {
  * Builds the relationship layer of the entity graph. Lenders & carriers are derived
  * from the workbook (loans, insurance) and the pipeline (deals); counsel/title/principals
  * come from the grounded people seed and are linked to deals by owner/firm mention, then
- * merged with any same-named derived firm (e.g., REDACTED-672 lender ↔ REDACTED-583, REDACTED-672 title).
+ * merged with any same-named derived firm (e.g., Firm 03 lender ↔ Contact 04, Firm 03 title).
  */
 export function deriveCounterparties(args: {
   properties: Property[];
@@ -110,7 +110,7 @@ export function deriveCounterparties(args: {
     // Merge with a same-named derived firm: the person inherits the firm's links so the
     // relationship graph stays connected. We do NOT copy the individual's contact identity
     // onto the firm — a firm must show its OWN contact, never a person's email (Defect 4:
-    // the lender "REDACTED-672" was carrying the title coordinator's personal address).
+    // the lender "Firm 03" was carrying the title coordinator's personal address).
     const firm = firmKey ? firms.get(firmKey) : undefined;
     if (firm) {
       firm.links.properties.forEach((id) => pushUniq(person.links.properties, id));

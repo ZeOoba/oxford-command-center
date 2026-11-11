@@ -707,7 +707,7 @@ export const LEASING_FORECAST_TABS: ReadonlySet<LeasingTab> = new Set<LeasingTab
 `src/modules/overview/widgets.tsx:39-40` uses `goTo('leases')` — resolves through the alias today, but repoint to `goTo('leasing')` (and `goTo('debt')`→`goTo('capital')`, `goTo('cash')`→`goTo('capital')` in PR-B's rebase) so a click is one navigation, not navigate + redirect. Test: extend an existing overview test if present; otherwise assert via `resolveLegacyRoute` that no `goTo` target is a legacy id (add a tiny unit that greps `widgets.tsx` for `goTo('<legacy id>')` using the `LEGACY_ALIASES` keys — cheap regression guard).
 
 ### Task 12: e2e + close-out
-- [ ] `tests/e2e/smoke.spec.ts:31-37`: rename to "leasing shows the rent roll": click `button { name: 'Leasing' }`, click `tab { name: 'Rent roll' }`, then the existing `Rent Roll`/`REDACTED-659` assertions. `tests/e2e/a11y.spec.ts:14-18`: same two clicks before the `th[aria-sort]` assertion.
+- [ ] `tests/e2e/smoke.spec.ts:31-37`: rename to "leasing shows the rent roll": click `button { name: 'Leasing' }`, click `tab { name: 'Rent roll' }`, then the existing `Rent Roll`/`Tenant 155 LLC` assertions. `tests/e2e/a11y.spec.ts:14-18`: same two clicks before the `th[aria-sort]` assertion.
 - [ ] Legacy-URL case: `/leases?tab=rollover&still=1` → URL matches `/leasing\?.*tab=rent-roll.*view=rollover/`.
 - [ ] `npm run test:e2e` (needs `npx playwright install chromium` once), gate, bundle, PR.
 
