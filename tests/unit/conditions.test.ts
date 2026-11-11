@@ -1037,7 +1037,7 @@ describe('evaluateConditions — insurance alert titles disambiguate co-located 
 
 describe('evaluateConditions — affiliate notes are outside per-property LTV (ratified 2026-09-24)', () => {
   it('an Oxford-affiliate note (live 1100 Rarig shape) fires neither ltv-governor nor ltv', () => {
-    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Oxford Capital', loanBalance: 1_095_582, ltv: 0.4613521862071406 })] }), opts);
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Oxford Capital', loanBalance: 1_000_000, ltv: 0.46 })] }), opts);
     expect(out.some((i) => i.id === 'ltv-governor-p1' || i.id === 'ltv-p1')).toBe(false);
   });
   it('an affiliate note at 70% LTV does not fire the 65% ceiling warning either', () => {
@@ -1045,7 +1045,7 @@ describe('evaluateConditions — affiliate notes are outside per-property LTV (r
     expect(out.some((i) => i.id === 'ltv-p1')).toBe(false);
   });
   it('the same LTV on a third-party loan still fires the info governor insight (id unchanged)', () => {
-    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Lender 08', loanBalance: 1_095_582, ltv: 0.4613521862071406 })] }), opts);
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Lender 08', loanBalance: 1_000_000, ltv: 0.46 })] }), opts);
     expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
   });
 });

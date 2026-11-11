@@ -13,7 +13,7 @@ function makeSnap(): PortfolioSnapshot {
       { id: 'l2', company: null, tenantName: 'Acme', propertyKey: '2207', propertyId: 'p1', unit: null, annualRent: 50000, status: 'Expiring Soon' },
     ],
     loans: [
-      { id: 'ln1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', absBalance: 980773, rate: 0.09, lender: null },
+      { id: 'ln1', name: 'Note Party 02', counterparty: 'Oxford Capital', direction: 'lender', absBalance: 500600, rate: 0.09, lender: null },
     ],
     deals: [
       { id: 'd1', name: 'Easton Logistics', shortName: 'Easton', stage: 'LOI/PSA', location: 'Easton MD' },
