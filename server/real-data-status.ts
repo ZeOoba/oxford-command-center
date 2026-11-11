@@ -2,9 +2,9 @@
 //
 // Shared reader for the "real firm data is never tracked" model (ruling 2026-11-10):
 // scripts/fixtures/real-data-manifest.json lists every real-data path; fixtures/synthetic/<path> holds
-// the committed synthetic stand-in. A runtime file is SYNTHETIC when its bytes equal the stand-in (or
-// it is listed in data/.synthetic-seeded.json and still unchanged), REAL when it differs, ABSENT when
-// missing. Used by scripts/ensure-local-data.ts, the server boot banner, reconcile, the drift check,
+// the committed synthetic stand-in. A runtime file is SYNTHETIC when its bytes equal the stand-in, or
+// equal the hash data/.synthetic-seeded.json recorded when it was seeded (so a seeded copy is still
+// recognised after the fixtures are regenerated); REAL when it differs, ABSENT when missing. Used by scripts/ensure-local-data.ts, the server boot banner, reconcile, the drift check,
 // bake-mirror and the tests' golden selection. Node built-ins only.
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -48,6 +48,19 @@ export function listFiles(dir: string): string[] {
 }
 
 const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+/** SHA-256 (hex) of a file's bytes. */
+export const fileSha = sha;
+
+/** Hashes recorded by ensure-local-data for the files it seeded. An unreadable marker throws:
+ *  the caller cannot then tell seeded copies from real files. */
+function seededHashes(root: string): Record<string, string> {
+  const path = join(root, SEED_MARKER);
+  if (!existsSync(path)) return {};
+  const m = JSON.parse(readFileSync(path, 'utf8')) as { sha256?: Record<string, string> };
+  const out: Record<string, string> = {};
+  for (const [rel, h] of Object.entries(m.sha256 ?? {})) out[normPath(rel)] = h;
+  return out;
+}
 
 export type FileState = 'absent' | 'synthetic' | 'real';
 
@@ -69,13 +82,17 @@ export function realDataStatus(root: string): PathStatus[] {
   const rels = new Set<string>(listFiles(fixtureRoot).map((p) => relative(fixtureRoot, p).replace(/\\/g, '/')));
   for (const d of m.dirs) for (const p of listFiles(join(root, d))) rels.add(relative(root, p).replace(/\\/g, '/'));
   for (const f of m.files) rels.add(f);
+  const seeded = seededHashes(root);
   const out: PathStatus[] = [];
   for (const rel of [...rels].sort()) {
     const target = join(root, rel);
     const fixture = join(fixtureRoot, rel);
     const dir = m.dirs.find((d) => normPath(rel).startsWith(normPath(d))) ?? null;
     let state: FileState = 'absent';
-    if (existsSync(target)) state = existsSync(fixture) && sha(target) === sha(fixture) ? 'synthetic' : 'real';
+    if (existsSync(target)) {
+      const h = sha(target);
+      state = (existsSync(fixture) && h === sha(fixture)) || seeded[normPath(rel)] === h ? 'synthetic' : 'real';
+    }
     out.push({ rel, state, dir, optional: (m.optional ?? []).some((o) => normPath(o) === normPath(rel)) });
   }
   return out;
@@ -111,8 +128,9 @@ function unexpectedSynthetic(root: string, env: NodeJS.ProcessEnv): string[] {
   if (isCiOrTest(env)) return [];
   try {
     return syntheticInUse(root);
-  } catch {
-    return [];
+  } catch (e) {
+    // Fail closed: when the manifest or seed marker cannot be read, nothing proves the data is real.
+    return [`(real-data status unreadable: ${(e as Error).message})`];
   }
 }
 

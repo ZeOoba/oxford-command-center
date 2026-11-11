@@ -132,6 +132,23 @@ describe('ensureLocalData', () => {
     expect(syntheticDataFlags(root, DEV).map((f) => f.field)).not.toContain('data/snapshots/portfolio.json');
   });
 
+  it('a seeded copy is still synthetic after the fixtures are regenerated (seed-marker hashes)', () => {
+    ensureLocalData(root, quiet, CI);
+    write('fixtures/synthetic/data/snapshots/portfolio.json', '{"synthetic":"regenerated"}\n');
+    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('synthetic');
+    expect(() => refuseIfSynthetic('bake-mirror', root, DEV)).toThrow(/data\/snapshots\/portfolio\.json/);
+    // real bytes copied over the seeded file are real again
+    write('data/snapshots/portfolio.json', '{"real":true}\n');
+    expect(realDataStatus(root).find((s) => s.rel === 'data/snapshots/portfolio.json')?.state).toBe('real');
+  });
+
+  it('fails closed when the status cannot be read: an unreadable seed marker refuses outside CI', () => {
+    ensureLocalData(root, quiet, CI);
+    write('data/.synthetic-seeded.json', '{not json');
+    expect(() => refuseIfSynthetic('bake-mirror', root, DEV)).toThrow(/real-data status unreadable/);
+    expect(syntheticNotice('Brain Server', root, DEV)).toMatch(/real-data status unreadable/);
+  });
+
   it("the repo's own manifest and fixture tree agree (every manifest path has a synthetic stand-in)", () => {
     // The validation runs before any seeding decision; ORA_NO_SYNTHETIC_SEED keeps this a pure check.
     expect(() => ensureLocalData(process.cwd(), quiet, { ORA_NO_SYNTHETIC_SEED: '1' } as NodeJS.ProcessEnv)).not.toThrow();
