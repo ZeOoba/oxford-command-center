@@ -26,6 +26,7 @@ import { filterAgainstPersisted, type DatedArrearsWrite } from '../server/ar/res
 import { parseSnapshotForImport, type SnapshotForImport } from '../server/ar/parse-snapshot-for-import';
 import type { TenantArrears } from '../src/contracts/index';
 import { ORA_JSON_MUTATION_HEADERS } from '../src/contracts/client-header';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 const SERVER = process.env.ORA_SERVER ?? 'http://localhost:3000';
 const PYTHON = process.env.ORA_PYTHON ?? 'python';
@@ -109,6 +110,9 @@ function printRow(tenant: string, d30: number, d60: number, d90: number, d90plus
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  // Writes data/ar-mapping-cache.json (a manifest file) in place: never on synthetic stand-ins outside
+  // CI / tests (refute 2026-11-11, F13).
+  refuseIfSynthetic('ar-import');
   const pdfPath = process.argv[2];
   if (!pdfPath) {
     console.error('Usage: npx tsx scripts/ar-import.ts <pdf-path>');

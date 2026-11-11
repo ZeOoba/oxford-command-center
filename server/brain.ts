@@ -465,7 +465,11 @@ class Brain extends EventEmitter {
     try {
       const stored = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
       // The stored deals[] were stamped when the snapshot was written; adoptSnapshot re-checks them.
-      this.adoptSnapshot(stored);
+      // The synthetic-data flags are re-derived for the files in place NOW (never trusted from the
+      // stored copy), so a cold start on a seeded checkout with no workbook is flagged too.
+      const synthetic = syntheticDataFlags();
+      const kept = stored.dataQuality.filter((f) => !(f.entity === 'data-source' && f.issue.includes('SYNTHETIC stand-in')));
+      this.adoptSnapshot({ ...stored, dataQuality: [...kept, ...synthetic] });
       return true;
     } catch {
       return false;
