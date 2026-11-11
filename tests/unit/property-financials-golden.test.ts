@@ -72,6 +72,42 @@ describe('golden normalized NOI (USD, rounded)', () => {
     for (const id of GOLDEN_IDS) expect(G.noi[id], id).toBeDefined();
   });
 
+  it('the value lock keys are exactly the entities with FY2024 and FY2025 data', () => {
+    const withFy = PF_ENTITY_IDS.filter((id) => {
+      const per = D.properties[id].periods as Record<string, { noi?: unknown } | undefined>;
+      return typeof per['FY2024']?.noi === 'number' && typeof per['FY2025']?.noi === 'number';
+    });
+    expect(Object.keys(G.noi).sort()).toEqual([...withFy].sort());
+  });
+
+  it('EVERY locked entity: FY2024 / FY2025 NOI equal the value lock and the history years where present', () => {
+    for (const [id, lock] of Object.entries(G.noi)) {
+      const p = D.properties[id as (typeof PF_ENTITY_IDS)[number]];
+      expect(p, id).toBeDefined();
+      expect(Math.round(p.periods.FY2024.noi), `${id}/FY2024`).toBe(lock.FY2024);
+      expect(Math.round(p.periods.FY2025.noi), `${id}/FY2025`).toBe(lock.FY2025);
+      for (const [per, y] of [['FY2024', '2024'], ['FY2025', '2025']] as const) {
+        const h = D.history[id as (typeof PF_ENTITY_IDS)[number]].yr[y];
+        if (h) expect(Math.round(h.noi), `${id}/${per} history`).toBe(Math.round(p.periods[per].noi));
+      }
+    }
+  });
+
+  it('latest-period NOI (YTD26 / partial 2026) of every entity equals the value lock', () => {
+    expect(Object.keys(G.latestNoi).sort()).toEqual([...PF_ENTITY_IDS].sort());
+    for (const id of PF_ENTITY_IDS) {
+      const lock = G.latestNoi[id]!;
+      const per = D.properties[id].periods as Record<string, { noi: number } | undefined>;
+      expect(per[lock.period], `${id}/${lock.period}`).toBeDefined();
+      expect(Math.round(per[lock.period]!.noi), `${id}/${lock.period}`).toBe(lock.noi);
+    }
+    // monthly entities: the history Jan-Sep 2026 block agrees with the locked YTD26 figure
+    for (const id of PF_MONTHLY_ENTITY_IDS) {
+      expect(G.latestNoi[id]!.period, id).toBe('YTD26');
+      expect(Math.round(D.history[id].ytd['2026']!.noi), `${id} history ytd 2026`).toBe(G.latestNoi[id]!.noi);
+    }
+  });
+
   for (const id of GOLDEN_IDS) {
     it(`${id}: FY2024 / FY2025 NOI equal the ratified value lock and agree across blocks`, () => {
       const p = D.properties[id];
@@ -102,8 +138,8 @@ describe('golden normalized NOI (USD, rounded)', () => {
     }
   });
 
-  // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; NOI moved
-  // +5.3% -> +4.9% (YTD25 2,288,999 -> 2,297,654; YTD26 2,409,726 -> 2,409,530).
+  // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; only the
+  // same-store NOI change moved.
   it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent, opex excl. RE tax and NOI changes equal the value lock', () => {
     const sum = (per: 'YTD25' | 'YTD26', f: (x: PfMonthlyProperty['periods']['YTD25']) => number) =>
       SAME_STORE.reduce((a, id) => a + f(monthlyProp(id).periods[per]), 0);
@@ -241,7 +277,8 @@ describe('per-SF', () => {
     const ytd = perSf(r.periods.YTD26.base_rent, r.sf);
     expect(ytd.value).toBeCloseTo(r.periods.YTD26.base_rent / 21_000, 10);
     const fy = perSf(r.periods.FY2025.base_rent, r.sf);
-    expect(fy.value).toBeCloseTo(r.periods.FY2025.base_rent / 21_000, 10);
+    expect(r.periods.FY2025.base_rent).toBeCloseTo(pfGolden().locks.rarigBaseRentFy2025, 2); // value lock
+    expect(fy.value).toBeCloseTo(pfGolden().locks.rarigBaseRentFy2025 / 21_000, 6);
     // 9-month figure is ~3/4 of the annual, not scaled up to it.
     expect((ytd.value ?? 0) < (fy.value ?? 0)).toBe(true);
   });
@@ -416,8 +453,9 @@ describe('rent-step events', () => {
       });
       total += got.length;
     }
-    // every monthly entity's persisted steps are reproduced (the count is the dataset's own)
+    // every monthly entity's persisted steps are reproduced, and the count equals the value lock
     expect(total).toBe(PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + D.history[id].ev.length, 0));
+    expect(total).toBe(pfGolden().locks.rentStepEvents);
     expect(total).toBeGreaterThan(0);
   });
 
@@ -494,15 +532,19 @@ describe('THRESHOLDS + ragStatus', () => {
     expect(v.recoveryRatio).toBeCloseTo((t.recoveries + t.utility_reimb) / t.pool, 10);
     expect(v.mgmtFeePct).toBeCloseTo(t.opex_by['Management fees'] / t.revenue, 10);
     expect(v.contraRevenue).toBeCloseTo(Math.abs(t.vacancy_waivers) / t.base_rent, 10);
-    expect(v.rentRunRateGrowth).toBeCloseTo(r.base_rent_runrate_q3.q3_2026! / r.base_rent_runrate_q3.q3_2025! - 1, 6);
+    // the run-rate pair is a value lock (the growth would otherwise be read from the same fields it checks)
+    const rr = pfGolden().locks.rarigRunRateQ3;
+    expect(r.base_rent_runrate_q3.q3_2025!).toBeCloseTo(rr.q3_2025, 2);
+    expect(r.base_rent_runrate_q3.q3_2026!).toBeCloseTo(rr.q3_2026, 2);
+    expect(v.rentRunRateGrowth).toBeCloseTo(rr.q3_2026 / rr.q3_2025 - 1, 6);
     // Without the cube the artifact's displayed (2-dp) run-rate growth is used.
     expect(evaluationInputs(r).rentRunRateGrowth).toBe(r.base_rent_runrate_q3.yoy_2026);
     expect(v.utilityGrowth).toBeCloseTo(r.periods.YTD26.opex_by.Utilities / r.periods.YTD25.opex_by.Utilities - 1, 10);
     expect(v.repairsGrowth).toBeCloseTo(r.periods.YTD26.opex_by['Repairs & maintenance'] / r.periods.YTD25.opex_by['Repairs & maintenance'] - 1, 10);
     // Livingston: no Q3-2025 -> run-rate n/m. Its Jan-Sep 2025 window holds only 3 of 9 months, so the
     // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which the repairs
-    // prior base clears. A 3-month vs 9-month comparison would have read +489.6% / -66.8%; the partial
-    // rule refuses before any arithmetic.
+    // prior base clears. A 3-month vs 9-month comparison would read as a huge swing; the partial rule
+    // refuses before any arithmetic.
     const liv = monthlyProp('3883 Livingston');
     const l = evaluationInputs(liv, D.monthly['3883 Livingston']);
     expect(l.rentRunRateGrowth).toBeNull();
@@ -562,7 +604,7 @@ describe('formatters (reference artifact usd / pc / pl)', () => {
     expect(usd(1_234_567)).toBe('$1.23M');
     expect(usd(1_234_567, 'f')).toBe('$1,234,567');
     expect(usd(-1_234_567)).toBe('-$1.23M');
-    expect(usd(222_187.84)).toBe('$222,188');
+    expect(usd(123_456.78)).toBe('$123,457');
     expect(usd(12_345, 'k')).toBe('$12.3K');
     expect(usd(1_234_567, 'k')).toBe('$1,234.6K');
     expect(usd(-500, 'k')).toBe('-$0.5K');

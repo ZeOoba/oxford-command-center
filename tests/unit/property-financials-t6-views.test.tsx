@@ -18,6 +18,7 @@ import { PF_KEYS } from '../../src/modules/property-financials/hooks';
 import { evaluationMatrix, filterWatchlist, topOpexMovers, WATCHLIST_ALL } from '../../src/modules/property-financials/model';
 import type { PfDatasetResponse, PfInsightStatusResponse } from '../../src/modules/property-financials/types';
 import { loadDataset, loadDatasetText } from './property-financials-helpers';
+import { pfGolden } from './golden-helpers';
 
 const D = loadDataset();
 const RAW = JSON.parse(loadDatasetText()) as { properties: Record<string, { kind: string; periods: Record<string, { opex_by: Record<string, number>; base_rent: number }> }> };
@@ -100,6 +101,7 @@ describe('Rent & NOI levers', () => {
     expect(within(rev09).getByText('1851 South Club Solar')).toBeTruthy();
     expect(within(rev09).getByText('Next step')).toBeTruthy();
     const rev09Impact = D.insights.find((i) => i.id === 'REV-09')!.annual_impact_usd!;
+    expect(rev09Impact).toBe(pfGolden().locks.rev09Impact); // value lock (not read back from the same file)
     expect(rev09Impact).toBeLessThan(0);
     expect(within(rev09).getByTestId('pf-impact').textContent).toContain(`-${usd(Math.abs(rev09Impact), 'k')}`);
     const rev06 = p.querySelector('article[data-insight="REV-06"]') as HTMLElement;

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { LEVERS, computeLevers, describeLeverRate, type LeverDef } from '@analytics/property-financials/levers';
 import { usd } from '@analytics/property-financials/format';
 import { loadDataset, loadDatasetText } from './property-financials-helpers';
+import { pfGolden } from './golden-helpers';
 
 const D = loadDataset();
 // A second, independent copy of the data: the raw JSON, untouched by the contract parser.
@@ -22,7 +23,7 @@ const PM = Object.keys(RAW.properties).filter((k) => RAW.properties[k]!.kind ===
 // of the base and named in the basis ("excludes ..."); the lever itself stays a value. This is the same
 // rule the recoveryPool lever applies to its single member (n/m on a partial period). It departs from the
 // reference artifact, whose sumP() summed every PM asset regardless of n_months (FY2025 tax including
-// 3883 Livingston's 6-month $10,677.34).
+// 3883 Livingston's 6-month figure).
 const FULL_MONTHS = 12;
 const complete = (id: string, period: string) => RAW.properties[id]!.periods[period]!.n_months === FULL_MONTHS;
 function sumField(period: string, field: string): number {
@@ -91,7 +92,7 @@ describe('lever arithmetic (independent spot-checks from the raw dataset)', () =
     expect(f.value.value).toBe(lease.sf! * 1.0);
     expect(f.basis).toContain('24,000 SF per lease');
     expect(f.basis).toContain(lease.source);
-    // Every renewal step in the schedule is +2.0% (8,540 -> 8,710.80 -> ... -> 9,428.85).
+    // Every renewal step in the schedule is +2.0% over the prior step's monthly rent.
     const amts = lease.rent_schedule_monthly!.map((x) => x[2]);
     for (let i = 1; i < amts.length; i++) expect(amts[i]! / amts[i - 1]! - 1).toBeCloseTo(0.02, 3);
     expect(f.basis).toContain('+2.0%/yr');
@@ -100,6 +101,7 @@ describe('lever arithmetic (independent spot-checks from the raw dataset)', () =
   it('recovery: +10 points of each named cost pool (FVC FY2025, 9620 TTM, Rarig FY2025)', () => {
     expect(r.get('recoveryFvc')!.value.value).toBeCloseTo(pool('FVC', 'FY2025') * 0.1, 6);
     expect(r.get('recovery9620')!.value.value).toBeCloseTo(pool('9620 State 350', 'TTM26') * 0.1, 6);
+    expect(r.get('recovery9620')!.value.value).toBeCloseTo(pfGolden().locks.recovery9620Lever, 2); // value lock
     expect(r.get('recoveryRarig')!.value.value).toBeCloseTo(pool('1100 Rarig', 'FY2025') * 0.1, 6);
     // The recomputed pool is the dataset's own pool figure.
     expect(pool('FVC', 'FY2025')).toBeCloseTo(RAW.properties.FVC!.periods.FY2025!.pool as number, 2);
