@@ -3,6 +3,7 @@
 // Module 10 — Cost Segregation Property Data. A second source type next to the PCA reports: engineering takeoffs and
 // RSMeans / Marshall & Swift modeled pricing for tax classification. Never a condition assessment, never a reserve,
 // near-term, intensity or calibration input; quantities reach calibration only as pending candidates a human promotes.
+import { costGolden } from './golden-helpers';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,10 +79,14 @@ describe('committed dataset', () => {
     expect(ds.facts.every((f) => f.source_type === 'COST_SEG' && f.price_basis === 'COST_SEG_MODELED_RSMEANS_M&S')).toBe(true);
   });
 
-  it('class allocations tie to the study totals', () => {
-    // Derived from the dataset, never hardcoded: the committed copy is synthetic (dollars scaled).
+  it('class allocations tie to the study totals, and every total and class equals the value lock', () => {
+    // Exact values come from the gitignored data/cost-seg/golden.local.json (written only by
+    // `npm run golden:ratify`; in CI the committed synthetic copy), never from literals here.
+    const G = costGolden();
+    expect(Object.keys(G.studies).sort()).toEqual(Object.keys(ds.studies).sort());
     for (const [id, s] of Object.entries(ds.studies)) {
-      expect(s.total, id).toBeGreaterThan(0);
+      expect(s.total, id).toBe(G.studies[id]!.total);
+      for (const [cls, v] of Object.entries(G.studies[id]!.alloc)) expect(s.alloc[cls], `${id} ${cls}`).toBe(v);
       expect(allocationSum(s), id).toBeCloseTo(s.total, 2);
       // the QC block carries the same total the allocation re-sums to
       const qc = ds.qc.find((c) => c.check === id)!;
@@ -107,10 +112,12 @@ describe('committed dataset', () => {
   it('Fishel 5-yr and 15-yr line items re-sum to the stated class totals (QC block)', () => {
     const q = (name: string) => ds.qc.find((c) => c.check === name)!;
     const fis = ds.studies['CS-FIS']!;
+    const G = costGolden().studies['CS-FIS']!.alloc;
     for (const [name, cls] of [['FIS 5yr detail', '5yr'], ['FIS 15yr detail', '15yr']] as const) {
       expect(q(name).ok).toBe(true);
-      expect(q(name).computed).toBeCloseTo(q(name).expected, 2);
-      expect(fis.alloc[cls]).toBeCloseTo(q(name).expected, 2);
+      expect(q(name).computed).toBe(q(name).expected);
+      expect(q(name).expected).toBe(G[cls]);
+      expect(fis.alloc[cls]).toBe(G[cls]);
     }
   });
 

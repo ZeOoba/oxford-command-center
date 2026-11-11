@@ -7,6 +7,7 @@ import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, mutateOverlay, overlayPath, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
+import { syntheticDataFlags } from './real-data-status';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
@@ -150,7 +151,8 @@ class Brain extends EventEmitter {
       else if (preservedFrom) console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
       const withQb = { ...merged, quickbooks };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
-      const rtFlags = checkSnapshot(withQb);
+      // A snapshot built on synthetic stand-ins (outside CI / tests) carries error-severity flags.
+      const rtFlags = [...checkSnapshot(withQb), ...syntheticDataFlags()];
       const adopted = this.adoptSnapshot(rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb);
       this.persist(adopted);
       this.setState({

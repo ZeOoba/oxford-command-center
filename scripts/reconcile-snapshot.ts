@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { SNAPSHOT_PATH } from '../server/config';
 import { PortfolioSnapshot } from '../src/contracts/index';
 import { checkSnapshot } from '../server/reconcile-runtime';
+import { syntheticNotice } from '../server/real-data-status';
 import type { DataQualityFlag } from '../src/contracts/common';
 
 export function evaluateFlags(flags: DataQualityFlag[]): { ok: boolean; errorCount: number; warnCount: number } {
@@ -38,6 +39,9 @@ export function evaluateFlags(flags: DataQualityFlag[]): { ok: boolean; errorCou
 }
 
 function main() {
+  // In CI the snapshot is the synthetic stand-in by design; anywhere else say so loudly.
+  const synthetic = syntheticNotice('reconcile:snapshot');
+  if (synthetic) console.error(synthetic);
   const raw = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
   // Zod parse, not a bare cast: a schema-shape drift (a renamed/removed field) should fail this
   // check loudly rather than let checkSnapshot silently read `undefined` off a field that no

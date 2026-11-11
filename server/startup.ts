@@ -1,3 +1,5 @@
+import { syntheticNotice } from './real-data-status';
+
 export interface StartupDeps {
   listen: (onListening: (port: number) => void) => void;
   refresh: () => Promise<void>;
@@ -15,6 +17,10 @@ export interface StartupDeps {
 export function startServer(d: StartupDeps): void {
   d.listen((port) => {
     d.log(`◆ Oxford Brain Server — http://127.0.0.1:${port} (localhost only)`);
+    // Real firm data is local-only (ruling 2026-11-10): say so loudly if this server is about to serve
+    // the committed synthetic stand-ins instead (outside CI / tests).
+    const synthetic = syntheticNotice('Brain Server');
+    if (synthetic) d.log(synthetic);
     setTimeout(() => {
       d.refresh().catch((err) => d.warn('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until workbook loads):', err));
       d.warmDocs().catch((err) => d.warn('⚠ Document index warm-up failed (non-fatal):', err));

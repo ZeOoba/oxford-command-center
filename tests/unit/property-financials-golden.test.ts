@@ -43,6 +43,7 @@ import {
 } from '@analytics/property-financials/metrics';
 import { EVALUATION_TEST_IDS, THRESHOLDS, ragMatrix, ragStatus, type RagStatus } from '@analytics/property-financials/thresholds';
 import { DASH, NM, axisUsd, fmtResult, pct, pctLevel, usd } from '@analytics/property-financials/format';
+import { isSynthetic, pfGolden } from './golden-helpers';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
@@ -59,22 +60,33 @@ function monthlyProp(id: (typeof PF_MONTHLY_ENTITY_IDS)[number]): PfMonthlyPrope
 // -------------------------------------------------------------------------------------------------
 
 describe('golden normalized NOI (USD, rounded)', () => {
-  // The hardcoded per-entity NOI table was removed 2026-11-10: real firm data is never tracked, and the
-  // committed dataset is a synthetic stand-in (dollars scaled). The golden checks are now the
-  // dataset's own independent blocks agreeing with each other: the FY period figure, the full-history
-  // year, and (monthly entities) the sum of the twelve months.
+  // Value lock (refute run 2026-11-11): the exact per-entity NOI lives in the gitignored
+  // data/property-financials/golden.local.json, written only by `npm run golden:ratify` from the real
+  // dataset (in CI: the committed synthetic copy). A builder / mapping regression fails here until a
+  // human re-ratifies on purpose. The FY figures must also agree with the history and monthly blocks.
+  const G = pfGolden();
+  const SYNTH = isSynthetic('data/property-financials/dataset.json');
   const GOLDEN_IDS = ['1100 Rarig', '1900 Broadway', '29000 Info Lane', '3540 E 5th', '9050 Red Branch', 'FVC', '55 New Plant (EGFLLC)', '1851 South Club Solar'] as const;
 
+  it('the value lock covers every golden entity', () => {
+    for (const id of GOLDEN_IDS) expect(G.noi[id], id).toBeDefined();
+  });
+
   for (const id of GOLDEN_IDS) {
-    it(`${id}: FY2024 / FY2025 NOI agree across the period, history and monthly blocks`, () => {
+    it(`${id}: FY2024 / FY2025 NOI equal the ratified value lock and agree across blocks`, () => {
       const p = D.properties[id];
+      expect(Math.round(p.periods.FY2024.noi)).toBe(G.noi[id]!.FY2024);
+      expect(Math.round(p.periods.FY2025.noi)).toBe(G.noi[id]!.FY2025);
       for (const [per, y] of [['FY2024', '2024'], ['FY2025', '2025']] as const) {
         const noi = p.periods[per].noi;
         expect(Math.round(D.history[id].yr[y]!.noi), `${id}/${per} history`).toBe(Math.round(noi));
         if (p.kind === 'monthly') {
           const months = Object.entries(D.monthly[id as keyof typeof D.monthly] ?? {}).filter(([m]) => m.startsWith(`${y}-`));
           expect(months, `${id}/${per} months`).toHaveLength(12);
-          expect(months.reduce((a, [, f]) => a + f.noi, 0), `${id}/${per} monthly sum`).toBeCloseTo(noi, 1);
+          // exact on the real data; the synthetic copy rounds each month separately (<= 12 cents)
+          const sum = months.reduce((a, [, f]) => a + f.noi, 0);
+          if (SYNTH) expect(Math.abs(sum - noi), `${id}/${per} monthly sum`).toBeLessThanOrEqual(0.12);
+          else expect(sum, `${id}/${per} monthly sum`).toBeCloseTo(noi, 2);
         }
       }
     });
@@ -92,7 +104,7 @@ describe('golden normalized NOI (USD, rounded)', () => {
 
   // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; NOI moved
   // +5.3% -> +4.9% (YTD25 2,288,999 -> 2,297,654; YTD26 2,409,726 -> 2,409,530).
-  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent +2.6%, opex excl. RE tax +6.6%, NOI +4.9%', () => {
+  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent, opex excl. RE tax and NOI changes equal the value lock', () => {
     const sum = (per: 'YTD25' | 'YTD26', f: (x: PfMonthlyProperty['periods']['YTD25']) => number) =>
       SAME_STORE.reduce((a, id) => a + f(monthlyProp(id).periods[per]), 0);
     const baseRent = pctChange(sum('YTD25', (x) => x.base_rent), sum('YTD26', (x) => x.base_rent));
@@ -101,9 +113,10 @@ describe('golden normalized NOI (USD, rounded)', () => {
       sum('YTD26', (x) => x.opex - x.opex_by[RE_TAX]),
     );
     const noi = pctChange(sum('YTD25', (x) => x.noi), sum('YTD26', (x) => x.noi));
-    expect(pct(baseRent.value)).toBe('+2.6%');
-    expect(pct(opexExTax.value)).toBe('+6.6%');
-    expect(pct(noi.value)).toBe('+4.9%'); // was +5.3% before v03.2
+    // ratified values (golden lock); the v03.2 ruling moved NOI from +5.3% to +4.9% on the real data
+    expect(pct(baseRent.value)).toBe(G.sameStoreYtd.baseRent);
+    expect(pct(opexExTax.value)).toBe(G.sameStoreYtd.opexExTax);
+    expect(pct(noi.value)).toBe(G.sameStoreYtd.noi);
   });
 });
 

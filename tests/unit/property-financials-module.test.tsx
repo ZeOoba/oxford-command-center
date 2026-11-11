@@ -1,9 +1,10 @@
 // tests/unit/property-financials-module.test.tsx — T5 of
 // docs/superpowers/plans/2026-10-05-property-financials-module.md. Render smoke tests of the Property
 // Financials destination against the REAL committed dataset: masthead read from dataset meta, the
-// six-view strip on ?view=, Overview KPIs equal to the calc-lib outputs (golden +2.6% / +6.6%), the
+// six-view strip on ?view=, Overview KPIs equal to the calc-lib outputs (and the value lock), the
 // computed lede, chart crosshair + tooltips, the insight workflow (dismiss requires a reason; PUT
 // carries X-ORA-Client), Scorecard n/m reasons, sorting, row detail and the Explorer hand-off.
+import { pfGolden } from './golden-helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -122,21 +123,21 @@ describe('Overview (real dataset)', () => {
     expect(lede).toBe(overviewLede(m));
     expect(lede).not.toMatch(/\d+\.\d%/);
     const kpis = screen.getByTestId('pf-kpis');
-    expect(within(kpis).queryByText('+2.6%')).toBeNull();
-    expect(within(kpis).queryByText('+6.6%')).toBeNull();
+    expect(within(kpis).queryByText(pfGolden().sameStoreYtd.baseRent)).toBeNull();
+    expect(within(kpis).queryByText(pfGolden().sameStoreYtd.opexExTax)).toBeNull();
     expect(screen.getByTestId('pf-partial-note').textContent).toBe(
       'Percent changes are n/m: 1100 Rarig: partial period: 8 of 9 months. The dollar bars compare unequal month counts; read them as indicative only.',
     );
   });
 
-  it('KPI tiles equal the calc-lib outputs: base rent +2.6%, opex excl. RE tax +6.6%', () => {
+  it('KPI tiles equal the calc-lib outputs and the value lock (base rent, opex excl. RE tax)', () => {
     renderModule();
     const kpis = screen.getByTestId('pf-kpis');
     expect(within(kpis).getByText(usd(k.baseRent.current))).toBeTruthy();
-    expect(within(kpis).getByText('+2.6%')).toBeTruthy();
-    expect(pct(k.baseRent.change.value)).toBe('+2.6%');
+    expect(within(kpis).getByText(pfGolden().sameStoreYtd.baseRent)).toBeTruthy();
+    expect(pct(k.baseRent.change.value)).toBe(pfGolden().sameStoreYtd.baseRent);
     expect(within(kpis).getByText(usd(k.opexExTax.current))).toBeTruthy();
-    expect(within(kpis).getByText('+6.6%')).toBeTruthy();
+    expect(within(kpis).getByText(pfGolden().sameStoreYtd.opexExTax)).toBeTruthy();
     expect(within(kpis).getByText(usd(k.noiFy.current))).toBeTruthy();
     expect(within(kpis).getByText(pct(k.noiFy.change.value))).toBeTruthy();
     expect(within(kpis).getByText(String(k.high.count))).toBeTruthy();
