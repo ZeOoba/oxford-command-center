@@ -1,0 +1,87 @@
+{
+  "note": "Value lock: written only by `npm run golden:ratify` from the data in place. Never edit by hand.",
+  "studies": {
+    "CS-RAR": {
+      "total": 1029463.1,
+      "alloc": {
+        "5yr": 93805.11,
+        "7yr": 1278.17,
+        "15yr": 82320.4,
+        "39yr": 852059.42,
+        "9yr_ads": 0
+      }
+    },
+    "CS-BWY": {
+      "total": 3688629,
+      "alloc": {
+        "5yr": 332575,
+        "7yr": 0,
+        "15yr": 521932,
+        "39yr": 2834122,
+        "9yr_ads": 0
+      }
+    },
+    "CS-RDB": {
+      "total": 8317277,
+      "alloc": {
+        "5yr": 602275,
+        "7yr": 41323,
+        "15yr": 635626,
+        "39yr": 7038053,
+        "9yr_ads": 0
+      }
+    },
+    "CS-NWD": {
+      "total": 2061418,
+      "alloc": {
+        "5yr": 115215,
+        "7yr": 0,
+        "15yr": 310479,
+        "39yr": 1634023,
+        "9yr_ads": 1701
+      }
+    },
+    "CS-LIV": {
+      "total": 551493,
+      "alloc": {
+        "5yr": 36854,
+        "7yr": 0,
+        "15yr": 111255,
+        "39yr": 403384,
+        "9yr_ads": 0
+      }
+    },
+    "CS-FIS": {
+      "total": 939058.64,
+      "alloc": {
+        "5yr": 67352.3,
+        "7yr": 0,
+        "15yr": 110226.28,
+        "39yr": 761480.06,
+        "9yr_ads": 0
+      }
+    }
+  },
+  "calibration": {
+    "55 New Plant Ct": {
+      "variancePct": -0.622,
+      "ratio": 0.378
+    },
+    "3540 E Fifth Ave": {
+      "variancePct": -0.6322222222222222,
+      "ratio": 0.36777777777777776
+    },
+    "3875-3883 E Livingston": {
+      "variancePct": 0.06000000000000005,
+      "ratio": 1.06
+    },
+    "3520 E Fulton St": {
+      "variancePct": 1.6749999999999998,
+      "ratio": 2.675
+    },
+    "2800-2826 Banwick": {
+      "variancePct": 0.5800000000000001,
+      "ratio": 1.58
+    }
+  }
+}

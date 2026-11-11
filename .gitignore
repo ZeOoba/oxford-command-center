@@ -32,6 +32,13 @@ scripts/property-financials/config/curated/insights.json
 scripts/property-financials/config/curated/leases.json
 scripts/property-financials/config/curated/data_quality.json
 scripts/property-financials/config/curated/sf.json
+tests/fixtures/property-financials/reference-artifact.html
+scripts/data/2026-08-22-insurance-premium-history.json
+# Value locks written only by `npm run golden:ratify` (scripts/golden/compute-golden.ts)
+data/property-financials/golden.local.json
+data/cost-seg/golden.local.json
+# Code matching tables that name real tenants / entities (synthetic stand-ins in fixtures/synthetic/)
+config/local/
 # Marker listing the synthetic stand-ins ensure-local-data.ts seeded on this machine
 data/.synthetic-seeded.json
 # Write-back overlay — local user mutations (deal stages, created tasks); never committed
