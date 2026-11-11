@@ -1,0 +1,239 @@
+{
+  "$note": "Curated lease facts (from lease OCR / text layers; carry a confidence field). Carried verbatim into dataset.leases.",
+  "leases": [
+    {
+      "property": "3034 Westerville",
+      "tenant": "Tenant 069 LLC",
+      "sf": 18360,
+      "term": "2025-01-02 to 2030-09-30",
+      "rent_schedule_monthly": [
+        [
+          "2025-04-01",
+          "2026-03-31",
+          5484.8664
+        ],
+        [
+          "2026-04-01",
+          "2027-03-31",
+          7969.464
+        ],
+        [
+          "2027-04-01",
+          "2028-03-31",
+          8250.7392
+        ],
+        [
+          "2028-04-01",
+          "2029-03-31",
+          8532.0144
+        ],
+        [
+          "2029-04-01",
+          "2030-03-31",
+          8832.04128
+        ],
+        [
+          "2030-04-01",
+          "2030-09-30",
+          9141.162112
+        ]
+      ],
+      "security_deposit": 12256,
+      "nnn_estimate_monthly": 1875.168,
+      "source": "Lease -- 3034 Westerville Tenant 069 LLC.pdf",
+      "confidence": "text layer"
+    },
+    {
+      "property": "3875-3883 Livingston",
+      "tenant": "tenant 072 llc",
+      "sf": 10950,
+      "term": "2026-07-01 to 2031-08-31 (rent starts 2026-09-01)",
+      "rent_schedule_monthly": [
+        [
+          "Y1",
+          null,
+          5032.62
+        ],
+        [
+          "Y2",
+          null,
+          5183.601664
+        ],
+        [
+          "Y3",
+          null,
+          5339.105792
+        ],
+        [
+          "Y4",
+          null,
+          5499.279456
+        ],
+        [
+          "Y5",
+          null,
+          5664.257472
+        ]
+      ],
+      "security_deposit": 5032.62,
+      "nnn_estimate_monthly": 1677.54,
+      "renewal": "one 5-year option; renewal rent at prevailing rate, 3.0% step language present",
+      "source": "Lease -- 3875-3883 Livingston tenant 072 llc.pdf",
+      "confidence": "text layer"
+    },
+    {
+      "property": "7658 Fishel (no P&L in folder)",
+      "tenant": "Tenant 141 LLC",
+      "sf": 24000,
+      "term": "2021-10-01 to 2026-09-30; renewal 2026-10-01 to 2031-09-30 exercised",
+      "rent_schedule_monthly": [
+        [
+          "2021-10-01",
+          "2026-09-30",
+          5233.312
+        ],
+        [
+          "2026-10-01",
+          "2027-09-30",
+          5337.97824
+        ],
+        [
+          "2027-10-01",
+          "2028-09-30",
+          5444.740256
+        ],
+        [
+          "2028-10-01",
+          "2029-09-30",
+          5553.634816
+        ],
+        [
+          "2029-10-01",
+          "2030-09-30",
+          5664.704816
+        ],
+        [
+          "2030-10-01",
+          "2031-09-30",
+          5777.99928
+        ]
+      ],
+      "second_renewal": "5 years: $5,893.56 rising to $6,379.38",
+      "source": "Lease -- 7658 Fishel (no P&L in folder) Tenant 141 LLC.pdf",
+      "confidence": "text layer"
+    },
+    {
+      "property": "3540 E 5th",
+      "tenant": "Tenant 142 LLC",
+      "sf": 35886,
+      "term": "2023-04-03 to 2033-07-31 (base rent from 2023-08-01)",
+      "rent_schedule_monthly": [
+        [
+          "LY1",
+          null,
+          13744.338
+        ],
+        [
+          "LY2",
+          null,
+          14087.947216
+        ],
+        [
+          "LY3",
+          null,
+          14440.147888
+        ],
+        [
+          "LY4",
+          null,
+          14801.154496
+        ],
+        [
+          "LY5",
+          null,
+          15171.18152
+        ],
+        [
+          "LY6",
+          null,
+          15550.461824
+        ],
+        [
+          "LY7",
+          null,
+          15939.222144
+        ],
+        [
+          "LY8",
+          null,
+          16337.701472
+        ],
+        [
+          "LY9",
+          null,
+          16746.144928
+        ],
+        [
+          "LY10",
+          null,
+          17164.797632
+        ]
+      ],
+      "escalator": "2.5% annual",
+      "mgmt_fee_cap": "3% of base annual rent plus adjustment rent",
+      "source": "Lease -- 3540 E 5th Tenant 142 LLC.pdf",
+      "confidence": "OCR of scan, first pages only; verify against PDF"
+    },
+    {
+      "property": "55 New Plant (EGFLLC)",
+      "tenant": "Tenant 143 LLC",
+      "sf": 34534,
+      "term": "2023-01-01 to 2027-12-31",
+      "rent_schedule_monthly": [
+        [
+          "2023",
+          null,
+          21162.4352
+        ],
+        [
+          "2024",
+          null,
+          21797.308256
+        ],
+        [
+          "2025",
+          null,
+          22451.227136
+        ],
+        [
+          "2026",
+          null,
+          23124.767872
+        ],
+        [
+          "2027",
+          null,
+          23818.506496
+        ]
+      ],
+      "escalator": "3.0% annual",
+      "hvac_replacement_recovery": "landlord replaces HVAC, tenant repays 1/120 of cost per month",
+      "source": "Lease -- 55 New Plant (EGFLLC) Tenant 143 LLC.pdf",
+      "confidence": "OCR of scan, first pages only; renewal clause not read"
+    },
+    {
+      "property": "401 Sunburst Highway (no P&L in folder)",
+      "tenant": "Tenant 073 LLC",
+      "sf": null,
+      "term": "5-year initial term from ~2019-12; two 5-year renewals",
+      "rent_annual": {
+        "initial": 37723.968,
+        "renewal1_min": 42246.432,
+        "renewal2_min": 47313.0624
+      },
+      "renewal": "greater of fair rental value or the stated minimum",
+      "source": "Lease -- 401 Sunburst Highway (no P&L in folder) Tenant 073 LLC.pdf",
+      "confidence": "OCR of scan, first pages only; addenda not read"
+    }
+  ]
+}
