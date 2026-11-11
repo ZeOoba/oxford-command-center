@@ -13,7 +13,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Generic patterns the repo should never push. Intentionally NOT real deal terms — keep this
 // list synthetic/structural so the file itself is safe to commit. Extend cautiously: anything
@@ -116,6 +117,74 @@ export function shouldBlockOnMissingRoster(rosterOk, env) {
   return env['PREPUSH_ALLOW_NO_ROSTER'] !== '1';
 }
 
+// ── real-data paths (ruling 2026-11-10) ──────────────────────────────────────────────────────────
+// Real firm data is never tracked. scripts/fixtures/real-data-manifest.json lists every real-data
+// path (exact files + directory prefixes); each is gitignored, and fixtures/synthetic/<same path>
+// holds the committed synthetic stand-in. A push that ADDS or MODIFIES a manifest path (a `git add -f`,
+// a negated ignore rule, a rename into place) is blocked. Deleting one (untracking) is always fine.
+
+const REAL_DATA_MANIFEST = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'real-data-manifest.json');
+const SYNTHETIC_PREFIX = 'fixtures/synthetic/';
+
+/**
+ * Load the real-data manifest. Throws when it is missing or malformed, so the caller fails closed.
+ * @param {string} [pathOverride] - test seam.
+ * @returns {{files: string[], dirs: string[]}}
+ */
+export function loadRealDataManifest(pathOverride) {
+  const parsed = JSON.parse(readFileSync(pathOverride ?? REAL_DATA_MANIFEST, 'utf8'));
+  const files = Array.isArray(parsed?.files) ? parsed.files.filter((f) => typeof f === 'string' && f) : [];
+  const dirs = Array.isArray(parsed?.dirs) ? parsed.dirs.filter((d) => typeof d === 'string' && d) : [];
+  if (files.length === 0 && dirs.length === 0) throw new Error('real-data manifest lists no paths');
+  return { files, dirs };
+}
+
+/**
+ * True when `path` is a real-data path the manifest covers. Synthetic stand-ins under
+ * fixtures/synthetic/ never match (they are what the repo is meant to carry).
+ * @param {string} path - repo-relative, either slash style.
+ * @param {{files: string[], dirs: string[]}} manifest
+ */
+export function isRealDataPath(path, manifest) {
+  const p = String(path).replace(/\\/g, '/').replace(/^\.\//, '');
+  if (p.startsWith(SYNTHETIC_PREFIX)) return false;
+  return manifest.files.includes(p) || manifest.dirs.some((d) => p.startsWith(d));
+}
+
+/**
+ * Parse `git diff --name-status --no-renames --diff-filter=AMT` output and return every added or
+ * modified real-data path.
+ * @param {string} nameStatusText
+ * @param {{files: string[], dirs: string[]}} manifest
+ * @returns {string[]}
+ */
+export function parseRealDataPaths(nameStatusText, manifest) {
+  const out = [];
+  for (const line of String(nameStatusText ?? '').split('\n')) {
+    // "A\tpath", "M\tpath", "T\tpath"; a rename/copy row ("R100\told\tnew") carries the new path last.
+    const m = /^([AMTCR])\d*\t(?:[^\t]+\t)?(.+)$/.exec(line.trimEnd());
+    if (!m || !m[2]) continue;
+    if (isRealDataPath(m[2], manifest)) out.push(m[2].replace(/\\/g, '/'));
+  }
+  return out;
+}
+
+/** @param {string} remoteSha
+ * @param {string} localSha
+ * @param {{files: string[], dirs: string[]}} manifest
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @returns {string[]} */
+export function realDataPathsFor(remoteSha, localSha, manifest, cwd) {
+  const base = resolveDiffBase(remoteSha, localSha, cwd);
+  const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--name-status', '--no-renames', '--diff-filter=AMT', `${base}..${localSha}`], {
+    encoding: 'utf8',
+    maxBuffer: Infinity,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd,
+  });
+  return parseRealDataPaths(text, manifest);
+}
+
 const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
 
 /**
@@ -157,15 +226,15 @@ function readJsonSafe(path) {
   }
 }
 
-// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
-// Gabriel's ruling: this repo's data/snapshots/portfolio.json deliberately carries real
-// confidential-deal records (the .gitignore negation at .gitignore:14 is intentional, not a
-// leak) — formalized as an in-perimeter confidential store rather than redacted. The gap was
-// that the ONLY control on that boundary was a term denylist with no structural rule about the
-// payload SHAPE: nothing asserted that a `"confidential": true` record may only ever be pushed
-// from a repo actually registered as an intentional confidential store. This closes that gap
-// structurally — it does not change what data may be committed to THIS repo (still real data,
-// deliberately), it only makes the control assert its own precondition instead of assuming it.
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21). The 2026-08-21
+// ruling that let data/snapshots/portfolio.json carry real confidential-deal records in git is
+// SUPERSEDED: real firm data is never tracked (ruling 2026-11-10). The snapshot and every other path
+// in scripts/fixtures/real-data-manifest.json are gitignored and local-only; the tracked copies under
+// fixtures/synthetic/ are synthetic, and the real-data path check below blocks any push that adds or
+// modifies a manifest path. This flag check stays as a second, payload-shaped line of defense:
+// a `"confidential": true` record may only ever be pushed from a repo registered as an intentional
+// confidential store (the synthetic fixtures carry the flag so the code paths that read it are
+// exercised), and it is independent of whether any term denylist entry also matched.
 // Matches both the JSON-quoted-key shape ("confidential": true) and the unquoted object-literal
 // shape (confidential: true) — the latter is the idiomatic form this codebase's own TS source
 // and test fixtures actually use to construct these records (e.g. src/data/public-deals.ts),
@@ -484,14 +553,21 @@ function errorLine(err) {
  * records its own diffErrors entry but never discards a text diff that succeeded, so its added
  * lines are still term-scanned (refute run wf_44a3341e-b41, low).
  *
+ * When `deps.manifest` is given, each ref's added/modified real-data paths (ruling 2026-11-10) are
+ * collected into realDataHits, in a third try block with its own diffErrors entry.
+ *
  * @param {string} stdinText
  * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[]}} [deps] - test seam; defaults to the real git calls.
- * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], diffErrors: {localSha: string, message: string}[]}}
+ * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[], realDataPathsFor?: (remoteSha: string, localSha: string, manifest: {files: string[], dirs: string[]}, cwd?: string) => string[], manifest?: {files: string[], dirs: string[]}}} [deps] - test seam; defaults to the real git calls.
+ * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], realDataHits: string[], diffErrors: {localSha: string, message: string}[]}}
  */
 export function collectRefScan(stdinText, cwd, deps) {
   const getDiff = deps?.diffFor ?? diffFor;
   const getBinaries = deps?.binaryPathsFor ?? binaryPathsFor;
+  const getRealData = deps?.realDataPathsFor ?? realDataPathsFor;
+  const manifest = deps?.manifest;
+  /** @type {string[]} */
+  const realDataHits = [];
   /** @type {{file: string, lineNo: number, text: string}[][]} */
   const addedByRef = [];
   /** @type {string[]} */
@@ -514,8 +590,15 @@ export function collectRefScan(stdinText, cwd, deps) {
     } catch (err) {
       diffErrors.push({ localSha, message: `binary numstat: ${errorLine(err)}` });
     }
+    if (manifest) {
+      try {
+        realDataHits.push(...getRealData(remoteSha ?? '', localSha, manifest, cwd));
+      } catch (err) {
+        diffErrors.push({ localSha, message: `real-data paths: ${errorLine(err)}` });
+      }
+    }
   }
-  return { addedByRef, binaryHits, diffErrors };
+  return { addedByRef, binaryHits, realDataHits, diffErrors };
 }
 
 function main() {
@@ -532,8 +615,20 @@ function main() {
     );
     process.exit(1);
   }
+  // Real firm data is never tracked (ruling 2026-11-10). The manifest that names it must be readable,
+  // or the push is blocked: without it this scan cannot tell a real-data path from any other.
+  let manifest;
+  try {
+    manifest = loadRealDataManifest();
+  } catch (err) {
+    console.error(
+      `\n✖  PUSH BLOCKED — scripts/fixtures/real-data-manifest.json is unreadable (${errorLine(err)}), so the ` +
+        'real-data path check cannot run (fail closed). Restore the file and push again.\n',
+    );
+    process.exit(1);
+  }
   const stdin = readStdin();
-  const { addedByRef, binaryHits, diffErrors } = collectRefScan(stdin);
+  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin, undefined, { manifest });
   const allHits = [];
   const flagHits = [];
   for (const added of addedByRef) {
@@ -563,6 +658,17 @@ function main() {
         `[prepush-confidential-scan] WARN: PREPUSH_ALLOW_DIFF_ERROR=1 - ref ${e.localSha} pushed UNSCANNED (${e.message}).`,
       );
     }
+  }
+
+  if (realDataHits.length > 0) {
+    blockOnHits(
+      [...new Set(realDataHits)],
+      'real firm data path(s) added or modified (scripts/fixtures/real-data-manifest.json; ruling 2026-11-10)',
+      (p) => p,
+      'Real firm data is never tracked. These paths are gitignored and local-only; the committed copy is ' +
+        'the synthetic stand-in under fixtures/synthetic/ (regenerate it with `npm run data:synthetic`). ' +
+        'Remove the file from the commit (git rm --cached <path>) and push again. There is no override.',
+    );
   }
 
   if (binaryHits.length > 0) {

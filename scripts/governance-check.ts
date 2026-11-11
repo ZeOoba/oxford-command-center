@@ -6,6 +6,7 @@
  * Exported functions allow unit testing without process.exit side effects.
  */
 import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
 export interface GovernanceResult {
@@ -450,6 +451,52 @@ export function checkStatusJson(root: string): GovernanceResult {
   return { pass: errors.length === 0, errors, warnings };
 }
 
+/**
+ * Real firm data is never tracked (ruling 2026-11-10). scripts/fixtures/real-data-manifest.json names
+ * every real-data path (exact files + directory prefixes); each is gitignored and local-only, with a
+ * synthetic stand-in at fixtures/synthetic/<same path>. Fails when any manifest path is in the index
+ * (`git add -f`, a negated ignore rule), and fails closed when the manifest or the index cannot be
+ * read. The pre-push scan (scripts/prepush-confidential-scan.mjs) blocks the same paths at push time;
+ * this catches them at gate / CI time.
+ *
+ * @param tracked test seam: the tracked file list; defaults to `git ls-files` in `root`.
+ */
+export function checkRealDataUntracked(root: string, tracked?: readonly string[]): GovernanceResult {
+  const errors: string[] = [];
+  let manifest: { files: string[]; dirs: string[] };
+  try {
+    const parsed = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf-8')) as { files?: unknown; dirs?: unknown };
+    const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []);
+    manifest = { files: strings(parsed.files), dirs: strings(parsed.dirs) };
+    if (manifest.files.length === 0 && manifest.dirs.length === 0) throw new Error('lists no paths');
+  } catch (e) {
+    errors.push(`REAL_DATA: scripts/fixtures/real-data-manifest.json is unreadable (${(e as Error).message}); cannot verify real data is untracked`);
+    return { pass: false, errors, warnings: [] };
+  }
+  let files: readonly string[];
+  try {
+    files =
+      tracked ??
+      execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+        .split('\0')
+        .filter(Boolean);
+  } catch (e) {
+    errors.push(`REAL_DATA: could not list tracked files (git ls-files: ${(e as Error).message.split('\n')[0]}); cannot verify real data is untracked`);
+    return { pass: false, errors, warnings: [] };
+  }
+  for (const raw of files) {
+    const f = raw.replace(/\\/g, '/');
+    if (f.startsWith('fixtures/synthetic/')) continue;
+    if (manifest.files.includes(f) || manifest.dirs.some((d) => f.startsWith(d))) {
+      errors.push(
+        `REAL_DATA_TRACKED: ${f} is real firm data (scripts/fixtures/real-data-manifest.json, ruling 2026-11-10) and must not be tracked. ` +
+          'Untrack it (git rm --cached) and keep the synthetic stand-in under fixtures/synthetic/.',
+      );
+    }
+  }
+  return { pass: errors.length === 0, errors, warnings: [] };
+}
+
 /** Run all checks, print results, and exit with appropriate code. */
 /**
  * Migration prefixes must be unique — a shared numeric prefix makes apply order depend on a
@@ -495,6 +542,7 @@ function main(): void {
     checkGovernorLiteralCoupling(root),
     checkStatusJson(root),
     checkMigrationPrefixUniqueness(root),
+    checkRealDataUntracked(root),
   ];
 
   for (const result of checks) {

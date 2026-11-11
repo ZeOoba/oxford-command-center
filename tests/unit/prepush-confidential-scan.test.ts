@@ -31,6 +31,10 @@ import {
   shouldBlockOnDiffError,
   resolveDiffBase,
   collectRefScan,
+  loadRealDataManifest,
+  isRealDataPath,
+  parseRealDataPaths,
+  realDataPathsFor,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -241,9 +245,11 @@ describe('prepush-confidential-scan / scanDiffForContextTerms', () => {
   });
 });
 
-// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
-// Gabriel's ruling: formalize the repo as an intentional in-perimeter confidential store, but
-// make the push gate assert that precondition structurally rather than assuming it.
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21): the push gate asserts
+// structurally that a confidential:true payload only leaves a registered confidential store. The
+// 2026-08-21 ruling that let the snapshot carry real records in git is superseded (real firm data is
+// never tracked, ruling 2026-11-10; see the real-data describe block below); this check stays as a
+// second, payload-shaped line of defense.
 describe('prepush-confidential-scan / scanDiffForConfidentialFlag', () => {
   it('flags a "confidential": true payload', () => {
     const added = [{ file: 'data/snapshots/portfolio.json', lineNo: 42, text: '    "confidential": true,' }];
@@ -650,5 +656,145 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
     const local = commitOnFeature('a.txt', 'plain text\n');
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(0);
+  });
+});
+
+// Real firm data is never tracked (ruling 2026-11-10). scripts/fixtures/real-data-manifest.json names
+// every real-data path; a push that adds or modifies one is blocked with no override, while deleting
+// (untracking) one and committing the synthetic stand-ins under fixtures/synthetic/ are allowed.
+describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () => {
+  const manifest = { files: ['data/snapshots/portfolio.json', 'src/data/seed-deals.ts'], dirs: ['data/calibration/'] };
+
+  it('loads the committed manifest, and it covers the snapshot and the seed files', () => {
+    const m = loadRealDataManifest();
+    expect(m.files).toContain('data/snapshots/portfolio.json');
+    expect(m.files).toContain('src/data/seed-deals.ts');
+    expect(m.dirs).toContain('data/building-specs/');
+  });
+
+  it('fails closed (throws) on a missing or empty manifest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prepush-manifest-'));
+    try {
+      expect(() => loadRealDataManifest(join(dir, 'missing.json'))).toThrow();
+      writeFileSync(join(dir, 'empty.json'), '{"files":[],"dirs":[]}');
+      expect(() => loadRealDataManifest(join(dir, 'empty.json'))).toThrow(/no paths/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('matches exact files and directory prefixes, either slash style, but never fixtures/synthetic/', () => {
+    expect(isRealDataPath('data/snapshots/portfolio.json', manifest)).toBe(true);
+    expect(isRealDataPath('data\\calibration\\observations.json', manifest)).toBe(true);
+    expect(isRealDataPath('./src/data/seed-deals.ts', manifest)).toBe(true);
+    expect(isRealDataPath('fixtures/synthetic/data/snapshots/portfolio.json', manifest)).toBe(false);
+    expect(isRealDataPath('fixtures/synthetic/data/calibration/observations.json', manifest)).toBe(false);
+    expect(isRealDataPath('src/data/seed-deals.test.ts', manifest)).toBe(false);
+    expect(isRealDataPath('data/snapshots/other.json', manifest)).toBe(false);
+  });
+
+  it('parses --name-status output: added/modified/renamed-to paths hit, deletions do not', () => {
+    const text = [
+      'A\tdata/snapshots/portfolio.json',
+      'M\tdata/calibration/observations.json',
+      'D\tsrc/data/seed-deals.ts',
+      'R100\tsomewhere/else.ts\tsrc/data/seed-deals.ts',
+      'A\tfixtures/synthetic/data/snapshots/portfolio.json',
+      'M\tsrc/app.ts',
+    ].join('\n');
+    expect(parseRealDataPaths(text, manifest)).toEqual([
+      'data/snapshots/portfolio.json',
+      'data/calibration/observations.json',
+      'src/data/seed-deals.ts',
+    ]);
+  });
+
+  it('collectRefScan collects real-data hits only when given the manifest, and records their errors', () => {
+    const sha = 'c'.repeat(40);
+    const stdin = `refs/heads/x ${sha} refs/heads/x ${'0'.repeat(40)}\n`;
+    const base = { diffFor: () => '', binaryPathsFor: () => [] as string[] };
+    expect(collectRefScan(stdin, undefined, { ...base, realDataPathsFor: () => ['data/snapshots/portfolio.json'] }).realDataHits).toEqual([]);
+    const hit = collectRefScan(stdin, undefined, { ...base, manifest, realDataPathsFor: () => ['data/snapshots/portfolio.json'] });
+    expect(hit.realDataHits).toEqual(['data/snapshots/portfolio.json']);
+    const err = collectRefScan(stdin, undefined, {
+      ...base,
+      manifest,
+      realDataPathsFor: () => {
+        throw new Error('fatal: bad object');
+      },
+    });
+    expect(err.diffErrors).toEqual([{ localSha: sha, message: 'real-data paths: fatal: bad object' }]);
+    expect(shouldBlockOnDiffError(err.diffErrors, {})).toBe(true);
+  });
+
+  describe('against a real git repo', () => {
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
+    const ZERO = '0000000000000000000000000000000000000000';
+    const script = join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs');
+    let repo: string;
+    let home: string;
+
+    beforeEach(() => {
+      repo = mkdtempSync(join(tmpdir(), 'prepush-realdata-'));
+      home = mkdtempSync(join(tmpdir(), 'prepush-realdata-home-'));
+      mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
+      writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), '{"_meta":{}}');
+      git(repo, 'init', '-q', '-b', 'main');
+      mkdirSync(join(repo, 'data', 'snapshots'), { recursive: true });
+      writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[]}\n');
+      writeFileSync(join(repo, 'README.md'), 'base\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'base with a tracked snapshot');
+      git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    });
+    afterEach(() => {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    const runHook = (stdin: string) => {
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+      delete env['PREPUSH_ALLOW_DIFF_ERROR'];
+      delete env['PREPUSH_ALLOW_NO_ROSTER'];
+      return spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env });
+    };
+
+    it('BLOCKS a push that modifies a manifest path', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[1]}\n');
+      git(repo, 'commit', '-qam', 'modify snapshot');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual(['data/snapshots/portfolio.json']);
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('PUSH BLOCKED');
+      expect(r.stderr).toContain('data/snapshots/portfolio.json');
+      expect(r.stderr).toContain('real firm data');
+    });
+
+    it('BLOCKS a force-added manifest file in a new directory (data/building-specs/)', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      mkdirSync(join(repo, 'data', 'building-specs'), { recursive: true });
+      writeFileSync(join(repo, 'data', 'building-specs', 'reports.json'), '[]\n');
+      git(repo, 'add', '-f', 'data/building-specs/reports.json');
+      git(repo, 'commit', '-qm', 'force-add');
+      const r = runHook(`refs/heads/feat ${git(repo, 'rev-parse', 'HEAD')} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('data/building-specs/reports.json');
+    });
+
+    it('ALLOWS untracking a manifest path and adding its synthetic stand-in', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      git(repo, 'rm', '-q', '--cached', 'data/snapshots/portfolio.json');
+      mkdirSync(join(repo, 'fixtures', 'synthetic', 'data', 'snapshots'), { recursive: true });
+      writeFileSync(join(repo, 'fixtures', 'synthetic', 'data', 'snapshots', 'portfolio.json'), '{"leases":[]}\n');
+      git(repo, 'add', 'fixtures');
+      git(repo, 'commit', '-qm', 'untrack + synthetic');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(0);
+    });
   });
 });
