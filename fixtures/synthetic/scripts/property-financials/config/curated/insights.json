@@ -9,7 +9,7 @@
       "title": "Synthetic insight title 001.",
       "finding": "Synthetic finding 001.",
       "action": "Synthetic action 001. [confirm]",
-      "annual_impact_usd": -62393,
+      "annual_impact_usd": -4245,
       "impact_basis": "FY25 vs FY24 energy income [ACTUAL YoY]",
       "tags": [
         "solar",
@@ -25,15 +25,15 @@
       "title": "Synthetic insight title 002.",
       "finding": "Synthetic finding 002.",
       "action": "Synthetic action 002.",
-      "annual_impact_usd": -69643,
+      "annual_impact_usd": -15741,
       "impact_basis": "Q3-26 vs Q3-25 annualized base rent [ESTIMATE]",
       "tags": [
         "rent",
         "vacancy"
       ],
       "evidence": {
-        "q3_2025": 864397.18,
-        "q3_2026": 794754.2
+        "q3_2025": 1816301.04,
+        "q3_2026": 1646699.16
       }
     },
     {
@@ -44,16 +44,16 @@
       "title": "Synthetic insight title 003.",
       "finding": "Synthetic finding 003.",
       "action": "Synthetic action 003. [confirm]",
-      "annual_impact_usd": -56953,
-      "impact_basis": "Prior $9,289/mo vs new $5,899.80/mo base rent x 12 [ESTIMATE; depends on whether prior rent was gross]",
+      "annual_impact_usd": -21933,
+      "impact_basis": "Prior $3,802/mo vs new $109,190.64/mo base rent x 12 [ESTIMATE; depends on whether prior rent was gross]",
       "tags": [
         "lease",
         "rolldown",
         "collections"
       ],
       "evidence": {
-        "prior_monthly": 10489,
-        "new_monthly": 5742.5,
+        "prior_monthly": 9688.21,
+        "new_monthly": 6401.56,
         "sf": 10950
       }
     },
@@ -65,7 +65,7 @@
       "title": "Synthetic insight title 004.",
       "finding": "Synthetic finding 004.",
       "action": "Synthetic action 004.",
-      "annual_impact_usd": 36886,
+      "annual_impact_usd": 21269,
       "impact_basis": "Annualized 2026 water vs FY2025 [ESTIMATE]",
       "tags": [
         "utilities",
@@ -82,7 +82,7 @@
       "title": "Synthetic insight title 005.",
       "finding": "Synthetic finding 005.",
       "action": "Synthetic action 005.",
-      "annual_impact_usd": 34440,
+      "annual_impact_usd": 71783,
       "impact_basis": "YTD26 vs YTD25 R&M plus grounds/snow increase [ACTUAL, 9 months]",
       "tags": [
         "repairs",
@@ -99,7 +99,7 @@
       "title": "Synthetic insight title 006.",
       "finding": "Synthetic finding 006.",
       "action": "Synthetic action 006.",
-      "annual_impact_usd": 28783,
+      "annual_impact_usd": 7483,
       "impact_basis": "TTM contra-revenue at Red Branch [UPPER BOUND of what is recoverable]",
       "tags": [
         "vacancy",
@@ -116,7 +116,7 @@
       "title": "Synthetic insight title 007.",
       "finding": "Synthetic finding 007.",
       "action": "Synthetic action 007. [confirm]",
-      "annual_impact_usd": 20239,
+      "annual_impact_usd": 3953,
       "impact_basis": "Each +10 points of recovery on the FVC pool [SENSITIVITY]",
       "tags": [
         "nnn",
@@ -132,7 +132,7 @@
       "title": "Synthetic insight title 008.",
       "finding": "Synthetic finding 008.",
       "action": "Synthetic action 008.",
-      "annual_impact_usd": REDACTED-AMT,
+      "annual_impact_usd": 29960,
       "impact_basis": "5% reduction across FY2025 tax [SENSITIVITY]",
       "tags": [
         "tax",
@@ -148,7 +148,7 @@
       "title": "Synthetic insight title 009.",
       "finding": "Synthetic finding 009.",
       "action": "Synthetic action 009. [confirm]",
-      "annual_impact_usd": 6403,
+      "annual_impact_usd": 61299,
       "impact_basis": "Each +10 points of recovery on the 9620 pool [SENSITIVITY]",
       "tags": [
         "cam",
@@ -164,7 +164,7 @@
       "title": "Synthetic insight title 010.",
       "finding": "Synthetic finding 010.",
       "action": "Synthetic action 010. [confirm]",
-      "annual_impact_usd": 5355,
+      "annual_impact_usd": 19571,
       "impact_basis": "Increase in net unrecovered utilities YTD [ACTUAL, 9 months]",
       "tags": [
         "utilities",
@@ -181,7 +181,7 @@
       "title": "Synthetic insight title 011.",
       "finding": "Synthetic finding 011.",
       "action": "Synthetic action 011.",
-      "annual_impact_usd": 19035,
+      "annual_impact_usd": 39663,
       "impact_basis": "Each 50 bps of fee on trailing revenue [SENSITIVITY]",
       "tags": [
         "management-fee",
@@ -197,7 +197,7 @@
       "title": "Synthetic insight title 012.",
       "finding": "Synthetic finding 012.",
       "action": "Synthetic action 012.",
-      "annual_impact_usd": 9713,
+      "annual_impact_usd": 12114,
       "impact_basis": "10% savings on grounds/snow [SENSITIVITY]",
       "tags": [
         "bid-out",
@@ -213,7 +213,7 @@
       "title": "Synthetic insight title 013.",
       "finding": "Synthetic finding 013.",
       "action": "Synthetic action 013. [confirm]",
-      "annual_impact_usd": 8997,
+      "annual_impact_usd": 2548,
       "impact_basis": "TTM recoveries minus total opex [ESTIMATE of possible over-recovery]",
       "tags": [
         "recoveries",
@@ -229,7 +229,7 @@
       "title": "Synthetic insight title 014.",
       "finding": "Synthetic finding 014.",
       "action": "Synthetic action 014.",
-      "annual_impact_usd": 3726,
+      "annual_impact_usd": 18104,
       "impact_basis": "Each +1 point of annual rent growth [SENSITIVITY]",
       "tags": [
         "rent",
@@ -245,7 +245,7 @@
       "title": "Synthetic insight title 015.",
       "finding": "Synthetic finding 015.",
       "action": "Synthetic action 015. [confirm]",
-      "annual_impact_usd": 2557,
+      "annual_impact_usd": 15446,
       "impact_basis": "25% of the premium increase through a rebid [SPECULATIVE]",
       "tags": [
         "insurance",
@@ -261,7 +261,7 @@
       "title": "Synthetic insight title 016.",
       "finding": "Synthetic finding 016.",
       "action": "Synthetic action 016.",
-      "annual_impact_usd": 2503,
+      "annual_impact_usd": 115254,
       "impact_basis": "10% tax reduction [SENSITIVITY]",
       "tags": [
         "tax",
@@ -278,7 +278,7 @@
       "title": "Synthetic insight title 017.",
       "finding": "Synthetic finding 017.",
       "action": "Synthetic action 017.",
-      "annual_impact_usd": 2110,
+      "annual_impact_usd": 28653,
       "impact_basis": "10% tax reduction [SENSITIVITY]",
       "tags": [
         "tax"
@@ -342,7 +342,7 @@
       "title": "Synthetic insight title 021.",
       "finding": "Synthetic finding 021.",
       "action": "Synthetic action 021.",
-      "annual_impact_usd": 9405,
+      "annual_impact_usd": 20358,
       "impact_basis": "8% savings through blanket rebid [SPECULATIVE]",
       "tags": [
         "insurance"
