@@ -19,7 +19,8 @@ function load<T>(rel: string): T {
 export const pfGolden = (): PfGolden => load<PfGolden>('data/property-financials/golden.local.json');
 export const costGolden = (): CostGolden => load<CostGolden>('data/cost-seg/golden.local.json');
 
-/** True when the runtime file is the committed synthetic stand-in (byte-identical to the fixture). */
+/** True when the runtime file is a synthetic stand-in (byte-identical to the fixture, or matching
+ *  the hash recorded when it was seeded). */
 export function isSynthetic(rel: string): boolean {
   return realDataStatus(process.cwd()).some((s) => s.rel === rel && s.state === 'synthetic');
 }
