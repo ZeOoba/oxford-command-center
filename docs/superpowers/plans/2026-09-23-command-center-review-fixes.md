@@ -1235,7 +1235,7 @@ import { compSourceCount, humanizeDealId } from '../../src/modules/market/comps-
 
 describe('comps display helpers', () => {
   it('humanizes an orphan Notion deal slug', () => {
-    expect(humanizeDealId('notion-liberty-office-park-west-chester-oh-45069')).toBe('Liberty Office Park West Chester OH 45069');
+    expect(humanizeDealId('notion-maple-grove-park-springfield-oh-45501')).toBe('Maple Grove Park Springfield OH 45501');
   });
   it('counts distinct comp sources when the set-level sources list is empty', () => {
     expect(compSourceCount({ sources: [], saleComps: [{ source: 'a' }, { source: 'b' }, { source: 'a' }], rentComps: [{ source: 'c' }] })).toBe(3);

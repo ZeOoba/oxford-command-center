@@ -22,7 +22,7 @@ describe('normalizeTokens', () => {
     expect(normalizeTokens('FOXWELL, LOUIS W.')).toEqual(['louis', 'w', 'foxwell']);
   });
   it('drops an entity suffix that follows a comma (not a person reorder)', () => {
-    expect(normalizeTokens('Curtis Elliott Designs, LTD')).toEqual(['curtis', 'elliott', 'designs']);
+    expect(normalizeTokens('Harbor Lane Designs, LTD')).toEqual(['harbor', 'lane', 'designs']);
   });
 
   // Real defect (found 2026-08-16 reconciling the a tenant's AR balance against the real lease roster):
