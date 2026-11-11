@@ -6,8 +6,8 @@
 //
 //  (1) deltaPct / growth12Pct were read verbatim from the workbook's own percent cells, which divide
 //      by the prior (or 12-month-ago) balance as-is. When that denominator is NEGATIVE the cell's
-//      sign inverts against its own dollar figure (live: deltaDollar -1,698 beside deltaPct +4.1%;
-//      growth12Dollar +2,064 beside growth12Pct -1186%). The parser now recomputes both from the
+//      sign inverts against its own dollar figure (live: a negative deltaDollar beside a positive
+//      deltaPct; a positive growth12Dollar beside a large negative growth12Pct). The parser now recomputes both from the
 //      dollar figure and the balance it is measured against, and emits null -- this repo's
 //      "verified null over a wrong-signed number" rule -- whenever that balance is <= 0 or missing.
 //  (2) The Cash Balances sheet's typed "As of" dateline could sit LATER than the last row of its own
@@ -86,8 +86,8 @@ const solar: EntityRow = {
   // The clean case, live-shaped: positive prior and 12-month balances, so the recomputed percents
   // are ordinary. The workbook cells are set to nonsense to prove they are not what gets served.
   entity: 'Fixture Solar (25%)',
-  current: 8710.935, prior: 8294, deltaDollar: 416.935, deltaPctCell: -0.5,
-  bal12: 7279, growth12Dollar: 1431.935, growth12PctCell: -0.9,
+  current: 1234.567, prior: 1000, deltaDollar: 234.567, deltaPctCell: -0.5,
+  bal12: 900, growth12Dollar: 334.567, growth12PctCell: -0.9,
 };
 
 describe('parseCash — deltaPct / growth12Pct are recomputed, never read verbatim', () => {
@@ -96,15 +96,15 @@ describe('parseCash — deltaPct / growth12Pct are recomputed, never read verbat
     await writeFixture(file, {
       dateline: 'As of July 10, 2026',
       entities: [solar],
-      history: [{ date: new Date('2026-07-10'), balances: [8710.935], total: 8710.935 }],
+      history: [{ date: new Date('2026-07-10'), balances: [1234.567], total: 1234.567 }],
     });
 
     const { snapshot } = await parseWorkbook(file);
 
     const e = snapshot.cash.entities[0]!;
-    expect(e.deltaDollar).toBeCloseTo(416.935, 3); // the dollar figure itself is still the workbook's
-    expect(e.deltaPct).toBeCloseTo(416.935 / 8294, 6);
-    expect(e.growth12Pct).toBeCloseTo(1431.935 / 7279, 6);
+    expect(e.deltaDollar).toBeCloseTo(234.567, 3); // the dollar figure itself is still the workbook's
+    expect(e.deltaPct).toBeCloseTo(234.567 / 1000, 6);
+    expect(e.growth12Pct).toBeCloseTo(334.567 / 900, 6);
     expect(e.deltaPct).not.toBe(-0.5);
     expect(e.growth12Pct).not.toBe(-0.9);
   });
@@ -115,20 +115,20 @@ describe('parseCash — deltaPct / growth12Pct are recomputed, never read verbat
       dateline: 'As of July 10, 2026',
       entities: [
         {
-          // Live shape: overdrawn prior balance, so the workbook's Δ% cell reads +4.1% on a -$1,698 move.
+          // Live shape: overdrawn prior balance, so the workbook's Δ% cell reads +11.1% on a -$2,222 move.
           entity: 'Fixture Livingston',
-          current: -42814.64, prior: -41116.24, deltaDollar: -1698.4, deltaPctCell: 0.0413,
-          bal12: null, growth12Dollar: -42814.64, growth12PctCell: null,
+          current: -22222.22, prior: -20000, deltaDollar: -2222.22, deltaPctCell: 0.1111,
+          bal12: null, growth12Dollar: -22222.22, growth12PctCell: null,
         },
         {
           // Live shape: positive prior (Δ% recomputes fine) but a NEGATIVE 12-month-ago balance, so
-          // the workbook's 12-mo % cell reads -1186% on a +$2,064 move.
+          // the workbook's 12-mo % cell reads -989% on a +$1,236 move.
           entity: 'Fixture Broadway',
-          current: 1890.165, prior: 2567.19, deltaDollar: -677.025, deltaPctCell: -0.2637,
-          bal12: -174, growth12Dollar: 2064.165, growth12PctCell: -11.863,
+          current: 1111.125, prior: 1500, deltaDollar: -388.875, deltaPctCell: -0.2593,
+          bal12: -125, growth12Dollar: 1236.125, growth12PctCell: -9.889,
         },
       ],
-      history: [{ date: new Date('2026-07-10'), balances: [-42814.64, 1890.165], total: -40924.475 }],
+      history: [{ date: new Date('2026-07-10'), balances: [-22222.22, 1111.125], total: -21111.095 }],
     });
 
     const { snapshot } = await parseWorkbook(file);
@@ -138,7 +138,7 @@ describe('parseCash — deltaPct / growth12Pct are recomputed, never read verbat
     expect(livingston.growth12Pct).toBeNull(); // bal12moAgo missing -> nothing to measure against
 
     const broadway = snapshot.cash.entities.find((e) => e.entity === 'Fixture Broadway')!;
-    expect(broadway.deltaPct).toBeCloseTo(-677.025 / 2567.19, 6); // positive prior: ordinary
+    expect(broadway.deltaPct).toBeCloseTo(-388.875 / 1500, 6); // positive prior: ordinary
     expect(broadway.growth12Pct).toBeNull(); // negative 12-month-ago balance: verified null
   });
 
@@ -170,14 +170,14 @@ describe('parseCash — the sheet dateline must not outrun its own history matri
       dateline: 'As of September 10, 2026',
       entities: [solar],
       history: [
-        { date: new Date('2026-06-10'), balances: [8294], total: 8294 },
-        { date: new Date('2026-07-10'), balances: [8710.935], total: 8710.935 },
+        { date: new Date('2026-06-10'), balances: [1000], total: 1000 },
+        { date: new Date('2026-07-10'), balances: [1234.567], total: 1234.567 },
       ],
     });
 
     const { snapshot, flags } = await parseWorkbook(file);
 
-    const f = flags.find((x) => x.entity === 'cash' && x.field === 'asOf');
+    const f =flags.find((x) => x.entity === 'cash' && x.field === 'asOf');
     expect(f).toBeDefined();
     expect(f!.severity).toBe('warn');
     expect(f!.issue).toContain('2026-09-10');
@@ -195,8 +195,8 @@ describe('parseCash — the sheet dateline must not outrun its own history matri
       dateline: 'As of July 10, 2026',
       entities: [solar],
       history: [
-        { date: new Date('2026-06-10'), balances: [8294], total: 8294 },
-        { date: new Date('2026-07-10'), balances: [8710.935], total: 8710.935 },
+        { date: new Date('2026-06-10'), balances: [1000], total: 1000 },
+        { date: new Date('2026-07-10'), balances: [1234.567], total: 1234.567 },
       ],
     });
 

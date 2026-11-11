@@ -73,7 +73,7 @@ describe('evaluateConditions — debt', () => {
   // A `lender`-direction loan is money ORA is OWED (contracts/loan.ts: "Lender = Oxford
   // receives"; currentBalance is negative = capital deployed). Telling the reader to
   // "prepare refinance or payoff" on an asset inverts the fact. Live case that motivated
-  // this: Note Party 02 — $979,772 @ 9%, balloon 2027-02-20, direction 'lender'
+  // this: Note Party 02 — a lender note @ 9%, balloon 2027-02-20, direction 'lender'
   // — shipped in the 2026-07-16 Daily Brief as a debt obligation.
   //
   // Convention follows the refi-spread precedent already in this file (test (f)):
@@ -96,7 +96,7 @@ describe('evaluateConditions — debt', () => {
 
   it('a maturing lender-direction note fires its own insight, distinct from the balloon one', () => {
     const out = evaluateConditions(
-      snap({ loans: [loan({ id: 'lend2', name: 'Note Party 02', direction: 'lender', balloon: true, maturity: iso(120), absBalance: 979_772 })] }),
+      snap({ loans: [loan({ id: 'lend2', name: 'Note Party 02', direction: 'lender', balloon: true, maturity: iso(120), absBalance: 876_543 })] }),
       opts,
     );
     const note = out.find((i) => i.id === 'note-maturity-lend2');
@@ -112,7 +112,7 @@ describe('evaluateConditions — debt', () => {
   // REGRESSION GUARD — the live row, with its REAL fields, not just its name.
   // The first cut of this test carried absBalance alone and left monthlyPmt/rate null, so
   // annualDebtService returned null, impactAnnualUsd was null, and the suite was green while
-  // the real row produced -$40,669.88. A fixture must carry the data that breaks, not the
+  // the real row produced a NEGATIVE impact. A fixture must carry the data that breaks, not the
   // label of the thing that broke.
   it('the live Note Party 02 row yields a POSITIVE impact (signed workbook pmt must not leak through)', () => {
     const out = evaluateConditions(
@@ -124,9 +124,9 @@ describe('evaluateConditions — debt', () => {
             direction: 'lender',
             balloon: true,
             maturity: iso(120),
-            absBalance: 979_771.96,
-            currentBalance: -979_771.96,
-            monthlyPmt: -5571.216666666667, // workbook signs lender payments negative
+            absBalance: 876_543.21,
+            currentBalance: -876_543.21,
+            monthlyPmt: -4321.5, // workbook signs lender payments negative (synthetic amounts, live shape)
             rate: 0.09,
           }),
         ],
@@ -138,19 +138,19 @@ describe('evaluateConditions — debt', () => {
     expect(note!.provenance).toBe('derived');
     expect(note!.impactAnnualUsd).not.toBeNull();
     expect(note!.impactAnnualUsd!).toBeGreaterThan(0);
-    // |−5571.216666666667 × 12| × min(120/30/12, 1) = 66854.6 × 0.3333… = 22284.87
-    expect(note!.impactAnnualUsd!).toBeCloseTo(22_284.87, 1);
+    // |−4321.5 × 12| × min(120/30/12, 1) = 51858 × 0.3333… = 17286
+    expect(note!.impactAnnualUsd!).toBeCloseTo(17_286, 1);
   });
 
   it('a borrower balloon with a positive workbook pmt is numerically unchanged by the abs() hardening', () => {
     const out = evaluateConditions(
-      snap({ loans: [loan({ id: 'bpos', direction: 'borrower', balloon: true, maturity: iso(120), monthlyPmt: 16_304.46 })] }),
+      snap({ loans: [loan({ id: 'bpos', direction: 'borrower', balloon: true, maturity: iso(120), monthlyPmt: 12_345.67 })] }),
       opts,
     );
     const b = out.find((i) => i.id === 'balloon-bpos');
     expect(b).toBeDefined();
-    // |16304.46 × 12| × 0.3333… = 195653.52 × 0.3333… = 65217.84 — identical to pre-hardening.
-    expect(b!.impactAnnualUsd!).toBeCloseTo(65_217.84, 1);
+    // |12345.67 × 12| × 0.3333… = 148148.04 × 0.3333… = 49382.68 — identical to pre-hardening.
+    expect(b!.impactAnnualUsd!).toBeCloseTo(49_382.68, 1);
   });
 
   it('a lender note never reaches critical severity, however close its maturity', () => {

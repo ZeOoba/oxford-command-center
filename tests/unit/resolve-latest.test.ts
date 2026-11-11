@@ -94,8 +94,11 @@ describe('resolveLatestArrears — cross-report supersede (never sum)', () => {
   // "conflicting reports" disagreement and stranded the write behind a false ambiguousTies entry,
   // even though the two totals are the SAME MONEY to the cent.
   it('an exact as-of tie whose buckets differ only by a sub-cent float ulp is harmless, not ambiguous', () => {
-    const original = wb('L1', { d30: 752.8599999999999 }, new Date('2026-08-21'), 'a.pdf');
-    const reExport = wb('L1', { d30: 752.86 }, new Date('2026-08-21'), 'b.pdf');
+    // 234.56 + 400 + 100.3 summed forward vs reversed (the merge-buckets / rent-manager fixture).
+    expect(234.56 + 400 + 100.3).toBe(734.8599999999999);
+    expect(100.3 + 400 + 234.56).toBe(734.86);
+    const original = wb('L1', { d30: 734.8599999999999 }, new Date('2026-08-21'), 'a.pdf');
+    const reExport = wb('L1', { d30: 734.86 }, new Date('2026-08-21'), 'b.pdf');
     const r = resolveLatestArrears([original, reExport]);
     expect(r.ambiguousTies).toEqual([]);
     expect(r.resolved).toHaveLength(1);

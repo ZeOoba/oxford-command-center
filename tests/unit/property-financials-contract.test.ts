@@ -171,7 +171,7 @@ describe('property-financials contract: fails loudly', () => {
     const props = raw.properties as Record<string, { periods: Record<string, Record<string, unknown>> }>;
     const fy = props['1100 Rarig']?.periods.FY2024;
     if (!fy) throw new Error('fixture shape changed');
-    fy.noi = '129655.5';
+    fy.noi = '123456.5';
     expectThrowsSanitized(raw, 'properties.1100 Rarig.periods.FY2024.noi');
   });
 

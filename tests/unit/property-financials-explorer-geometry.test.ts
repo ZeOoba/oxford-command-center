@@ -30,10 +30,10 @@ describe('barAxis', () => {
   });
 
   it('negative values extend the floor below zero in whole steps (grouped mode)', () => {
-    const a = barAxis([300_000, -82_591]);
+    const a = barAxis([300_000, -77_777]);
     expect(a.min).toBeLessThan(0);
     expect(a.min % a.step).toBe(-0);
-    expect(a.min).toBeLessThanOrEqual(-82_591);
+    expect(a.min).toBeLessThanOrEqual(-77_777);
     expect(a.ticks[0]).toBe(a.min);
     expect(a.ticks).toContain(0);
   });
@@ -137,15 +137,15 @@ describe('stackedBarsLayout', () => {
 
 describe('stepChartLayout', () => {
   const steps = [
-    { from: '2025-04-01', to: '2026-03-31', value: 8950.5 },
-    { from: '2026-04-01', to: '2027-03-31', value: 13005 },
-    { from: '2027-04-01', to: '2028-03-31', value: 13464 },
+    { from: '2025-04-01', to: '2026-03-31', value: 4444.5 },
+    { from: '2026-04-01', to: '2027-03-31', value: 6000 },
+    { from: '2027-04-01', to: '2028-03-31', value: 6200 },
   ];
   const L = stepChartLayout(steps, PLOT, '2026-10-05');
 
   it('x spans first from to last to; y tops out at 12% above the max step', () => {
     expect(L.points[0]!.x).toBeCloseTo(PLOT.left);
-    expect(L.top).toBeCloseTo(13464 * 1.12);
+    expect(L.top).toBeCloseTo(6200 * 1.12);
     expect(L.endX).toBeCloseTo(PLOT.left + PLOT.width);
   });
 

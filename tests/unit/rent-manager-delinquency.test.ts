@@ -70,13 +70,13 @@ describe('parseRentManagerRows — bucket computation', () => {
 
   it('sums multiple charges across a tenant block into the right buckets (mirrors the real Pedro\'s Flooring block)', () => {
     const cells = [
-      tenantCharge('Pedro', { other: 41.71 }, 'Water', new Date(Date.UTC(2026, 5, 23))), // 22d -> d30
-      tenantCharge(null, { rent: 1287.5 }, 'Rent Charge', new Date(Date.UTC(2026, 6, 1))), // 14d -> d30
-      tenantCharge(null, { other: 128.75 }, 'Late Charge', new Date(Date.UTC(2026, 6, 10))), // 5d -> d30
-      subtotal(1287.5, 170.46),
+      tenantCharge('Pedro', { other: 33.33 }, 'Water', new Date(Date.UTC(2026, 5, 23))), // 22d -> d30
+      tenantCharge(null, { rent: 1111.5 }, 'Rent Charge', new Date(Date.UTC(2026, 6, 1))), // 14d -> d30
+      tenantCharge(null, { other: 111.15 }, 'Late Charge', new Date(Date.UTC(2026, 6, 10))), // 5d -> d30
+      subtotal(1111.5, 144.48),
     ];
     const r = parseRentManagerRows(cells, ASOF);
-    expect(r.rows).toEqual([{ tenant: 'Pedro', property: null, d30: 1287.5 + 170.46, d60: 0, d90: 0, d90plus: 0 }]);
+    expect(r.rows).toEqual([{ tenant: 'Pedro', property: null, d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 }]);
     expect(r.subtotalMismatches).toEqual([]);
   });
 
@@ -101,11 +101,11 @@ describe('parseRentManagerRows — bucket computation', () => {
 
   it('handles an explicit K=0 subtotal (all delinquency in Other) — matches the real Sepich file', () => {
     const cells = [
-      tenantCharge('Granite', { other: 104.23 }, 'Water', new Date(Date.UTC(2025, 11, 24))),
-      subtotal(0, 104.23),
+      tenantCharge('Granite', { other: 123.45 }, 'Water', new Date(Date.UTC(2025, 11, 24))),
+      subtotal(0, 123.45),
     ];
     const r = parseRentManagerRows(cells, ASOF);
-    expect(r.rows[0]).toMatchObject({ tenant: 'Granite', d90plus: 104.23 });
+    expect(r.rows[0]).toMatchObject({ tenant: 'Granite', d90plus: 123.45 });
   });
 
   it('skips property-header rows and attaches the current property to subsequent tenants', () => {
@@ -191,21 +191,23 @@ describe('parseRentManagerRows — bucket computation', () => {
   // running float sum with no cent-rounding, so a tenant's total depended on the ORDER the
   // charge rows happened to appear in the worksheet -- an identical re-export with the same
   // charges enumerated in a different row order could sum to a different last-ulp float (e.g.
-  // 752.8599999999999 vs 752.86). resolve-latest.ts's sameBuckets compares with `===`, so that
+  // 734.8599999999999 vs 734.86). resolve-latest.ts's sameBuckets compares with `===`, so that
   // ulp difference made an unchanged re-import look like two reports "disagreeing" and stranded
   // the write behind a false ambiguousTies conflict. Verified on the real archived exports.
   it('sums to the same cent-precise total regardless of charge-row order (float-drift regression)', () => {
     const chargesForward = [
-      tenantCharge('Embody Dance', { other: 225.66 }, 'Late Fee', new Date(ASOF.getTime() - 5 * 86400000)),
-      tenantCharge(null, { rent: 385 }, 'Rent Charge', new Date(ASOF.getTime() - 10 * 86400000)),
-      tenantCharge(null, { other: 142.2 }, 'Water', new Date(ASOF.getTime() - 15 * 86400000)),
+      tenantCharge('Embody Dance', { other: 234.56 }, 'Late Fee', new Date(ASOF.getTime() - 5 * 86400000)),
+      tenantCharge(null, { rent: 400 }, 'Rent Charge', new Date(ASOF.getTime() - 10 * 86400000)),
+      tenantCharge(null, { other: 100.3 }, 'Water', new Date(ASOF.getTime() - 15 * 86400000)),
     ];
     const chargesReversed = [chargesForward[2]!, chargesForward[1]!, { ...chargesForward[0]!, tenantName: 'Embody Dance' }];
-    const forward = parseRentManagerRows([...chargesForward, subtotal(385, 367.86)], ASOF);
-    const reversed = parseRentManagerRows([...chargesReversed, subtotal(385, 367.86)], ASOF);
+    // The order-dependence is real for these inputs (asserted so a future edit cannot silently lose it).
+    expect(234.56 + 400 + 100.3).not.toBe(100.3 + 400 + 234.56);
+    const forward = parseRentManagerRows([...chargesForward, subtotal(400, 334.86)], ASOF);
+    const reversed = parseRentManagerRows([...chargesReversed, subtotal(400, 334.86)], ASOF);
     const totalOf = (r: typeof forward) => r.rows[0]!.d30 + r.rows[0]!.d60 + r.rows[0]!.d90 + r.rows[0]!.d90plus;
     expect(totalOf(forward)).toBe(totalOf(reversed));
-    expect(totalOf(forward)).toBe(752.86); // exact cent value, not 752.8599999999999
+    expect(totalOf(forward)).toBe(734.86); // exact cent value, not 734.8599999999999
   });
 });
 
@@ -236,24 +238,24 @@ function buildRealShapeWorksheet(): ExcelJS.Worksheet {
   ws.getCell('D6').value = '18387';
   ws.getCell('F6').value = '1100 Rarig Ave #B';
   ws.getCell('H6').value = 'Commercial unit';
-  ws.getCell('L6').value = 41.71;
+  ws.getCell('L6').value = 33.33;
   ws.getCell('M6').value = 'Water';
   ws.getCell('P6').value = new Date(Date.UTC(2026, 5, 23));
   ws.getCell('Q6').value = 0;
-  ws.getCell('K7').value = 1287.5;
+  ws.getCell('K7').value = 1111.5;
   ws.getCell('M7').value = 'Rent Charge';
   ws.getCell('P7').value = new Date(Date.UTC(2026, 6, 1));
   ws.getCell('Q7').value = 0;
-  ws.getCell('L8').value = 128.75;
+  ws.getCell('L8').value = 111.15;
   ws.getCell('M8').value = 'Late Charge';
   ws.getCell('P8').value = new Date(Date.UTC(2026, 6, 10));
   ws.getCell('Q8').value = 0;
-  ws.getCell('K9').value = 1287.5;
-  ws.getCell('L9').value = 170.46;
+  ws.getCell('K9').value = 1111.5;
+  ws.getCell('L9').value = 144.48;
   ws.getCell('Q9').value = 0;
   ws.getCell('A10').value = 'Total Delinquent for Property:';
   ws.mergeCells('A10:C10');
-  ws.getCell('E10').value = 1287.5 + 170.46;
+  ws.getCell('E10').value = 1111.5 + 144.48;
   ws.getCell('A11').value = 'Report Summary';
   ws.mergeCells('A11:C11');
   return ws;
@@ -276,7 +278,7 @@ describe('parseRentManagerWorksheet — real ExcelJS adapter (mirrors the live 1
     const r = parseRentManagerWorksheet(buildRealShapeWorksheet());
     expect(r.unsupportedReason).toBeUndefined();
     expect(r.rows).toEqual([
-      { tenant: "PEDRO'S FLOORING LLC", property: '1100 Rarig Ave', d30: 1287.5 + 170.46, d60: 0, d90: 0, d90plus: 0 },
+      { tenant: "PEDRO'S FLOORING LLC", property: '1100 Rarig Ave', d30: 1111.5 + 144.48, d60: 0, d90: 0, d90plus: 0 },
     ]);
     expect(r.subtotalMismatches).toEqual([]);
   });

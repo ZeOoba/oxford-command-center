@@ -465,7 +465,7 @@ describe('insuranceConditions', () => {
       policyNumber: 'ROLL-OLD',
       effectiveDate: addDays(AS_OF, -365),
       expirationDate: addDays(AS_OF, 10),
-      premiumAnnual: 11_166,
+      premiumAnnual: 11_111,
       sourceDate: addDays(AS_OF, -1),
     });
     // Rolled-over current term: same property/coverage, new policy_number, expiring ~1 year out
@@ -476,7 +476,7 @@ describe('insuranceConditions', () => {
       policyNumber: 'ROLL-NEW',
       effectiveDate: addDays(AS_OF, 10),
       expirationDate: addDays(AS_OF, 375),
-      premiumAnnual: 11_554,
+      premiumAnnual: 12_345,
       sourceDate: AS_OF,
     });
 

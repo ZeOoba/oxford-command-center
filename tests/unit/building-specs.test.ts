@@ -44,7 +44,7 @@ const rawFact = (over: Record<string, unknown> = {}) => ({
   confidence: 'STATED', note: null, ...over,
 });
 const rawFinding = (over: Record<string, unknown> = {}) => ({
-  component: 'paving', description: 'Repair drainage north lot', priority: 'Immediate', estimate_usd: 7500, qty: null, unit: null,
+  component: 'paving', description: 'Repair drainage north lot', priority: 'Immediate', estimate_usd: 5000, qty: null, unit: null,
   timing: null, scope: null, source_page: 30, ...over,
 });
 const stamp = (m: ReportMetaT, facts: unknown[], findings: unknown[] = []) =>
@@ -199,14 +199,14 @@ describe('canonical attributes (only the ones the diff / rollups depend on)', ()
 });
 
 describe('findings ledger', () => {
-  const stale = stamp(STALE, [], [rawFinding({ estimate_usd: 7500 }), rawFinding({ description: 'Mold in basement', estimate_usd: null, priority: 'Narrative' })]).findings;
-  const current = stamp(CURRENT, [], [rawFinding({ description: 'ADA van space', component: 'ada', estimate_usd: 275, priority: 'Immediate' })]).findings;
+  const stale = stamp(STALE, [], [rawFinding({ estimate_usd: 5000 }), rawFinding({ description: 'Mold in basement', estimate_usd: null, priority: 'Narrative' })]).findings;
+  const current = stamp(CURRENT, [], [rawFinding({ description: 'ADA van space', component: 'ada', estimate_usd: 250, priority: 'Immediate' })]).findings;
 
   it('keeps every finding with its original priority and dollar estimate, resolved_since UNKNOWN by default', () => {
     const rows = buildFindingsLedger([...stale, ...current], []);
     expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.resolved_since === 'UNKNOWN')).toBe(true);
-    expect(rows.find((r) => r.description === 'Repair drainage north lot')).toMatchObject({ priority: 'Immediate', estimate_usd: 7500, report_year: 2016 });
+    expect(rows.find((r) => r.description === 'Repair drainage north lot')).toMatchObject({ priority: 'Immediate', estimate_usd: 5000, report_year: 2016 });
   });
 
   it('labels stale dollars with the report year and exposes no totals', () => {
@@ -549,7 +549,7 @@ describe('isolation — stale data never enters reserve, near-term or calibratio
   it('stale facts/findings live only in the specs model: the rollup and totals functions take no spec input', () => {
     // nearTermRollup consumes PCA register properties; STALE ones are excluded and counted.
     const stalePca = { propertyKey: 'red-branch', propertyLabel: 'Red Branch', propertyMasterId: null, history: [], ageYears: 11, reservesPsfYr: null, hasDollarFigures: true, status: 'STALE' as const,
-      current: { reportId: 'R12', reportDate: '2015-08-12', consultant: 'PCI', usabilityClass: 'stale' as const, usabilityRaw: null, sf: 89609, immediateUsd: 76150, shortTermUsd: null, reservesUninflUsd: 522000, reservesInflUsd: 630594, termYears: 10, psfYrStated: 0.7, notes: null } };
+      current: { reportId: 'R12', reportDate: '2015-08-12', consultant: 'PCI', usabilityClass: 'stale' as const, usabilityRaw: null, sf: 89609, immediateUsd: 11111, shortTermUsd: null, reservesUninflUsd: 222222, reservesInflUsd: 233333, termYears: 10, psfYrStated: 0.5, notes: null } };
     const r = nearTermRollup([stalePca]);
     expect(r.totalUsd).toBe(0);
     expect(r.excludedStale).toBe(1);
@@ -557,9 +557,9 @@ describe('isolation — stale data never enters reserve, near-term or calibratio
 
   it('a calibration observation whose PCA estimate is from a stale report is excluded from the aggregate', () => {
     const o = CalibrationObservation.parse({
-      obs_id: 's:roof_epdm:v:1', property: 'Old', component: 'roof_epdm', unit: 'SF', qty: 28700, pca_unit_cost: 7,
+      obs_id: 's:roof_epdm:v:1', property: 'Old', component: 'roof_epdm', unit: 'SF', qty: 28700, pca_unit_cost: 5,
       pca_source: { consultant: 'PCI', report_date: '2016-10', source_file: 'f', source_date: '2016-10', price_basis: 'PCA_CONSULTANT_ESTIMATE', status: 'STALE' },
-      contractor_unit_cost: 2.85, contractor_source: { vendor: 'Bean', doc_date: '2017-02-03', status: 'EXECUTED', source_file: 'q', source_date: '2017-02-03', price_basis: 'CONTRACTOR_QUOTE' },
+      contractor_unit_cost: 2, contractor_source: { vendor: 'Bean', doc_date: '2017-02-03', status: 'EXECUTED', source_file: 'q', source_date: '2017-02-03', price_basis: 'CONTRACTOR_QUOTE' },
       scope_note: '', added_at: '2026-10-13',
     });
     const agg = aggregateByComponent([o])[0]!;

@@ -188,7 +188,7 @@ describe('ingest pipeline', () => {
 
   it('absolute values neutralize display sign conventions: stated -30000 vs positive scoped leaves 30000 → no mismatch', async () => {
     // QB/Rent-Manager summary blocks display expense totals NEGATIVE against positive
-    // leaves (Rarig 2024: stated -125,539.93 vs EXPENSE leaves +125,539.93 exact)
+    // leaves (Rarig 2024: the stated total is the exact negation of the EXPENSE leaf sum)
     const dir = mkdtempSync(join(tmpdir(), 'wh-'));
     const db = openWarehouse(join(dir, 'f.sqlite'));
     seedPropertyMaster(db);
@@ -306,7 +306,7 @@ describe('sign-flip is section-scoped, not account-scoped (defect class: OI-355 
       ['Property: 9620 State 350', null, null, null],
       ['01/01/25 - 12/31/25  (accrual basis)', null, null, null],
       [null, 'REVENUE', null, null],
-      [null, null, '    Rental Revenue', 479096.4],
+      [null, null, '    Rental Revenue', 333333.3],
       [null, 'OPERATING EXPENSES', null, null],
       [null, null, '    Insurance Expense', 12000],
       [null, null, ' TOTAL OPERATING EXPENSES', 12000], // closes the section: statedTotal=12000
@@ -338,7 +338,7 @@ describe('sign-flip is section-scoped, not account-scoped (defect class: OI-355 
                       WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi
       FROM ledger_entries WHERE is_active = 1
     `).get() as { noi: number }).noi;
-    expect(noi).toBe(467096.4); // 479096.4 - 12000; the -500000 financing row is 'excluded', not opex
+    expect(noi).toBe(321333.3); // 333333.3 - 12000; the -500000 financing row is 'excluded', not opex
   });
 
   // refute-financial-change wf_e7c0dd32-4ae: the sign decision must come from booked LEAF values,

@@ -48,7 +48,7 @@ describe('namesAffiliateLender — explicit Oxford lending-entity list, whole ph
 
 describe('isAffiliateNoteProperty — property row whose outstanding loan is owed to an Oxford lender', () => {
   it('live 1100 Rarig row → true', () => {
-    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 1_095_582 })).toBe(true);
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 1_111_111 })).toBe(true);
   });
   it('affiliate lender name but nothing outstanding → false (no note to exclude)', () => {
     expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 0 })).toBe(false);
@@ -61,7 +61,7 @@ describe('isAffiliateNoteProperty — property row whose outstanding loan is owe
     expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: Number.POSITIVE_INFINITY })).toBe(false);
   });
   it('third-party lender → false', () => {
-    expect(isAffiliateNoteProperty({ lender: 'Firm 03', loanBalance: 3_707_567.24 })).toBe(false);
+    expect(isAffiliateNoteProperty({ lender: 'Firm 03', loanBalance: 3_456_789.01 })).toBe(false);
   });
   it('no lender → false', () => {
     expect(isAffiliateNoteProperty({ lender: null, loanBalance: 0 })).toBe(false);
@@ -94,11 +94,11 @@ describe('isAffiliateBorrowerLoan — borrower direction only', () => {
 });
 
 describe('investment-basis helpers', () => {
-  const rarig = { lender: 'Oxford Capital', loanBalance: 1_095_582, ltv: 0.4613521862071406 };
-  const easton = { lender: 'Firm 03', loanBalance: 2_760_611.91, ltv: 0.38957229544549016 };
+  const rarig = { lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444444 };
+  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.389966526984127 };
   it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
     expect(investmentLoanBalance(rarig)).toBe(0);
-    expect(investmentLoanBalance(easton)).toBe(2_760_611.91);
+    expect(investmentLoanBalance(easton)).toBe(2_456_789.12);
     expect(investmentLoanBalance({ lender: null, loanBalance: null })).toBe(0);
   });
   it('investmentLoanBalance coerces a non-finite balance to 0', () => {
@@ -107,7 +107,7 @@ describe('investment-basis helpers', () => {
   });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();
-    expect(investmentLtv(easton)).toBe(0.38957229544549016);
+    expect(investmentLtv(easton)).toBe(0.389966526984127);
   });
   it('propertyLtvLabel names the exclusion instead of printing a number', () => {
     expect(propertyLtvLabel(rarig)).toBe('affiliate note');
@@ -115,8 +115,8 @@ describe('investment-basis helpers', () => {
     expect(propertyLtvLabel({ lender: null, loanBalance: 0, ltv: null })).toBe('—');
   });
   it('affiliateNotesClause formats a disclosure clause, or nothing', () => {
-    expect(affiliateNotesClause(1_095_582)).toBe('+$1.10M affiliate notes');
-    expect(affiliateNotesClause(385_218)).toBe('+$385K affiliate notes');
+    expect(affiliateNotesClause(1_111_111)).toBe('+$1.11M affiliate notes');
+    expect(affiliateNotesClause(333_333)).toBe('+$333K affiliate notes');
     expect(affiliateNotesClause(0)).toBe('');
     expect(affiliateNotesClause(null)).toBe('');
     expect(affiliateNotesClause(undefined)).toBe('');
@@ -124,7 +124,7 @@ describe('investment-basis helpers', () => {
   });
   it('affiliateNotesClause discloses a negative total with its own minus sign, no "+" prefix', () => {
     expect(affiliateNotesClause(-12_500)).toBe('-$13K affiliate notes');
-    expect(affiliateNotesClause(-1_095_582)).toBe('-$1.10M affiliate notes');
+    expect(affiliateNotesClause(-1_111_111)).toBe('-$1.11M affiliate notes');
   });
 });
 

@@ -60,9 +60,9 @@ function lease(over: Partial<DriftLeaseView> & { id: string }): DriftLeaseView {
  */
 function rentZeroOutIncident(): { previous: DriftLeaseView[]; current: DriftLeaseView[] } {
   const previous = [
-    lease({ id: 'zettler-2000-2002-fixture-countertops-llc', unit: '2000-2002', company: 'Fixture Countertops LLC', status: 'Expired', leaseEnd: '2026-07-31', monthsToExpiry: -2, annualRent: 89_952 }),
-    lease({ id: 'zettler-2004-fixture-tint-co', unit: '2004', company: 'Fixture Tint Co', status: 'Expired', leaseEnd: '2026-08-31', monthsToExpiry: -1, annualRent: 22_200 }),
-    lease({ id: 'information-lane-202-fixture-consulting-group', propertyKey: '29000 Information Lane', unit: '202', company: 'Fixture Consulting Group', status: 'Active', leaseEnd: '2027-01-31', monthsToExpiry: 4, annualRent: 18_777.96 }),
+    lease({ id: 'zettler-2000-2002-fixture-countertops-llc', unit: '2000-2002', company: 'Fixture Countertops LLC', status: 'Expired', leaseEnd: '2026-07-31', monthsToExpiry: -2, annualRent: 88_888 }),
+    lease({ id: 'zettler-2004-fixture-tint-co', unit: '2004', company: 'Fixture Tint Co', status: 'Expired', leaseEnd: '2026-08-31', monthsToExpiry: -1, annualRent: 22_222 }),
+    lease({ id: 'information-lane-202-fixture-consulting-group', propertyKey: '29000 Information Lane', unit: '202', company: 'Fixture Consulting Group', status: 'Active', leaseEnd: '2027-01-31', monthsToExpiry: 4, annualRent: 17_654.32 }),
   ];
   const current = previous.map((l) => ({ ...l, annualRent: 0 }));
   return { previous, current };
@@ -265,13 +265,13 @@ describe('computeDrift — rentChanged (the 2026-09-07 rent zero-out shape)', ()
     expect(drift.rentChanged).toHaveLength(3);
     expect(drift.rentChanged.map((r) => r.kind)).toEqual(['to-zero', 'to-zero', 'to-zero']);
     const active = drift.rentChanged.find((r) => r.current.status === 'Active')!;
-    expect(active.previous.annualRent).toBeCloseTo(18_777.96);
+    expect(active.previous.annualRent).toBeCloseTo(17_654.32);
     expect(active.current.annualRent).toBe(0);
     expect(drift.rentChanged.filter((r) => r.current.status === 'Expired')).toHaveLength(2);
   });
 
   it('also catches a to-$0 move hidden underneath a re-key (business-key paired), not just id-matched leases', () => {
-    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 18_777.96 })];
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 17_654.32 })];
     const current = [lease({ id: 'banwick-2802-fixture-consulting-group', company: 'Fixture Consulting Group', annualRent: 0 })];
 
     const drift = computeDrift(previous, current);
@@ -441,7 +441,7 @@ describe('evaluateAnomalyFloor — >25% mass-removal refusal', () => {
 // Regression cover for the 2026-08-03 phantom-lease incident (PR #250). The anomaly floor above
 // is COUNT-based (0-lease / >25%-removed) and would NOT have caught that defect -- the corrupt
 // parse added 10 leases (well under the 25% removal threshold; nothing was removed at all) while
-// inflating annual rent by $312,540. `server/reconcile-runtime.ts`'s checkSnapshot() already ties
+// inflating annual rent by a six-figure amount. `server/reconcile-runtime.ts`'s checkSnapshot() already ties
 // parsed lease annualRent to the workbook's own Portfolio Total cell (captured into
 // snapshot.workbookTotals.rent by parse.ts) and would have caught this exactly -- it simply was
 // never called from either CLI writer, only from server/brain.ts's live-server refresh path. This
@@ -730,24 +730,24 @@ describe('formatDriftReport', () => {
     expect(activeLine).toMatch(/Active/);
     expect(activeLine).toMatch(/2027-01-31/);
     expect(activeLine).toMatch(/4 mo/);
-    expect(activeLine).toMatch(/\$18,778 -> \$0/);
+    expect(activeLine).toMatch(/\$17,654 -> \$0/);
 
     // The Expired pair are plausibly correct zero-outs (a vacated suite) -- still listed, with the
     // status that explains them, so the reader judges rather than the script.
     const expiredLine = report.lines.find((l) => l.includes('Fixture Countertops LLC'));
     expect(expiredLine).toMatch(/Expired/);
-    expect(expiredLine).toMatch(/\$89,952 -> \$0/);
+    expect(expiredLine).toMatch(/\$88,888 -> \$0/);
   });
 
   it('shows the id change alongside a rent change that was paired across a re-key', () => {
-    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 18_777.96 })];
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 17_654.32 })];
     const current = [lease({ id: 'banwick-2802-fixture-consulting-group', company: 'Fixture Consulting Group', annualRent: 0 })];
     const drift = computeDrift(previous, current);
 
     const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(true);
-    expect(report.lines.some((l) => /\$18,778 -> \$0/.test(l))).toBe(true);
+    expect(report.lines.some((l) => /\$17,654 -> \$0/.test(l))).toBe(true);
     expect(report.lines.some((l) => l.includes('banwick-2802-105 -> banwick-2802-fixture-consulting-group'))).toBe(true);
   });
 

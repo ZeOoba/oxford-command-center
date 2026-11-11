@@ -58,14 +58,16 @@ describe('mergeByLease', () => {
   // resolve-latest.ts's `===` bucket comparison then reads as two DISAGREEING reports.
   it('sums to the same cent-precise total regardless of row order (float-drift regression)', () => {
     const rowsForward = [
-      { leaseId: 'l-multi', arrears: { d30: 225.66, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit A' },
-      { leaseId: 'l-multi', arrears: { d30: 385, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit B' },
-      { leaseId: 'l-multi', arrears: { d30: 142.2, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit C' },
+      { leaseId: 'l-multi', arrears: { d30: 234.56, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit A' },
+      { leaseId: 'l-multi', arrears: { d30: 400, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit B' },
+      { leaseId: 'l-multi', arrears: { d30: 100.3, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit C' },
     ];
+    // The order-dependence is real for these inputs (asserted so a future edit cannot silently lose it).
+    expect(234.56 + 400 + 100.3).not.toBe(100.3 + 400 + 234.56);
     const rowsReversed = [...rowsForward].reverse();
     const fwd = mergeByLease(rowsForward)[0]!.arrears.d30;
     const rev = mergeByLease(rowsReversed)[0]!.arrears.d30;
     expect(fwd).toBe(rev);
-    expect(fwd).toBe(752.86); // exact cent value, not 752.8599999999999
+    expect(fwd).toBe(734.86); // exact cent value, not 734.8599999999999
   });
 });

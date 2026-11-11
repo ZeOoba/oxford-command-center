@@ -15,26 +15,26 @@ const FIXTURE_BODY: FixtureRow[] = [
   [null, null, null, null],
   [null, 'INCOME', null, null],
   [null, null, '     5002 RENTAL INCOME', null],
-  [null, null, '          5064 Rent', 214557.21],
-  [null, null, '          5002 Total RENTAL INCOME', 214557.21],
+  [null, null, '          5064 Rent', 111111.11],
+  [null, null, '          5002 Total RENTAL INCOME', 111111.11],
   [null, null, '     5090 MISC INCOME', null],
-  [null, null, '          5046 Miscellaneous', 1904.19],
-  [null, null, '          5090 Total MISC INCOME', 1904.19],
+  [null, null, '          5046 Miscellaneous', 2222.22],
+  [null, null, '          5090 Total MISC INCOME', 2222.22],
   [null, 'TOTAL', null, null],
-  [null, null, null, 216461.4],
-  [null, null, 'INCOME', 216461.4], // real "TOTAL → INCOME 216461.4" value row — NOT a section header
+  [null, null, null, 113333.33],
+  [null, null, 'INCOME', 113333.33], // "TOTAL → INCOME 113333.33" value row — NOT a section header
   [null, 'EXPENSE', null, null],
   [null, null, '     6160 REPAIR', null],
-  [null, null, '          6285 HVAC Repair', 630.95],
-  [null, null, '          6160 Total REPAIR', 630.95],
+  [null, null, '          6285 HVAC Repair', 444.44],
+  [null, null, '          6160 Total REPAIR', 444.44],
   [null, 'NON OPERATING EXPENSE', null, null],
   [null, null, '          7402 Distribution to Owner', 25000],
-  [null, null, '105647.91', null], // numeric-only TEXT label under a live (non-TOTAL) section — must be skipped
+  [null, null, '123456.78', null], // numeric-only TEXT label under a live (non-TOTAL) section — must be skipped
 ];
 
 const FIXTURE_TOTAL_TAIL: FixtureRow[] = [
   [null, 'TOTAL', null, null],
-  [null, null, null, 25630.95],
+  [null, null, null, 25444.44],
 ];
 
 // Real-world report footer (observed in actual QB P&L exports): summary lines that
@@ -42,13 +42,13 @@ const FIXTURE_TOTAL_TAIL: FixtureRow[] = [
 // pure-numeric label cell. None of these may become accounts or re-arm a section.
 const REPORT_FOOTER_TAIL: FixtureRow[] = [
   [null, 'TOTAL', null, null],
-  [null, null, null, 25630.95], // summary total row (already suppressed by TOTAL section)
+  [null, null, null, 25444.44], // summary total row (already suppressed by TOTAL section)
   [null, null, null, null],
-  [null, null, 'INCOME', 216461.4], // section word + amount on SAME row — must NOT re-arm section
-  [null, null, 'EXPENSE', 25630.95], // same
-  [null, null, 'NOI - Net Operating Income', 190830.45], // footer metric row — must be skipped
-  [null, null, 'NET INCOME', 190830.45], // footer metric row — must be skipped
-  [null, null, '1', 190830.45], // pure-numeric label cell — must be skipped
+  [null, null, 'INCOME', 113333.33], // section word + amount on SAME row — must NOT re-arm section
+  [null, null, 'EXPENSE', 25444.44], // same
+  [null, null, 'NOI - Net Operating Income', 87888.89], // footer metric row — must be skipped
+  [null, null, 'NET INCOME', 87888.89], // footer metric row — must be skipped
+  [null, null, '1', 87888.89], // pure-numeric label cell — must be skipped
 ];
 
 async function buildFixture(path: string, tail: FixtureRow[] = FIXTURE_TOTAL_TAIL): Promise<void> {
@@ -73,8 +73,8 @@ const YARDI_FIXTURE: YardiRow[] = [
   [null, ' Period to Date', '%', ' Year to Date', '%'],
   [' REVENUE', null, null, null, null],
   [' RENTAL REVENUE', null, null, null, null],
-  ['    Rental Revenue', 479096.4, 68.17, 479096.4, 68.17],
-  [' TOTAL RENTAL REVENUE', 480436.1, 68.36, 480436.1, 68.36],
+  ['    Rental Revenue', 333333.3, 68.17, 333333.3, 68.17],
+  [' TOTAL RENTAL REVENUE', 334666.6, 68.36, 334666.6, 68.36],
   [' EXPENSE', null, null, null, null],
   ['    Insurance Expense', 12000, 1.71, 12000, 1.71],
   ['NET OPERATING INCOME', 300000, 42.7, 300000, 42.7],
@@ -93,7 +93,7 @@ async function buildYardiFixture(path: string): Promise<void> {
 // whose header text CONTAINS '%' but is not exactly '%' ("% of Selected Period",
 // "% of Fiscal Year To Date"), sections are 4-space-indented words ("    Income"),
 // leaves 8-space. Dollar values MUST come from "Fiscal Year To Date" (col 4) —
-// never a %-containing column (col 5 would read Rent as 93).
+// never a %-containing column (col 5 would read Rent as 90.91).
 type AfRow = Array<string | number | null>;
 
 const AF_PROPERTIES = 'Properties: nbc-a - 2207 Nothwood Drive Bldg A Salisbury, MD 21801, nbc-b - 2205 Northwood Drive Bldg B Salisbury, MD 21801, nbc-c - 2203 Marvel Road Salisbury, MD 21801';
@@ -115,26 +115,26 @@ function appfolioRows(dateRange: string): AfRow[] {
     ['Account Name', 'Selected Period', '% of Selected Period', 'Fiscal Year To Date', '% of Fiscal Year To Date'],
     ['Operating Income & Expense', null, null, null, null],
     ['    Income', null, null, null, null],
-    ['        Rent', 479208.59, 93, 479208.59, 93],
-    ['        CAM pass-thru', 17057.04, 3.31, 17057.04, 3.31],
-    ['    Total Operating Income', 515253.29, 100, 515253.29, 100],
+    ['        Rent', 444444.44, 90.91, 444444.44, 90.91],
+    ['        CAM pass-thru', 22222.22, 4.55, 22222.22, 4.55],
+    ['    Total Operating Income', 488888.88, 100, 488888.88, 100],
     ['    Expense', null, null, null, null],
-    ['        Owner Transfer', 61171.04, 11.87, 61171.04, 11.87],
-    ['        Interest Expense', 162474.41, 31.53, 162474.41, 31.53],
-    ['    Total Operating Expense', 371767.05, 72.15, 371767.05, 72.15],
-    ['    NOI - Net Operating Income', 143486.24, 27.85, 143486.24, 27.85],
-    ['    Total Income', 515253.29, 100, 515253.29, 100],
-    ['    Total Expense', 371767.05, 72.15, 371767.05, 72.15],
-    ['    Net Income', 143486.24, 27.85, 143486.24, 27.85],
+    ['        Owner Transfer', 55555.55, 11.36, 55555.55, 11.36],
+    ['        Interest Expense', 111111.11, 22.73, 111111.11, 22.73],
+    ['    Total Operating Expense', 222222.22, 45.45, 222222.22, 45.45],
+    ['    NOI - Net Operating Income', 266666.66, 54.55, 266666.66, 54.55],
+    ['    Total Income', 488888.88, 100, 488888.88, 100],
+    ['    Total Expense', 222222.22, 45.45, 222222.22, 45.45],
+    ['    Net Income', 266666.66, 54.55, 266666.66, 54.55],
     ['    Other Items', null, null, null, null],
-    ['        Operating Cash', 17526.66, null, 17526.66, null],
-    ['        Owner deposit', 61171.04, null, 61171.04, null],
-    ['        Owner Draw', -232820.9, null, -232820.9, null],
-    ['    Net Other Items', -154123.2, null, -154123.2, null],
-    ['Cash Flow', -10636.96, null, -10636.96, null],
-    ['Beginning Cash', 21173.1, null, 21173.1, null],
-    ['Beginning Cash + Cash Flow', 10536.14, null, 10536.14, null],
-    ['Actual Ending Cash', 3646.44, null, 3646.44, null],
+    ['        Operating Cash', 12345.67, null, 12345.67, null],
+    ['        Owner deposit', 55555.55, null, 55555.55, null],
+    ['        Owner Draw', -350000, null, -350000, null],
+    ['    Net Other Items', -282098.78, null, -282098.78, null],
+    ['Cash Flow', -15432.12, null, -15432.12, null],
+    ['Beginning Cash', 22222.22, null, 22222.22, null],
+    ['Beginning Cash + Cash Flow', 6790.1, null, 6790.1, null],
+    ['Actual Ending Cash', 5555.55, null, 5555.55, null],
   ];
 }
 
@@ -162,21 +162,21 @@ describe('qb-excel adapter', () => {
     expect(rent.code).toBe('5064');
     expect(rent.section).toBe('INCOME');
     expect(rent.parent).toBe('RENTAL INCOME');
-    expect(rent.total).toBeCloseTo(214557.21);
+    expect(rent.total).toBeCloseTo(111111.11);
     const dist = s.accounts[3]!;
     expect(dist.section).toBe('NON OPERATING EXPENSE');
-    // bare-TOTAL pattern: "TOTAL → INCOME 216461.4" row records the stated income total;
+    // bare-TOTAL pattern: "TOTAL → INCOME 113333.33" row records the stated income total;
     // the default tail has no EXPENSE word row, so totalExpense stays null
-    expect(s.totalIncome).toBeCloseTo(216461.4);
+    expect(s.totalIncome).toBeCloseTo(113333.33);
     expect(s.totalExpense).toBeNull();
     // per-section foot scope: leaf sums accumulate per section; the bare-TOTAL INCOME
     // value becomes a synthetic file-total section footed against the income-side
     // sections captured at the row's pass time. No EXPENSE word row → no expense synthetic.
     expect(s.sections).toEqual([
-      { name: 'INCOME', leafSum: expect.closeTo(216461.4), statedTotal: null },
-      { name: 'EXPENSE', leafSum: expect.closeTo(630.95), statedTotal: null },
+      { name: 'INCOME', leafSum: expect.closeTo(113333.33), statedTotal: null },
+      { name: 'EXPENSE', leafSum: expect.closeTo(444.44), statedTotal: null },
       { name: 'NON OPERATING EXPENSE', leafSum: 25000, statedTotal: null },
-      { name: 'INCOME (file total)', leafSum: expect.closeTo(216461.4), statedTotal: expect.closeTo(216461.4) },
+      { name: 'INCOME (file total)', leafSum: expect.closeTo(113333.33), statedTotal: expect.closeTo(113333.33) },
     ]);
   });
 
@@ -191,17 +191,17 @@ describe('qb-excel adapter', () => {
     expect(s.accounts.find((a) => a.name === 'HVAC Repair')!.section).toBe('EXPENSE');
     expect(s.accounts.find((a) => a.name === 'Distribution to Owner')!.section).toBe('NON OPERATING EXPENSE');
     // the skipped TOTAL→INCOME / TOTAL→EXPENSE value rows ARE the report's stated totals
-    expect(s.totalIncome).toBeCloseTo(216461.4);
-    expect(s.totalExpense).toBeCloseTo(25630.95);
-    // footer bare-TOTAL EXPENSE (25630.95) is a FILE-level total: its synthetic section
+    expect(s.totalIncome).toBeCloseTo(113333.33);
+    expect(s.totalExpense).toBeCloseTo(25444.44);
+    // footer bare-TOTAL EXPENSE (25444.44) is a FILE-level total: its synthetic section
     // snapshots the expense-side leaf sums at pass time — here AFTER both expense
-    // sections, so 630.95 + 25000 (= the report's own arithmetic) → foots clean.
+    // sections, so 444.44 + 25000 (= the report's own arithmetic) → foots clean.
     expect(s.sections).toEqual([
-      { name: 'INCOME', leafSum: expect.closeTo(216461.4), statedTotal: null },
-      { name: 'EXPENSE', leafSum: expect.closeTo(630.95), statedTotal: null },
+      { name: 'INCOME', leafSum: expect.closeTo(113333.33), statedTotal: null },
+      { name: 'EXPENSE', leafSum: expect.closeTo(444.44), statedTotal: null },
       { name: 'NON OPERATING EXPENSE', leafSum: 25000, statedTotal: null },
-      { name: 'INCOME (file total)', leafSum: expect.closeTo(216461.4), statedTotal: expect.closeTo(216461.4) },
-      { name: 'EXPENSE (file total)', leafSum: expect.closeTo(25630.95), statedTotal: expect.closeTo(25630.95) },
+      { name: 'INCOME (file total)', leafSum: expect.closeTo(113333.33), statedTotal: expect.closeTo(113333.33) },
+      { name: 'EXPENSE (file total)', leafSum: expect.closeTo(25444.44), statedTotal: expect.closeTo(25444.44) },
     ]);
   });
 
@@ -232,7 +232,7 @@ describe('qb-excel adapter', () => {
       ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
       [null, 'INCOME', null, null],
       [null, null, '     5002 RENTAL INCOME', null],
-      [null, null, '          5064 Rent', 214557.21],
+      [null, null, '          5064 Rent', 111111.11],
       [null, 'NON OPERATING EXPENSE', null, null],
       [null, null, '          1st Mortgage Note Payable', 5000],
       [null, null, '          1st Mortgage Interest', 1200],
@@ -261,11 +261,11 @@ describe('qb-excel adapter', () => {
       ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
       [null, 'EXPENSE', null, null],
       [null, null, '     6160 REPAIR', null],
-      [null, null, '          6285 HVAC Repair', 630.95],
-      [null, null, '          NET OPERATING INCOME', 190830.45], // derived total — NOT an account
-      [null, null, '          CASH FLOW', 165830.45], // derived total — NOT an account
-      [null, null, '          Beginning Cash', 21173.1], // cash-position line — NOT a P&L account
-      [null, null, '          Actual Ending Cash', 3646.44], // cash-position line — NOT a P&L account
+      [null, null, '          6285 HVAC Repair', 444.44],
+      [null, null, '          NET OPERATING INCOME', 87888.89], // derived total — NOT an account
+      [null, null, '          CASH FLOW', 62888.89], // derived total — NOT an account
+      [null, null, '          Beginning Cash', 22222.22], // cash-position line — NOT a P&L account
+      [null, null, '          Actual Ending Cash', 5555.55], // cash-position line — NOT a P&L account
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'derived.xlsx');
@@ -290,7 +290,7 @@ describe('qb-excel adapter', () => {
     const rent = s.accounts[0]!;
     expect(rent.section).toBe('REVENUE');
     expect(rent.parent).toBe('RENTAL REVENUE');
-    expect(rent.total).toBeCloseTo(479096.4); // dollars — NOT the trailing % column (68.17)
+    expect(rent.total).toBeCloseTo(333333.3); // dollars — NOT the trailing % column (68.17)
     const ins = s.accounts[1]!;
     expect(ins.section).toBe('EXPENSE');
     expect(ins.total).toBeCloseTo(12000); // dollars — NOT 1.71
@@ -300,7 +300,7 @@ describe('qb-excel adapter', () => {
     expect(s.totalExpense).toBeNull();
     // no top-level Total rows → sections never close, stated totals stay null
     expect(s.sections).toEqual([
-      { name: 'REVENUE', leafSum: expect.closeTo(479096.4), statedTotal: null },
+      { name: 'REVENUE', leafSum: expect.closeTo(333333.3), statedTotal: null },
       { name: 'EXPENSE', leafSum: 12000, statedTotal: null },
     ]);
   });
@@ -317,7 +317,7 @@ describe('qb-excel adapter', () => {
       ['Book = Cash ; Tree = 8807cole', null, null, null, null],
       [null, ' Period to Date', '%', ' Year to Date', '%'],
       [' REVENUE', null, null, null, null],
-      ['    Rental Revenue', 479096.4, 68.17, 479096.4, 68.17],
+      ['    Rental Revenue', 333333.3, 68.17, 333333.3, 68.17],
       [' OPERATING EXPENSES', null, null, null, null],
       ['    Insurance Expense', 12000, 1.71, 12000, 1.71],
       [' TOTAL OPERATING EXPENSES', 12000, 1.71, 12000, 1.71],
@@ -336,7 +336,7 @@ describe('qb-excel adapter', () => {
     expect(mortgage.total).toBeCloseTo(-50000);
     // but the section closed at its TOTAL row: leafSum 12000 (Insurance only), stated 12000
     expect(s.sections).toEqual([
-      { name: 'REVENUE', leafSum: expect.closeTo(479096.4), statedTotal: null },
+      { name: 'REVENUE', leafSum: expect.closeTo(333333.3), statedTotal: null },
       { name: 'OPERATING EXPENSES', leafSum: 12000, statedTotal: 12000 },
     ]);
     expect(s.totalExpense).toBe(12000); // existing capture path untouched
@@ -442,31 +442,31 @@ describe('qb-excel adapter', () => {
     }
     const byName = new Map(s.accounts.map((a) => [a.name, a]));
     // value column is "Fiscal Year To Date" (col 4) — NOT "% of Fiscal Year To Date" (col 5)
-    expect(byName.get('Rent')!.total).toBeCloseTo(479208.59); // not 93 (the % column)
+    expect(byName.get('Rent')!.total).toBeCloseTo(444444.44); // not 90.91 (the % column)
     expect(byName.get('Rent')!.section).toBe('INCOME');
-    expect(byName.get('CAM pass-thru')!.total).toBeCloseTo(17057.04);
+    expect(byName.get('CAM pass-thru')!.total).toBeCloseTo(22222.22);
     expect(byName.get('CAM pass-thru')!.section).toBe('INCOME');
     // Owner Transfer IS parsed as an EXPENSE-section account — its NOI exclusion
     // happens via the seed mapping (classification 'excluded'), not the parser
-    expect(byName.get('Owner Transfer')!.total).toBeCloseTo(61171.04);
+    expect(byName.get('Owner Transfer')!.total).toBeCloseTo(55555.55);
     expect(byName.get('Owner Transfer')!.section).toBe('EXPENSE');
-    expect(byName.get('Interest Expense')!.total).toBeCloseTo(162474.41);
+    expect(byName.get('Interest Expense')!.total).toBeCloseTo(111111.11);
     expect(byName.get('Interest Expense')!.section).toBe('EXPENSE');
     expect(byName.get('Owner Draw')!.section).toBe('OTHER ITEMS');
-    expect(byName.get('Owner Draw')!.total).toBeCloseTo(-232820.9);
+    expect(byName.get('Owner Draw')!.total).toBeCloseTo(-350000);
     // stated totals captured from the skipped "Total Operating Income" / "Total Operating
     // Expense" rows (the later "Total Income"/"Total Expense" rows carry the same values)
-    expect(s.totalIncome).toBeCloseTo(515253.29);
-    expect(s.totalExpense).toBeCloseTo(371767.05);
+    expect(s.totalIncome).toBeCloseTo(488888.88);
+    expect(s.totalExpense).toBeCloseTo(222222.22);
     // sections close at their "Total Operating ..." rows; the later duplicate
     // "Total Income"/"Total Expense" rows find them closed and re-attribute nothing.
     // (This fixture is a trimmed subset of the real export, so leafSum ≠ statedTotal
     // here — the parse layer RECORDS scope, the ingest layer judges mismatches.)
     // Other Items never states a total → never footable.
     expect(s.sections).toEqual([
-      { name: 'INCOME', leafSum: expect.closeTo(496265.63), statedTotal: expect.closeTo(515253.29) },
-      { name: 'EXPENSE', leafSum: expect.closeTo(223645.45), statedTotal: expect.closeTo(371767.05) },
-      { name: 'OTHER ITEMS', leafSum: expect.closeTo(-154123.2), statedTotal: null },
+      { name: 'INCOME', leafSum: expect.closeTo(466666.66), statedTotal: expect.closeTo(488888.88) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(166666.66), statedTotal: expect.closeTo(222222.22) },
+      { name: 'OTHER ITEMS', leafSum: expect.closeTo(-282098.78), statedTotal: null },
     ]);
   });
 
@@ -494,8 +494,8 @@ describe('qb-excel adapter', () => {
       [null, null, null, null, 'Amount', 'Amount'],
       [null, 'INCOME', 'INCOME', 'INCOME', null, null],
       [null, null, '     5002 RENTAL INCOME', '     5002 RENTAL INCOME', null, null],
-      [null, null, '          5064 Rent', '          5064 Rent', 214557.21, 214557.21],
-      [null, null, sub, sub, 214557.21, 214557.21],
+      [null, null, '          5064 Rent', '          5064 Rent', 111111.11, 111111.11],
+      [null, null, sub, sub, 111111.11, 111111.11],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'merged.xlsx');
@@ -504,7 +504,7 @@ describe('qb-excel adapter', () => {
     expect(s.propertyRaw).toBe('1100 Rarig Ave');
     expect(s.sourceSystem).toBe('quickbooks');
     expect(s.accounts.map((a) => a.name)).toEqual(['Rent']);
-    expect(s.accounts[0]!.total).toBeCloseTo(214557.21);
+    expect(s.accounts[0]!.total).toBeCloseTo(111111.11);
   });
 
   it('does not treat data rows below the first section as header rows (QB cash-flow "% Income" format)', async () => {
@@ -521,8 +521,8 @@ describe('qb-excel adapter', () => {
       [null, null, null, null, null, '% Income'],
       [null, 'INCOME', null, null, null, null],
       [null, null, '     4100 RENTAL PROPERTY INCOME', null, null, null],
-      [null, null, '          4110 Rental Income', null, 171801.26, '92.83 %'],
-      [null, null, '          4100 Total RENTAL PROPERTY INCOME', null, 171803.76, '92.83 %'],
+      [null, null, '          4110 Rental Income', null, 155555.55, '92.83 %'],
+      [null, null, '          4100 Total RENTAL PROPERTY INCOME', null, 155558.05, '92.83 %'],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'pct-income.xlsx');
@@ -531,7 +531,7 @@ describe('qb-excel adapter', () => {
     expect(s.propertyRaw).toBe('350 Highway Center');
     expect(s.sourceSystem).toBe('quickbooks');
     expect(s.accounts.map((a) => a.name)).toEqual(['Rental Income']);
-    expect(s.accounts[0]!.total).toBeCloseTo(171801.26);
+    expect(s.accounts[0]!.total).toBeCloseTo(155555.55);
   });
 
   it('parses column-indented QB Desktop layouts (55 New Plant): no leading spaces, indentation by column', async () => {
@@ -543,25 +543,25 @@ describe('qb-excel adapter', () => {
     const rows: Array<Array<string | number | null>> = [
       [null, null, null, null, 'Jan - Dec 24'],
       [null, 'Income', null, null, null],
-      [null, null, 'Rents', null, 425450.49],
-      [null, null, 'Tax Refund', null, 1500],
-      [null, 'Total Income', null, null, 426950.49],
+      [null, null, 'Rents', null, 321000.25],
+      [null, null, 'Tax Refund', null, 1200],
+      [null, 'Total Income', null, null, 322200.25],
       [null, 'Expense', null, null, null],
-      [null, null, 'Amortization Expense', null, 17601],
-      [null, null, 'Asset Management Fees', null, 17342.6],
-      [null, null, 'Depreciation', null, 14529],
+      [null, null, 'Amortization Expense', null, 11000],
+      [null, null, 'Asset Management Fees', null, 12000.5],
+      [null, null, 'Depreciation', null, 13000],
       [null, null, 'Insurance', null, 0],
-      [null, null, 'Interest Expense', null, 58659.84],
-      [null, null, 'Professional Fees', null, 3520],
-      [null, null, 'REPAIR & MAINT--BLDG', null, 975],
+      [null, null, 'Interest Expense', null, 44000.75],
+      [null, null, 'Professional Fees', null, 2500],
+      [null, null, 'REPAIR & MAINT--BLDG', null, 800],
       [null, null, 'Tax', null, null], // group header — no value; parent for the col-D leaves
-      [null, null, null, 'Fed', 7000],
-      [null, null, null, 'Property', 309],
-      [null, null, null, 'State', 1500],
-      [null, null, null, 'Tax - Other', 309],
-      [null, null, 'Total Tax', null, 9118],
-      [null, 'Total Expense', null, null, 121745.44],
-      ['Net Income', null, null, null, 305205.05],
+      [null, null, null, 'Fed', 6000],
+      [null, null, null, 'Property', 200],
+      [null, null, null, 'State', 1100],
+      [null, null, null, 'Tax - Other', 200],
+      [null, null, 'Total Tax', null, 7500],
+      [null, 'Total Expense', null, null, 90801.25],
+      ['Net Income', null, null, null, 231399],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'col-indent.xlsx');
@@ -569,18 +569,18 @@ describe('qb-excel adapter', () => {
     const s = await parseQbExcel(file);
     expect(s.periodLabel).toBe('Jan - Dec 24');
     const byName = new Map(s.accounts.map((a) => [a.name, a]));
-    expect(byName.get('Rents')!.total).toBeCloseTo(425450.49);
+    expect(byName.get('Rents')!.total).toBeCloseTo(321000.25);
     expect(byName.get('Rents')!.section).toBe('INCOME');
-    expect(byName.get('Tax Refund')!.total).toBeCloseTo(1500);
-    expect(byName.get('Amortization Expense')!.total).toBeCloseTo(17601);
-    expect(byName.get('Asset Management Fees')!.total).toBeCloseTo(17342.6);
-    expect(byName.get('Depreciation')!.total).toBeCloseTo(14529);
+    expect(byName.get('Tax Refund')!.total).toBeCloseTo(1200);
+    expect(byName.get('Amortization Expense')!.total).toBeCloseTo(11000);
+    expect(byName.get('Asset Management Fees')!.total).toBeCloseTo(12000.5);
+    expect(byName.get('Depreciation')!.total).toBeCloseTo(13000);
     expect(byName.get('Insurance')!.total).toBe(0); // real file carries a numeric 0
-    expect(byName.get('Interest Expense')!.total).toBeCloseTo(58659.84);
-    expect(byName.get('Professional Fees')!.total).toBeCloseTo(3520);
-    expect(byName.get('REPAIR & MAINT--BLDG')!.total).toBeCloseTo(975);
+    expect(byName.get('Interest Expense')!.total).toBeCloseTo(44000.75);
+    expect(byName.get('Professional Fees')!.total).toBeCloseTo(2500);
+    expect(byName.get('REPAIR & MAINT--BLDG')!.total).toBeCloseTo(800);
     // Tax sub-leaves (column D) get the most recent shallower-column group as parent
-    for (const [name, total] of [['Fed', 7000], ['Property', 309], ['State', 1500], ['Tax - Other', 309]] as const) {
+    for (const [name, total] of [['Fed', 6000], ['Property', 200], ['State', 1100], ['Tax - Other', 200]] as const) {
       const a = byName.get(name)!;
       expect(a.total).toBeCloseTo(total);
       expect(a.parent).toBe('Tax');
@@ -595,12 +595,12 @@ describe('qb-excel adapter', () => {
     expect(s.accounts).toHaveLength(13);
     // stated totals from the skipped top-level "Total Income"/"Total Expense" rows —
     // the sub-group "Total Tax" must NOT overwrite totalExpense
-    expect(s.totalIncome).toBeCloseTo(426950.49);
-    expect(s.totalExpense).toBeCloseTo(121745.44);
+    expect(s.totalIncome).toBeCloseTo(322200.25);
+    expect(s.totalExpense).toBeCloseTo(90801.25);
     // both sections close at their own Total rows and foot exactly; "Total Tax" closed nothing
     expect(s.sections).toEqual([
-      { name: 'INCOME', leafSum: expect.closeTo(426950.49), statedTotal: expect.closeTo(426950.49) },
-      { name: 'EXPENSE', leafSum: expect.closeTo(121745.44), statedTotal: expect.closeTo(121745.44) },
+      { name: 'INCOME', leafSum: expect.closeTo(322200.25), statedTotal: expect.closeTo(322200.25) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(90801.25), statedTotal: expect.closeTo(90801.25) },
     ]);
   });
 
@@ -619,27 +619,27 @@ describe('qb-excel adapter', () => {
       [null, null, null, null, null, null, 'Jan - Dec 24'],
       [null, 'Ordinary Income/Expense', null, null, null, null, null],
       [null, null, null, 'Income', null, null, null],
-      [null, null, null, null, 'Electricity Income -- PS', null, 216214.47],
-      [null, null, null, null, 'SREC Income', null, 452584],
-      [null, null, null, 'Total Income', null, null, 668798.47],
-      [null, null, 'Gross Profit', null, null, null, 668798.47],
+      [null, null, null, null, 'Electricity Income -- PS', null, 150000.5],
+      [null, null, null, null, 'SREC Income', null, 250000],
+      [null, null, null, 'Total Income', null, null, 400000.5],
+      [null, null, 'Gross Profit', null, null, null, 400000.5],
       [null, null, null, 'Expense', null, null, null],
       [null, null, null, null, 'Bank Service Charges', null, null],
-      [null, null, null, null, null, 'Wire Fee', 15],
-      [null, null, null, null, null, 'Bank Service Charges - Other', 30],
-      [null, null, null, null, 'Total Bank Service Charges', null, 45],
-      [null, null, null, null, 'Insurance Expense', null, 17556.92],
-      [null, null, null, null, 'Professional Fees', null, 3000],
-      [null, null, null, null, 'Repairs and Maintenance', null, 17062.37],
-      [null, null, null, null, 'Tax -- Personal Property', null, 309],
-      [null, null, null, 'Total Expense', null, null, 37973.29],
-      [null, 'Net Ordinary Income', null, null, null, null, 630825.18],
+      [null, null, null, null, null, 'Wire Fee', 10],
+      [null, null, null, null, null, 'Bank Service Charges - Other', 20],
+      [null, null, null, null, 'Total Bank Service Charges', null, 30],
+      [null, null, null, null, 'Insurance Expense', null, 15000.25],
+      [null, null, null, null, 'Professional Fees', null, 2500],
+      [null, null, null, null, 'Repairs and Maintenance', null, 12000.75],
+      [null, null, null, null, 'Tax -- Personal Property', null, 200],
+      [null, null, null, 'Total Expense', null, null, 29731],
+      [null, 'Net Ordinary Income', null, null, null, null, 370269.5],
       [null, 'Other Income/Expense', null, null, null, null, null],
       [null, null, 'Other Expense', null, null, null, null],
-      [null, null, null, 'Tax -- Md State', null, null, 36013],
-      [null, null, 'Total Other Expense', null, null, null, 36013],
-      [null, 'Net Other Income', null, null, null, null, -36013],
-      ['Net Income', null, null, null, null, null, 594812.18],
+      [null, null, null, 'Tax -- Md State', null, null, 25000],
+      [null, null, 'Total Other Expense', null, null, null, 25000],
+      [null, 'Net Other Income', null, null, null, null, -25000],
+      ['Net Income', null, null, null, null, null, 345269.5],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'tips-first.xlsm');
@@ -657,13 +657,13 @@ describe('qb-excel adapter', () => {
     expect(byName.get('Wire Fee')!.parent).toBe('Bank Service Charges');
     expect(byName.get('Insurance Expense')!.parent).toBeNull();
     expect(byName.get('Tax -- Md State')!.section).toBe('EXPENSE');
-    expect(byName.get('Tax -- Md State')!.total).toBeCloseTo(36013);
+    expect(byName.get('Tax -- Md State')!.total).toBeCloseTo(25000);
     // 1851 Solar pattern: the stated "Total Expense" covers Ordinary Expense only; the
     // EXPENSE section closes there, so the trailing Other Expense leaf (Tax -- Md State,
-    // 36013) stays in the LEDGER but out of the closed section's foot scope.
+    // 25000) stays in the LEDGER but out of the closed section's foot scope.
     expect(s.sections).toEqual([
-      { name: 'INCOME', leafSum: expect.closeTo(668798.47), statedTotal: expect.closeTo(668798.47) },
-      { name: 'EXPENSE', leafSum: expect.closeTo(37973.29), statedTotal: expect.closeTo(37973.29) },
+      { name: 'INCOME', leafSum: expect.closeTo(400000.5), statedTotal: expect.closeTo(400000.5) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(29731), statedTotal: expect.closeTo(29731) },
     ]);
   });
 
@@ -685,14 +685,14 @@ describe('qb-excel adapter', () => {
     ws.addRow(['01/01/25 - 12/31/25  (cash basis)', null, null, null]);
     ws.addRow([null, 'EXPENSE', null, null]);
     ws.addRow([null, null, '     6160 REPAIR', null]);
-    ws.addRow([null, null, '          6285 HVAC Repair', '(98.81)']);
+    ws.addRow([null, null, '          6285 HVAC Repair', '(55.55)']);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'paren.xlsx');
     await wb.xlsx.writeFile(file);
     const s = await parseQbExcel(file);
     expect(s.accounts).toHaveLength(1);
     const hvac = s.accounts[0]!;
     expect(hvac.name).toBe('HVAC Repair');
-    expect(hvac.total).toBeCloseTo(-98.81);
+    expect(hvac.total).toBeCloseTo(-55.55);
   });
 
   // ---- accounting-basis derivation (feeds the warehouse:verify basis-coverage gate,
@@ -722,12 +722,12 @@ describe('qb-excel adapter', () => {
     const rows: Array<Array<string | number | null>> = [
       [null, null, null, null, 'Jan - Dec 24'],
       [null, 'Income', null, null, null],
-      [null, null, 'Rents', null, 425450.49],
-      [null, 'Total Income', null, null, 425450.49],
+      [null, null, 'Rents', null, 321000.25],
+      [null, 'Total Income', null, null, 321000.25],
       [null, 'Expense', null, null, null],
-      [null, null, 'Depreciation', null, 14529], // non-cash item corroborates accrual
-      [null, null, 'Amortization Expense', null, 17601],
-      [null, 'Total Expense', null, null, 32130],
+      [null, null, 'Depreciation', null, 13000], // non-cash item corroborates accrual
+      [null, null, 'Amortization Expense', null, 11000],
+      [null, 'Total Expense', null, null, 24000],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-accrual-hdr.xlsx');
@@ -746,8 +746,8 @@ describe('qb-excel adapter', () => {
     const rows: Array<Array<string | number | null>> = [
       [null, null, null, null, 'Jan - Dec 24'],
       [null, 'Income', null, null, null],
-      [null, null, 'Rents', null, 425450.49],
-      [null, 'Total Income', null, null, 425450.49],
+      [null, null, 'Rents', null, 321000.25],
+      [null, 'Total Income', null, null, 321000.25],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-notoken.xlsx');
