@@ -5,6 +5,8 @@
 // dataset's own derived blocks (recovery ratio, Q3 run-rate, driver nature, rent-step events), the
 // THRESHOLDS config + RAG function (single-threshold flip), and the formatters.
 import { describe, expect, it } from 'vitest';
+import { loadLeaseTermSeeds } from '../../server/warehouse/lease-terms';
+import { DEFAULT_LEASE_RUN_ASSUMPTIONS, projectLeaseRun } from '../../server/warehouse/lease-run';
 import {
   OPEX_CATEGORIES,
   PF_ENTITY_IDS,
@@ -634,5 +636,24 @@ describe('formatters (reference artifact usd / pc / pl)', () => {
     expect(axisUsd(520_000)).toBe('$520K');
     expect(axisUsd(120)).toBe('$120');
     expect(axisUsd(-50_000)).toBe('-$50K');
+  });
+});
+
+describe('value lock — lease-run engine on the operator lease-term roster', () => {
+  // The roster is config/local/lease-term-seeds.json: synthetic in CI, the real abstracts on the live
+  // machine. The lock (pfGolden().leaseRun) is the engine output ratified against the v1.0 Excel models.
+  const seeds = loadLeaseTermSeeds();
+  const G = pfGolden();
+
+  it('locks exactly the properties of the roster', () => {
+    expect(Object.keys(G.leaseRun).sort()).toEqual(seeds.map((t) => t.propertyId).sort());
+  });
+
+  it.each(seeds.map((t) => [t.propertyId, t] as const))('%s: stabilized NOI, indicative value and every lease-year NOI match the lock', (id, t) => {
+    const p = projectLeaseRun(t, DEFAULT_LEASE_RUN_ASSUMPTIONS);
+    const g = G.leaseRun[id]!;
+    expect(p.stabilizedNoi === null ? null : Math.round(p.stabilizedNoi * 100) / 100).toBe(g.stabilizedNoi);
+    expect(p.indicativeValue === null ? null : Math.round(p.indicativeValue * 100) / 100).toBe(g.indicativeValue);
+    expect(Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, Math.round(x.noi * 100) / 100]))).toEqual(g.noiByYear);
   });
 });

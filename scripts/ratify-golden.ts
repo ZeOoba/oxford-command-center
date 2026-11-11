@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { GOLDEN_COST, GOLDEN_PF, computeCostGolden, computePfGolden } from './golden/compute-golden';
+import { loadLeaseTermSeeds } from '../server/warehouse/lease-terms';
 import { syntheticInUse } from '../server/real-data-status';
 
 const ROOT = resolve(process.cwd());
@@ -21,10 +22,10 @@ function diff(prefix: string, a: unknown, b: unknown, out: string[]): void {
 }
 
 function main(): void {
-  const synthetic = syntheticInUse(ROOT).filter((f) => /dataset\.json|cost-seg\.json|observations\.json/.test(f));
+  const synthetic = syntheticInUse(ROOT).filter((f) => /dataset\.json|cost-seg\.json|observations\.json|lease-term-seeds\.json/.test(f));
   if (synthetic.length) throw new Error(`golden:ratify refuses on synthetic stand-in data: ${synthetic.join(', ')}`);
   const writes: Array<[string, unknown]> = [
-    [GOLDEN_PF, computePfGolden(read('data/property-financials/dataset.json'))],
+    [GOLDEN_PF, computePfGolden(read('data/property-financials/dataset.json'), loadLeaseTermSeeds(ROOT))],
     [GOLDEN_COST, computeCostGolden(read('data/cost-seg/cost-seg.json'), read('data/calibration/observations.json'))],
   ];
   for (const [rel, golden] of writes) {

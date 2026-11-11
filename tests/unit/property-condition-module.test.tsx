@@ -11,6 +11,8 @@ import { PropertyConditionModule } from '../../src/modules/property-condition/Pr
 import { CoverageCard } from '../../src/modules/property-condition/SpecsView';
 import { CrossCheckCard } from '../../src/modules/property-condition/CostSegView';
 import { parseCostSeg } from '../../src/analytics/cost-seg';
+import { fmtUsd } from '../../src/analytics/index';
+import { INFO_LANE_DETAIL } from '../../src/modules/property-condition/pca-overlay';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -30,8 +32,8 @@ import type { PropertyConditionReport } from '../../src/contracts/property-condi
 function brief(over: Partial<PropertyConditionReport['properties'][number]['current']> = {}) {
   return {
     reportId: 'R03', reportDate: '2025-04-28', consultant: 'CBRE', usabilityClass: 'limited' as const,
-    usabilityRaw: 'CURRENT (reliance limited)', sf: 198576, immediateUsd: 26000, shortTermUsd: 566125,
-    reservesUninflUsd: 781625, reservesInflUsd: 838287.64, termYears: 12, psfYrStated: 0.33, notes: 'No roof access', ...over,
+    usabilityRaw: 'CURRENT (reliance limited)', sf: 198576, immediateUsd: 25000, shortTermUsd: 475000,
+    reservesUninflUsd: 780000, reservesInflUsd: 836000, termYears: 12, psfYrStated: 0.33, notes: 'No roof access', ...over,
   };
 }
 
@@ -42,15 +44,15 @@ function report(over: Partial<PropertyConditionReport> = {}): PropertyConditionR
     properties: [
       {
         propertyKey: 'e-fulton', propertyLabel: '3520 E Fulton St', propertyMasterId: null, current: brief(),
-        history: [], ageYears: 1, reservesPsfYr: 0.328, hasDollarFigures: true,
+        history: [], ageYears: 1, reservesPsfYr: 0.327, hasDollarFigures: true,
       },
       {
         propertyKey: 'sheriff-rd', propertyLabel: '6410 Sheriff Rd', propertyMasterId: null,
-        current: brief({ reportId: 'R16', reportDate: '2007-07-19', consultant: 'PCI', usabilityClass: 'stale', usabilityRaw: 'STALE', sf: null, immediateUsd: 11500, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: 60855, termYears: null, psfYrStated: null, notes: null }),
+        current: brief({ reportId: 'R16', reportDate: '2007-07-19', consultant: 'PCI', usabilityClass: 'stale', usabilityRaw: 'STALE', sf: null, immediateUsd: 11000, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: 60000, termYears: null, psfYrStated: null, notes: null }),
         history: [], ageYears: 19, reservesPsfYr: null, hasDollarFigures: true,
       },
     ],
-    totals: { propertiesTotal: 2, propertiesWithFigures: 2, immediateUsd: 37500, shortTermUsd: 566125, reservesUninflUsd: 781625 },
+    totals: { propertiesTotal: 2, propertiesWithFigures: 2, immediateUsd: 36000, shortTermUsd: 475000, reservesUninflUsd: 780000 },
     schedule: [
       { propertyKey: 'northwood', propertyLabel: 'Northwood', component: 'Roof', installFact: null, installYear: 2020, ageYears: 6, warranty: 'to 2025', warrantyEndYear: 2025, warrantyStatus: 'expired', flag: null },
       { propertyKey: 'new-plant', propertyLabel: 'New Plant', component: 'Roof EPDM', installFact: null, installYear: 2017, ageYears: 9, warranty: '20-yr to 2037', warrantyEndYear: 2037, warrantyStatus: 'active', flag: null },
@@ -139,7 +141,7 @@ describe('PropertyConditionModule', () => {
   it('?view=infolane never shows the Year 1 / Year 2 reserve outlays as Immediate or Short-term', () => {
     renderModule('/property-condition?view=infolane');
     expect(screen.getByText('Immediate (ADA)')).toBeTruthy();
-    expect(screen.getByText('$1,100')).toBeTruthy();
+    expect(screen.getByText(fmtUsd(INFO_LANE_DETAIL.immediateUsd))).toBeTruthy();
     expect(screen.getByText('Reserve schedule by year (uninflated)')).toBeTruthy();
     expect(screen.getAllByText(/\[SPECULATIVE\]/).length).toBeGreaterThanOrEqual(2);
   });

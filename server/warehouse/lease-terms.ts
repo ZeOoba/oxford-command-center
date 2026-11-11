@@ -3,107 +3,42 @@
 // The lease_terms read/seed layer for the PFI Lease-Run Pro Forma (migration 006).
 // Spec: docs/superpowers/specs/2026-06-14-pfi-lease-run-proforma-feature.md (Data model & provenance).
 //
-// SEED PROVENANCE: the SUNBURST_SEED / FISHEL_SEED structured lease economics are transcribed
-// verbatim from the 2026-06-14 lease-sweep encoding in Claude_Workspace/01_Workspace/
-// build_proformas.py (the `sunburst` / `fishel` config dicts that drive the v1.0 Excel models).
-// The engine MUST reconcile to those models to the dollar — see tests/unit/lease-run.test.ts.
+// SEED ROSTER: the structured lease abstracts (tenant, rent schedule, options, notes, provenance) are
+// real firm data, so they live in the gitignored operator table config/local/lease-term-seeds.json
+// (ruling 2026-11-10: real firm data is never tracked; a real-data manifest path with a synthetic
+// stand-in under fixtures/synthetic/). On the operator machine the real roster is rebuilt from the
+// pre-untrack commit by scripts/extract-local-tables.ts. The engine's reconciliation to the v1.0
+// Excel models is locked on real data by the ratified golden (data/property-financials/
+// golden.local.json, `leaseRun`), and its math by tests/unit/lease-run.test.ts on synthetic seeds.
 //
-// These are OWNED ORA assets (401-sunburst-hwy-cambridge-md / 7658-fishel-dr-n-dublin-oh,
-// ratified in property-master.ts). No confidential active-deal terms appear here.
+// These are OWNED ORA assets (ratified in property-master.ts). No confidential active-deal terms.
 //
-// The seed lives in TypeScript (not raw SQL) so it is type-checked against the LeaseTerm
-// contract and reused by the golden test directly. seedLeaseTerms(db) writes it idempotently,
-// mirroring seedPropertyMaster. Migration 006 creates the TABLE only.
+// Each row is .parse()'d through the LeaseTerm contract on load, so a malformed table fails closed.
+// seedLeaseTerms(db) writes the roster idempotently, mirroring seedPropertyMaster. Migration 006
+// creates the TABLE only.
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { LeaseTerm } from '../../src/contracts/lease-run';
 import type { WarehouseDb } from './db';
 
-// ── 401 Sunburst Hwy — Cambridge, MD (absolute NNN; 5,130 SF) ──────────────────────────────
-// Contractual LY'27–LY'33 are hard data ($15.00/SF → $17.00/SF step on 4/1/2028). Option years
-// LY'34–LY'43 are UNEXERCISED (no fixed rate in the lease) → option_assumed: the engine grows
-// the expiring rate at renewalMarketGrowthPct. Floors (Opt1 68,940; Opt2 77,208) are recorded on
-// the renewal options but sit BELOW current contractual rent (stale), so the growth proxy governs.
-export const SUNBURST_SEED: LeaseTerm = LeaseTerm.parse({
-  propertyId: '401-sunburst-hwy-cambridge-md',
-  suite: null,
-  tenant: 'Tenant 092 LLC (automotive service/tire)',
-  rentableSf: 5130,
-  structure: 'absolute_nnn',
-  commencement: '2019-12-23',
-  currentExpiry: '2033-03-31',
-  rentSchedule: [
-    { periodStart: '2026-04-01', periodEnd: '2027-03-31', leaseYearLabel: "LY '27", annualBaseRent: 76950, status: 'contractual' },
-    { periodStart: '2027-04-01', periodEnd: '2028-03-31', leaseYearLabel: "LY '28", annualBaseRent: 76950, status: 'contractual' },
-    { periodStart: '2028-04-01', periodEnd: '2029-03-31', leaseYearLabel: "LY '29", annualBaseRent: 87210, status: 'contractual' },
-    { periodStart: '2029-04-01', periodEnd: '2030-03-31', leaseYearLabel: "LY '30", annualBaseRent: 87210, status: 'contractual' },
-    { periodStart: '2030-04-01', periodEnd: '2031-03-31', leaseYearLabel: "LY '31", annualBaseRent: 87210, status: 'contractual' },
-    { periodStart: '2031-04-01', periodEnd: '2032-03-31', leaseYearLabel: "LY '32", annualBaseRent: 87210, status: 'contractual' },
-    { periodStart: '2032-04-01', periodEnd: '2033-03-31', leaseYearLabel: "LY '33", annualBaseRent: 87210, status: 'contractual' },
-    // Option 1 (5 yr) — FRV/floor, unexercised → assumption (grown off the expiring rate).
-    { periodStart: '2033-04-01', periodEnd: '2034-03-31', leaseYearLabel: "LY '34", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2034-04-01', periodEnd: '2035-03-31', leaseYearLabel: "LY '35", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2035-04-01', periodEnd: '2036-03-31', leaseYearLabel: "LY '36", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2036-04-01', periodEnd: '2037-03-31', leaseYearLabel: "LY '37", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2037-04-01', periodEnd: '2038-03-31', leaseYearLabel: "LY '38", annualBaseRent: null, status: 'option_assumed' },
-    // Option 2 (5 yr) — FRV/floor, unexercised → assumption.
-    { periodStart: '2038-04-01', periodEnd: '2039-03-31', leaseYearLabel: "LY '39", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2039-04-01', periodEnd: '2040-03-31', leaseYearLabel: "LY '40", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2040-04-01', periodEnd: '2041-03-31', leaseYearLabel: "LY '41", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2041-04-01', periodEnd: '2042-03-31', leaseYearLabel: "LY '42", annualBaseRent: null, status: 'option_assumed' },
-    { periodStart: '2042-04-01', periodEnd: '2043-03-31', leaseYearLabel: "LY '43", annualBaseRent: null, status: 'option_assumed' },
-  ],
-  renewalOptions: [
-    { termYears: 5, rentBasis: 'frv_or_floor', floorAnnual: 68940, notice: 'per lease' },
-    { termYears: 5, rentBasis: 'frv_or_floor', floorAnnual: 77208, notice: 'per lease' },
-  ],
-  diligenceNotes: [
-    'Confirm the two 5-yr renewal options survive the Addendum #1 term extension to 3/31/2033 (counsel).',
-    'Confirm Landlord entity succession (Seafire → Fairground Village Center, LLC) in chain of title.',
-    'No security deposit or guaranty found.',
-    'Option rent = greater of FRV or floor; both floors are BELOW current contractual rent (stale) → FRV governs.',
-  ],
-  provenance: { sourceFile: '2026-06-14 lease-sweep (401 Sunburst lease + Addendum #1 + 2nd Amendment)', abstractDate: '2026-06-14', note: 'Absolute NNN; figures NET to landlord.' },
-});
+/** Repo-relative path of the operator lease-term roster (a real-data manifest path). */
+export const LEASE_TERM_SEEDS_REL = 'config/local/lease-term-seeds.json';
 
-// ── 7658 Fishel Dr N — Dublin, OH (NNN; 24,000 SF) ─────────────────────────────────────────
-// ALL base rent is hard data: Initial term (LY'26) + Renewal 1 exercised via tenant notice 3/11/2026
-// (LY'27–LY'31, locked through 9/30/2031) + Option 2 (LY'32–LY'36) at the lease's pre-agreed §2.2
-// FIXED rates. Opt 2 is unexercised but contractual-rate → option_contractual (data, NOT assumption).
-export const FISHEL_SEED: LeaseTerm = LeaseTerm.parse({
-  propertyId: '7658-fishel-dr-n-dublin-oh',
-  suite: null,
-  tenant: 'Tenant 153 LLC',
-  rentableSf: 24000,
-  structure: 'nnn',
-  commencement: '2021-10-01',
-  currentExpiry: '2031-09-30',
-  rentSchedule: [
-    { periodStart: '2025-10-01', periodEnd: '2026-09-30', leaseYearLabel: "LY '26", annualBaseRent: 102480, status: 'contractual' },
-    { periodStart: '2026-10-01', periodEnd: '2027-09-30', leaseYearLabel: "LY '27", annualBaseRent: 104529.6, status: 'renewal_exercised' },
-    { periodStart: '2027-10-01', periodEnd: '2028-09-30', leaseYearLabel: "LY '28", annualBaseRent: 106620.24, status: 'renewal_exercised' },
-    { periodStart: '2028-10-01', periodEnd: '2029-09-30', leaseYearLabel: "LY '29", annualBaseRent: 108752.64, status: 'renewal_exercised' },
-    { periodStart: '2029-10-01', periodEnd: '2030-09-30', leaseYearLabel: "LY '30", annualBaseRent: 110927.64, status: 'renewal_exercised' },
-    { periodStart: '2030-10-01', periodEnd: '2031-09-30', leaseYearLabel: "LY '31", annualBaseRent: 113146.2, status: 'renewal_exercised' },
-    // Option 2 (5 yr) — unexercised but at FIXED §2.2 rates → DATA, not an assumption.
-    { periodStart: '2031-10-01', periodEnd: '2032-09-30', leaseYearLabel: "LY '32", annualBaseRent: 115409.16, status: 'option_contractual' },
-    { periodStart: '2032-10-01', periodEnd: '2033-09-30', leaseYearLabel: "LY '33", annualBaseRent: 117717.36, status: 'option_contractual' },
-    { periodStart: '2033-10-01', periodEnd: '2034-09-30', leaseYearLabel: "LY '34", annualBaseRent: 120071.64, status: 'option_contractual' },
-    { periodStart: '2034-10-01', periodEnd: '2035-09-30', leaseYearLabel: "LY '35", annualBaseRent: 122473.08, status: 'option_contractual' },
-    { periodStart: '2035-10-01', periodEnd: '2036-09-30', leaseYearLabel: "LY '36", annualBaseRent: 124922.52, status: 'option_contractual' },
-  ],
-  renewalOptions: [
-    { termYears: 5, rentBasis: 'fixed', floorAnnual: null, notice: '§2.2 pre-agreed rates' },
-  ],
-  diligenceNotes: [
-    'Confirm ORA (7658 Fishel, LLC) formally acknowledged the renewal notice and updated the rent roll.',
-    "Confirm tenant's building-insurance certificate does not conflict with ORA's lender-required coverage.",
-    'Confirm 24,000 SF against survey/rent roll.',
-    'No security deposit or guaranty found.',
-  ],
-  provenance: { sourceFile: '2026-06-14 lease-sweep (7658 Fishel lease + tenant renewal notice 3/11/2026)', abstractDate: '2026-06-14', note: 'NNN in economic effect; tenant carries casualty insurance.' },
-});
-
-/** The v1 seed roster. Order is stable for deterministic seeding/rollup. */
-export const LEASE_TERM_SEEDS: readonly LeaseTerm[] = [SUNBURST_SEED, FISHEL_SEED];
+/** The lease-term roster, in file order (stable for deterministic seeding / rollup). Throws when the
+ *  table is missing or a row fails the LeaseTerm contract: seeding must never silently write nothing
+ *  over a populated warehouse, nor write a partial roster. */
+export function loadLeaseTermSeeds(root: string = process.cwd()): LeaseTerm[] {
+  const path = join(root, LEASE_TERM_SEEDS_REL);
+  if (!existsSync(path)) {
+    throw new Error(
+      `lease-terms: ${LEASE_TERM_SEEDS_REL} is missing. It is a local-only operator table: rebuild it with ` +
+        '`npx tsx scripts/extract-local-tables.ts <pre-pull ref>` (docs/ops/2026-11-11-real-data-untrack-pull-runbook.md).',
+    );
+  }
+  const rows = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  if (!Array.isArray(rows)) throw new Error(`lease-terms: ${LEASE_TERM_SEEDS_REL} must hold a JSON array of LeaseTerm rows`);
+  return rows.map((r) => LeaseTerm.parse(r));
+}
 
 // ── Persistence (idempotent; mirrors seedPropertyMaster) ──────────────────────────────────
 interface LeaseTermRow {
@@ -156,9 +91,10 @@ function fromRow(r: LeaseTermRow): LeaseTerm {
 /**
  * Seed lease_terms idempotently. Requires property_master to already hold the FK targets
  * (foreign_keys=ON) — call seedPropertyMaster(db) first. One row per (property_id, suite-or-'').
- * ON CONFLICT updates the schedule/options/notes so a re-seed refreshes the abstract.
+ * ON CONFLICT updates the schedule/options/notes so a re-seed refreshes the abstract. The roster
+ * defaults to the operator table (loadLeaseTermSeeds); tests pass their own.
  */
-export function seedLeaseTerms(db: WarehouseDb): number {
+export function seedLeaseTerms(db: WarehouseDb, seeds: readonly LeaseTerm[] = loadLeaseTermSeeds()): number {
   const up = db.prepare(`
     INSERT INTO lease_terms
       (property_id, suite, tenant, rentable_sf, structure, commencement, current_expiry,
@@ -181,7 +117,7 @@ export function seedLeaseTerms(db: WarehouseDb): number {
     }
     return n;
   });
-  return tx(LEASE_TERM_SEEDS);
+  return tx(seeds);
 }
 
 /** All lease terms for one property (single-tenant today → 0 or 1 rows; multi-tenant later → many). */

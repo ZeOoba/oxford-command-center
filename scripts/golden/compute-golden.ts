@@ -17,6 +17,8 @@ import { pct } from '../../src/analytics/property-financials/format';
 import { ratio, variancePct } from '../../src/analytics/calibration-ledger';
 import { computeLevers } from '../../src/analytics/property-financials/levers';
 import type { PfDataset } from '../../src/contracts/property-financials';
+import { projectLeaseRun, DEFAULT_LEASE_RUN_ASSUMPTIONS } from '../../server/warehouse/lease-run';
+import type { LeaseTerm } from '../../src/contracts/lease-run';
 
 type Obj = Record<string, unknown>;
 
@@ -36,6 +38,10 @@ export interface PfGolden {
   /** Point locks for checks that otherwise read the very figure they assert from the dataset in place
    *  (circular). Money at full precision, counts exact. */
   locks: PfLocks;
+  /** Lease-run engine output per property of the operator lease-term roster at default assumptions
+   *  (config/local/lease-term-seeds.json): locks the engine's reconciliation to the v1.0 Excel models
+   *  on the real roster, cents. */
+  leaseRun: Record<string, { stabilizedNoi: number | null; indicativeValue: number | null; noiByYear: Record<string, number> }>;
 }
 
 export interface PfLocks {
@@ -67,7 +73,7 @@ export interface CostGolden {
 
 const NOTE = 'Value lock: written only by `npm run golden:ratify` from the data in place. Never edit by hand.';
 
-export function computePfGolden(dataset: Obj): PfGolden {
+export function computePfGolden(dataset: Obj, leaseSeeds: readonly LeaseTerm[]): PfGolden {
   const props = (dataset['properties'] ?? {}) as Record<string, Obj>;
   const noi: PfGolden['noi'] = {};
   for (const [id, p] of Object.entries(props)) {
@@ -99,6 +105,7 @@ export function computePfGolden(dataset: Obj): PfGolden {
     mgmtFeeTtm26,
     latestNoi,
     locks: computeLocks(dataset),
+    leaseRun: computeLeaseRunGolden(leaseSeeds),
     sameStoreYtd: {
       baseRent: pct(pctChange(sum('YTD25', (x) => Number(x['base_rent'] ?? 0)), sum('YTD26', (x) => Number(x['base_rent'] ?? 0))).value),
       opexExTax: pct(pctChange(sum('YTD25', (x) => Number(x['opex'] ?? 0) - tax(x)), sum('YTD26', (x) => Number(x['opex'] ?? 0) - tax(x))).value),
@@ -143,6 +150,21 @@ function computeLocks(dataset: Obj): PfLocks {
     rev09Impact: typeof rev09 === 'number' ? rev09 : null,
     exp07Lever: lever('mgmtFee'),
   };
+}
+
+const toCents = (v: number): number => Math.round(v * 100) / 100;
+
+export function computeLeaseRunGolden(seeds: readonly LeaseTerm[]): PfGolden['leaseRun'] {
+  const out: PfGolden['leaseRun'] = {};
+  for (const t of seeds) {
+    const p = projectLeaseRun(t, DEFAULT_LEASE_RUN_ASSUMPTIONS);
+    out[t.propertyId] = {
+      stabilizedNoi: p.stabilizedNoi === null ? null : toCents(p.stabilizedNoi),
+      indicativeValue: p.indicativeValue === null ? null : toCents(p.indicativeValue),
+      noiByYear: Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, toCents(x.noi)])),
+    };
+  }
+  return out;
 }
 
 export function computeCostGolden(costSeg: Obj, observations: unknown): CostGolden {
