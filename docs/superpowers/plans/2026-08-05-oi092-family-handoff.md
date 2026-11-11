@@ -12,7 +12,7 @@ authoritative — re-verify against it before acting on anything below.**
 |---|---|
 | **OI-092** window defect | Fixed. `[TODAY(), TODAY()+366)` → `(Assumptions!$B$30, EOMONTH(Assumptions!$B$30,12)]` on all six cells. Zero `TODAY()+366` remain. |
 | **OI-092** February pair fix | Landed with the above: `B30` = `IF(B31="Auto (current month-end)",EOMONTH(TODAY(),0),IF(ISNUMBER(B32),EOMONTH(B32,0),EOMONTH(TODAY(),0)))`. |
-| **OI-094** Banwick truncation | Fixed. Ranges extended `B11:B70` → `B11:B71`, capturing the 2031-06-05 balloon. `J9` = $REDACTED-AMT, `Loan Index!F9` = $REDACTED-AMT — matches Firm 03 loan 11153's own schedule. |
+| **OI-094** Banwick truncation | Fixed. Ranges extended `B11:B70` → `B11:B71`, capturing the 2031-06-05 balloon. `J9` (annual) and `Loan Index!F9` (monthly) now match Firm 03 loan 11153's own schedule. |
 | Six-range audit | Complete, run independently by two sessions with identical conclusions. Banwick was the only truncated range. |
 | Warehouse contamination | None. `debt_positions` was clean — all 8 snapshot dates fell on non-payment days. Nothing backfilled. |
 | Snapshot remediation | `61cc346` → `51d4039` → `63992e0` → `f269986`, all pushed. |
@@ -53,13 +53,14 @@ All of `H6:I9`, `H15:I15`, `H16` use `EOMONTH(Assumptions!$B$30,12)`. `B33` repo
 Rows 45 and 46 both carry `2028-09-26`:
 
 ```
-r45  2028-09-26   D=REDACTED-AMT      E=REDACTED-AMT   F=252,000   <- final regular payment
-r46  2028-09-26   D=253,365    E=REDACTED-AMT   F=0         <- payoff (252,000 principal + REDACTED-AMT interest)
+r45  2028-09-26   D=1,250      E=1,250   F=200,000   <- final regular payment
+r46  2028-09-26   D=201,250    E=1,250   F=0         <- payoff (200,000 principal + 1,250 interest)
 ```
+(Amounts illustrative; the row shape is the real one.)
 
-`H16` sums column `E` over the date predicate and picks up **both** rows' $REDACTED-AMT — the same September
+`H16` sums column `E` over the date predicate and picks up **both** rows' interest — the same September
 interest twice. Bites when 2028-09-26 enters the forward window, ~Oct 2027. Direction is
-over-statement, so it is the safe side of the 1.25x DSCR floor; magnitude $REDACTED-AMT.
+over-statement, so it is the safe side of the 1.25x DSCR floor; magnitude one month's interest.
 
 **Ruling: fix at source.** r46's payoff already contains the September interest that r45 also reports,
 so one of the two must stop reporting it in column `E`. Verify the payoff total and the remaining

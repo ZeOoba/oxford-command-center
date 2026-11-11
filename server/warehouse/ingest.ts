@@ -106,7 +106,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   // Sign-convention normalization: some charts (9620 State 350 / Peak REP QB export)
   // book expense-side rows as NEGATIVE outflows; the ledger stores costs as positive
   // magnitudes (NOI = income − opex), so subtracting negative opex would ADD costs back
-  // (the defect that produced 9620 2025 NOI 342,516 instead of 27,614). Flip a side when
+  // (the defect that overstated 9620 2025 NOI by more than tenfold). Flip a side when
   // its signed non-zero leaf SUM is negative — contra rows (tax refunds)
   // correctly invert with the side. Never silent: a 'sign-normalized' DQ info row is
   // written whenever a flip is applied.
@@ -219,10 +219,10 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     // format's stated expense total covers a narrower scope than the lingering section
     // state attributes —
     //  - QB/Rent-Manager charts display it NEGATIVE and exclude NON OPERATING EXPENSE
-    //    (Rarig 2024: stated -REDACTED-AMT vs EXPENSE-section leaves +REDACTED-AMT exact);
+    //    (Rarig 2024: the stated total is the exact negation of the EXPENSE-section leaf sum);
     //  - Yardi "Total Operating Expenses" excludes the financing/capital rows that follow
     //    in the same lingering section (29000 Info Lane 2025 carries the refinance flows:
-    //    section sum -5.79M vs stated REDACTED-AMT) — the seed classifies those rows out of
+    //    section sum is negative and millions in magnitude vs a positive six-figure stated total) — the seed classifies those rows out of
     //    NOI correctly, so the ledger is right even though a naive section foot is not;
     //  - 1851 Solar's stated total covers Ordinary Expense only (delta = Other Expense).
     // The expense side therefore foots per SECTION below: parse-side accumulation

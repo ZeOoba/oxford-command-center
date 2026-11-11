@@ -17,7 +17,7 @@
   (allocation ties recomputed, read-only basis panel), per-property spec sheet with DERIVED / OCR / UNVERIFIED / property-notes flags, PCA-vs-cost-seg quantity
   cross-check, and the D1–D14 discrepancy queue (also open issue #9). Cost seg quantities can only be offered as a candidate `qty` on a *pending* calibration
   proposal (`qty_source: COST_SEG_MODELED`); never a condition finding, reserve, rollup, intensity or calibration input.
-- Corrected 29000 Information Ln to Immediate $1,100 / Short-term $0 (verified against Intertek PCR T1643.01); Year 1 / Year 2 reserve outlays ($REDACTED-AMT /
-  $REDACTED-AMT) appear only in the reserve schedule. Raytown reserve corrected to $292,500.
+- Corrected 29000 Information Ln to the PCR's ADA-only Immediate / Short-term $0 (verified against Intertek PCR T1643.01); the Year 1 / Year 2 reserve
+  outlays appear only in the reserve schedule. Raytown reserve corrected to its year-column total.
 - KPI dollar totals, near-term rollup, reserve-intensity and the lifecycle forecast card now exclude pre-2024 STALE reports (see `docs/capital/PCA_RECONCILIATION.md`).
 - Display only — no scoring, governor, DSCR/LTV or capital-allocation changes. Architect-owned edits: `package.json` (two scripts) and the `architecture/status.json` claim.

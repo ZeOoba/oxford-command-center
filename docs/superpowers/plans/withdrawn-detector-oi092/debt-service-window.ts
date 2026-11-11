@@ -6,8 +6,8 @@
  * `[TODAY(), TODAY()+366)` — a half-open 366-day span, which on a loan's payment
  * day-of-month captured BOTH this month's payment and next year's anniversary payment:
  * 13 payments instead of 12. Annual debt service was inflated by exactly one payment and
- * DSCR correspondingly depressed (Banwick / Morrison: $REDACTED-AMT vs. the true
- * $REDACTED-AMT, DSCR 2.641 vs. 2.861). It fired ~6 days per loan per year and self-corrected
+ * DSCR correspondingly depressed (Banwick / Morrison: 13 payments' worth vs. the true 12,
+ * DSCR 2.641 vs. 2.861). It fired ~6 days per loan per year and self-corrected
  * the next day, so it never looked like a persistent defect.
  *
  * The workbook now uses `(Assumptions!B30, EDATE(Assumptions!B30,12)]` anchored on
@@ -16,7 +16,7 @@
  * covers and assert it is exactly 12.
  *
  * WHY A COUNT, AND NOT THE "REPEATING DECIMAL" SIGNATURE: an inflated annual ÷ 12 does
- * produce a long repeating decimal (REDACTED-AMT), but so do several perfectly
+ * produce a long repeating decimal (e.g. 12345.678333333335), but so do several perfectly
  * correct loans — `9050 Red Branch` carries a half-cent from its `*0.5` Oxford-share
  * multiplier, and `3883 from Oxford` has no amortization schedule at all (its interest is
  * rate x balance), so its "monthly payment" is a synthetic annual÷12 and is *always*

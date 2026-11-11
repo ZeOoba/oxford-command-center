@@ -83,7 +83,7 @@ export function partitionArRows(
   // FRESH tenant-name match can no longer auto-attribute to a dead lease -- but `leases` also fed
   // this validation set, so a PREVIOUSLY human-CONFIRMED cache mapping to an Expired lease (a
   // different, already-trusted decision -- see the header doc) started failing validation too and
-  // silently froze real, live arrears (verified: 2 cache entries covering $9,596.90 + $REDACTED-AMT in
+  // silently froze real, live arrears (verified: 2 cache entries with live arrears in
   // this repo's own data at review time). Callers that need the Expired-exclusion for fresh matches
   // but must still honor a confirmed mapping to an Expired lease should pass the FULL (unfiltered)
   // roster's ids here; omitting it falls back to deriving from `leases`, preserving old behavior for
