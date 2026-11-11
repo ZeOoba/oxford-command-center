@@ -217,6 +217,8 @@ function Copy-RealDataIntoBuildRoot {
   }
 
   $rels = New-Object System.Collections.Generic.List[string]
+  # `optional` is absent from older manifests; StrictMode forbids reading a missing property.
+  $optional = @(if ($manifest.PSObject.Properties['optional']) { @($manifest.optional) })
   foreach ($f in @($manifest.files)) { $rels.Add([string]$f) }
   foreach ($d in @($manifest.dirs)) {
     $src = Join-Path $RepoRoot ($d -replace '/', '\')
@@ -235,7 +237,7 @@ function Copy-RealDataIntoBuildRoot {
 
   foreach ($rel in $rels) {
     # Optional manifest files (value locks, local operator tables) are never bake inputs.
-    if (@($manifest.optional) -contains $rel) { continue }
+    if ($optional -contains $rel) { continue }
     $src = Join-Path $RepoRoot ($rel -replace '/', '\')
     if (-not (Test-Path -LiteralPath $src)) { throw "Real-data file missing from the canonical checkout: $rel -- refusing to bake (restore it; see docs/ops/2026-11-11-real-data-untrack-pull-runbook.md)." }
     if ($seeded -contains $rel) { throw "Canonical $rel is listed in data\.synthetic-seeded.json (synthetic stand-in) -- refusing to bake." }

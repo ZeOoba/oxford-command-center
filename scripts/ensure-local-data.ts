@@ -20,7 +20,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FIXTURE_DIR, SEED_MARKER, isCiOrTest, isManifestPath, listFiles, loadManifest, realDataStatus } from '../server/real-data-status';
+import { FIXTURE_DIR, SEED_MARKER, fileSha, isCiOrTest, isManifestPath, listFiles, loadManifest, realDataStatus } from '../server/real-data-status';
 
 export { isManifestPath } from '../server/real-data-status';
 
@@ -89,13 +89,23 @@ export function ensureLocalData(root = ROOT, log: (line: string) => void = (l) =
   }
   const markerPath = join(root, SEED_MARKER);
   let prior: string[] = [];
+  let priorSha: Record<string, string> = {};
   try {
-    prior = existsSync(markerPath) ? ((JSON.parse(readFileSync(markerPath, 'utf8')) as { seeded?: string[] }).seeded ?? []) : [];
+    const old = existsSync(markerPath) ? (JSON.parse(readFileSync(markerPath, 'utf8')) as { seeded?: string[]; sha256?: Record<string, string> }) : {};
+    prior = old.seeded ?? [];
+    priorSha = old.sha256 ?? {};
   } catch {
     prior = [];
   }
+  // The seeded bytes' hashes let readers still recognise a seeded copy after the fixtures are
+  // regenerated (its bytes then no longer equal the new stand-in).
+  const sha256 = { ...priorSha };
+  for (const rel of result.seeded) sha256[rel] = fileSha(join(root, rel));
   mkdirSync(dirname(markerPath), { recursive: true });
-  writeFileSync(markerPath, JSON.stringify({ note: 'Synthetic stand-ins seeded by scripts/ensure-local-data.ts', seeded: [...new Set([...prior, ...result.seeded])].sort() }, null, 2) + '\n');
+  writeFileSync(
+    markerPath,
+    JSON.stringify({ note: 'Synthetic stand-ins seeded by scripts/ensure-local-data.ts', seeded: [...new Set([...prior, ...result.seeded])].sort(), sha256 }, null, 2) + '\n',
+  );
   return result;
 }
 
