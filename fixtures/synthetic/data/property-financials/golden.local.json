@@ -57,6 +57,71 @@
     "9620 State 350": 0.04009075013003218,
     "FVC": 0.028599183612244596
   },
+  "latestNoi": {
+    "1100 Rarig": {
+      "period": "YTD26",
+      "noi": 151390
+    },
+    "1900 Broadway": {
+      "period": "YTD26",
+      "noi": 214498
+    },
+    "29000 Info Lane": {
+      "period": "YTD26",
+      "noi": 495487
+    },
+    "3034 Westerville": {
+      "period": "YTD26",
+      "noi": 121406
+    },
+    "3540 E 5th": {
+      "period": "YTD26",
+      "noi": 132769
+    },
+    "3883 Livingston": {
+      "period": "YTD26",
+      "noi": 20294
+    },
+    "9050 Red Branch": {
+      "period": "YTD26",
+      "noi": 2168124
+    },
+    "9620 State 350": {
+      "period": "YTD26",
+      "noi": 363572
+    },
+    "FVC": {
+      "period": "YTD26",
+      "noi": 981803
+    },
+    "55 New Plant (EGFLLC)": {
+      "period": "YTD26_partial_thru_2026-06-12",
+      "noi": 119884
+    },
+    "1851 South Club Solar": {
+      "period": "YTD26_partial_thru_2026-06-12",
+      "noi": 2519
+    }
+  },
+  "locks": {
+    "rentStepEvents": 61,
+    "rarigOpex2025": 66227.84,
+    "rarigBaseRentFy2025": 277289.82,
+    "rarigRunRateQ3": {
+      "q3_2025": 284143.32,
+      "q3_2026": 235983.96
+    },
+    "credit9620ReTaxS26": -56317.81,
+    "credit3540Grounds2024": -8488.32,
+    "westervilleRent": {
+      "current": 17144.78,
+      "next": 17744.85
+    },
+    "recovery9620Lever": 20471.164000000004,
+    "pool29000TenPoints": 14334.572,
+    "rev09Impact": -4245,
+    "exp07Lever": 39663.48435
+  },
   "sameStoreYtd": {
     "baseRent": "+12.4%",
     "opexExTax": "+34.1%",
