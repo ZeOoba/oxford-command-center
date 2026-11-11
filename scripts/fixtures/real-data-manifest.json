@@ -1,0 +1,24 @@
+{
+  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them.",
+  "ruling": "2026-11-10",
+  "files": [
+    "data/snapshots/portfolio.json",
+    "data/property-financials/dataset.json",
+    "data/property-financials/data-dictionary.md",
+    "src/data/seed-deals.ts",
+    "src/data/seed-counterparties.ts",
+    "data/ar-mapping-cache.json",
+    "data/ar/review-queue.json",
+    "data/cost-seg/cost-seg.json",
+    "docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json",
+    "scripts/property-financials/config/annual-statements.csv",
+    "scripts/property-financials/config/curated/insights.json",
+    "scripts/property-financials/config/curated/leases.json",
+    "scripts/property-financials/config/curated/data_quality.json",
+    "scripts/property-financials/config/curated/sf.json"
+  ],
+  "dirs": [
+    "data/building-specs/",
+    "data/calibration/"
+  ]
+}

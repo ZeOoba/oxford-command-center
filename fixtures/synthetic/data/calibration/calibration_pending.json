@@ -1,0 +1,32 @@
+[
+  {
+    "obs_id": "e-livingston:roof_other:vendor-17:2025-03-26",
+    "property": "3875-3883 E Livingston",
+    "component": "roof_other",
+    "unit": "SF",
+    "qty": 2376,
+    "pca_unit_cost": 7.3536,
+    "pca_source": {
+      "consultant": "Vendor 16",
+      "report_date": "2025-04-10",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R04 3883 mod-bit roof replacement)",
+      "source_date": "2025-04-10",
+      "price_basis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "DRAFT"
+    },
+    "contractor_unit_cost": 7.710293,
+    "contractor_source": {
+      "vendor": "Vendor 17",
+      "doc_date": "2025-03-26",
+      "status": "BID",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (3883 Livingston — back bldg re-roof (Vendor 17))",
+      "source_date": "2025-03-26",
+      "price_basis": "CONTRACTOR_QUOTE"
+    },
+    "scope_note": "Synthetic scope_note 002.",
+    "include_in_stats": true,
+    "exclusion_reason": null,
+    "proposed_at": "2026-10-13",
+    "proposed_from": "workbook:2026-10-06_PCA-Extraction_Register_v01_2.xlsx"
+  }
+]
