@@ -18,6 +18,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { getLeaseTerms, listLeaseTermPropertyIds, seedLeaseTerms } from '../../server/warehouse/lease-terms';
+import { SYNTHETIC_LEASE_TERM_SEEDS } from './lease-run-fixtures';
 import { projectLeaseRun, DEFAULT_LEASE_RUN_ASSUMPTIONS } from '../../server/warehouse/lease-run';
 import {
   LeaseRunProjectionEnvelope,
@@ -47,7 +48,7 @@ function seededDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'lease-run-'));
   const db = openWarehouse(join(dir, 'f.sqlite'));
   seedPropertyMaster(db);
-  seedLeaseTerms(db);
+  seedLeaseTerms(db, SYNTHETIC_LEASE_TERM_SEEDS);
   return db;
 }
 
@@ -95,20 +96,20 @@ describe('lease_terms migration + seed round-trip', () => {
     const fishel = getLeaseTerms(db, FISHEL);
     expect(fishel).toHaveLength(1);
     const proj = projectLeaseRun(fishel[0]!, DEFAULT_LEASE_RUN_ASSUMPTIONS);
-    expect(proj.stabilizedNoi).toBeCloseTo(97793.71, 2);
-    expect(proj.indicativeValue).toBeCloseTo(1222421.4, 2);
+    expect(proj.stabilizedNoi).toBeCloseTo(85446, 2);
+    expect(proj.indicativeValue).toBeCloseTo(1068075, 2);
 
     const sun = getLeaseTerms(db, SUNBURST)[0]!;
     const sp = projectLeaseRun(sun, DEFAULT_LEASE_RUN_ASSUMPTIONS);
     expect(sp.rentableSf).toBe(5130);
-    expect(sp.stabilizedNoi).toBeCloseTo(73872.0, 2);
-    expect(sp.indicativeValue).toBeCloseTo(923400.0, 2);
+    expect(sp.stabilizedNoi).toBeCloseTo(67130.5, 2);
+    expect(sp.indicativeValue).toBeCloseTo(839131.25, 2);
   });
 
   it('re-seeding is idempotent (UPSERT, not duplicate rows)', () => {
     const db = seededDb();
-    seedLeaseTerms(db);
-    seedLeaseTerms(db);
+    seedLeaseTerms(db, SYNTHETIC_LEASE_TERM_SEEDS);
+    seedLeaseTerms(db, SYNTHETIC_LEASE_TERM_SEEDS);
     expect(getLeaseTerms(db, FISHEL)).toHaveLength(1);
     expect(listLeaseTermPropertyIds(db)).toHaveLength(2);
   });
@@ -127,8 +128,8 @@ describe('GET /analytics/lease-run/:propertyId', () => {
     expect(res.status).toBe(200);
     const body = LeaseRunProjectionEnvelope.parse(await res.json());
     expect(body.propertyId).toBe(FISHEL);
-    expect(body.stabilizedNoi).toBeCloseTo(97793.71, 2);
-    expect(body.indicativeValue).toBeCloseTo(1222421.4, 2);
+    expect(body.stabilizedNoi).toBeCloseTo(85446, 2);
+    expect(body.indicativeValue).toBeCloseTo(1068075, 2);
     // Opt-2 rows are flagged as data, not assumptions.
     expect(body.periods.some((p) => p.isAssumption)).toBe(false);
   });
@@ -171,10 +172,10 @@ describe('GET /analytics/lease-run (ownership rollup)', () => {
     expect(res.status).toBe(200);
     const body = LeaseRunRollupResponse.parse(await res.json());
     expect(body.summaries).toHaveLength(2);
-    // total stabilized NOI = Sunburst 73,872 + Fishel 97,793.71 = 171,665.71.
-    expect(body.totalStabilizedNoi).toBeCloseTo(73872.0 + 97793.71, 1);
-    // total indicative value = 923,400 + 1,222,421.40.
-    expect(body.totalIndicativeValue).toBeCloseTo(923400.0 + 1222421.4, 1);
+    // total stabilized NOI = 67,130.50 + 85,446 = 152,576.50 (synthetic roster).
+    expect(body.totalStabilizedNoi).toBeCloseTo(67130.5 + 85446, 1);
+    // total indicative value = 839,131.25 + 1,068,075.
+    expect(body.totalIndicativeValue).toBeCloseTo(839131.25 + 1068075, 1);
     const fishel = body.summaries.find((s) => s.propertyId === FISHEL)!;
     expect(fishel.rolloverLabels.length).toBeGreaterThan(0);
   });
@@ -194,10 +195,10 @@ describe('overlay assumptions flow through to the engine via the route (adversar
     const body = LeaseRunProjectionEnvelope.parse(await res.json());
     expect(body.assumptions.indicativeCapRate).toBeCloseTo(0.06, 6);
     expect(body.assumptionsAreDefault).toBe(false);
-    // Stabilized NOI is unchanged (97,793.712); only the cap divisor moves:
-    // 97,793.712 / 0.06 = 1,629,895.20 (NOT the 8%-default 1,222,421.40).
-    expect(body.stabilizedNoi).toBeCloseTo(97793.712, 2);
-    expect(body.indicativeValue).toBeCloseTo(97793.712 / 0.06, 1);
+    // Stabilized NOI is unchanged (85,446); only the cap divisor moves:
+    // 85,446 / 0.06 = 1,424,100 (NOT the 8%-default 1,068,075).
+    expect(body.stabilizedNoi).toBeCloseTo(85446, 2);
+    expect(body.indicativeValue).toBeCloseTo(85446 / 0.06, 1);
   });
 
   it('a persisted vacancy override flows into per-period EGR', async () => {
@@ -207,12 +208,12 @@ describe('overlay assumptions flow through to the engine via the route (adversar
     const app = warehouseRoutes(() => db);
     const body = LeaseRunProjectionEnvelope.parse(await (await app.request(`/analytics/lease-run/${FISHEL}`)).json());
     const ly26 = body.periods.find((p) => p.leaseYearLabel === "LY '26")!;
-    expect(ly26.egr).toBeCloseTo(REDACTED-AMT * 0.95, 2);
+    expect(ly26.egr).toBeCloseTo(90000 * 0.95, 2);
   });
 });
 
 describe('mark-to-market chip fires through the real route off the benchmarks cohort', () => {
-  it("Fishel's $4.27/SF in-place rent is flagged below-market against the ingested cohort", async () => {
+  it("Fishel's $3.75/SF in-place rent is flagged below-market against the ingested cohort", async () => {
     const db = seededDbWithCohort();
     const app = warehouseRoutes(() => db);
     const res = await app.request(`/analytics/lease-run/${FISHEL}`);

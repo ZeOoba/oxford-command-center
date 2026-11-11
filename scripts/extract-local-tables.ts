@@ -2,16 +2,20 @@
 //
 // One-time rebuild of the gitignored operator tables under config/local/ from a commit that still
 // tracked them (ruling 2026-11-10: real firm data is never tracked). Before that change the AR seed
-// mappings were an inline CONFIRMED table in scripts/seed-ar-mappings.ts and the doc-search golden
-// was scripts/doc-search-golden.json; both now live in config/local/. Run on a checkout that holds
+// mappings were an inline CONFIRMED table in scripts/seed-ar-mappings.ts, the doc-search golden was
+// scripts/doc-search-golden.json, the lease-term roster was LEASE_TERM_SEEDS in
+// server/warehouse/lease-terms.ts and the PCA overlay tables were exports of
+// src/modules/property-condition/pca-overlay.ts; all four now live in config/local/. Run on a checkout that holds
 // real data, right after pulling the untrack change, naming the pre-pull commit:
 //
 //   npx tsx scripts/extract-local-tables.ts ORIG_HEAD
 //
 // Never overwrites an existing file. See docs/ops/2026-11-11-real-data-untrack-pull-runbook.md.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export interface ArSeedTable {
   confirmed: Array<{ name: string; leaseId: string; why: string }>;
@@ -47,13 +51,36 @@ function show(root: string, ref: string, path: string): string {
   return execFileSync('git', ['show', `${ref}:${path}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
-export function extractLocalTables(root: string, ref: string, log: (l: string) => void = console.log): string[] {
-  const out: Array<[string, () => string]> = [
+/** Import a module as it was at `ref`: its source is written beside the current file (so relative
+ *  imports resolve), imported, then moved out to the OS temp dir. */
+async function importFromRef(root: string, ref: string, path: string): Promise<Record<string, unknown>> {
+  const tmp = join(root, dirname(path), `.extract-${process.pid}-${basename(path)}`);
+  writeFileSync(tmp, show(root, ref, path));
+  try {
+    return (await import(pathToFileURL(tmp).href)) as Record<string, unknown>;
+  } finally {
+    renameSync(tmp, join(tmpdir(), `occ-extract-${process.pid}-${Date.now()}-${basename(path)}`));
+  }
+}
+
+export async function extractLocalTables(root: string, ref: string, log: (l: string) => void = console.log): Promise<string[]> {
+  const out: Array<[string, () => string | Promise<string>]> = [
     ['config/local/ar-seed-mappings.json', () => JSON.stringify(parseConfirmedTable(show(root, ref, 'scripts/seed-ar-mappings.ts')), null, 2) + '\n'],
     ['config/local/doc-search-golden.json', () => {
       const raw = show(root, ref, 'scripts/doc-search-golden.json');
       JSON.parse(raw); // must be valid JSON before it is written
       return raw;
+    }],
+    ['config/local/lease-term-seeds.json', async () => {
+      const m = await importFromRef(root, ref, 'server/warehouse/lease-terms.ts');
+      if (!Array.isArray(m['LEASE_TERM_SEEDS'])) throw new Error(`extract-local-tables: no LEASE_TERM_SEEDS array in server/warehouse/lease-terms.ts at ${ref}`);
+      return JSON.stringify(m['LEASE_TERM_SEEDS'], null, 2) + '\n';
+    }],
+    ['config/local/pca-overlay.json', async () => {
+      const m = await importFromRef(root, ref, 'src/modules/property-condition/pca-overlay.ts');
+      const t = { overlay: m['PCA_OVERLAY'], infoLaneDetail: m['INFO_LANE_DETAIL'], extraAssetFacts: m['EXTRA_ASSET_FACTS'], issues: m['PCA_ISSUES'] };
+      for (const [k, v] of Object.entries(t)) if (v == null) throw new Error(`extract-local-tables: pca-overlay.ts at ${ref} has no ${k} export`);
+      return JSON.stringify(t, null, 2) + '\n';
     }],
   ];
   const written: string[] = [];
@@ -63,7 +90,7 @@ export function extractLocalTables(root: string, ref: string, log: (l: string) =
       log(`[extract-local-tables] ${rel} already exists -- left untouched`);
       continue;
     }
-    const text = body();
+    const text = await body();
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, text);
     written.push(rel);
@@ -78,10 +105,8 @@ if (process.argv[1] && /extract-local-tables\.ts$/.test(process.argv[1].replace(
     console.error('usage: npx tsx scripts/extract-local-tables.ts <pre-pull ref, e.g. ORIG_HEAD>');
     process.exit(2);
   }
-  try {
-    extractLocalTables(process.cwd(), ref);
-  } catch (e) {
+  extractLocalTables(process.cwd(), ref).catch((e: unknown) => {
     console.error((e as Error).message);
     process.exit(1);
-  }
+  });
 }

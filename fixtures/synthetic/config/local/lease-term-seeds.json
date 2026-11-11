@@ -1,0 +1,260 @@
+[
+  {
+    "propertyId": "401-sunburst-hwy-cambridge-md",
+    "suite": null,
+    "tenant": "Synthetic Tenant A LLC (automotive service)",
+    "rentableSf": 5130,
+    "structure": "absolute_nnn",
+    "commencement": "2019-12-23",
+    "currentExpiry": "2033-03-31",
+    "rentSchedule": [
+      {
+        "periodStart": "2026-04-01",
+        "periodEnd": "2027-03-31",
+        "leaseYearLabel": "LY '27",
+        "annualBaseRent": 70000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2027-04-01",
+        "periodEnd": "2028-03-31",
+        "leaseYearLabel": "LY '28",
+        "annualBaseRent": 70000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2028-04-01",
+        "periodEnd": "2029-03-31",
+        "leaseYearLabel": "LY '29",
+        "annualBaseRent": 80000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2029-04-01",
+        "periodEnd": "2030-03-31",
+        "leaseYearLabel": "LY '30",
+        "annualBaseRent": 80000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2030-04-01",
+        "periodEnd": "2031-03-31",
+        "leaseYearLabel": "LY '31",
+        "annualBaseRent": 80000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2031-04-01",
+        "periodEnd": "2032-03-31",
+        "leaseYearLabel": "LY '32",
+        "annualBaseRent": 80000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2032-04-01",
+        "periodEnd": "2033-03-31",
+        "leaseYearLabel": "LY '33",
+        "annualBaseRent": 80000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2033-04-01",
+        "periodEnd": "2034-03-31",
+        "leaseYearLabel": "LY '34",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2034-04-01",
+        "periodEnd": "2035-03-31",
+        "leaseYearLabel": "LY '35",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2035-04-01",
+        "periodEnd": "2036-03-31",
+        "leaseYearLabel": "LY '36",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2036-04-01",
+        "periodEnd": "2037-03-31",
+        "leaseYearLabel": "LY '37",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2037-04-01",
+        "periodEnd": "2038-03-31",
+        "leaseYearLabel": "LY '38",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2038-04-01",
+        "periodEnd": "2039-03-31",
+        "leaseYearLabel": "LY '39",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2039-04-01",
+        "periodEnd": "2040-03-31",
+        "leaseYearLabel": "LY '40",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2040-04-01",
+        "periodEnd": "2041-03-31",
+        "leaseYearLabel": "LY '41",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2041-04-01",
+        "periodEnd": "2042-03-31",
+        "leaseYearLabel": "LY '42",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      },
+      {
+        "periodStart": "2042-04-01",
+        "periodEnd": "2043-03-31",
+        "leaseYearLabel": "LY '43",
+        "annualBaseRent": null,
+        "status": "option_assumed"
+      }
+    ],
+    "renewalOptions": [
+      {
+        "termYears": 5,
+        "rentBasis": "frv_or_floor",
+        "floorAnnual": 60000,
+        "notice": "per lease"
+      },
+      {
+        "termYears": 5,
+        "rentBasis": "frv_or_floor",
+        "floorAnnual": 66000,
+        "notice": "per lease"
+      }
+    ],
+    "diligenceNotes": [
+      "Synthetic stand-in: confirm the renewal options survive the term extension.",
+      "Synthetic stand-in: no security deposit or guaranty."
+    ],
+    "provenance": {
+      "sourceFile": "synthetic stand-in (fixtures/synthetic)",
+      "abstractDate": "2026-06-14",
+      "note": "Absolute NNN; figures NET to landlord."
+    }
+  },
+  {
+    "propertyId": "7658-fishel-dr-n-dublin-oh",
+    "suite": null,
+    "tenant": "Synthetic Tenant B LLC",
+    "rentableSf": 24000,
+    "structure": "nnn",
+    "commencement": "2021-10-01",
+    "currentExpiry": "2031-09-30",
+    "rentSchedule": [
+      {
+        "periodStart": "2025-10-01",
+        "periodEnd": "2026-09-30",
+        "leaseYearLabel": "LY '26",
+        "annualBaseRent": 90000,
+        "status": "contractual"
+      },
+      {
+        "periodStart": "2026-10-01",
+        "periodEnd": "2027-09-30",
+        "leaseYearLabel": "LY '27",
+        "annualBaseRent": 91800,
+        "status": "renewal_exercised"
+      },
+      {
+        "periodStart": "2027-10-01",
+        "periodEnd": "2028-09-30",
+        "leaseYearLabel": "LY '28",
+        "annualBaseRent": 93636,
+        "status": "renewal_exercised"
+      },
+      {
+        "periodStart": "2028-10-01",
+        "periodEnd": "2029-09-30",
+        "leaseYearLabel": "LY '29",
+        "annualBaseRent": 95508.72,
+        "status": "renewal_exercised"
+      },
+      {
+        "periodStart": "2029-10-01",
+        "periodEnd": "2030-09-30",
+        "leaseYearLabel": "LY '30",
+        "annualBaseRent": 97418.89,
+        "status": "renewal_exercised"
+      },
+      {
+        "periodStart": "2030-10-01",
+        "periodEnd": "2031-09-30",
+        "leaseYearLabel": "LY '31",
+        "annualBaseRent": 99367.27,
+        "status": "renewal_exercised"
+      },
+      {
+        "periodStart": "2031-10-01",
+        "periodEnd": "2032-09-30",
+        "leaseYearLabel": "LY '32",
+        "annualBaseRent": 101354.62,
+        "status": "option_contractual"
+      },
+      {
+        "periodStart": "2032-10-01",
+        "periodEnd": "2033-09-30",
+        "leaseYearLabel": "LY '33",
+        "annualBaseRent": 103381.71,
+        "status": "option_contractual"
+      },
+      {
+        "periodStart": "2033-10-01",
+        "periodEnd": "2034-09-30",
+        "leaseYearLabel": "LY '34",
+        "annualBaseRent": 105449.34,
+        "status": "option_contractual"
+      },
+      {
+        "periodStart": "2034-10-01",
+        "periodEnd": "2035-09-30",
+        "leaseYearLabel": "LY '35",
+        "annualBaseRent": 107558.33,
+        "status": "option_contractual"
+      },
+      {
+        "periodStart": "2035-10-01",
+        "periodEnd": "2036-09-30",
+        "leaseYearLabel": "LY '36",
+        "annualBaseRent": 109709.5,
+        "status": "option_contractual"
+      }
+    ],
+    "renewalOptions": [
+      {
+        "termYears": 5,
+        "rentBasis": "fixed",
+        "floorAnnual": null,
+        "notice": "pre-agreed rates"
+      }
+    ],
+    "diligenceNotes": [
+      "Synthetic stand-in: confirm the renewal notice was acknowledged.",
+      "Synthetic stand-in: no security deposit or guaranty."
+    ],
+    "provenance": {
+      "sourceFile": "synthetic stand-in (fixtures/synthetic)",
+      "abstractDate": "2026-06-14",
+      "note": "NNN in economic effect."
+    }
+  }
+]

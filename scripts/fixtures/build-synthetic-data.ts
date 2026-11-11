@@ -69,6 +69,7 @@ import {
   type MoneyDrawer,
 } from './synthetic-money';
 import { GOLDEN_COST, GOLDEN_PF, computeCostGolden, computePfGolden } from '../golden/compute-golden';
+import { LeaseTerm } from '../../src/contracts/lease-run';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OUT_ROOT = join(ROOT, 'fixtures', 'synthetic');
@@ -2503,8 +2504,23 @@ export async function build(
   // The value locks (scripts/golden/compute-golden.ts): the synthetic copies are computed from the
   // synthetic data, so CI asserts exact values against them exactly as the live machine does against
   // its ratified real ones.
+  // Hand-written static stand-ins (no transform of the real file): the lease-term roster and the PCA
+  // overlay tables. Their committed fixtures are emitted unchanged; the real roster's tenant labels are
+  // registered so the leak check hunts them in every fixture.
+  const STATIC_STANDINS = ['config/local/lease-term-seeds.json', 'config/local/pca-overlay.json'];
+  for (const rel of STATIC_STANDINS) {
+    if (!have(rel)) continue;
+    const fixed = readFileSync(join(OUT_ROOT, rel), 'utf8');
+    outputs.push([rel, () => fixed]);
+  }
+  if (have('config/local/lease-term-seeds.json')) {
+    for (const t of readJson(root, 'config/local/lease-term-seeds.json') as Obj[]) ctx.a.alias('company', str(t['tenant']));
+  }
+  const syntheticLeaseSeeds = (JSON.parse(readFileSync(join(OUT_ROOT, 'config/local/lease-term-seeds.json'), 'utf8')) as unknown[]).map((r) =>
+    LeaseTerm.parse(r),
+  );
   if (synth.dataset) {
-    const g = computePfGolden(synth.dataset);
+    const g = computePfGolden(synth.dataset, syntheticLeaseSeeds);
     outputs.push([GOLDEN_PF, () => json(g as unknown as Json)]);
   }
   if (synth.costSeg) {

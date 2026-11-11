@@ -21,7 +21,7 @@ function report(over: Partial<PcaReport>): PcaReport {
   return {
     reportId: 'R01', propertyKey: 'banwick', propertyMasterId: null, propertyLabel: 'Banwick', location: null,
     consultant: 'Intertek', client: null, oraCommissioned: true, purpose: null, inspectionDate: null,
-    reportDate: '2026-04-07', sf: 24000, buildings: 1, yearBuilt: '1981', immediateUsd: 1050, shortTermUsd: null,
+    reportDate: '2026-04-07', sf: 24000, buildings: 1, yearBuilt: '1981', immediateUsd: 1000, shortTermUsd: null,
     reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, termYears: 12, psfYrStated: 0.77,
     usabilityRaw: 'CURRENT', usabilityClass: 'current', sourceFiles: null, notes: null, ...over,
   };
@@ -55,9 +55,9 @@ describe('buildPropertyConditionReport — properties', () => {
     try {
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'R09', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2016-12-07', usabilityClass: 'stale', immediateUsd: 13350, reservesUninflUsd: REDACTED-AMT }),
-          report({ reportId: 'R08', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2025-11', usabilityClass: 'draft', immediateUsd: REDACTED-AMT, reservesUninflUsd: REDACTED-AMT }),
-          report({ reportId: 'R16', propertyKey: 'sheriff-rd', propertyLabel: 'Sheriff', reportDate: '2007-07-19', usabilityClass: 'stale', immediateUsd: 11500, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: REDACTED-AMT, sf: null }),
+          report({ reportId: 'R09', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2016-12-07', usabilityClass: 'stale', immediateUsd: 13000, reservesUninflUsd: 190000 }),
+          report({ reportId: 'R08', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2025-11', usabilityClass: 'draft', immediateUsd: 40000, reservesUninflUsd: 120000 }),
+          report({ reportId: 'R16', propertyKey: 'sheriff-rd', propertyLabel: 'Sheriff', reportDate: '2007-07-19', usabilityClass: 'stale', immediateUsd: 11000, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: 60000, sf: null }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
@@ -136,13 +136,13 @@ describe('buildPropertyConditionReport — properties', () => {
     try {
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'F', propertyKey: 'e-fulton', propertyLabel: 'E Fulton', sf: 198576, immediateUsd: 26000, shortTermUsd: REDACTED-AMT, reservesUninflUsd: REDACTED-AMT, termYears: 12 }),
+          report({ reportId: 'F', propertyKey: 'e-fulton', propertyLabel: 'E Fulton', sf: 198576, immediateUsd: 25000, shortTermUsd: 475000, reservesUninflUsd: 780000, termYears: 12 }),
           report({ reportId: 'S', propertyKey: 'small', propertyLabel: 'Small', immediateUsd: 10, shortTermUsd: null }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       expect(r.properties[0]?.propertyKey).toBe('e-fulton');
-      expect(r.properties[0]?.reservesPsfYr).toBeCloseTo(0.328, 3);
+      expect(r.properties[0]?.reservesPsfYr).toBeCloseTo(780000 / 198576 / 12, 3);
     } finally {
       db.close();
     }

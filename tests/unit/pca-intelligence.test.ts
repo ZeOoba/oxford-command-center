@@ -1,9 +1,12 @@
 // tests/unit/pca-intelligence.test.ts
 //
 // Pure-function tests for src/analytics/pca-intelligence.ts and the curated overlay in
-// src/modules/property-condition/pca-overlay.ts. Fixtures mirror the eight current reports in the
-// 2026-10-13 PCA Command Center report; the "register" 29000 Information Ln row is deliberately the
-// WRONG one ($REDACTED-AMT / $REDACTED-AMT shown as Immediate / Short-term) so the correction is exercised.
+// src/modules/property-condition/pca-overlay.ts. Fixtures have the shape of the eight current reports in
+// the 2026-10-13 PCA Command Center report, with synthetic figures (real firm data is local-only, ruling
+// 2026-11-10). The overlay itself is the runtime table config/local/pca-overlay.json (synthetic in CI, real
+// on the live machine), so every figure the overlay decides is read from it, never pinned here. The
+// "register" 29000 Information Ln row is deliberately the WRONG one (the overlay's Year 1 / Year 2 reserve
+// outlays shown as Immediate / Short-term) so the correction is exercised.
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,17 +45,28 @@ function prop(key: string, label: string, current: PcaReportBrief): PcaPropertyS
   };
 }
 
-/** The eight current reports as the REGISTER prints them (29000 Info Ln wrong). */
+const INFO_SET = PCA_OVERLAY.corrections.find((c) => c.propertyKey === 'info-lane')!.set as {
+  reportDate: string; immediateUsd: number; shortTermUsd: number;
+};
+const RAY_SET = PCA_OVERLAY.corrections.find((c) => c.propertyKey === 'raytown')!.set as { reservesUninflUsd: number };
+/** The register's error: the Info Ln drill-down's Year 1 / Year 2 reserve outlays shown as Immediate / Short-term. */
+const INFO_YR1 = INFO_LANE_DETAIL.reserveScheduleUninfl.yr1;
+const INFO_YR2 = INFO_LANE_DETAIL.reserveScheduleUninfl.yr2;
+/** Immediate + Short-term of the seven register rows the overlay does not touch (synthetic figures below). */
+const OTHER_NEAR_TERM = 1000 + 2000 + (25000 + 475000) + (10000 + 55000) + 6000 + 2400 + 2000;
+const FULTON_NEAR_TERM = 25000 + 475000;
+
+/** The eight current reports as the REGISTER prints them (29000 Info Ln wrong). Synthetic figures. */
 function registerProperties(): PcaPropertySummary[] {
   return [
-    prop('banwick', '2800-2826 Banwick', brief({ reportId: 'R01', sf: 24000, immediateUsd: 1050, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.77 })),
-    prop('old-morrison', '384-420 Old Morrison', brief({ reportId: 'R02', sf: 31200, immediateUsd: 2050, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.58 })),
-    prop('e-fulton', '3520 E Fulton', brief({ reportId: 'R03', reportDate: '2025-04-28', consultant: 'CBRE', usabilityClass: 'limited', sf: 198576, immediateUsd: 26000, shortTermUsd: REDACTED-AMT, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.33 })),
-    prop('e-livingston', '3875-3883 E Livingston', brief({ reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft', sf: 10950, immediateUsd: 10400, shortTermUsd: 59000, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT })),
-    prop('northwood', '2203-2207 Northwood', brief({ reportId: 'R05', reportDate: '2024-09-16', consultant: 'PCI', sf: 53700, immediateUsd: 6500, reservesUninflUsd: null, reservesInflUsd: REDACTED-AMT, termYears: 10, psfYrStated: 0.06 })),
-    prop('raytown', '9620 SR 350 Raytown', brief({ reportId: 'R06', reportDate: '2024-10-07', consultant: 'EWI', sf: 34560, immediateUsd: 2500, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 21.25 })),
-    prop('sunburst', '401 Sunburst', brief({ reportId: 'R07', reportDate: '2025-11-25', consultant: 'PCI letter', usabilityClass: 'limited', immediateUsd: 2225, termYears: null })),
-    prop('info-lane', '29000 Information Ln', brief({ reportId: 'R08', reportDate: '2025-11', usabilityClass: 'draft', sf: 48000, immediateUsd: REDACTED-AMT, shortTermUsd: REDACTED-AMT, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.25 })),
+    prop('banwick', '2800-2826 Banwick', brief({ reportId: 'R01', sf: 24000, immediateUsd: 1000, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.77 })),
+    prop('old-morrison', '384-420 Old Morrison', brief({ reportId: 'R02', sf: 31200, immediateUsd: 2000, reservesUninflUsd: 216000, reservesInflUsd: 229000, psfYrStated: 0.58 })),
+    prop('e-fulton', '3520 E Fulton', brief({ reportId: 'R03', reportDate: '2025-04-28', consultant: 'CBRE', usabilityClass: 'limited', sf: 198576, immediateUsd: 25000, shortTermUsd: 475000, reservesUninflUsd: 780000, reservesInflUsd: 836000, psfYrStated: 0.33 })),
+    prop('e-livingston', '3875-3883 E Livingston', brief({ reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft', sf: 10950, immediateUsd: 10000, shortTermUsd: 55000, reservesUninflUsd: 98550, reservesInflUsd: 110000 })),
+    prop('northwood', '2203-2207 Northwood', brief({ reportId: 'R05', reportDate: '2024-09-16', consultant: 'PCI', sf: 53700, immediateUsd: 6000, reservesUninflUsd: null, reservesInflUsd: 33000, termYears: 10, psfYrStated: 0.06 })),
+    prop('raytown', '9620 SR 350 Raytown', brief({ reportId: 'R06', reportDate: '2024-10-07', consultant: 'EWI', sf: 34560, immediateUsd: 2400, reservesUninflUsd: 210000, reservesInflUsd: 300000, psfYrStated: 21.25 })),
+    prop('sunburst', '401 Sunburst', brief({ reportId: 'R07', reportDate: '2025-11-25', consultant: 'PCI letter', usabilityClass: 'limited', immediateUsd: 2000, termYears: null })),
+    prop('info-lane', '29000 Information Ln', brief({ reportId: 'R08', reportDate: '2025-11', usabilityClass: 'draft', sf: 48000, immediateUsd: INFO_YR1, shortTermUsd: INFO_YR2, reservesUninflUsd: INFO_LANE_DETAIL.reservesUninflUsd, reservesInflUsd: INFO_LANE_DETAIL.reservesInflUsd, psfYrStated: 0.25 })),
   ];
 }
 
@@ -66,9 +80,9 @@ function reportOf(properties: PcaPropertySummary[]): PropertyConditionReport {
 
 describe('reservePsfYr', () => {
   it('derives reserves ÷ SF ÷ term when no stated value exists and marks it derived (Livingston)', () => {
-    const r = reservePsfYr({ reservesUninflUsd: REDACTED-AMT, sf: 10950, termYears: 12, psfYrStated: null });
+    const r = reservePsfYr({ reservesUninflUsd: 98550, sf: 10950, termYears: 12, psfYrStated: null });
     expect(r.origin).toBe('derived');
-    expect(r.value).toBeCloseTo(0.8016, 3);
+    expect(r.value).toBeCloseTo(0.75, 3);
   });
 
   it('keeps the stated label only when the stated figure reconciles to the computation (Banwick 0.77)', () => {
@@ -77,7 +91,7 @@ describe('reservePsfYr', () => {
     expect(r.value).toBeCloseTo(0.77, 2);
   });
 
-  it('returns n/a — never imputes — when the uninflated reserve is absent (Northwood: only inflated $REDACTED-AMT exists)', () => {
+  it('returns n/a — never imputes — when the uninflated reserve is absent (Northwood: only an inflated reserve exists)', () => {
     const r = reservePsfYr({ reservesUninflUsd: null, sf: 53700, termYears: 10, psfYrStated: 0.06 });
     expect(r).toEqual({ value: null, origin: 'n/a', stated: 0.06 });
   });
@@ -87,10 +101,10 @@ describe('reservePsfYr', () => {
     expect(reservePsfYr({ reservesUninflUsd: 1000, sf: 100, termYears: null, psfYrStated: null }).origin).toBe('n/a');
   });
 
-  it('recomputes Raytown from the corrected $292,500 and treats the unreproducible stated $21.25 as derived', () => {
-    const r = reservePsfYr({ reservesUninflUsd: 292500, sf: 34560, termYears: 12, psfYrStated: 21.25 });
+  it('recomputes Raytown from the corrected reserve and treats the unreproducible stated $21.25 as derived', () => {
+    const r = reservePsfYr({ reservesUninflUsd: RAY_SET.reservesUninflUsd, sf: 34560, termYears: 12, psfYrStated: 21.25 });
     expect(r.origin).toBe('derived');
-    expect(r.value).toBeCloseTo(0.7053, 3);
+    expect(r.value).toBeCloseTo(RAY_SET.reservesUninflUsd / 34560 / 12, 3);
   });
 });
 
@@ -157,21 +171,21 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
   const adjusted = applyPcaOverlay(reportOf(registerProperties()), PCA_OVERLAY);
   const info = adjusted.properties.find((p) => p.propertyKey === 'info-lane')!;
 
-  it('replaces the Year 1 / Year 2 reserve outlays with Immediate $1,100 and Short-Term $0', () => {
-    expect(info.current.immediateUsd).toBe(1100);
-    expect(info.current.shortTermUsd).toBe(0);
+  it('replaces the Year 1 / Year 2 reserve outlays with the overlay Immediate and Short-Term', () => {
+    expect(info.current.immediateUsd).toBe(INFO_SET.immediateUsd);
+    expect(info.current.shortTermUsd).toBe(INFO_SET.shortTermUsd);
   });
 
-  it('never leaves $REDACTED-AMT or $REDACTED-AMT in Immediate or Short-Term anywhere in the model', () => {
+  it('never leaves the Year 1 / Year 2 outlays in Immediate or Short-Term anywhere in the model', () => {
     for (const p of adjusted.properties) {
-      expect([p.current.immediateUsd, p.current.shortTermUsd]).not.toContain(REDACTED-AMT);
-      expect([p.current.immediateUsd, p.current.shortTermUsd]).not.toContain(REDACTED-AMT);
+      expect([p.current.immediateUsd, p.current.shortTermUsd]).not.toContain(INFO_YR1);
+      expect([p.current.immediateUsd, p.current.shortTermUsd]).not.toContain(INFO_YR2);
     }
   });
 
-  it('keeps the reserve totals and dates the report to the 2025-10-29 Intertek DRAFT', () => {
-    expect(info.current.reservesUninflUsd).toBe(REDACTED-AMT);
-    expect(info.current.reportDate).toBe('2025-10-29');
+  it('keeps the reserve totals and dates the report to the overlay DRAFT date', () => {
+    expect(info.current.reservesUninflUsd).toBe(INFO_LANE_DETAIL.reservesUninflUsd);
+    expect(info.current.reportDate).toBe(INFO_SET.reportDate);
     expect(reportStatus(info.current)).toBe('DRAFT');
   });
 
@@ -180,8 +194,8 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
     expect(adjusted.corrections.find((c) => c.propertyKey === 'info-lane')).toMatchObject({
       propertyKey: 'info-lane',
       changes: expect.arrayContaining([
-        expect.objectContaining({ field: 'immediateUsd', from: REDACTED-AMT, to: 1100 }),
-        expect.objectContaining({ field: 'shortTermUsd', from: REDACTED-AMT, to: 0 }),
+        expect.objectContaining({ field: 'immediateUsd', from: INFO_YR1, to: INFO_SET.immediateUsd }),
+        expect.objectContaining({ field: 'shortTermUsd', from: INFO_YR2, to: INFO_SET.shortTermUsd }),
       ]),
     });
   });
@@ -196,7 +210,7 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
   });
 
   it('keeps STALE (pre-2024) reports out of the dollar totals but still counts the property', () => {
-    const stale = prop('red-branch', '9050 Red Branch', brief({ reportId: 'R12', reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: REDACTED-AMT, shortTermUsd: 5, reservesUninflUsd: 522000 }));
+    const stale = prop('red-branch', '9050 Red Branch', brief({ reportId: 'R12', reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: 70000, shortTermUsd: 5, reservesUninflUsd: 500000 }));
     const withStale = applyPcaOverlay(reportOf([...registerProperties(), stale]), PCA_OVERLAY);
     expect(withStale.totals.immediateUsd).toBe(adjusted.totals.immediateUsd);
     expect(withStale.totals.reservesUninflUsd).toBe(adjusted.totals.reservesUninflUsd);
@@ -205,7 +219,7 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
 
   it('is idempotent when the register is later fixed upstream', () => {
     const twice = applyPcaOverlay(adjusted, PCA_OVERLAY);
-    expect(twice.properties.find((p) => p.propertyKey === 'info-lane')!.current.immediateUsd).toBe(1100);
+    expect(twice.properties.find((p) => p.propertyKey === 'info-lane')!.current.immediateUsd).toBe(INFO_SET.immediateUsd);
     expect(twice.corrections).toHaveLength(0);
   });
 
@@ -214,9 +228,10 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
     expect(flagged).toEqual(expect.arrayContaining(['e-fulton', 'e-livingston', 'info-lane', 'northwood', 'raytown']));
   });
 
-  it('derives Raytown reserves to the corrected $292,500, not the stated $REDACTED-AMT', () => {
+  it('derives Raytown reserves to the corrected figure, not the stated one', () => {
     const ray = adjusted.properties.find((p) => p.propertyKey === 'raytown')!;
-    expect(ray.current.reservesUninflUsd).toBe(292500);
+    expect(ray.current.reservesUninflUsd).toBe(RAY_SET.reservesUninflUsd);
+    expect(ray.current.reservesUninflUsd).not.toBe(210000);
     expect(ray.psf.origin).toBe('derived');
   });
 });
@@ -225,14 +240,16 @@ describe('nearTermRollup', () => {
   const adjusted = applyPcaOverlay(reportOf(registerProperties()), PCA_OVERLAY);
   const roll = nearTermRollup(adjusted.properties);
 
-  it('totals Immediate + Short-Term across the eight current reports to ≈ $677K', () => {
-    expect(roll.totalUsd).toBe(676950);
+  const total = OTHER_NEAR_TERM + INFO_SET.immediateUsd + INFO_SET.shortTermUsd;
+
+  it('totals Immediate + Short-Term across the eight current reports', () => {
+    expect(roll.totalUsd).toBe(total);
   });
 
-  it('puts 3520 E Fulton first at ≈ 87% concentration ($592,125)', () => {
-    expect(roll.rows[0]).toMatchObject({ propertyKey: 'e-fulton', totalUsd: 592125 });
-    expect(roll.rows[0]!.share).toBeCloseTo(0.8747, 3);
-    expect(roll.topShare).toBeCloseTo(0.8747, 3);
+  it('puts 3520 E Fulton first with its concentration share', () => {
+    expect(roll.rows[0]).toMatchObject({ propertyKey: 'e-fulton', totalUsd: FULTON_NEAR_TERM });
+    expect(roll.rows[0]!.share).toBeCloseTo(FULTON_NEAR_TERM / total, 3);
+    expect(roll.topShare).toBeCloseTo(FULTON_NEAR_TERM / total, 3);
   });
 
   it('sorts descending', () => {
@@ -240,16 +257,16 @@ describe('nearTermRollup', () => {
     expect(totals).toEqual([...totals].sort((a, b) => b - a));
   });
 
-  it('counts 29000 Info Ln at $1,100 — not $70,863 — so the register error cannot inflate the rollup', () => {
-    expect(roll.rows.find((r) => r.propertyKey === 'info-lane')!.totalUsd).toBe(1100);
+  it('counts 29000 Info Ln at the corrected figure — not Year 1 + Year 2 — so the register error cannot inflate the rollup', () => {
+    expect(roll.rows.find((r) => r.propertyKey === 'info-lane')!.totalUsd).toBe(INFO_SET.immediateUsd + INFO_SET.shortTermUsd);
     const unfixed = nearTermRollup(registerProperties());
-    expect(unfixed.totalUsd).toBe(746713);
+    expect(unfixed.totalUsd).toBe(OTHER_NEAR_TERM + INFO_YR1 + INFO_YR2);
   });
 
   it('excludes STALE reports from the rollup', () => {
-    const stale = prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: REDACTED-AMT }));
+    const stale = prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: 70000 }));
     const withStale = nearTermRollup([...adjusted.properties, { ...stale, flags: [], psf: reservePsfYr({ reservesUninflUsd: null, sf: null, termYears: null, psfYrStated: null }), status: 'STALE' }]);
-    expect(withStale.totalUsd).toBe(676950);
+    expect(withStale.totalUsd).toBe(total);
     expect(withStale.excludedStale).toBe(1);
   });
 });
@@ -295,7 +312,7 @@ describe('currencyAlerts', () => {
   it('flags the stale 29000 Info Ln rent roll (10/17/2025)', () => {
     const rr = alerts.find((a) => a.kind === 'rent-roll');
     expect(rr).toMatchObject({ propertyKey: 'info-lane' });
-    expect(rr!.message).toContain('2025-10-17');
+    expect(rr!.message).toContain(PCA_OVERLAY.rentRolls[0]!.asOf);
   });
 });
 
@@ -328,19 +345,20 @@ describe('warrantyClock', () => {
 });
 
 describe('overlay content', () => {
-  it('29000 Info Ln drill-down reconciles: reserve schedule and system breakdown both sum to $REDACTED-AMT', () => {
+  it('29000 Info Ln drill-down reconciles: reserve schedule and system breakdown both sum to the uninflated reserve', () => {
     const sched = Object.values(INFO_LANE_DETAIL.reserveScheduleUninfl).reduce((a, b) => a + b, 0);
     const sys = INFO_LANE_DETAIL.systems.reduce((a, s) => a + s.usd, 0);
-    expect(sched).toBe(REDACTED-AMT);
-    expect(sys).toBe(REDACTED-AMT);
-    expect(INFO_LANE_DETAIL.immediateUsd).toBe(1100);
-    expect(INFO_LANE_DETAIL.shortTermUsd).toBe(0);
-    expect(INFO_LANE_DETAIL.reserveScheduleUninfl.yr1).toBe(REDACTED-AMT);
-    expect(INFO_LANE_DETAIL.reserveScheduleUninfl.yr2).toBe(REDACTED-AMT);
+    expect(sched).toBe(INFO_LANE_DETAIL.reservesUninflUsd);
+    expect(sys).toBe(INFO_LANE_DETAIL.reservesUninflUsd);
+    // The drill-down and the correction agree on Immediate / Short-term, and neither is a reserve outlay.
+    expect(INFO_LANE_DETAIL.immediateUsd).toBe(INFO_SET.immediateUsd);
+    expect(INFO_LANE_DETAIL.shortTermUsd).toBe(INFO_SET.shortTermUsd);
+    expect(INFO_LANE_DETAIL.immediateUsd).not.toBe(INFO_YR1);
+    expect(INFO_LANE_DETAIL.shortTermUsd).not.toBe(INFO_YR2);
   });
 
-  it('ADA immediate items sum to the $1,100 Immediate (van $275 + signs $225 + aisles $600)', () => {
-    expect(INFO_LANE_DETAIL.immediateItems.reduce((a, i) => a + i.usd, 0)).toBe(1100);
+  it('ADA immediate items sum to the Immediate figure', () => {
+    expect(INFO_LANE_DETAIL.immediateItems.reduce((a, i) => a + i.usd, 0)).toBe(INFO_LANE_DETAIL.immediateUsd);
   });
 
   it('loads exactly the 9 open issues, status Open, owner blank', () => {

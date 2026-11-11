@@ -21,7 +21,9 @@
     "data/property-financials/golden.local.json",
     "data/cost-seg/golden.local.json",
     "config/local/ar-seed-mappings.json",
-    "config/local/doc-search-golden.json"
+    "config/local/doc-search-golden.json",
+    "config/local/lease-term-seeds.json",
+    "config/local/pca-overlay.json"
   ],
   "optional": [
     "data/property-financials/golden.local.json",
