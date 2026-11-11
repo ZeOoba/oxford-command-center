@@ -4,9 +4,15 @@
 // inherited by every worker and by every child process a test spawns. See tests/support/temp-run-dir.ts
 // for why (the suite leaks mkdtemp warehouses and filled the CI runner's disk).
 import { tmpdir } from 'node:os';
+import { ensureLocalData } from '../scripts/ensure-local-data';
 import { createRunDir, redirectTmpEnv, removeRunDir, scheduleDeferredRemoval, sweepStaleRunDirs } from './support/temp-run-dir';
 
 export default function setup(): () => void {
+  // Real firm data is never tracked (ruling 2026-11-10): seed the committed synthetic stand-ins for
+  // any manifest file absent from this checkout (never overwrites). postinstall does the same; this
+  // covers a checkout whose install predates the change. Runs once, before the workers fork.
+  ensureLocalData();
+
   const realRoot = tmpdir();
   const saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
 
