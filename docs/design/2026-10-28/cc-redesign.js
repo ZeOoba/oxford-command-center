@@ -28,7 +28,7 @@ const PROPS=[
 ['1100 Rarig Ave',[[100,0],[0.6,0],[0,0],[8,0],[0,0],[100,0]]]];
 const COLS=[['Occupancy','%','leasing'],['NOI vs budget','%','property-financials'],['12-mo rollover','% rent','leasing'],['Capex due','$K','property-condition'],['Tax vs comps','%','obligations'],['Collected','%','worklist']];
 const KPI=[
-{l:'NOI · TTM',v:'$4.82M',pct:.954,tgt:1,note:'−4.6% vs plan $5.05M',tone:'warn',dest:'property-financials'},
+{l:'NOI · TTM',v:'$3.47M',pct:.953,tgt:1,note:'−4.7% vs plan $3.64M',tone:'warn',dest:'property-financials'},
 {l:'Occupancy',v:'93.1%',pct:.931/1,tgt:.95,note:'1.9 pts under 95% target',tone:'warn',dest:'leasing'},
 {l:'DSCR',v:'1.42x',pct:1.42/2,tgt:1.25/2,note:'Covenant 1.25x · clear',tone:'pos',dest:'capital'},
 {l:'Cash vs reserve',v:'$2.31M',pct:2.31/3,tgt:1.5/3,note:'$810K above $1.5M floor',tone:'pos',dest:'capital'},
@@ -40,7 +40,7 @@ pipeline:{l:'Acquisitions',g:'Command',b:[2,'n'],verdict:'2 deals need a go/no-g
 worklist:{l:'Worklist',g:'Command',b:[4,'neg'],verdict:'4 items are due today; 3 past-due tenants roll up to one notice decision.',k:[['Due today','4'],['Overdue','1'],['Snoozed','6']],tabs:['Today','Alerts','Calendar','Renewals'],tb:{Alerts:[3,'neg']}},
 'command-brain':{l:'Brain',g:'Command',b:[4,'n'],verdict:'4 open questions are blocking calibration; track record is 71% on resolved calls.',k:[['Open questions','4'],['Resolved calls','38'],['Accuracy','71%']],tabs:['Digest','Insights','Track record','Feedback','Memory'],tb:{Feedback:[4,'n']}},
 portfolio:{l:'Portfolio',g:'Assets',verdict:'8 assets; 2 are under budget on NOI and account for 81% of the shortfall.',k:[['Assets','8'],['Value','$61.4M'],['Under budget','2']],tabs:['Properties','Trends','Expenses']},
-'property-financials':{l:'Property Financials',g:'Assets',b:[1,'warn'],verdict:'Salisbury is the only property more than 5% under NOI budget.',k:[['NOI · TTM','$4.82M'],['vs plan','−4.6%'],['Watchlist','3']],tabs:['Overview','Property explorer','Scorecard table','Rent & NOI levers','Expense watchlist','Evaluation scorecard'],view:1},
+'property-financials':{l:'Property Financials',g:'Assets',b:[1,'warn'],verdict:'Salisbury is the only property more than 5% under NOI budget.',k:[['NOI · TTM','$3.47M'],['vs plan','−4.7%'],['Watchlist','3']],tabs:['Overview','Property explorer','Scorecard table','Rent & NOI levers','Expense watchlist','Evaluation scorecard'],view:1},
 intel:{l:'Financials',g:'Assets',verdict:'One recoverable CAM true-up ($11K) and no manager outliers this month.',k:[['Entities','11'],['Recoverable','$11K'],['Managers','3']],tabs:['Ownership','Property','Lease Run','Benchmarks','Managers']},
 leasing:{l:'Leasing',g:'Assets',b:[3,'warn'],verdict:'$91K/yr of below-market rent rolls in the next 9 months — two Polk tenants.',k:[['Rolling 12 mo','23% rent'],['Below market','$91K/yr'],['Vacant SF','14,200']],tabs:['Rollover','Rent roll','Forecast','Market rents','Tenants'],tb:{'Rent roll':[2,'neg']}},
 capital:{l:'Capital',g:'Capital',b:[1,'warn'],verdict:'One maturity in 12 months; deployable capacity is $3.1M after reserves.',k:[['Deployable','$3.1M'],['DSCR','1.42x'],['Maturing 12 mo','$6.2M']],tabs:['Allocation','Pipeline','Debt','Cash','Close']},

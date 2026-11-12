@@ -36,7 +36,7 @@ financial changes). Your plan must operate INSIDE that protocol — it is itself
   `server/warehouse/migrations/` (SQLite DDL), `server/warehouse/property-master.ts`
   (property roster). Schema changes = new numbered migration, Architect-owned.
 - **Real portfolio:** ~600K SF, ~140 tenants, ~27 properties across OH/MD/IN/WI/MO/KS/TN.
-  Insurance: ~24 active policies, ~$166K premium (workbook `Insurance Renewals` →
+  Insurance: ~24 active policies (workbook `Insurance Renewals` →
   `src/contracts/insurance.ts`, module shipped).
 - **Already built (the design must bind to these, not duplicate them):**
   - **Acquisition Intelligence Engine** (Phase 4, merged): `server/warehouse/acq-engine.ts`,

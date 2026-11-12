@@ -73,7 +73,7 @@ The highest value per unit of work in the entire project: an existing, tested, a
 2. Deliver the eight `Business/A.R. Reports/*.xlsx` files (dated 7.15.2026) into it. Copy, never move — the OneDrive business folder is read-only under Invariant 5.
 3. **Dry-run first** (ruled 2026-08-16): point `AR_INBOX` and `SNAPSHOT_PATH` at worktree copies. Inspect the review queue and every proposed tenant→lease attribution before any live write. The importer's own docstring warns that `Brain` loads `overlay.json` once at construction and never re-reads it, so a live run while a dev server is up can be silently reverted for that process's whole lifetime.
 4. Fix what the first real run breaks. Expected friction: the eight files are per-property xlsx, and format detection was written against Yardi/AppFolio *aging* exports — a delinquency export may parse as recognized-but-unsupported.
-5. Verify against the independent `_pipeline` result: **$REDACTED-AMT** total, **$REDACTED-AMT** active, **31 tenants**, 0 unmapped, from the same eight files on 2026-07-17. Two independent implementations agreeing on the total is the strongest available correctness signal; a divergence is a finding, not a rounding difference.
+5. Verify against the independent `_pipeline` result: the **total** ([amount redacted]), the **active** total ([amount redacted]), **31 tenants**, 0 unmapped, from the same eight files on 2026-07-17. Two independent implementations agreeing on the total is the strongest available correctness signal; a divergence is a finding, not a rounding difference.
 6. Schedule via supervised `create_scheduled_task` only — never registry JSON splicing.
 
 **Exit:** `tenantArrears` non-empty, `arBalances[]` populated, `arrears-*` and `ar-stale` conditions live, brief Section 4c showing real collections data, and a scheduled task keeping it that way.
@@ -116,7 +116,7 @@ Applies at Phase 1 exit. False-positive criteria are **blocking** (ruled 2026-08
 
 Replayed against a fixture corpus built from documented incidents, the engine must:
 
-- **(a)** flag the misspelled-tenant-name mismatch and its $20,457 balance
+- **(a)** flag the misspelled-tenant-name mismatch and its balance
 - **(b)** flag the 5 wrong `ora-pm` critical-date rows and the omitted Example Tint expiry
 - **(c)** flag both 2026 holdovers
 - **(d)** emit **zero** deterioration alarms on the 2026-08-01 vacancy convention change
@@ -177,7 +177,7 @@ Eight decisions ruled by Gabriel 2026-08-16, plus two re-scope rulings the same 
 
 v02's estimate is withdrawn and not replaced. Its largest line was CAM under-recovery, now confirmed unbuildable; its escalation line measured a tracking-miss population, not the billing-miss population the dollar figure implied.
 
-What the audit establishes instead is concrete and does not require an estimate: **$REDACTED-AMT of accounts receivable — $REDACTED-AMT of it active across 31 tenants — is invisible to the Command Center, the daily brief, and every downstream report, because an inbox directory was never created.** Phase 0 makes it visible without building anything new.
+What the audit establishes instead is concrete and does not require an estimate: **Six figures of accounts receivable — most of it active, across 31 tenants — is invisible to the Command Center, the daily brief, and every downstream report, because an inbox directory was never created.** Phase 0 makes it visible without building anything new.
 
 The binding constraint Gabriel named is ops/AM bandwidth, not expense reduction. The current substitute for this engine is hand-auditing PM reports after they have already misled someone. That is the cost being removed.
 

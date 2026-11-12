@@ -4,8 +4,8 @@
 // the residence rule). Ratified 2026-09-24 (Gabriel): Oxford-to-Oxford ("affiliate") notes are
 // EXCLUDED from investment Overview Total Debt, aggregate LTV, per-property LTV and Capital › Debt
 // External Debt, and shown separately ("+$X affiliate notes"). Live cases: the 1100 Rarig property
-// row (lender "Oxford Capital", loanBalance ≈ $1.10M) and the borrower loan "3883 from Oxford (50%)"
-// (≈ $385K). With both excluded, the Overview-vs-Capital debt-basis flag reconciles to the cent.
+// row (lender "Oxford Capital") and the borrower loan "3883 from Oxford (50%)"
+// With both excluded, the Overview-vs-Capital debt-basis flag reconciles to the cent.
 //
 // Identification: the workbook carries no "affiliate" field, so this is an explicit whole-phrase
 // lender-name list — not a fuzzy heuristic — matched against Property.lender (Property NOI col 19)
@@ -101,7 +101,7 @@ export function propertyLtvLabel(p: DebtRow & { readonly ltv: number | null }): 
 }
 
 /**
- * Disclosure clause for a debt headline, e.g. "+$1.10M affiliate notes"; '' when there are none.
+ * Disclosure clause for a debt headline, e.g. "+$2.35M affiliate notes"; '' when there are none.
  * Sign-symmetric: a negative total is still disclosed ("-$13K affiliate notes") — the '+' prefix is
  * added only for a positive amount; otherwise fmtUsdCompact's own minus sign stands.
  */

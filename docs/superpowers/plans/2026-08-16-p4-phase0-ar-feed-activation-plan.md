@@ -32,7 +32,7 @@ Eight files in `Business/A.R. Reports/`, all dated 7.15.2026, in three formats:
 | **C** | `DB Caption:` | 29000 Info Lane · 1900 Broadway + 9050 Red Branch | `Lease` column (names) | Missing | 11 |
 | **B** | `Delinquency` + `Exported On:` | 2203-2207 Northwood | **Unit only — no name** | Missing + needs new match path | 6 |
 
-Independent cross-check from `_pipeline/output/sync_log.json` (built 2026-07-17 from these same files): **`ar_total` $REDACTED-AMT · `ar_total_active` $REDACTED-AMT · `ar_tenants` 31 · 0 unmapped.**
+Independent cross-check from `_pipeline/output/sync_log.json` (built 2026-07-17 from these same files): **`ar_total` [amount redacted] · `ar_total_active` [amount redacted] · `ar_tenants` 31 · 0 unmapped.**
 
 **Format A needs no code.** It is 26 of 31 tenants — the bulk of the value — and Task 1 delivers it.
 
