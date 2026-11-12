@@ -133,8 +133,11 @@ const SYNTHETIC_PREFIX = 'fixtures/synthetic/';
  */
 export function loadRealDataManifest(pathOverride) {
   const parsed = JSON.parse(readFileSync(pathOverride ?? REAL_DATA_MANIFEST, 'utf8'));
-  const files = Array.isArray(parsed?.files) ? parsed.files.filter((f) => typeof f === 'string' && f) : [];
-  const dirs = Array.isArray(parsed?.dirs) ? parsed.dirs.filter((d) => typeof d === 'string' && d) : [];
+  const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
+  // `neverTrack` lists real-data paths that have no synthetic stand-in (baked outputs, the overlay, the
+  // warehouse, raw exports): never seeded, but blocked here exactly like the manifest paths.
+  const files = [...strings(parsed?.files), ...strings(parsed?.neverTrack?.files)];
+  const dirs = [...strings(parsed?.dirs), ...strings(parsed?.neverTrack?.dirs)];
   if (files.length === 0 && dirs.length === 0) throw new Error('real-data manifest lists no paths');
   return { files, dirs };
 }

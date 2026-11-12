@@ -32,6 +32,12 @@ describe('governance: real firm data is never tracked (checkRealDataUntracked)',
     expect(r.errors.join('\n')).toMatch(/src\/data\/seed-deals\.ts/);
   });
 
+  it('fails when a neverTrack path (no synthetic stand-in) is tracked', () => {
+    const r = checkRealDataUntracked(REPO, ['src/x.ts', 'data/overlay.json', 'public/warehouse.json', 'data/warehouse/finance.sqlite', 'data/property-financials/monthly-long.csv']);
+    expect(r.pass).toBe(false);
+    expect(r.errors).toHaveLength(4);
+  });
+
   it('allows the synthetic stand-ins under fixtures/synthetic/ and Windows-style separators are normalized', () => {
     expect(checkRealDataUntracked(REPO, ['fixtures/synthetic/data/snapshots/portfolio.json', 'fixtures/synthetic/src/data/seed-deals.ts']).pass).toBe(true);
     expect(checkRealDataUntracked(REPO, ['data\\cost-seg\\cost-seg.json']).pass).toBe(false);

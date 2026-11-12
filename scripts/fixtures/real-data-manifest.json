@@ -1,5 +1,5 @@
 {
-  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them. 'optional' files may be absent on a checkout that holds real data (they are seeded only on an all-synthetic checkout and are never deploy inputs): the value locks, ratified with `npm run golden:ratify`, and local operator tables.",
+  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them. 'optional' files may be absent on a checkout that holds real data (they are seeded only on an all-synthetic checkout and are never deploy inputs): the value locks, ratified with `npm run golden:ratify`, and local operator tables. 'neverTrack' lists real-data paths with NO synthetic stand-in (the P&L audit CSV, the baked public snapshot and warehouse outputs, the overlay, the warehouse and the raw lease-market exports): they are never seeded and are read only by the push-time scan and the governance check, which block them exactly like the paths above.",
   "ruling": "2026-11-10",
   "files": [
     "data/snapshots/portfolio.json",
@@ -34,5 +34,17 @@
   "dirs": [
     "data/building-specs/",
     "data/calibration/"
-  ]
+  ],
+  "neverTrack": {
+    "files": [
+      "data/property-financials/monthly-long.csv",
+      "public/snapshot.json",
+      "public/warehouse.json",
+      "data/overlay.json"
+    ],
+    "dirs": [
+      "data/warehouse/",
+      "data/lease-market/"
+    ]
+  }
 }
