@@ -303,17 +303,17 @@ import type { AnalyticsBundle } from '../../src/analytics/index';
 import { principalKpis } from '../../src/modules/principal/PrincipalModule';
 
 function bundle(): { snapshot: PortfolioSnapshot; analytics: AnalyticsBundle } {
-  const analytics = { kpis: { noi: { value: REDACTED-AMT, prov: 'derived' }, value: { value: REDACTED-AMT, prov: 'derived' }, occupancy: { value: 0.94, prov: 'derived' } }, insights: [] } as unknown as AnalyticsBundle;
-  const snapshot = { cash: { totalCash: REDACTED-AMT } } as unknown as PortfolioSnapshot;
+  const analytics = { kpis: { noi: { value: 2_684_150, prov: 'derived' }, value: { value: 41_872_300, prov: 'derived' }, occupancy: { value: 0.94, prov: 'derived' } }, insights: [] } as unknown as AnalyticsBundle;
+  const snapshot = { cash: { totalCash: 5_312_640 } } as unknown as PortfolioSnapshot;
   return { snapshot, analytics };
 }
 
 describe('principalKpis', () => {
   it('formats the headline figures', () => {
     const k = principalKpis(bundle().snapshot, bundle().analytics);
-    expect(k.find((x) => x.label === 'NOI')?.display).toMatch(/\$3\.9/);
+    expect(k.find((x) => x.label === 'NOI')?.display).toMatch(/\$2\.68/);
     expect(k.find((x) => x.label === 'Occupancy')?.display).toBe('94%');
-    expect(k.find((x) => x.label === 'Cash')?.display).toMatch(/\$7\.8/);
+    expect(k.find((x) => x.label === 'Cash')?.display).toMatch(/\$5\.3/);
   });
 });
 ```

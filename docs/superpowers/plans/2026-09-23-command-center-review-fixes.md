@@ -1828,19 +1828,19 @@ const master = new Map([['3034-westerville-rd-columbus-oh', '3034 Westerville Rd
 describe('buildPremiumHistory', () => {
   it('groups terms per policy line, drops duplicate terms within 300d at the same premium, sums by policy year', () => {
     const r = buildPremiumHistory([
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2024-09-24', premium_annual: REDACTED-AMT },
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-09-18', premium_annual: REDACTED-AMT }, // DQ duplicate
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-07-05', premium_annual: REDACTED-AMT },
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2026-07-05', premium_annual: REDACTED-AMT },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2024-09-24', premium_annual: 6420 },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-09-18', premium_annual: 6420 }, // DQ duplicate
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-07-05', premium_annual: 6413 },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2026-07-05', premium_annual: 6163 },
       { property_id: 'ins-x-gl', policy_type: 'GL', effective_date: null, premium_annual: 100 },
     ], master);
     expect(() => PremiumHistoryReport.parse(r)).not.toThrow();
     expect(r.lines[0]!.property).toBe('3034 Westerville Rd, Columbus OH');
-    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([REDACTED-AMT, REDACTED-AMT, REDACTED-AMT]);
+    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([6420, 6413, 6163]);
     expect(r.byYear).toEqual([
-      { year: 2024, premium: REDACTED-AMT, lines: 1 },
-      { year: 2025, premium: REDACTED-AMT, lines: 1 },
-      { year: 2026, premium: REDACTED-AMT, lines: 1 },
+      { year: 2024, premium: 6420, lines: 1 },
+      { year: 2025, premium: 6413, lines: 1 },
+      { year: 2026, premium: 6163, lines: 1 },
     ]);
   });
 });
@@ -1872,7 +1872,7 @@ interface Row { property_id: string; policy_type: string; effective_date: string
 const DUP_WINDOW_DAYS = 300;
 
 /** Per-line premium terms + policy-year totals. Skips undated/unpriced rows; collapses a same-premium
- *  term re-keyed within 300d (the 3034 Westerville $REDACTED-AMT duplicate in data_quality_issues). */
+ *  term re-keyed within 300d (the 3034 Westerville duplicate in data_quality_issues). */
 export function buildPremiumHistory(rows: Row[], masterNames: ReadonlyMap<string, string>): PremiumHistoryReport {
   const byLine = new Map<string, { policyType: string; terms: Array<{ effectiveDate: string; premium: number }> }>();
   for (const r of rows) {
@@ -1946,10 +1946,10 @@ describe('PremiumHistoryCard', () => {
   it('renders the policy-year chart and a sparkline for each multi-term line only', () => {
     const qc = new QueryClient();
     qc.setQueryData(PREMIUM_HISTORY_KEY, {
-      byYear: [{ year: 2025, premium: 190000, lines: 30 }, { year: 2026, premium: REDACTED-AMT, lines: 30 }],
+      byYear: [{ year: 2025, premium: 154800, lines: 30 }, { year: 2026, premium: 157390, lines: 30 }],
       lines: [
-        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: REDACTED-AMT }, { effectiveDate: '2026-07-05', premium: REDACTED-AMT }] },
-        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 595 }] },
+        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: 6413 }, { effectiveDate: '2026-07-05', premium: 6163 }] },
+        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 640 }] },
       ],
     });
     render(<QueryClientProvider client={qc}><PremiumHistoryCard /></QueryClientProvider>);
