@@ -3,8 +3,8 @@
 // Render-level tests for CalendarModule's horizon band selector.
 //
 // Why this file exists: the calendar shipped with a two-band window filter (90d / 12mo) and
-// fetched events at a fixed 12-month horizon. Against the live portfolio that hid 72.6% of
-// annual rent — including Tenant 155 LLC, the single largest tenant by rent, expiring in ~15 months.
+// fetched events at a fixed 12-month horizon. Against the live portfolio that hid most of the
+// annual rent, including a large lease expiring in ~15 months.
 // A third 36-month band exposes it.
 //
 // The trap this file guards: criticalDateKpis() returns `next12mo: events.length`, i.e. it
@@ -41,7 +41,7 @@ const OVERDUE = '2026-08-19'; //  -30d  — holdover, must survive EVERY band
 const NEAR = '2026-11-17'; //   ~60d  — inside both bands
 const EDGE_IN = '2027-09-18'; //  365d  — exactly the 12-month cut, inclusive
 const EDGE_OUT = '2027-09-19'; // 366d  — one day past it
-const MID = '2027-12-31'; //     469d  — OUTSIDE 12mo, inside 36mo  (the Tenant 155 LLC analogue)
+const MID = '2027-12-31'; //     469d  — OUTSIDE 12mo, inside 36mo  (the long-dated lease analogue)
 const FAR = '2030-06-30'; //    1381d  — outside both
 
 function snapshotFixture(): SnapshotResponse {
@@ -53,7 +53,7 @@ function snapshotFixture(): SnapshotResponse {
         { id: 'L-NEAR', company: 'Acme Freight', tenantName: 'Acme', propertyKey: '100 A', unit: '1', annualRent: 120000, leaseEnd: NEAR, escalationDate: null },
         { id: 'L-EDGE-IN', company: 'Edgein Partners', tenantName: 'Edgein', propertyKey: '400 D', unit: null, annualRent: 50000, leaseEnd: EDGE_IN, escalationDate: null },
         { id: 'L-EDGE-OUT', company: 'Edgeout Partners', tenantName: 'Edgeout', propertyKey: '401 D', unit: null, annualRent: 50000, leaseEnd: EDGE_OUT, escalationDate: null },
-        { id: 'L-MID', company: 'Longhaul Systems', tenantName: 'Longhaul', propertyKey: '55 New Plant', unit: null, annualRent: 452835, leaseEnd: MID, escalationDate: null },
+        { id: 'L-MID', company: 'Longhaul Systems', tenantName: 'Longhaul', propertyKey: '500 E', unit: null, annualRent: 318000, leaseEnd: MID, escalationDate: null },
         { id: 'L-FAR', company: 'Farhorizon Corp', tenantName: 'Farhorizon', propertyKey: '300 C', unit: null, annualRent: 90000, leaseEnd: FAR, escalationDate: null },
       ],
       loans: [],

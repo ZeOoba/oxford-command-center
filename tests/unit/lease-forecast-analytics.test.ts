@@ -496,22 +496,22 @@ describe('rentForecast — expired-this-month regression (calendar truncation)',
 
 // -- annualRent is year-1 cash NET of abated months; forecast math is on CONTRACT rent ------------
 describe('abated lease: forecast uses contract rent (monthlyRent x 12), not net-of-abatement annualRent', () => {
-  // $5,300/mo contract = $63,600/yr; 1 abated month -> annualRent 58,300.
+  // $4,700/mo contract = $56,400/yr; 1 abated month -> annualRent 51,700.
   const abated = (o: Partial<Lease> = {}) =>
-    mkLease({ id: 'ab', sf: 10000, monthlyRent: 5300, annualRent: 58300, rentPerSf: null, leaseEnd: isoOffset(ASOF, 6), monthsToExpiry: 6, ...o });
+    mkLease({ id: 'ab', sf: 10000, monthlyRent: 4700, annualRent: 51700, rentPerSf: null, leaseEnd: isoOffset(ASOF, 6), monthsToExpiry: 6, ...o });
 
-  it('marketRentGaps PSF fallback is contract PSF (6.36), not 5.83', () => {
+  it('marketRentGaps PSF fallback is contract PSF (5.64), not 5.17', () => {
     const [g] = marketRentGaps([abated()], { ab: 7 });
-    expect(g!.currentRentPsf).toBeCloseTo(6.36, 6);
-    expect(g!.gapPsf).toBeCloseTo(0.64, 6);
+    expect(g!.currentRentPsf).toBeCloseTo(5.64, 6);
+    expect(g!.gapPsf).toBeCloseTo(1.36, 6);
   });
 
   it('renew_at_market delta is market minus CONTRACT rent', () => {
     const r = rentForecast([abated()], ASOF, RentForecastInput.parse({ scenario: 'renew_at_market', horizonMonths: 12, vacancyPct: 0 }), { ab: 7 });
-    expect(r.deltaUsd).toBeCloseTo(70000 - 63600, 6);
-    expect(r.inPlaceAnnualRent).toBeCloseTo(63600, 6);
+    expect(r.deltaUsd).toBeCloseTo(70000 - 56400, 6);
+    expect(r.inPlaceAnnualRent).toBeCloseTo(56400, 6);
     expect(r.projectedAnnualRent).toBeCloseTo(70000, 6);
-    expect(r.expiringRentInHorizon).toBeCloseTo(63600, 6);
+    expect(r.expiringRentInHorizon).toBeCloseTo(56400, 6);
   });
 
   it('no abatement (annualRent === monthly x 12) is unchanged', () => {
