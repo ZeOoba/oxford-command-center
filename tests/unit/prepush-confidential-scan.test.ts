@@ -35,6 +35,12 @@ import {
   isRealDataPath,
   parseRealDataPaths,
   realDataPathsFor,
+  isCopyOf,
+  COPY_MARKER,
+  realAmountFingerprints,
+  scanAddedLinesForRealAmounts,
+  FINGERPRINT_BLOCK_MIN,
+  FINGERPRINT_BLOCK_MIN_SYNTHETIC,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -689,7 +695,7 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     // expanded into a sample path instead of being skipped.
     const m = loadRealDataManifest();
     const sample = (rule: string): string => {
-      const r = rule.replace(/^\//, '').replace(/\*\*\//g, 'x/').replace(/\*/g, 'x');
+      const r = rule.replace(/^\//, '').replace(/\[ _\(\.~-\]/g, '_').replace(/\*\*\//g, 'x/').replace(/\*/g, 'x');
       return r.endsWith('/') || /^(dist|dist-server)$/.test(r) ? `${r.replace(/\/$/, '')}/x.json` : r;
     };
     const rules = [
@@ -699,7 +705,10 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('#') && !l.startsWith('!'))
       .filter((l) => /^\/?(data\/|data$|public\/|dist$|dist-server$|config\/local|src\/data\/|scripts\/property-financials\/|scripts\/data\/|docs\/superpowers\/specs\/.*seed|tests\/fixtures\/property-financials\/)/.test(l))
-      .filter((l) => !/\.log$/.test(l));
+      .filter((l) => !/\.log$/.test(l))
+      // Explorer / browser copies of ANY file and folder copies are ignored more broadly than they are
+      // blocked (a copy of an unlisted file is not real data); the copy-forms test below covers them.
+      .filter((l) => !/ - Copy|\(\?|\]\*\/$/.test(l));
     expect(rules.length).toBeGreaterThan(30);
     expect(rules.some((r) => r.includes('*'))).toBe(true); // wildcard rules are checked, not dropped
     const uncovered = rules.filter((l) => !isRealDataPath(sample(l), m));
@@ -729,8 +738,151 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     expect(paths.filter((p) => !isRealDataPath(p, m))).toEqual([]);
     const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' }).stdout.split(/\r?\n/).filter(Boolean);
     expect(paths.filter((p) => !ignored.includes(p))).toEqual([]);
-    // a legitimate sibling that is not a copy stays allowed
-    expect(isRealDataPath('src/data/seed-deals.test.ts', m)).toBe(false);
+    // a legitimate sibling that does not start with the listed stem plus a separator stays allowed
+    expect(isRealDataPath('src/data/seed-dealership.ts', m)).toBe(false);
+  });
+
+  // Refute round 7: the copy forms are generated here from the manifest alone, never from the
+  // .gitignore patterns, so this test cannot pass by construction.
+  it('Explorer, browser, editor and archive copies of every listed file, at any depth, are both gitignored and push-blocked', () => {
+    const m = loadRealDataManifest();
+    const listed = m.files.filter((f) => !f.startsWith('fixtures/'));
+    const forms = (f: string): string[] => {
+      const slash = f.lastIndexOf('/');
+      const dir = slash >= 0 ? f.slice(0, slash + 1) : '';
+      const base = f.slice(slash + 1);
+      const dot = base.lastIndexOf('.');
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const ext = dot > 0 ? base.slice(dot) : '';
+      const folder = dir.replace(/\/$/, '');
+      const out = [
+        `${dir}${stem} - Copy${ext}`, // Explorer
+        `${dir}${stem} - Copy (2)${ext}`,
+        `${dir}${stem} (1)${ext}`, // browser download
+        `${dir}${stem} (12)${ext}`,
+        `${dir}Copy of ${base}`,
+        `${dir}${stem}_old${ext}`,
+        `${dir}${stem}-old${ext}`,
+        `${dir}${stem}.backup${ext}`,
+        `${dir}${base}.backup`,
+        `${dir}${base}~`, // editor
+        `${dir}.${base}.swp`,
+        `${dir}${stem}.2026-11-10${ext}`, // date tag
+        `${dir}${stem}_2026-11-10${ext}`,
+        `${dir}old/${base}`, // nested archive folders
+        `${dir}backup/${stem}_old${ext}`,
+        `${dir}archive/2026/${base}`,
+        `${dir}old/${stem} (1)${ext}`,
+      ];
+      if (folder) out.push(`${folder} - Copy/${base}`, `${folder}.bak/${base}`, `${folder} (1)/${base}`, `${folder}_old/${base}`);
+      return out;
+    };
+    const paths = listed.flatMap(forms);
+    expect(paths.length).toBeGreaterThan(listed.length * 15);
+    expect(paths.filter((p) => !isRealDataPath(p, m))).toEqual([]);
+    const ignored = new Set(
+      spawnSync('git', ['check-ignore', '--no-index', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' }).stdout.split(/\r?\n/).filter(Boolean),
+    );
+    expect(paths.filter((p) => !ignored.has(p))).toEqual([]);
+  });
+
+  it('the copy rule is anchored to the listed stem: ordinary names and other folders are not copies', () => {
+    const m = loadRealDataManifest();
+    for (const p of [
+      'src/data/seed-dealership.ts', // stem followed by a letter
+      'src/data/my-seed-deals.ts', // stem mid-word, no copy marker
+      'src/data2/seed-deals.ts', // a different folder, not a copy of src/data
+      'src/data/queries.ts',
+      'scripts/property-financials/config/curated/meta.json',
+      'scripts/property-financials/config/curated/sfx.json',
+      'tests/fixtures/property-financials/raw-records.synthetic.json',
+      'fixtures/synthetic/src/data/seed-deals (1).ts', // synthetic stand-ins never match
+    ]) {
+      expect(isRealDataPath(p, m), p).toBe(false);
+    }
+    expect(isCopyOf('src/data/old/seed-deals.ts', 'src/data/seed-deals.ts')).toBe(true);
+    expect(isCopyOf('src/data/backup_seed-deals.ts', 'src/data/seed-deals.ts')).toBe(true);
+    expect(isCopyOf('src/data/golden_seed-deals.ts', 'src/data/seed-deals.ts')).toBe(false);
+  });
+
+  it('COPY_MARKER matches only the declared markers on name-segment boundaries', () => {
+    for (const w of ['Copy of ', 'x.bak', 'x_old', 'x-tmp-1', 'x.orig', 'x (copy)', 'x.quarantine', 'x.corrupt-1', 'backup_', 'x.temp']) {
+      expect(COPY_MARKER.test(w), w).toBe(true);
+    }
+    for (const w of ['golden', 'template', 'copyright', 'bold', 'temperature', 'origin', 'tmpfile', 'oldest', 'backups2go']) {
+      expect(COPY_MARKER.test(w), w).toBe(false);
+    }
+  });
+
+  it('copyRuleAllow is reasoned, and no tracked file is flagged by the copy rule', () => {
+    const raw = JSON.parse(readFileSync(join(process.cwd(), 'scripts/fixtures/real-data-manifest.json'), 'utf8'));
+    for (const [path, reason] of Object.entries(raw.copyRuleAllow ?? {})) {
+      expect(typeof reason === 'string' && (reason as string).length > 20, path).toBe(true);
+    }
+    const m = loadRealDataManifest();
+    const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
+    expect(tracked.length).toBeGreaterThan(500);
+    expect(tracked.filter((f) => isRealDataPath(f, m))).toEqual([]);
+  });
+
+  describe('content fingerprint (real amounts in a renamed copy or pasted into any file)', () => {
+    // All amounts below are SYNTHETIC test values, never real figures.
+    let root: string;
+    const writeManifest = (r: string) => {
+      mkdirSync(join(r, 'scripts', 'fixtures'), { recursive: true });
+      writeFileSync(join(r, 'scripts', 'fixtures', 'real-data-manifest.json'), JSON.stringify({ files: ['data/a.json', 'notes/b.md'], dirs: ['data/specs/'] }));
+    };
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), 'prepush-fp-'));
+      writeManifest(root);
+    });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+    it('returns null (fail open) when no listed file exists: CI and synthetic checkouts', () => {
+      expect(realAmountFingerprints(root)).toBeNull();
+    });
+
+    it('returns null when every present file is seeded or byte-identical to its synthetic stand-in', () => {
+      mkdirSync(join(root, 'data'), { recursive: true });
+      mkdirSync(join(root, 'fixtures', 'synthetic', 'data'), { recursive: true });
+      writeFileSync(join(root, 'data', 'a.json'), '{"rent": 123456.78}');
+      writeFileSync(join(root, 'fixtures', 'synthetic', 'data', 'a.json'), '{"rent": 123456.78}');
+      expect(realAmountFingerprints(root)).toBeNull();
+      writeFileSync(join(root, 'data', 'a.json'), '{"rent": 223456.78}');
+      writeFileSync(join(root, 'data', '.synthetic-seeded.json'), JSON.stringify({ seeded: ['data/a.json'] }));
+      expect(realAmountFingerprints(root)).toBeNull();
+    });
+
+    it('collects distinctive money amounts and skips quantities, round thousands and short numbers', () => {
+      mkdirSync(join(root, 'data', 'specs'), { recursive: true });
+      mkdirSync(join(root, 'notes'), { recursive: true });
+      writeFileSync(join(root, 'data', 'a.json'), JSON.stringify({ rent: 123456.78, noi: 987654, sf: 345678, flat: 250000, small: 999, rows: [{ amt: 4567.89 }] }));
+      writeFileSync(join(root, 'data', 'specs', 'x.json'), JSON.stringify({ cost: 765432.1 }));
+      writeFileSync(join(root, 'notes', 'b.md'), 'Paid $54,321.09 and 123456 units');
+      const fp = realAmountFingerprints(root)!;
+      expect([...fp].sort()).toEqual(['123456.78', '4567.89', '54321.09', '765432.1', '987654'].sort());
+    });
+
+    it(`blocks a file whose added lines carry ${FINGERPRINT_BLOCK_MIN}+ distinct real amounts, in any number format`, () => {
+      const fp = new Set(['123456.78', '987654', '4567.89', '765432.1']);
+      const hits = scanAddedLinesForRealAmounts(
+        [
+          { file: 'src/renamed.ts', lineNo: 1, text: 'const a = 123,456.78; const b = $987,654;' },
+          { file: 'src/renamed.ts', lineNo: 2, text: 'const c = 4567.89; const d = 4567.89;' },
+          { file: 'src/other.ts', lineNo: 1, text: 'const z = 123456.78, y = 987654;' },
+        ],
+        fp,
+      );
+      expect(hits).toEqual([{ file: 'src/renamed.ts', count: 3 }]);
+    });
+
+    it('holds the committed synthetic fixtures to the higher coincidence threshold', () => {
+      const fp = new Set(Array.from({ length: 60 }, (_, i) => String(100001.25 + i)));
+      const lines = (file: string, n: number) => [{ file, lineNo: 1, text: [...fp].slice(0, n).join(' ') }];
+      expect(scanAddedLinesForRealAmounts(lines('fixtures/synthetic/data/x.json', 10), fp)).toEqual([]);
+      expect(scanAddedLinesForRealAmounts(lines('fixtures/synthetic/data/x.json', FINGERPRINT_BLOCK_MIN_SYNTHETIC), fp)).toHaveLength(1);
+      expect(scanAddedLinesForRealAmounts(lines('src/x.json', 10), fp)).toHaveLength(1);
+    });
   });
 
   it('neverTrack paths (no synthetic stand-in) are blocked like manifest paths', () => {
@@ -747,8 +899,11 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     expect(isRealDataPath('./src/data/seed-deals.ts', manifest)).toBe(true);
     expect(isRealDataPath('fixtures/synthetic/data/snapshots/portfolio.json', manifest)).toBe(false);
     expect(isRealDataPath('fixtures/synthetic/data/calibration/observations.json', manifest)).toBe(false);
-    expect(isRealDataPath('src/data/seed-deals.test.ts', manifest)).toBe(false);
+    // fail closed: a name that starts with a listed stem plus a separator is treated as a copy
+    expect(isRealDataPath('src/data/seed-deals.test.ts', manifest)).toBe(true);
+    expect(isRealDataPath('src/data/seed-dealership.ts', manifest)).toBe(false);
     expect(isRealDataPath('data/snapshots/other.json', manifest)).toBe(false);
+    expect(isRealDataPath('docs/superpowers/specs/other.md', manifest)).toBe(false);
   });
 
   it('matches case variants (NTFS / core.ignorecase) and normalizes separators', () => {
