@@ -210,7 +210,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
     expect(compareQuantity(11280, [11280])).toMatchObject({ status: 'match' });
     expect(compareQuantity(11280, [11100])).toMatchObject({ status: 'match' }); // 1.6%
     expect(compareQuantity(11280, [])).toMatchObject({ status: 'no-pca' });
-    expect(compareQuantity(53700, [52233, 53700])).toMatchObject({ status: 'match' }); // any PCA value within tolerance
+    expect(compareQuantity(53700, [52900, 53700])).toMatchObject({ status: 'match' }); // any PCA value within tolerance
   });
 
   it('compareQuantity never divides by zero or trusts a non-positive quantity', () => {
@@ -245,7 +245,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
   });
 
   it('a per-building modeled roof is not flagged against a whole-property PCA total', () => {
-    const cmp = { propertyKey: 'northwood', buildingSf: [], pavingArea: [], doors: [], roofArea: [{ value: 52233, label: 'King', vintage: 'CURRENT', scoped: false }] };
+    const cmp = { propertyKey: 'northwood', buildingSf: [], pavingArea: [], doors: [], roofArea: [{ value: 50000, label: 'PCA', vintage: 'CURRENT', scoped: false }] };
     const per = crossCheck(ds.facts, 'CS-NWD', cmp).find((r) => r.metric === 'Roof area (per building, modeled)')!;
     expect(per.status).toBe('no-pca'); // only building-level PCA values could be compared
   });
