@@ -36,8 +36,8 @@ const valuation = m({
   id: 'cf-hurdle-drag::fishel',
   category: 'CF',
   severity: 'warning',
-  impactUsd: 52_265,
-  title: 'Premium valuation: 7658 Fishel yields 5.50% vs 8.25% market median',
+  impactUsd: 61_840,
+  title: 'Premium valuation: 7658 Fishel yields 6.10% vs 7.40% market median',
 });
 const holdover = m({ id: 'lease-lapsed-L9', severity: 'warning', impactUsd: 7_215, title: 'Lapsed — Tenant 9' });
 
@@ -52,7 +52,7 @@ describe('finding 1 — valuation observations are not actions', () => {
     const tier = buildPriorityActionsTier([valuation, holdover], 7);
     expect(tier.items.map((i) => i.id)).toEqual(['lease-lapsed-L9']);
     expect(tier.heldBack).toEqual({ rows: 0, signals: 0 });
-    expect(tier.totalsBySpine?.[0]?.totalUsd).toBe(7_215); // rent at risk only, no $45K valuation spread
+    expect(tier.totalsBySpine?.[0]?.totalUsd).toBe(7_215); // rent at risk only, no valuation spread
   });
 
   it('still ranks the holdover even when the valuation row carries more dollars', () => {
@@ -156,7 +156,7 @@ describe('review fixes', () => {
     attribution: { inputs: {} },
     confidence: 0.7,
     goal: 1,
-    materialityUsd: 52_265,
+    materialityUsd: 61_840,
     title: 'Premium valuation: P1',
     discovery: '',
     prov: { source: 'capital-allocation-report', confidence: 'derived', asOf: '2026-10-30' },

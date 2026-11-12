@@ -168,9 +168,9 @@ describe('portfolioVerdict', () => {
       score('d', 'orange', 'monitor', 'concern'),
       score('e', 'red', 'disposition-candidate', 'concern'),
     ];
-    const totals = { propertyCount: 5, portfolioNoi: 59_600_000, oxfordNoi: 50_000_000 };
+    const totals = { propertyCount: 5, portfolioNoi: 47_300_000, oxfordNoi: 50_000_000 };
     expect(portfolioVerdict(scores, totals)).toBe(
-      '$59.6M portfolio NOI across 5 properties; 2 healthy, 1 on watch, 2 of concern. 2 need attention, 1 disposition candidate.',
+      '$47.3M portfolio NOI across 5 properties; 2 healthy, 1 on watch, 2 of concern. 2 need attention, 1 disposition candidate.',
     );
   });
 

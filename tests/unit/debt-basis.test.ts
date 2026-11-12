@@ -95,7 +95,7 @@ describe('isAffiliateBorrowerLoan — borrower direction only', () => {
 
 describe('investment-basis helpers', () => {
   const rarig = { lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444444 };
-  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.389966526984127 };
+  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.4172618 };
   it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
     expect(investmentLoanBalance(rarig)).toBe(0);
     expect(investmentLoanBalance(easton)).toBe(2_456_789.12);
@@ -107,11 +107,11 @@ describe('investment-basis helpers', () => {
   });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();
-    expect(investmentLtv(easton)).toBe(0.389966526984127);
+    expect(investmentLtv(easton)).toBe(0.4172618);
   });
   it('propertyLtvLabel names the exclusion instead of printing a number', () => {
     expect(propertyLtvLabel(rarig)).toBe('affiliate note');
-    expect(propertyLtvLabel(easton)).toBe('39.0%');
+    expect(propertyLtvLabel(easton)).toBe('41.7%');
     expect(propertyLtvLabel({ lender: null, loanBalance: 0, ltv: null })).toBe('—');
   });
   it('affiliateNotesClause formats a disclosure clause, or nothing', () => {

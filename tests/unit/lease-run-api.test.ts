@@ -78,7 +78,7 @@ function insertRevenueLedgerRow(db: WarehouseDb, propertyId: string, year: strin
   ).run(batch.lastInsertRowid, propertyId, year, revenue);
 }
 
-/** A real revenue-per-SF cohort ABOVE Fishel's in-place $4.27/SF, so the mark-to-market chip
+/** A real revenue-per-SF cohort ABOVE Fishel's in-place rent per SF, so the mark-to-market chip
  *  fires off the genuine benchmarks engine. Rarig (21,000 SF) @ 120,000 → $5.71/SF;
  *  Westerville (18,000 SF) @ 110,000 → $6.11/SF; median ≈ $5.91/SF. */
 function seededDbWithCohort(): WarehouseDb {

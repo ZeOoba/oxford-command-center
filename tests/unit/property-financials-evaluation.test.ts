@@ -52,7 +52,7 @@ describe('generated threshold text', () => {
   });
 
   it('formats a cell value by the test format', () => {
-    expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.6621)).toBe('66%');
+    expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.7138)).toBe('71%');
     expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.0452)).toBe('4.5%');
     expect(formatThresholdValue(THRESHOLDS.rentRunRateGrowth, 0.0586)).toBe('+5.9%');
     expect(formatThresholdValue(THRESHOLDS.utilityGrowth, -0.123)).toBe('-12%');
@@ -60,7 +60,7 @@ describe('generated threshold text', () => {
 
   it('a value that would print as a boundary it sits on the wrong side of gets one more digit', () => {
     // a management fee just above 5.0% is red (> 5.0%), so it must not read "5.0%".
-    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.050123)).toBe('5.01%');
+    expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.050377)).toBe('5.04%');
     expect(formatThresholdValue(THRESHOLDS.mgmtFeePct, 0.05)).toBe('5.0%');
     expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.6496)).toBe('64.96%');
     expect(formatThresholdValue(THRESHOLDS.noiMargin, 0.6504)).toBe('65%');

@@ -56,12 +56,12 @@ describe('unbucketedFootnote', () => {
   it('names each non-empty group with its rent, omitting empty groups', () => {
     const text = unbucketedFootnote({
       total: 5,
-      mtm: { count: 2, rent: 13_254.6 },
+      mtm: { count: 2, rent: 11_872.4 },
       expired: { count: 2, rent: 0 },
       noEnd: { count: 1, rent: 600 },
     });
     expect(text).toBe(
-      '5 leases not in a bucket: 2 month-to-month past end date ($13K/yr), 2 expired ($0/yr), 1 with no end date ($600/yr).',
+      '5 leases not in a bucket: 2 month-to-month past end date ($12K/yr), 2 expired ($0/yr), 1 with no end date ($600/yr).',
     );
     expect(
       unbucketedFootnote({ total: 1, mtm: { count: 1, rent: 5_000 }, expired: { count: 0, rent: 0 }, noEnd: { count: 0, rent: 0 } }),
