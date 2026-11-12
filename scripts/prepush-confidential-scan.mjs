@@ -10,7 +10,7 @@
 // built-in denylist and WARN — we never block all pushes just because the roster is missing.
 //
 // Node built-ins only (runs in a git hook with no install step).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -139,36 +139,194 @@ export function loadRealDataManifest(pathOverride) {
   const files = [...strings(parsed?.files), ...strings(parsed?.neverTrack?.files)];
   const dirs = [...strings(parsed?.dirs), ...strings(parsed?.neverTrack?.dirs)];
   if (files.length === 0 && dirs.length === 0) throw new Error('real-data manifest lists no paths');
-  return { files, dirs };
+  // Tracked files that share a listed file's stem but are not copies of it, each with its reason.
+  const allow = parsed?.copyRuleAllow && typeof parsed.copyRuleAllow === 'object' ? Object.keys(parsed.copyRuleAllow) : [];
+  return { files, dirs, allow };
+}
+
+/** What may follow a listed file's stem in a copy's name: end of name, or a separator (space, '-',
+ *  '_', '(', '.', '~'). Explorer / browser / editor / writer copies all take one of these shapes:
+ *  "x - Copy.ts", "x (1).json", "x_old.json", "x.json.tmp-1", "x.json~", "x.2026-11-10.json". */
+const STEM_SEPARATOR = /[\s\-_(.~]/;
+
+/** The declared copy markers (corrupt, tmp, temp, bak, backup, orig, old, quarantine, copy), anchored on
+ *  name-segment boundaries so ordinary words ("golden", "template", "copyright") never match. Used for
+ *  names that carry the stem later, such as "Copy of x.json" or "backup_x.json". */
+export const COPY_MARKER = /(?:^|[\s.\-_~()])(?:corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)(?:$|[\s.\-_~()\d])/i;
+
+/** Normalized repo-relative path: forward slashes, no leading './', lower case (NTFS / core.ignorecase). */
+const normPath = (x) => String(x).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+
+/**
+ * True when `path` is a copy of the listed file `listed` (refute rounds 5-6): anywhere at any depth
+ * under the listed file's folder, a name that starts with the listed stem followed by the end of the
+ * name or a separator, or a name that contains the stem (anchored on a non-alphanumeric boundary)
+ * together with a declared copy marker. Kept identical to scripts/governance-check.ts isCopyOf.
+ * @param {string} p - normalized path
+ * @param {string} listed - normalized listed file
+ */
+export function isCopyOf(p, listed) {
+  const slash = listed.lastIndexOf('/');
+  const dir = slash >= 0 ? listed.slice(0, slash + 1) : '';
+  if (!p.startsWith(dir) && !inCopiedFolder(p, dir)) return false;
+  const base = listed.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  const stem = (dot > 0 ? base.slice(0, dot) : base).replace(/^\./, ''); // '.x.json' -> 'x'
+  if (!stem) return false;
+  const name = p.slice(p.lastIndexOf('/') + 1).replace(/^\./, ''); // '.x.json.swp' (vim) is a copy too
+  if (name.startsWith(stem)) {
+    const next = name.charAt(stem.length);
+    if (next === '' || STEM_SEPARATOR.test(next)) return true;
+  }
+  const at = name.indexOf(stem);
+  if (at > 0 && !/[a-z0-9]/.test(name.charAt(at - 1))) {
+    const after = name.charAt(at + stem.length);
+    if ((after === '' || !/[a-z0-9]/.test(after)) && COPY_MARKER.test(name.slice(0, at))) return true;
+  }
+  return false;
+}
+
+/** True when `p` lies under a copy of the folder `dir` (for "a/b/" that is "a/b - Copy/", "a/b.bak/",
+ *  "a/b (1)/" ...): the listed folder's own name followed by a separator, beside the original. */
+function inCopiedFolder(p, dir) {
+  const trimmed = dir.replace(/\/$/, '');
+  if (!trimmed) return false;
+  const cut = trimmed.lastIndexOf('/');
+  const parent = cut >= 0 ? trimmed.slice(0, cut + 1) : '';
+  const folder = trimmed.slice(cut + 1);
+  if (!p.startsWith(parent + folder)) return false;
+  const rest = p.slice(parent.length + folder.length);
+  const end = rest.indexOf('/');
+  return end > 0 && STEM_SEPARATOR.test(rest.charAt(0));
 }
 
 /**
- * True when `path` is a real-data path the manifest covers. Synthetic stand-ins under
- * fixtures/synthetic/ never match (they are what the repo is meant to carry).
+ * True when `path` is a real-data path the manifest covers: a listed file or directory, or a copy of a
+ * listed file (isCopyOf). Synthetic stand-ins under fixtures/synthetic/ never match, and neither do the
+ * reasoned tracked siblings in the manifest's copyRuleAllow.
  * @param {string} path - repo-relative, either slash style.
- * @param {{files: string[], dirs: string[]}} manifest
+ * @param {{files: string[], dirs: string[], allow?: string[]}} manifest
  */
 export function isRealDataPath(path, manifest) {
-  // Case-insensitive and normalized: the checkout lives on NTFS (core.ignorecase), so a case variant
-  // of a manifest path is the same file there and must be caught too.
-  const norm = (x) => String(x).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
-  const p = norm(path);
+  const p = normPath(path);
   if (p.startsWith(SYNTHETIC_PREFIX)) return false;
-  if (manifest.dirs.some((d) => p.startsWith(norm(d)))) return true;
-  // A listed file, or a copy of one (refute round 5 F5/F9): the full name plus any suffix, or the same
-  // directory and stem carrying a quarantine / temp / backup marker.
-  return manifest.files.some((f) => {
-    const nf = norm(f);
-    if (p === nf || p.startsWith(`${nf}.`) || p.startsWith(`${nf}-`) || p.startsWith(`${nf}~`)) return true;
-    const slash = nf.lastIndexOf('/');
-    const dot = nf.lastIndexOf('.');
-    const stem = dot > slash ? nf.slice(0, dot) : nf;
-    return p.startsWith(`${stem}.`) && p.lastIndexOf('/') === slash && COPY_MARKER.test(p.slice(stem.length));
-  });
+  if ((manifest.allow ?? []).some((a) => normPath(a) === p)) return false;
+  if (manifest.dirs.some((d) => p.startsWith(normPath(d)))) return true;
+  return manifest.files.some((f) => isCopyOf(p, normPath(f)));
 }
 
-/** A quarantine / temp / backup copy marker in a file name. */
-const COPY_MARKER = /(corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)/i;
+// ── content fingerprint (refute round 6) ─────────────────────────────────────────────────────────
+// A path rule cannot see a renamed copy, or real figures pasted into an ordinary file. This check
+// reads the REAL manifest files on this machine, collects their distinctive amounts, and blocks a
+// push whose added lines in any one file carry FINGERPRINT_BLOCK_MIN or more of them. It FAILS OPEN
+// where no real data exists (CI and synthetic checkouts: every manifest file is absent or a synthetic
+// stand-in, so there is nothing to compare against); the path rules above still apply there.
+
+/** Distinct real amounts in one file's added lines that block the push. */
+export const FINGERPRINT_BLOCK_MIN = 3;
+/** The same threshold for the committed synthetic fixtures. Their money is seeded random draws (each
+ *  proved to be its own public draw #0 in CI), and across thousands of drawn values a handful equal a
+ *  real amount from some other field by pure coincidence (the generator's own leak check is field-aware
+ *  and reports none). A copy of real data would carry hundreds or thousands; coincidences stay in the
+ *  single digits. */
+export const FINGERPRINT_BLOCK_MIN_SYNTHETIC = 50;
+
+/** JSON keys whose numbers are quantities, not money (square feet, counts, pages). */
+const NON_MONEY_KEYS = /^(sf|leased_sf|common_area_sf|rentable_sf|rentableSf|building_sf|land_sf|qty|n|nm|n_months|index|tenants|tenantCount|pages_total|pages_without_text|pages_read|source_page|buildings|year|units)$/i;
+
+/** Canonical form of a numeric token: separators and '$' dropped, absolute value. */
+const canonAmount = (raw) => {
+  const n = Number(String(raw).replace(/[$,_\s]/g, ''));
+  return Number.isFinite(n) ? String(Math.abs(n)) : null;
+};
+
+/** Distinctive: at least 1,000, not a round thousand, six or more significant digits. */
+const distinctiveAmount = (c) => {
+  const n = Number(c);
+  if (!(n >= 1000) || Number.isInteger(n / 1000)) return false;
+  return c.replace(/\D/g, '').replace(/^0+/, '').length >= 6;
+};
+
+const NUMBER_TOKEN = /\$?\d{1,3}(?:[,_]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g;
+
+/**
+ * The distinctive amounts of the REAL manifest files under `root`, or null when none is real (CI, a
+ * synthetic checkout): the caller then fails open. A file counts as synthetic when it is listed in
+ * data/.synthetic-seeded.json or byte-identical to its stand-in under fixtures/synthetic/.
+ * @param {string} root
+ * @param {string} [manifestPath] - test seam
+ * @returns {Set<string> | null}
+ */
+export function realAmountFingerprints(root, manifestPath) {
+  const parsed = JSON.parse(readFileSync(manifestPath ?? join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf8'));
+  const marker = join(root, 'data', '.synthetic-seeded.json');
+  let seeded = new Set();
+  try {
+    if (existsSync(marker)) seeded = new Set((JSON.parse(readFileSync(marker, 'utf8')).seeded ?? []).map((x) => normPath(x)));
+  } catch {
+    seeded = new Set(['*']); // unreadable marker: treat everything as synthetic (no comparison possible)
+  }
+  const rels = [...(parsed.files ?? [])];
+  const walk = (d) => {
+    const abs = join(root, d);
+    if (!existsSync(abs)) return;
+    for (const n of readdirSync(abs)) {
+      const rel = `${d.replace(/\/$/, '')}/${n}`;
+      if (statSync(join(root, rel)).isDirectory()) walk(rel);
+      else rels.push(rel);
+    }
+  };
+  for (const d of parsed.dirs ?? []) walk(d);
+  const out = new Set();
+  let realFiles = 0;
+  const add = (c) => {
+    if (c && distinctiveAmount(c)) out.add(c);
+  };
+  const walkJson = (v, key) => {
+    if (Array.isArray(v)) v.forEach((x) => walkJson(x, key));
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walkJson(x, k);
+    else if (typeof v === 'number' && !NON_MONEY_KEYS.test(key)) add(canonAmount(v));
+  };
+  for (const rel of rels) {
+    const abs = join(root, rel);
+    if (!existsSync(abs) || seeded.has('*') || seeded.has(normPath(rel))) continue;
+    const text = readFileSync(abs, 'utf8');
+    const fixture = join(root, 'fixtures', 'synthetic', rel);
+    if (existsSync(fixture) && readFileSync(fixture, 'utf8') === text) continue;
+    realFiles += 1;
+    const embedded = rel.endsWith('.html') ? /<script type="application\/json" id="data">(.*)<\/script>/.exec(text)?.[1] : undefined;
+    try {
+      if (rel.endsWith('.json')) walkJson(JSON.parse(text), '');
+      else if (embedded !== undefined) walkJson(JSON.parse(embedded), '');
+      else for (const m of text.matchAll(NUMBER_TOKEN)) if (m[0].includes('.')) add(canonAmount(m[0])); // non-JSON: cents only
+    } catch {
+      for (const m of text.matchAll(NUMBER_TOKEN)) if (m[0].includes('.')) add(canonAmount(m[0]));
+    }
+  }
+  return realFiles === 0 ? null : out;
+}
+
+/**
+ * Files whose added lines carry FINGERPRINT_BLOCK_MIN or more distinct real amounts.
+ * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {Set<string>} fingerprints
+ * @returns {{file: string, count: number}[]}
+ */
+export function scanAddedLinesForRealAmounts(addedLines, fingerprints) {
+  const byFile = new Map();
+  for (const a of addedLines) {
+    for (const m of a.text.matchAll(NUMBER_TOKEN)) {
+      const c = canonAmount(m[0]);
+      if (c && fingerprints.has(c)) {
+        const set = byFile.get(a.file) ?? new Set();
+        set.add(c);
+        byFile.set(a.file, set);
+      }
+    }
+  }
+  const min = (file) => (normPath(file).startsWith(SYNTHETIC_PREFIX) ? FINGERPRINT_BLOCK_MIN_SYNTHETIC : FINGERPRINT_BLOCK_MIN);
+  return [...byFile].filter(([file, set]) => set.size >= min(file)).map(([file, set]) => ({ file, count: set.size }));
+}
 
 /**
  * Parse `git diff --name-status --no-renames --diff-filter=AMT` output and return every added or
@@ -620,7 +778,26 @@ export function collectRefScan(stdinText, cwd, deps) {
   return { addedByRef, binaryHits, realDataHits, diffErrors };
 }
 
+/**
+ * `node scripts/prepush-confidential-scan.mjs --staged`: the real-data path and content-fingerprint
+ * checks over what is staged for the next commit (git diff --cached). Not installed as a hook (the
+ * hooks directory is shared by every worktree of the live checkout); run it by hand or from CI.
+ */
+function stagedMain() {
+  const manifest = loadRealDataManifest();
+  const names = execFileSync('git', ['diff', '--cached', '--name-status', '--no-renames', '--diff-filter=AMT'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const pathHits = parseRealDataPaths(names, manifest);
+  const added = parseAddedLines(execFileSync('git', ['diff', '--cached', '-U0', '--no-color'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
+  const fps = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  const amountHits = fps ? scanAddedLinesForRealAmounts(added, fps) : [];
+  if (!fps) console.log('[prepush-confidential-scan --staged] content fingerprint check skipped: no real data on this machine.');
+  for (const p of pathHits) console.error(`real-data path staged: ${p}`);
+  for (const h of amountHits) console.error(`real amounts staged: ${h.file} (${h.count})`);
+  process.exit(pathHits.length || amountHits.length ? 1 : 0);
+}
+
 function main() {
+  if (process.argv.includes('--staged')) return stagedMain();
   const { alwaysTerms, contextGroups, rosterOk, rosterDetail } = loadTerms();
   if (!rosterOk && process.env['PREPUSH_ALLOW_NO_ROSTER'] === '1') {
     console.warn(`[prepush-confidential-scan] WARN: PREPUSH_ALLOW_NO_ROSTER=1 - roster gate BYPASSED for this push (${rosterDetail}).`);
@@ -688,6 +865,29 @@ function main() {
         'the synthetic stand-in under fixtures/synthetic/ (regenerate it with `npm run data:synthetic`). ' +
         'Remove the file from the commit (git rm --cached <path>) and push again. There is no override.',
     );
+  }
+
+  // Content fingerprint: real figures in a renamed copy or pasted into any file (fails open where no
+  // real data exists, e.g. CI).
+  let fingerprints = null;
+  try {
+    fingerprints = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  } catch (err) {
+    console.warn(`[prepush-confidential-scan] WARN: real-amount fingerprint list unavailable (${errorLine(err)}); content check skipped.`);
+  }
+  if (fingerprints === null) {
+    console.log('[prepush-confidential-scan] content fingerprint check skipped: no real data on this machine (CI or a synthetic checkout).');
+  } else {
+    const amountHits = addedByRef.flatMap((added) => scanAddedLinesForRealAmounts(added, fingerprints));
+    if (amountHits.length > 0) {
+      blockOnHits(
+        amountHits,
+        `added lines carry ${FINGERPRINT_BLOCK_MIN}+ distinct real amounts from the local real-data files`,
+        (h) => `${h.file}  ->  ${h.count} real amount(s)`,
+        'A copy of real data (renamed or pasted) is about to be pushed. Remove it from the commit and use ' +
+          'synthetic values. There is no override.',
+      );
+    }
   }
 
   if (binaryHits.length > 0) {

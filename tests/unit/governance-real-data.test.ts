@@ -42,7 +42,25 @@ describe('governance: real firm data is never tracked (checkRealDataUntracked)',
     expect(checkRealDataUntracked(REPO, ['data/ar/review-queue.corrupt-1700000000000.json']).pass).toBe(false);
     expect(checkRealDataUntracked(REPO, ['src/data/seed-deals.ts.bak']).pass).toBe(false);
     expect(checkRealDataUntracked(REPO, ['scripts/property-financials/config/curated/leases.corrupt-1.json']).pass).toBe(false);
-    expect(checkRealDataUntracked(REPO, ['src/data/seed-deals.test.ts']).pass).toBe(true);
+    expect(checkRealDataUntracked(REPO, ['src/data/seed-dealership.ts']).pass).toBe(true);
+  });
+
+  it('fails on Explorer / browser / archive copies at any depth (stem-anchored copy rule)', () => {
+    for (const p of [
+      'src/data/seed-deals - Copy.ts',
+      'src/data/seed-deals (1).ts',
+      'src/data/Copy of seed-deals.ts',
+      'src/data/seed-deals_old.ts',
+      'src/data/seed-deals.test.ts',
+      'src/data/old/seed-deals.ts',
+      'src/data - Copy/seed-deals.ts',
+      'scripts/property-financials/config/curated.bak/leases.json',
+    ]) {
+      expect(checkRealDataUntracked(REPO, [p]).pass, p).toBe(false);
+    }
+    for (const p of ['src/data/my-seed-deals.ts', 'src/data2/seed-deals.ts', 'src/data/queries.ts']) {
+      expect(checkRealDataUntracked(REPO, [p]).pass, p).toBe(true);
+    }
   });
 
   it('allows the synthetic stand-ins under fixtures/synthetic/ and Windows-style separators are normalized', () => {
