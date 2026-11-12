@@ -41,7 +41,16 @@ export interface PfGolden {
   /** Lease-run engine output per property of the operator lease-term roster at default assumptions
    *  (config/local/lease-term-seeds.json), cents. A snapshot of engine output: golden:ratify checks it
    *  against the pre-untrack Excel-model figures read from git history (./leaserun-baseline.ts). */
-  leaseRun: Record<string, { stabilizedNoi: number | null; indicativeValue: number | null; noiByYear: Record<string, number> }>;
+  leaseRun: Record<
+    string,
+    {
+      stabilizedNoi: number | null;
+      indicativeValue: number | null;
+      noiByYear: Record<string, number>;
+      /** Per lease year: base rent, EGR (base rent less vacancy) and the two opex lines, cents. */
+      periods: Record<string, { baseRent: number; egr: number; managementFee: number; reserve: number }>;
+    }
+  >;
 }
 
 export interface PfLocks {
@@ -165,6 +174,9 @@ export function computeLeaseRunGolden(seeds: readonly LeaseTerm[]): PfGolden['le
       stabilizedNoi: p.stabilizedNoi === null ? null : toCents(p.stabilizedNoi),
       indicativeValue: p.indicativeValue === null ? null : toCents(p.indicativeValue),
       noiByYear: Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, toCents(x.noi)])),
+      periods: Object.fromEntries(
+        p.periods.map((x) => [x.leaseYearLabel, { baseRent: toCents(x.baseRent), egr: toCents(x.egr), managementFee: toCents(x.managementFee), reserve: toCents(x.reserve) }]),
+      ),
     };
   }
   return out;

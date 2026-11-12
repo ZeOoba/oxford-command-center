@@ -661,5 +661,8 @@ describe('value lock — lease-run engine on the operator lease-term roster', ()
     expect(p.stabilizedNoi === null ? null : Math.round(p.stabilizedNoi * 100) / 100).toBe(g.stabilizedNoi);
     expect(p.indicativeValue === null ? null : Math.round(p.indicativeValue * 100) / 100).toBe(g.indicativeValue);
     expect(Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, Math.round(x.noi * 100) / 100]))).toEqual(g.noiByYear);
+    // EGR (vacancy), base rent and the opex lines are locked too, so offsetting moves cannot hide.
+    const c = (v: number): number => Math.round(v * 100) / 100;
+    expect(Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, { baseRent: c(x.baseRent), egr: c(x.egr), managementFee: c(x.managementFee), reserve: c(x.reserve) }]))).toEqual(g.periods);
   });
 });

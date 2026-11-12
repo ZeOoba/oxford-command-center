@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { GOLDEN_COST, GOLDEN_PF, computeCostGolden, computePfGolden } from './golden/compute-golden';
-import { compareToPinned, loadPinnedFromHistory } from './golden/leaserun-baseline';
+import { LOCAL_BASELINE_REL, compareToPinned, loadPinned } from './golden/leaserun-baseline';
 import { loadLeaseTermSeeds } from '../server/warehouse/lease-terms';
 import { syntheticInUse } from '../server/real-data-status';
 
@@ -27,20 +27,29 @@ function main(): void {
   if (synthetic.length) throw new Error(`golden:ratify refuses on synthetic stand-in data: ${synthetic.join(', ')}`);
   const pf = computePfGolden(read('data/property-financials/dataset.json'), loadLeaseTermSeeds(ROOT));
   // The leaseRun lock is a snapshot of engine output. Check it against the independently computed
-  // Excel-model figures the pre-untrack lease-run test pinned, read from git history at run time
-  // (never committed again); refuse to write a lock that disagrees.
-  const pinned = loadPinnedFromHistory(ROOT);
-  if (pinned === null) {
-    console.log('[golden:ratify] leaseRun baseline: pre-untrack lease-run test not reachable in this clone; check skipped');
-  } else {
-    const bad = compareToPinned(pf.leaseRun, pinned);
-    if (bad.length && process.env['ORA_ACCEPT_LEASERUN_CHANGE'] !== '1') {
+  // Excel-model figures the pre-untrack lease-run test pinned: the local copy (config/local, written
+  // once before the history purge) or git history. Fail closed when neither is available, when the
+  // baseline is incomplete, or when the lock disagrees (refute round 4 F1/F4/F5).
+  const accept = process.env['ORA_ACCEPT_LEASERUN_CHANGE'] === '1';
+  const base = loadPinned(ROOT);
+  if (base === null) {
+    if (!accept) {
       throw new Error(
-        `golden:ratify refuses: the leaseRun lock disagrees with the pre-untrack Excel-model figures (${bad.join('; ')}). ` +
+        `golden:ratify refuses: no leaseRun baseline (${LOCAL_BASELINE_REL} is missing and the pre-untrack lease-run test is not ` +
+          'in this clone). Write it with `npx tsx scripts/golden/leaserun-baseline.ts --write-local` on a clone that still has the ' +
+          'history, or set ORA_ACCEPT_LEASERUN_CHANGE=1 for a reviewed, intended change.',
+      );
+    }
+    console.log('[golden:ratify] leaseRun baseline: none available; ACCEPTED by ORA_ACCEPT_LEASERUN_CHANGE');
+  } else {
+    const bad = compareToPinned(pf.leaseRun, base.pinned);
+    if (bad.length && !accept) {
+      throw new Error(
+        `golden:ratify refuses: the leaseRun lock disagrees with the pre-untrack Excel-model figures from the ${base.source} (${bad.join('; ')}). ` +
           'Fix the engine or the lease-term roster; set ORA_ACCEPT_LEASERUN_CHANGE=1 only for a reviewed, intended change.',
       );
     }
-    console.log(`[golden:ratify] leaseRun baseline: ${bad.length ? `${bad.length} difference(s) ACCEPTED by ORA_ACCEPT_LEASERUN_CHANGE` : 'matches the pre-untrack Excel-model figures'}`);
+    console.log(`[golden:ratify] leaseRun baseline (${base.source}): ${bad.length ? `${bad.length} difference(s) ACCEPTED by ORA_ACCEPT_LEASERUN_CHANGE` : 'matches the pre-untrack Excel-model figures'}`);
   }
   const writes: Array<[string, unknown]> = [
     [GOLDEN_PF, pf],
