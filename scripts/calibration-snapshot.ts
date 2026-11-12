@@ -33,6 +33,7 @@ import {
 } from '../server/warehouse/calibration';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
 import { scoreProperties } from '../server/warehouse/scores';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 export interface SnapshotOptions {
   /** The scheduled-task id, used for the emittedBy tag (`snapshot:<taskId>`). */
@@ -174,6 +175,9 @@ function defaultDbPath(): string {
 }
 
 function main(argv: string[]): number {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('calibration-snapshot');
   const args = parseArgs(argv);
   const dbPath = args.db ?? defaultDbPath();
   let db: WarehouseDb;

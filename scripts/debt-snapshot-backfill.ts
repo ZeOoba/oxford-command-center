@@ -15,6 +15,7 @@ import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { buildLoanPropertyMap } from '../server/warehouse/property-crosswalk';
 import { writeDebtSnapshot } from '../server/warehouse/debt-snapshot';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 export interface CliArgs {
   dbPath?: string;
@@ -154,6 +155,9 @@ export function selectOutcome(
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('debt-snapshot-backfill');
   const args = parseArgs(argv);
   const wbPath = args.workbook ?? workbookPath();
   const dbPath = args.dbPath ?? defaultDbPath();

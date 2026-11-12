@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 // CSV column order (header row) — property_id,property_name,market,tax_year,jurisdiction,
 // assessed_value,assessment_ratio,millage_rate,annual_tax_billed,source,as_of
@@ -374,6 +375,9 @@ function defaultDbPath(): string {
 }
 
 function main(argv: string[]): number {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('import-assessments');
   let args: { csvPath: string; db?: string };
   try {
     args = parseArgs(argv);
