@@ -588,11 +588,19 @@ describe('committed seed data', () => {
   it('payload variances reproduce from $/unit and equal the value lock (data/cost-seg/golden.local.json)', () => {
     const by = (p: string) => ledger.find((o) => o.property === p)!;
     const G = costGolden().calibration;
-    for (const p of ['55 New Plant Ct', '3540 E Fifth Ave', '3875-3883 E Livingston', '3520 E Fulton St']) {
-      expect(G[p], p).toBeDefined();
-      expect(variancePct(by(p))).toBeCloseTo(G[p]!.variancePct!, 10);
-      expect(ratio(by(p))).toBeCloseTo(G[p]!.ratio!, 10);
+    // every ledger row is locked, keyed by obs_id
+    expect(Object.keys(G).sort()).toEqual(ledger.map((o) => o.obs_id).sort());
+    for (const o of ledger) {
+      const g = G[o.obs_id]!;
+      expect(g.property, o.obs_id).toBe(o.property);
+      const v = variancePct(o);
+      const r = ratio(o);
+      if (g.variancePct === null) expect(v, o.obs_id).toBeNull();
+      else expect(v, o.obs_id).toBeCloseTo(g.variancePct, 10);
+      if (g.ratio === null) expect(r, o.obs_id).toBeNull();
+      else expect(r, o.obs_id).toBeCloseTo(g.ratio, 10);
     }
+    for (const p of ['55 New Plant Ct', '3540 E Fifth Ave', '3875-3883 E Livingston', '3520 E Fulton St']) expect(by(p), p).toBeDefined();
     // the stale-PCA rows read as savings and the Fulton quote as a multiple. That direction is a rank
     // between two real amounts, which the synthetic copy deliberately does not keep (its unit costs
     // are independent seeded draws), so it is asserted on the real file only.

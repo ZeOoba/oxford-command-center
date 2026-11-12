@@ -4,8 +4,9 @@
 // Spec: docs/superpowers/specs/2026-06-14-pfi-lease-run-proforma-feature.md (Engine section).
 //
 // projectLeaseRun(lease, assumptions) → LeaseRunProjection. The math is IDENTICAL to the v1.0
-// Excel models (build_proformas.py) — the golden reconciliation test (tests/unit/lease-run.test.ts)
-// is the backstop. No I/O, no governor constants, no firm-figure source reads — a property's
+// Excel models (build_proformas.py). Backstops: tests/unit/lease-run.test.ts (hand-computed figures on
+// synthetic seeds) and the ratified `leaseRun` golden on the real roster, which golden:ratify checks
+// against the pre-untrack Excel-model figures (scripts/golden/leaserun-baseline.ts). No I/O, no governor constants, no firm-figure source reads — a property's
 // forward contractual cashflow given its lease terms and a set of overlay-overridable assumptions.
 //
 // NNN-net model (Behavior contract #2): for NNN / absolute-NNN structures, recoveries are

@@ -63,25 +63,35 @@
     }
   },
   "calibration": {
-    "55 New Plant Ct": {
+    "new-plant:roof_epdm:vendor-18:2017-02": {
+      "property": "55 New Plant Ct",
       "variancePct": -0.08979591836734702,
       "ratio": 0.910204081632653
     },
-    "3540 E Fifth Ave": {
+    "e-fifth:roof_tpo:vendor-20:2022-04": {
+      "property": "3540 E Fifth Ave",
       "variancePct": -0.7896138482023968,
       "ratio": 0.2103861517976032
     },
-    "3875-3883 E Livingston": {
+    "e-livingston:roof_tpo:vendor-22:2026-08": {
+      "property": "3875-3883 E Livingston",
       "variancePct": -0.5308848080133556,
       "ratio": 0.4691151919866444
     },
-    "3520 E Fulton St": {
+    "e-fulton:roof_epdm:vendor-22:2026-05": {
+      "property": "3520 E Fulton St",
       "variancePct": -0.4035326086956522,
       "ratio": 0.5964673913043478
     },
-    "2800-2826 Banwick": {
+    "banwick:roof_epdm:quote-low:2026": {
+      "property": "2800-2826 Banwick",
       "variancePct": 1.5727272727272728,
       "ratio": 2.5727272727272728
+    },
+    "banwick:roof_epdm:quote-high:2026": {
+      "property": "2800-2826 Banwick",
+      "variancePct": 3.843283582089552,
+      "ratio": 4.843283582089552
     }
   }
 }
