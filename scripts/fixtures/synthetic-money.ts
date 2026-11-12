@@ -20,8 +20,11 @@
 //   - the ONLY attributes of a real amount that survive are its SIGN and EXACT ZERO (a credit line,
 //     a month with no activity, a lease-up month with no rent). Tests depend on those partial-year
 //     and zero patterns, so they are kept; nothing else about the real value reaches the output.
-//   - a draw that happens to equal a real amount on the numeric fingerprint list is redrawn with a
-//     counter appended to its key, so the fingerprint leak check stays at zero.
+//   - every value is draw #0 for its key: there is NO redraw. An earlier version redrew a value that
+//     happened to equal a real amount; because the seed and keys are public, the redraw itself revealed
+//     which draws were real amounts (refute round 4 F3). A collision with the real-amount fingerprint
+//     list now FAILS the build (scripts/fixtures/build-synthetic-data.ts); the fix is to bump SYNTH_SEED
+//     globally, never to redraw one value.
 // Derived figures (sums, NOI = revenue - opex, per-SF, ratios, portfolio views, cash totals, ...) are
 // recomputed by the generator from the drawn parts, and joins (a property's loan balance and its loan
 // row, arrears and AR balances, ...) are re-established by copying the canonical record's drawn value
@@ -30,7 +33,7 @@
 import { createHash } from 'node:crypto';
 
 /** Public seed. Changing it re-draws every synthetic amount (bump the suffix on purpose only). */
-export const SYNTH_SEED = 'occ-synthetic-v2';
+export const SYNTH_SEED = 'occ-synthetic-v3';
 
 /** Decimal places of a number's shortest representation (exponent form counts as many). */
 export function decimalsOf(v: number): number {
@@ -221,32 +224,20 @@ export const hasBand = (field: string): boolean => Object.prototype.hasOwnProper
 export interface MoneyDrawer {
   /**
    * Draw an amount for `key` inside [lo, hi) (log-uniform), with the given sign and precision. The
-   * caller passes the sign of the real amount; that is the only thing taken from it. A result whose
-   * absolute value is on the avoid list (real-amount fingerprints) is redrawn with a counter.
+   * caller passes the sign of the real amount; that is the only thing taken from it. Always draw #0
+   * for the key: nothing about any real amount can move it.
    */
   draw(key: string, sign: number, lo: number, hi: number, decimals?: number): number;
-  /** Number of redraws forced by the avoid list so far (for the run log). */
-  readonly redraws: number;
 }
 
-export function makeMoneyDrawer(avoid: ReadonlySet<string> = new Set()): MoneyDrawer {
-  let redraws = 0;
+export function makeMoneyDrawer(): MoneyDrawer {
   return {
     draw(key: string, sign: number, lo: number, hi: number, decimals = 2): number {
-      for (let c = 0; ; c++) {
-        // A degenerate band (lo == hi: a model value with no jitter) steps by one unit of precision.
-        const x = hi > lo ? logUniform(c === 0 ? key : `${key}#${c}`, lo, hi) : lo + c * 10 ** -Math.min(decimals, 2);
-        let r = roundTo(x, decimals);
-        if (r === 0) r = decimals === 0 ? 1 : 0.01; // a drawn amount is never an exact zero
-        if (avoid.has(String(r)) && c < 1000) {
-          redraws++;
-          continue;
-        }
-        return sign < 0 ? -r : r;
-      }
-    },
-    get redraws() {
-      return redraws;
+      // A degenerate band (lo == hi: a model value with no jitter) is the value itself.
+      const x = hi > lo ? logUniform(key, lo, hi) : lo;
+      let r = roundTo(x, decimals);
+      if (r === 0) r = decimals === 0 ? 1 : 0.01; // a drawn amount is never an exact zero
+      return sign < 0 ? -r : r;
     },
   };
 }

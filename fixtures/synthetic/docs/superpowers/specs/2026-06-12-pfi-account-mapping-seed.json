@@ -2,7 +2,7 @@
   "_meta": {
     "generated": "2026-06-12",
     "source": "pfi-corpus-audit workflow wf_292578db-604 — 32 P&L files (2024/2025/2026 YTD), 339 distinct GL accounts",
-    "verification": "Adversarially reviewed; 2 corrections applied (Real Estate Tax Escrow, Insurance Escrow -> excluded). Verdict: structurally sound on distributions/debt/commissions/TI/capex/recovery classes. All 12 open rulings resolved by Syn066 2026-06-12.",
+    "verification": "Adversarially reviewed; 2 corrections applied (Real Estate Tax Escrow, Insurance Escrow -> excluded). Verdict: structurally sound on distributions/debt/commissions/TI/capex/recovery classes. All 12 open rulings resolved by Syn068 2026-06-12.",
     "corrections_applied": 2,
     "open_rulings": 0
   },
@@ -197,7 +197,7 @@
       "normalized_category": "Capital Expenditures",
       "classification": "capex",
       "confidence": "high",
-      "note": "RULED 2026-06-12 (general CRE standards): project-tied design fees capitalize; observed instance is $159,816 (immaterial)."
+      "note": "RULED 2026-06-12 (general CRE standards): project-tied design fees capitalize; observed instance is $16,188 (immaterial)."
     },
     {
       "code": "6830",
@@ -205,7 +205,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: assume expense per the $52,850 rule when no detail; single items >$17,404 or lease-tied buildouts reclassify to capex/ti on review."
+      "note": "RULED 2026-06-12: assume expense per the $1,021 rule when no detail; single items >$4,251 or lease-tied buildouts reclassify to capex/ti on review."
     },
     {
       "code": "6605",
@@ -837,7 +837,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: $27,614 single-item rule — assume opex without line detail (flag); any single ticket >$79,440 reclassifies to capex when detail exists."
+      "note": "RULED 2026-06-12: $11,750 single-item rule — assume opex without line detail (flag); any single ticket >$245,309 reclassifies to capex when detail exists."
     },
     {
       "code": null,
@@ -1741,7 +1741,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: $6,905 single-item rule — assume opex without line detail (flag); any single ticket >$16,799 reclassifies to capex when detail exists."
+      "note": "RULED 2026-06-12: $534 single-item rule — assume opex without line detail (flag); any single ticket >$583 reclassifies to capex when detail exists."
     },
     {
       "code": null,
@@ -1981,7 +1981,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: assume expense for now per the $5,112 rule; flag for detail."
+      "note": "RULED 2026-06-12: assume expense for now per the $47,556 rule; flag for detail."
     },
     {
       "code": "6700",
@@ -2759,10 +2759,10 @@
       "property_id": "sepich-portfolio-columbus-oh-8-props",
       "period": "2025",
       "confidence": "high",
-      "note": "H4 (2026-06-22): FVC 2025 ~$29,609 perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
+      "note": "H4 (2026-06-22): FVC 2025 ~$11,792 perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
     }
   ],
-  "needs_syn066_ruling": [],
+  "needs_syn068_ruling": [],
   "engine_rules_needed": [
     "Escrow-only books: for cash-basis entities where escrow funding is the ONLY tax/insurance record (lender pays from escrow), excluding the escrow lines zeroes out taxes/insurance and inflates NOI — the engine needs a rule to derive tax/insurance expense from escrow disbursements or lender statements for those entities. Related: confirm 'Mortgage Payment' 7405 is P&I only, not PITI; if escrow is embedded, taxes/insurance silently leak out of opex.",
     "Replacement Units and Parts (both charts, classified opex low-confidence): name says replacement units — pull GL detail and split whole-unit replacements (capex) from parts/consumables (opex); a blanket opex call mixes capital into NOI, a blanket capex call strips real R&M.",
@@ -2783,13 +2783,13 @@
     "by": "Contact 02 (session ruling, verbatim in memory/pfi-build-canon.md)",
     "rules": [
       "Owner transfers NEVER in NOI; general CRE accounting standards govern NOI/cash-flow/debt-service.",
-      "R&M single item > $68,959 = capex; <= $3,538 = opex; assume opex and flag when line detail unavailable.",
+      "R&M single item > $17,554 = capex; <= $100,994 = opex; assume opex and flag when line detail unavailable.",
       "Asset Management Fees below NOI (excluded).",
       "PM-software exports authoritative over internal QuickBooks.",
       "Coverage starts 2025 for late-2024 acquisitions (Westerville, 9620 State 350, Northwood).",
       "Basis: ingest as-is, tag basis, within-basis comparisons only.",
       "Ownership overlay: 100% figures with Oxford share (50% Red Branch/Broadway, 25% 1851 Solar).",
-      "FVC 2025 contains $986 one-time cell-tower perpetual easement sale (was Zettler Rd) — exclude from run-rate NOI.",
+      "FVC 2025 contains $53,907 one-time cell-tower perpetual easement sale (was Zettler Rd) — exclude from run-rate NOI.",
       "401 Sunburst + 7658 Fishel run lease-based with estimated capex (no P&L).",
       "FVC is the official entity-level unit (Sepich subsets never additive)."
     ]

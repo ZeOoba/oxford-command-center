@@ -48,7 +48,8 @@
 // name / address / tenant / company / person / email fields (plus their distinctive word tokens) is
 // grepped across every synthetic output; any hit fails the run (exit 1). Hits are reported by
 // file:line and term length only, never by the real term.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -58,6 +59,7 @@ import { rentStepEvents } from '../../src/analytics/property-financials/metrics'
 import { computeLevers } from '../../src/analytics/property-financials/levers';
 import {
   DEFAULT_SF,
+  SYNTH_SEED,
   UNIT_COST_BANDS,
   bandFor,
   hasBand,
@@ -255,6 +257,15 @@ class Aliases {
     return toks.length > 0 && toks.every((t) => this.protectedTokens.has(t));
   }
 
+  /** Register a short form or co-mention of an already-aliased name (a vendor's first word, the name
+   *  without its entity suffix): free text often names a counterparty that way (refute round 4 F6). */
+  variant(real: string, fake: string): void {
+    const r = real.trim();
+    if (r.length < 3 || r.toLowerCase() === fake.toLowerCase()) return;
+    if (!this.registry.has(r)) this.registry.set(r, ['vendor', fake]);
+    this.addPhrase(r, fake, false);
+  }
+
   /** Register an explicit real -> fake mapping (ids recomputed by the caller). */
   map(real: string, fake: string): void {
     if (real === fake) return;
@@ -338,13 +349,8 @@ class Ctx {
   private freeCounters = new Map<string, number>();
   private readonly m: MoneyDrawer;
   private textDollars = 0;
-  /** @param avoid real-amount fingerprints a draw must never equal (redrawn with a counter). */
-  constructor(avoid: ReadonlySet<string> = new Set()) {
-    this.m = makeMoneyDrawer(avoid);
-  }
-
-  get redraws(): number {
-    return this.m.redraws;
+  constructor() {
+    this.m = makeMoneyDrawer();
   }
 
   /**
@@ -1002,24 +1008,26 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   // Deal comps: keyed by the pipeline deal; comp addresses and source links are replaced.
   let comp = 0;
   const dealComps: Obj = {};
-  for (const [k, v] of Object.entries((s['dealComps'] as Obj | undefined) ?? {})) {
+  Object.entries((s['dealComps'] as Obj | undefined) ?? {}).forEach(([k, v], di) => {
     const c = v as Obj;
     const sk = ctx.t(k)!;
     ids.comp.set(k, sk);
+    // Draw keys use the deal's POSITION, not its (aliased) key: structural, name-free, and stable when
+    // the generator is re-run on its own output (the draw-#0 test).
     const fixComp = (kind: string) => (x: Json, j: number): Json => {
-      const o = W(x, 'comp', `snap/dealComps/${sk}/${kind}[${j}]`) as Obj;
+      const o = W(x, 'comp', `snap/dealComps#${di}/${kind}[${j}]`) as Obj;
       comp += 1;
       if ('address' in o) o['address'] = `Comp ${pad(comp, 3)}`;
       if (typeof o['source'] === 'string') o['source'] = `https://example.com/comp-source/${pad(comp, 3)}`;
       return o;
     };
     dealComps[sk] = {
-      ...(W({ ...c, saleComps: [], rentComps: [], sources: [] }, 'dealComps', `snap/dealComps/${sk}`) as Obj),
+      ...(W({ ...c, saleComps: [], rentComps: [], sources: [] }, 'dealComps', `snap/dealComps#${di}`) as Obj),
       saleComps: ((c['saleComps'] as Json[] | undefined) ?? []).map(fixComp('saleComps')),
       rentComps: ((c['rentComps'] as Json[] | undefined) ?? []).map(fixComp('rentComps')),
       sources: ((c['sources'] as Json[] | undefined) ?? []).map((_x, i) => `https://example.com/market-source/${pad(i + 1, 3)}`),
     };
-  }
+  });
   out['dealComps'] = dealComps;
   const qb = s['quickbooks'] as Obj | null | undefined;
   if (qb !== undefined) out['quickbooks'] = qb ? { ...(W(qb, 'quickbooks', 'snap/quickbooks') as Obj), sourceFile: 'synthetic/ora-pl-by-property.csv' } : qb;
@@ -1910,7 +1918,10 @@ function transformDataset(ctx: Ctx, d: Obj): Obj {
     const ri = ((d['insights'] as Obj[] | undefined) ?? []).find((x) => x['id'] === id);
     const si = (out['insights'] as Obj[]).find((x) => x['id'] === id);
     const rv = f(d);
-    if (!ri || !si || rv === null || num(ri['annual_impact_usd']) !== Math.round(rv)) continue;
+    // "Held in real" within $2: the shipped impact is the lever rounded to whole dollars, so an exact
+    // test would depend on the real amount's rounding residual (and flip under a rescale).
+    const shipped = num(ri?.['annual_impact_usd']);
+    if (!ri || !si || rv === null || shipped === null || Math.abs(shipped - rv) > 2) continue;
     const sv = f(out);
     if (sv !== null) si['annual_impact_usd'] = Math.round(sv);
   }
@@ -2081,10 +2092,59 @@ function registerVendors(ctx: Ctx, v: Json): void {
   if (v && typeof v === 'object') {
     for (const [k, x] of Object.entries(v)) {
       if ((k === 'consultant' || k === 'vendor') && typeof x === 'string') {
-        if (!PLACEHOLDER_VENDOR.test(x)) ctx.a.alias('vendor', x);
+        if (!PLACEHOLDER_VENDOR.test(x)) registerVendorName(ctx, x);
       } else registerVendors(ctx, x);
     }
   }
+}
+
+/** Words that never identify a vendor on their own (entity suffixes, trades, fillers). Narrower than
+ *  GENERIC on purpose: a vendor's distinctive first word may be an ordinary English word. */
+const VENDOR_STOP = new Set(
+  ('the and of inc llc co corp corporation company ltd lp pllc pc group services service roofing roof construction ' +
+    'contractors contracting contractor mechanical electric electrical plumbing paving engineering engineers consultants ' +
+    'consulting consultant associates environmental architects architecture inspections inspection partners solutions').split(' '),
+);
+
+/** Words of descriptive "vendor" values (a document or service, not a company): never hunted. */
+const DOC_WORDS = new Set(
+  ('tax report reports segregation pca cost costs proposal photo photos letter project assessment assessments budget log ' +
+    'advisors advisor comment comments study studies draft final quote quotes estimate estimates invoice').split(' '),
+);
+/** First-word short forms registered for vendor names (hunted by the output self-check). */
+const VENDOR_SHORT_FORMS = new Set<string>();
+
+/** Alias a vendor / consultant name and its free-text short forms: the name without its entity
+ *  suffix ("Acme Roofing" for "Acme Roofing LLC") and its first distinctive word ("Acme"). A name
+ *  written "A/B" registers each part too. */
+function registerVendorName(ctx: Ctx, name: string): string {
+  const fake = ctx.a.alias('vendor', name)!;
+  for (const part of name.includes('/') ? [name, ...name.split('/')] : [name]) {
+    const bare = part.replace(/[,.]?\s+(inc|llc|co|corp|corporation|company|ltd|lp|pllc|pc)\.?$/i, '').trim();
+    if (bare !== name) ctx.a.variant(bare, fake);
+    const words = bare.split(/\s+/).filter((w) => /^[A-Za-z][A-Za-z'&.-]*$/.test(w));
+    const first = words[0]?.replace(/[.,]+$/, '') ?? '';
+    // The first word alone is a short form only for a company-shaped name (it ends in a trade or entity
+    // word): "<Name> Roofing" is written "<Name>" in notes; "Real Estate Tax" is not a company.
+    const last = (words[words.length - 1] ?? '').toLowerCase().replace(/[.,]+$/, '');
+    const fw = first.toLowerCase();
+    if (words.length > 1 && first.length >= 3 && VENDOR_STOP.has(last) && !VENDOR_STOP.has(fw) && !DOC_WORDS.has(fw)) {
+      ctx.a.variant(first, fake);
+      VENDOR_SHORT_FORMS.add(fw);
+    }
+  }
+  return fake;
+}
+
+/** Every word (3+ letters, not generic) of a registered vendor / consultant name, for the self-check. */
+function vendorWords(ctx: Ctx): Set<string> {
+  const out = new Set<string>();
+  for (const [real, [cat]] of ctx.a.registry) {
+    if (cat !== 'vendor') continue;
+    for (const w of real.toLowerCase().split(/[^a-z]+/)) if (w.length >= 3 && !VENDOR_STOP.has(w) && !GENERIC.has(w) && !DOC_WORDS.has(w)) out.add(w);
+  }
+  for (const w of VENDOR_SHORT_FORMS) out.add(w);
+  return out;
 }
 
 function aliasVendors(ctx: Ctx, v: Json): Json {
@@ -2093,7 +2153,7 @@ function aliasVendors(ctx: Ctx, v: Json): Json {
     const out: Obj = {};
     for (const [k, x] of Object.entries(v)) {
       const vendorField = (k === 'consultant' || k === 'vendor') && typeof x === 'string';
-      out[k] = vendorField ? (PLACEHOLDER_VENDOR.test(x) ? x : ctx.a.alias('vendor', x)) : aliasVendors(ctx, x);
+      out[k] = vendorField ? (PLACEHOLDER_VENDOR.test(x) ? x : registerVendorName(ctx, x)) : aliasVendors(ctx, x);
     }
     return out;
   }
@@ -2313,18 +2373,18 @@ const json = (v: Json): string => JSON.stringify(v, null, 2) + '\n';
  * (repo-relative path -> content) without touching disk unless `write`. Exported for the money-
  * independence test, which runs it on two inputs that differ only in their amounts.
  *
- * `avoidRealAmounts` (default true): a draw that equals a distinctive real amount is redrawn. That is
- * the one place the real amounts touch the draws, and it can only move a value AWAY from a real
- * amount; the independence test turns it off to compare two inputs byte for byte.
+ * No real amount influences any draw: every money value is draw #0 for its structural key. On `write`,
+ * the outputs are first scanned for the real-amount fingerprints; a collision FAILS the build (bump
+ * SYNTH_SEED in synthetic-money.ts), it is never fixed by redrawing one value (refute round 4 F3: a
+ * per-value redraw revealed which draws were real amounts).
  */
 export async function build(
   root: string,
   write: boolean,
-  opts: { avoidRealAmounts?: boolean } = {},
 ): Promise<{ ctx: Ctx; outputs: string[]; contents: Map<string, string> }> {
   const manifest = loadManifest(ROOT);
   // A drawn amount must never equal a distinctive real amount (it would trip the fingerprint check).
-  const ctx = new Ctx(opts.avoidRealAmounts === false ? new Set() : realNumberFingerprints(root));
+  const ctx = new Ctx();
   const ids = newIds();
   const have = (rel: string): boolean => existsSync(join(root, rel));
   const outputs: Array<[string, () => string]> = [];
@@ -2361,6 +2421,10 @@ export async function build(
     if (!f.startsWith('data/cost-seg/')) protectProps(d);
     registerVendors(ctx, d);
   }
+  // Counterparties named only in free text (an inspector named in a cost-seg note) are listed in a
+  // local, untracked file beside the real data (never committed: it holds real names).
+  const EXTRA_NAMES = 'config/local/generator-extra-names.local.json';
+  if (have(EXTRA_NAMES)) for (const n of readJson(root, EXTRA_NAMES) as string[]) registerVendorName(ctx, n);
   // Tenant names that appear only in report narrative (rent-roll attributes of the PCA extractions,
   // cost-seg tenant lists): registered so they are hunted in kept text and land on the scrub list.
   const registerTenants = (v: Json): void => {
@@ -2550,13 +2614,39 @@ export async function build(
 
   const contents = new Map(outputs.map(([rel, content]) => [rel, content()] as [string, string]));
   if (write) {
+    // Self-check: no word of a registered real vendor / consultant name may survive anywhere in the
+    // synthetic output, free text included (refute round 4 F6). Fails closed; reports a count only.
+    const words = vendorWords(ctx);
+    words.delete('vendor');
+    const wordRe = words.size ? new RegExp(`(?<![A-Za-z])(?:${[...words].map(escapeRe).join('|')})(?![A-Za-z])`, 'gi') : null;
+    const survivors = wordRe ? [...contents.values()].reduce((a, c) => a + (c.match(wordRe)?.length ?? 0), 0) : 0;
+    if (survivors && process.env['SYNTH_DEBUG_WORDS'] === '1') {
+      const by = new Map<string, number>();
+      for (const c of contents.values()) for (const m of c.match(wordRe!) ?? []) by.set(m.toLowerCase(), (by.get(m.toLowerCase()) ?? 0) + 1);
+      console.error([...by].sort((x, y) => y[1] - x[1]).slice(0, 40));
+    }
+    if (survivors) throw new Error(`synthetic output still carries ${survivors} word(s) of real vendor / consultant names; register the missing short forms`);
+    // Fail closed BEFORE writing when any output carries a real-amount fingerprint: the outputs are
+    // staged in a temp dir and scanned there. The cure is a global seed bump, never a per-value redraw.
+    const stage = mkdtempSync(join(tmpdir(), 'occ-synthetic-stage-'));
+    for (const [rel, content] of contents) {
+      mkdirSync(dirname(join(stage, rel)), { recursive: true });
+      writeFileSync(join(stage, rel), content);
+    }
+    const collisions = scanForNumbers([...contents.keys()].map((rel) => join(stage, rel)), realNumberFingerprints(root));
+    if (collisions.length) {
+      throw new Error(
+        `synthetic money collides with ${collisions.length} real-amount fingerprint(s) under SYNTH_SEED '${SYNTH_SEED}'. ` +
+          'Bump SYNTH_SEED (scripts/fixtures/synthetic-money.ts) and regenerate; never redraw a single value.',
+      );
+    }
     for (const [rel, content] of contents) {
       const abs = join(OUT_ROOT, rel);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, content);
       console.log(`[synthetic] wrote fixtures/synthetic/${rel}`);
     }
-    console.log(`[synthetic] money: seeded draws, ${ctx.redraws} redraw(s) forced by the real-amount fingerprint list`);
+    console.log(`[synthetic] money: seeded draws (seed ${SYNTH_SEED}), no redraws; 0 real-amount fingerprint collisions`);
   }
   return { ctx, outputs: outputs.map(([rel]) => `fixtures/synthetic/${rel}`), contents };
 }
