@@ -1554,8 +1554,8 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string
         // Cols 5 and 11 (the workbook's own Δ% and 12-mo Δ% cells) are deliberately NOT read. They
         // divide by the prior / 12-month-ago balance as-is, so when that balance is NEGATIVE (an
         // overdrawn operating account, a start-up entity) the cell's sign inverts against its own
-        // dollar figure -- found live 2026-09-14: deltaDollar -REDACTED-AMT served beside deltaPct +4.1%,
-        // growth12Dollar +REDACTED-AMT beside growth12Pct -1186%, and the UI colours the percent green or
+        // dollar figure -- found live 2026-09-14: a negative deltaDollar served beside a positive deltaPct,
+        // a positive growth12Dollar beside a large negative growth12Pct, and the UI colours the percent green or
         // red on its own sign. Recomputed here from the dollar move and the balance it is measured
         // against; a denominator <= 0 or missing yields null -- "verified null over a wrong-signed
         // number" -- because a percent of a negative or zero base has no meaning a reader can act on.

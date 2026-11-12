@@ -64,7 +64,7 @@ const ASOF = d(2026, 8, 31);
  * principal-column sum misses it and only the remaining-balance column exposes the gap.
  */
 function balloonOutsidePrincipalColumn(): ScheduleRow[] {
-  const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: REDACTED-AMT });
+  const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: 1_384_902.40 });
   const last = rows[rows.length - 1]!;
   rows.push({ row: last.row + 1, date: last.date, interest: null, principal: null, balance: 0 });
   return rows;
@@ -180,13 +180,13 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
 
   it('compares interest only when the workbook principal is synthetic', () => {
     // 100 Note Party St: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
-    const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
+    const rows = schedule(2026, 9, 26, 24, 1180, 0);
     const flags = crossCheckSchedule({
       id: 'note-party-03',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
-      bookInterest: REDACTED-AMT * 12,
+      bookInterest: 1180 * 12,
       bookPrincipal: null,
       asOf: ASOF,
     });
@@ -253,7 +253,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
   });
 
   it('FIRES on duplicate payment dates (the 100 Note Party St double-count)', () => {
-    const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
+    const rows = schedule(2026, 9, 26, 24, 1180, 0);
     // rows 45/46 both carry the same date — September interest counted twice.
     const dupe = rows[5]!;
     rows.splice(6, 0, { ...dupe, row: dupe.row + 100 });
@@ -263,7 +263,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       rows,
       declaredRangeEnd: Math.max(...rows.map((r) => r.row)),
       share: 1,
-      bookInterest: REDACTED-AMT * 13, // the double-counted total the workbook actually produces
+      bookInterest: 1180 * 13, // the double-counted total the workbook actually produces
       bookPrincipal: null,
       asOf: ASOF,
     });
@@ -318,7 +318,7 @@ describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling
   // carry" — a principled borrower/lender asymmetry. That ruling was ITSELF superseded same-day
   // ("Turn 149"): the real root cause was I14/I15/I16 computing principal on three inconsistent
   // bases, not one deliberate design choice. All three were fixed to a single consistent
-  // forward-looking basis, and Note Party 02's balloon is now genuinely included (I15 -$REDACTED-AMT,
+  // forward-looking basis, and Note Party 02's balloon is now genuinely included (in I15,
   // confirmed live). The tracker records this explicitly as a detector constraint: "must NOT be
   // built to treat balloon-excluded lender principal as correct."
   //
@@ -1105,9 +1105,9 @@ describe('crossCheckSchedule — REFUTE: the origination path must be permutatio
 
 describe('crossCheckSchedule — D: duplicate-date detection tolerates a rounding cent', () => {
   it('still FIRES when the repeated amount is one cent off, not bit-identical', () => {
-    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 0); // interest-only, matches Note Party 03's shape
+    const rows = schedule(2027, 3, 26, 6, 1180, 0); // interest-only, matches Note Party 03's shape
     const dupeDate = rows[2]!.date;
-    rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 1365.01, principal: null, balance: 0 });
+    rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 1180.01, principal: null, balance: 0 });
 
     const flags = crossCheckSchedule({
       id: 'note-party-03',
@@ -1127,7 +1127,7 @@ describe('crossCheckSchedule — D: duplicate-date detection tolerates a roundin
     // payment and an unrelated fee/adjustment row, say) can legitimately land on the same calendar
     // date. Only a REPEATED amount signals the double-counting shape; two rows that merely share a
     // date but disagree on both interest and principal must not fire.
-    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 500);
+    const rows = schedule(2027, 3, 26, 6, 1180, 500);
     const dupeDate = rows[2]!.date;
     rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 9999, principal: 8888, balance: 0 });
 

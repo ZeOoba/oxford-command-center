@@ -334,7 +334,7 @@ export function evaluateAnomalyFloor(
  * lease incident, PR #250). The floor above is COUNT-based (0-lease / >25%-removed); it does
  * nothing when a bad parse only ADDS rows, which is exactly what happened when the rent roll's
  * derived "VACANCY & UPCOMING AVAILABILITY" block got ingested as 10 real leases -- nothing was
- * removed, so the floor saw no anomaly at all while annual rent was overstated by $REDACTED-AMT.
+ * removed, so the floor saw no anomaly at all while annual rent was overstated by $241,880.
  *
  * `server/reconcile-runtime.ts`'s checkSnapshot() already ties parsed lease annualRent (and NOI,
  * property value, cash, and structural invariants) to the workbook's own declared totals -- it is

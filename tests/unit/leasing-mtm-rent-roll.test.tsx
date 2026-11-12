@@ -10,7 +10,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type * as Queries from '../../src/data/queries';
 
 const LEASES = [
-  { id: 'a', company: 'Tenant 038 LLC', tenantName: 'Tenant 038 LLC', propertyKey: 'P1', unit: '1', sf: 1000, annualRent: REDACTED-AMT, rentPerSf: 8.5, leaseStart: '2020-01-01', leaseEnd: '2024-09-01', monthsToExpiry: -26, escalationPct: 0.03, status: 'Active' },
+  { id: 'a', company: 'Tenant 038 LLC', tenantName: 'Tenant 038 LLC', propertyKey: 'P1', unit: '1', sf: 1000, annualRent: 7_215, rentPerSf: 8.5, leaseStart: '2020-01-01', leaseEnd: '2024-09-01', monthsToExpiry: -26, escalationPct: 0.03, status: 'Active' },
   { id: 'b', company: 'Fixture Countertops', tenantName: 'Fixture Countertops', propertyKey: 'P2', unit: '2', sf: 1000, annualRent: 0, rentPerSf: null, leaseStart: '2020-01-01', leaseEnd: '2026-07-31', monthsToExpiry: -3, escalationPct: null, status: 'Expired' },
   { id: 'c', company: 'Tenant 155 LLC', tenantName: 'Tenant 155 LLC', propertyKey: 'P3', unit: '3', sf: 10000, annualRent: 100_000, rentPerSf: 10, leaseStart: '2020-01-01', leaseEnd: '2027-12-31', monthsToExpiry: 14, escalationPct: 0.03, status: 'Active' },
 ];

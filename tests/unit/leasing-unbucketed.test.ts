@@ -33,14 +33,14 @@ const sig = (over: Partial<RenewalSignal> & Pick<RenewalSignal, 'leaseId' | 'exp
 describe('summarizeUnbucketed', () => {
   it('splits past-end leases into month-to-month vs expired, and counts no-end-date leases', () => {
     const s = summarizeUnbucketed([
-      sig({ leaseId: 'a', expiryBucket: 'expired', monthToMonth: true, annualRent: REDACTED-AMT }),
-      sig({ leaseId: 'b', expiryBucket: 'expired', monthToMonth: true, annualRent: REDACTED-AMT }),
+      sig({ leaseId: 'a', expiryBucket: 'expired', monthToMonth: true, annualRent: 7_215.4 }),
+      sig({ leaseId: 'b', expiryBucket: 'expired', monthToMonth: true, annualRent: 3_960 }),
       sig({ leaseId: 'c', expiryBucket: 'expired', monthToMonth: false, annualRent: 0 }),
       sig({ leaseId: 'd', expiryBucket: 'unknown', annualRent: 600 }),
       sig({ leaseId: 'e', expiryBucket: '0-6m', annualRent: 99_000 }),
     ]);
     expect(s.total).toBe(4);
-    expect(s.mtm).toEqual({ count: 2, rent: REDACTED-AMT + REDACTED-AMT });
+    expect(s.mtm).toEqual({ count: 2, rent: 7_215.4 + 3_960 });
     expect(s.expired).toEqual({ count: 1, rent: 0 });
     expect(s.noEnd).toEqual({ count: 1, rent: 600 });
   });

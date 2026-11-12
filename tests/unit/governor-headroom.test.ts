@@ -133,7 +133,7 @@ describe('cashHeadroom', () => {
 describe('firmCashBalance (interim sweepable-cash proxy, Gabriel 2026-11-02)', () => {
   const e = (entity: string, id: string, currentBalance: number) => ({ entity, id, currentBalance });
   it('reads the Oxford entity by exact id or trimmed name', () => {
-    expect(firmCashBalance([e('Fairground Village Center', 'fairground-village-center', 4_500_000), e('Oxford', 'oxford', REDACTED-AMT)])).toBe(REDACTED-AMT);
+    expect(firmCashBalance([e('Fairground Village Center', 'fairground-village-center', 4_500_000), e('Oxford', 'oxford', 1_263_480)])).toBe(1_263_480);
     expect(firmCashBalance([e(' Oxford ', 'x1', 900_000)])).toBe(900_000);
   });
   it('never substring-matches another entity', () => {

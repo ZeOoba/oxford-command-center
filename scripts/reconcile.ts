@@ -179,7 +179,7 @@ async function main() {
   // Leases 138 / Cash entities 16) captured on 2026-06-05 — a false-fail waiting on the next
   // genuine lease signing, property acquisition, or entity onboarding, and it was never the check
   // that actually caught anything: the phantom-vacancy-lease incident (2026-08-03, PR #250, +10
-  // leases / +$REDACTED-AMT) shipped with the Lease count at exactly... 148, which this WOULD have
+  // leases / +$241,880) shipped with the Lease count at exactly... 148, which this WOULD have
   // caught by luck of a stale baseline, but only because nobody had bumped the "138" since. The
   // "Annualized rent total" check above is the real, non-time-bombed assertion for exactly this
   // failure mode — it compares the snapshot's own derived total against the workbook's declared

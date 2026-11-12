@@ -29,7 +29,7 @@ import { resolveInsuranceProperty } from './insurance-property-map';
 export type PremiumHistoryRow = CollapsibleInsuranceRow & { premium_annual: number | null };
 
 /** A same-premium term dated less than one policy year after a prior KEPT term of the same line is
- *  a re-key of that term, not a renewal. The 3034 Westerville $REDACTED-AMT duplicate in
+ *  a re-key of that term, not a renewal. The 3034 Westerville duplicate premium row in
  *  data_quality_issues (2024-09-24 vs 2025-09-18 = 359d) is the motivating case; a genuine flat
  *  renewal lands at >= 365d and is kept. */
 const DUP_WINDOW_DAYS = 365;

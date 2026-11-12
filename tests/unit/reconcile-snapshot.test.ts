@@ -57,25 +57,25 @@ describe('evaluateFlags', () => {
 describe('reconcile-snapshot — regression: the 2026-08-03 phantom-vacancy-lease incident', () => {
   // Replays the real incident numbers (memory/reference_parseleases_vacancy_block_phantom_leases_2026-08-03.md,
   // PR #250): parseLeases ingested 10 rows of a derived "VACANCY & UPCOMING AVAILABILITY" block as
-  // real leases. Annualized rent came out $REDACTED-AMT high (148 leases, $REDACTED-AMT) against the
-  // workbook's own declared total ($REDACTED-AMT). This shipped under "Data-quality flags: 0"
+  // real leases. Annualized rent came out $241,880 high (148 leases, $4,460,787.36) against the
+  // workbook's own declared total ($4,218,907.36). This shipped under "Data-quality flags: 0"
   // because nothing on the write path called checkSnapshot -- this is the fixture that proves
   // wiring checkSnapshot into a CI-safe gate would have caught it.
   it('would have failed the gate: Σ annual rent vs workbookTotals.rent mismatch surfaces as an error flag', () => {
     const goodLeases = Array.from({ length: 138 }, (_, i) => ({
       id: `l${i}`,
-      annualRent: REDACTED-AMT / 138,
-      monthlyRent: REDACTED-AMT / 138 / 12,
+      annualRent: 4218907.36 / 138,
+      monthlyRent: 4218907.36 / 138 / 12,
     }));
     const phantomLeases = Array.from({ length: 10 }, (_, i) => ({
       id: `phantom${i}`,
-      annualRent: REDACTED-AMT / 10,
-      monthlyRent: REDACTED-AMT / 10 / 12,
+      annualRent: 241880 / 10,
+      monthlyRent: 241880 / 10 / 12,
     }));
 
     const corrupted = base({
       leases: [...goodLeases, ...phantomLeases],
-      workbookTotals: { noi: null, value: null, rent: REDACTED-AMT },
+      workbookTotals: { noi: null, value: null, rent: 4218907.36 },
     });
 
     const flags = checkSnapshot(corrupted);
@@ -88,12 +88,12 @@ describe('reconcile-snapshot — regression: the 2026-08-03 phantom-vacancy-leas
   it('the corresponding clean snapshot (138 leases, rent matching the workbook total) passes', () => {
     const goodLeases = Array.from({ length: 138 }, (_, i) => ({
       id: `l${i}`,
-      annualRent: REDACTED-AMT / 138,
-      monthlyRent: REDACTED-AMT / 138 / 12,
+      annualRent: 4218907.36 / 138,
+      monthlyRent: 4218907.36 / 138 / 12,
     }));
     const clean = base({
       leases: goodLeases,
-      workbookTotals: { noi: null, value: null, rent: REDACTED-AMT },
+      workbookTotals: { noi: null, value: null, rent: 4218907.36 },
     });
 
     const result = evaluateFlags(checkSnapshot(clean));
