@@ -461,6 +461,23 @@ export function checkStatusJson(root: string): GovernanceResult {
  *
  * @param tracked test seam: the tracked file list; defaults to `git ls-files` in `root`.
  */
+/** A quarantine / temp / backup copy marker in a file name. */
+const COPY_MARKER = /(corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)/i;
+
+/** Same rule as scripts/prepush-confidential-scan.mjs isRealDataPath: a listed file or dir, or a copy
+ *  of a listed file (full name plus any suffix, or same dir and stem with a copy marker). */
+function isRealCopyOrPath(nf: string, manifest: { files: string[]; dirs: string[] }, norm: (x: string) => string): boolean {
+  if (manifest.dirs.some((d) => nf.startsWith(norm(d)))) return true;
+  return manifest.files.some((m) => {
+    const f = norm(m);
+    if (nf === f || nf.startsWith(`${f}.`) || nf.startsWith(`${f}-`) || nf.startsWith(`${f}~`)) return true;
+    const slash = f.lastIndexOf('/');
+    const dot = f.lastIndexOf('.');
+    const stem = dot > slash ? f.slice(0, dot) : f;
+    return nf.startsWith(`${stem}.`) && nf.lastIndexOf('/') === slash && COPY_MARKER.test(nf.slice(stem.length));
+  });
+}
+
 export function checkRealDataUntracked(root: string, tracked?: readonly string[]): GovernanceResult {
   const errors: string[] = [];
   let manifest: { files: string[]; dirs: string[] };
@@ -499,7 +516,7 @@ export function checkRealDataUntracked(root: string, tracked?: readonly string[]
     const f = raw.replace(/\\/g, '/');
     const nf = norm(f);
     if (nf.startsWith('fixtures/synthetic/')) continue;
-    if (manifest.files.some((m) => norm(m) === nf) || manifest.dirs.some((d) => nf.startsWith(norm(d)))) {
+    if (isRealCopyOrPath(nf, manifest, norm)) {
       errors.push(
         `REAL_DATA_TRACKED: ${f} is real firm data (scripts/fixtures/real-data-manifest.json, ruling 2026-11-10) and must not be tracked. ` +
           'Untrack it (git rm --cached) and keep the synthetic stand-in under fixtures/synthetic/.',

@@ -38,6 +38,13 @@ describe('governance: real firm data is never tracked (checkRealDataUntracked)',
     expect(r.errors).toHaveLength(4);
   });
 
+  it('fails on a tracked quarantine / temp / backup copy of real data; a non-copy sibling passes', () => {
+    expect(checkRealDataUntracked(REPO, ['data/ar/review-queue.corrupt-1700000000000.json']).pass).toBe(false);
+    expect(checkRealDataUntracked(REPO, ['src/data/seed-deals.ts.bak']).pass).toBe(false);
+    expect(checkRealDataUntracked(REPO, ['scripts/property-financials/config/curated/leases.corrupt-1.json']).pass).toBe(false);
+    expect(checkRealDataUntracked(REPO, ['src/data/seed-deals.test.ts']).pass).toBe(true);
+  });
+
   it('allows the synthetic stand-ins under fixtures/synthetic/ and Windows-style separators are normalized', () => {
     expect(checkRealDataUntracked(REPO, ['fixtures/synthetic/data/snapshots/portfolio.json', 'fixtures/synthetic/src/data/seed-deals.ts']).pass).toBe(true);
     expect(checkRealDataUntracked(REPO, ['data\\cost-seg\\cost-seg.json']).pass).toBe(false);

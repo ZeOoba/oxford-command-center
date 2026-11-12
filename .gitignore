@@ -114,3 +114,16 @@ data/property-financials/monthly-long.csv
 
 # Gate/build output logs (gate-output.log was tracked by mistake).
 *.log
+
+# Nothing under data/ is tracked: every real-data file there, and every quarantine / temp / backup copy a
+# writer leaves beside one (review-queue.corrupt-<ms>.json, <file>.corrupt-<ts>, <file>.tmp-<pid>), is
+# local-only. scripts/fixtures/real-data-manifest.json neverTrack lists data/ too, so a forced add is
+# blocked at push and by governance (refute round 5 F5/F9).
+/data/
+# Quarantine / temp / backup copies of real-data files outside data/ (the push-time block treats a copy
+# of any manifest file as real data too).
+*.corrupt-*
+*.tmp-*
+*.bak
+*.orig
+*.quarantine*
