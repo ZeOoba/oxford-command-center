@@ -1,13 +1,13 @@
 [
   {
-    "obs_id": "e-livingston:roof_other:vendor-17:2025-03-26",
+    "obs_id": "e-livingston:roof_other:vendor-29:2025-03-26",
     "property": "3875-3883 E Livingston",
     "component": "roof_other",
     "unit": "SF",
     "qty": 2376,
     "pca_unit_cost": 7.32,
     "pca_source": {
-      "consultant": "Vendor 16",
+      "consultant": "Vendor 03",
       "report_date": "2025-04-10",
       "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R04 3883 mod-bit roof replacement)",
       "source_date": "2025-04-10",
@@ -16,10 +16,10 @@
     },
     "contractor_unit_cost": 2.71,
     "contractor_source": {
-      "vendor": "Vendor 17",
+      "vendor": "Vendor 29",
       "doc_date": "2025-03-26",
       "status": "BID",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (3883 Livingston — back bldg re-roof (Vendor 17))",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (3883 Livingston — back bldg re-roof (Vendor 29))",
       "source_date": "2025-03-26",
       "price_basis": "CONTRACTOR_QUOTE"
     },
