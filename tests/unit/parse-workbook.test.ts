@@ -351,7 +351,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   // The live rent roll's per-lease annualised rent is the column headed "Annual Rent" (col 14), the
   // SAME column as the Portfolio Total, and it is net of abated months (monthly x (12 - abated)). The
   // old fixed col-13 read hit the "Notice to Vacate" flag column in the live layout, returned null, and
-  // silently fell back to monthly x 12 -- so one abated month on a $5,300/mo lease opened a $5,300 gap
+  // silently fell back to monthly x 12 -- so one abated month on a $4,700/mo lease opened a $4,700 gap
   // against the workbook's own total and the extract refused (2026-10-06). These tests pin the
   // header-driven read: the annual column is found by its header, abatement is honoured, and a sheet
   // with no such header keeps the legacy col-13 read (every other fixture in this file).
@@ -415,14 +415,14 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('reads per-lease rent from the "Annual Rent" header column, net of abated months, so the lease sum ties to the Portfolio Total', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-live-layout-abatement.xlsx');
-    // A: $5,300/mo with ONE abated month -> annualised 58,300 (not 63,600). B: carries a text flag in col 13.
+    // A: $4,700/mo with ONE abated month -> annualised 51,700 (not 56,400). B: carries a text flag in col 13.
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Abated Tenant Co', 5300, null, 58300, 1),
+      lease('Abated Tenant Co', 4700, null, 51700, 1),
       lease('Flagged Tenant Co', 2000, 'Yes', 24000, null),
-    ], 82300);
+    ], 75700);
     const { snapshot } = await parseWorkbook(file);
     const byName = Object.fromEntries(snapshot.leases.map((l) => [l.tenantName, l.annualRent]));
-    expect(byName['Abated Tenant Co']).toBe(58300);
+    expect(byName['Abated Tenant Co']).toBe(51700);
     expect(byName['Flagged Tenant Co']).toBe(24000);
     const sum = snapshot.leases.reduce((s, l) => s + l.annualRent, 0);
     expect(sum).toBe(snapshot.workbookTotals.rent);
@@ -431,9 +431,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('accepts the "Annualized Rent" header spelling', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-annualized-header.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annualized Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300);
+    await writeLiveLayoutWorkbook(file, 'Annualized Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700);
     const { snapshot } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]);
   });
 
   it('falls back to monthly x 12 for a lease whose "Annual Rent" cell is blank, and never reads the col-13 flag column as rent', async () => {
@@ -450,38 +450,38 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-inserted-column.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Abated Tenant Co', 5300, null, 58300, 1),
+      lease('Abated Tenant Co', 4700, null, 51700, 1),
       lease('Flagged Tenant Co', 2000, 'Yes', 24000, null),
-    ], 82300, { insertCol: true });
+    ], 75700, { insertCol: true });
     const { snapshot } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent).sort((a, b) => a - b)).toEqual([24000, 58300]);
+    expect(snapshot.leases.map((l) => l.annualRent).sort((a, b) => a - b)).toEqual([24000, 51700]);
     // Previously the total stayed on col 14 (now the inserted blank) and came back null, silently
     // switching off the Σ lease rent vs workbook total tie-out.
-    expect(snapshot.workbookTotals.rent).toBe(82300);
+    expect(snapshot.workbookTotals.rent).toBe(75700);
   });
 
   it('flags a header row that has lost its "Annual Rent" column instead of silently using monthly x 12', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-renamed-header.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent (Net)', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent (Net)', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700);
     const { snapshot, flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'annualRentHeader' && f.severity === 'warn')).toBe(true);
     // Falls back (legacy col 13 is the flag column -> null -> monthly x 12); the flag is the signal.
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([63600]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([56400]);
   });
 
   it('ignores a stray "Annual Rent" cell above the header row (only the header row counts)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-stray-title.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300, { titleRow: true });
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700, { titleRow: true });
     const { snapshot } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]);
   });
 
   it('clamps a negative Annual Rent (Abated Months typo above 12) to 0 with a row flag instead of aborting the parse', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-negative-annual.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 5300, null, -5300, 13)], -5300);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 4700, null, -4700, 13)], -4700);
     const { snapshot, flags } = await parseWorkbook(file); // must not throw on the Lease contract's annualRent >= 0
     expect(snapshot.leases.map((l) => l.annualRent)).toEqual([0]);
     expect(flags.some((f) => f.field === 'annualRent' && /negative Annual Rent/.test(f.issue))).toBe(true);
@@ -494,7 +494,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const file = join(dir, 'fixture-zero-unrecorded.xlsx');
     // Annual Rent 0 on an Active lease with a BLANK Abated Months: a zeroed cell is the likely cause. The
     // per-lease check names it (monthly x 12 expected); the generic zero-rent line is suppressed as a duplicate.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Zeroed Co', 5300, null, 0, null)], 0);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Zeroed Co', 4700, null, 0, null)], 0);
     const { snapshot, flags } = await parseWorkbook(file);
     expect(snapshot.leases.map((l) => l.annualRent)).toEqual([0]);
     const rowFlags = flags.filter((f) => f.field === 'annualRent');
@@ -505,7 +505,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('does NOT warn on a fully abated year that the sheet itself records (Abated Months = 12, Annual Rent 0)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-fully-abated.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Free Year Co', 5300, null, 0, 12)], 0);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Free Year Co', 4700, null, 0, 12)], 0);
     const { snapshot, flags } = await parseWorkbook(file);
     expect(snapshot.leases.map((l) => l.annualRent)).toEqual([0]);
     // Explained by the sheet: a standing warn for twelve months would only train people to ignore alerts.
@@ -515,11 +515,11 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('flags a hard-coded Annual Rent that is not monthly x (12 - abated), even though the Portfolio Total (a SUM of the same cells) ties to it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-hardcoded-annual.xlsx');
-    // 6,360 on a $5,300/mo lease with no abated months: the total sums the same cell, so it ties.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 5300, null, 6360, null)], 6360);
+    // 5,640 on a $4,700/mo lease with no abated months: the total sums the same cell, so it ties.
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 4700, null, 5640, null)], 5640);
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.workbookTotals.rent).toBe(6360);
-    expect(snapshot.leases.reduce((s, l) => s + l.annualRent, 0)).toBe(6360); // the total tie-out cannot see it
+    expect(snapshot.workbookTotals.rent).toBe(5640);
+    expect(snapshot.leases.reduce((s, l) => s + l.annualRent, 0)).toBe(5640); // the total tie-out cannot see it
     expect(flags.some((f) => f.field === 'annualRent' && /monthly rent × \(12 − abated months\)/.test(f.issue))).toBe(true);
   });
 
@@ -527,9 +527,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-consistent-annual.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Abated Tenant Co', 5300, null, 58300, 1),
+      lease('Abated Tenant Co', 4700, null, 51700, 1),
       lease('Plain Tenant Co', 2000, 'Yes', 24000, null),
-    ], 82300);
+    ], 75700);
     const { flags } = await parseWorkbook(file);
     expect(flags.filter((f) => f.field === 'annualRent')).toEqual([]);
   });
@@ -548,9 +548,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('does NOT go silent when the Abated Months header is renamed: flags it and falls back to a monthly x 12 check', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-no-abated-header.xlsx');
-    // 6,360 hard-coded on a $5,300/mo lease; the total sums the same cell so it ties. With the header
+    // 5,640 hard-coded on a $4,700/mo lease; the total sums the same cell so it ties. With the header
     // missing this used to produce ZERO flags (the old col-13 read would have refused via the total).
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 5300, null, 6360, null)], 6360, { abatedHeader: 'Free Rent (Mo)' });
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Typo Tenant Co', 4700, null, 5640, null)], 5640, { abatedHeader: 'Free Rent (Mo)' });
     const { flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'abatedMonthsHeader' && f.severity === 'warn')).toBe(true);
     expect(flags.some((f) => f.field === 'annualRent' && /no Abated Months column to explain it/.test(f.issue))).toBe(true);
@@ -569,8 +569,8 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('flags a non-numeric Abated Months cell as unreadable instead of coercing it to 0', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-text-abated.xlsx');
-    // Annual Rent 58,300 is CORRECT for one abated month; reading the text 'one' as 0 would call it a typo.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Text Abated Co', 5300, null, 58300, 'one' as unknown as number)], 58300);
+    // Annual Rent 51,700 is CORRECT for one abated month; reading the text 'one' as 0 would call it a typo.
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Text Abated Co', 4700, null, 51700, 'one' as unknown as number)], 51700);
     const { flags } = await parseWorkbook(file);
     const rowFlags = flags.filter((f) => f.field === 'annualRent');
     expect(rowFlags).toHaveLength(1);
@@ -598,9 +598,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('still finds the header when 20 title rows sit above it (scan is not capped at 15 rows)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-header-below-row-15.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300, { padRows: 20 });
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700, { padRows: 20 });
     const { snapshot } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]);
   });
 
   it('reports a systematic sub-$1 overstatement once, even though each lease is inside the per-lease tolerance', async () => {
@@ -641,10 +641,10 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-formula-zero-annual.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Free Year Co', 5300, null, { formula: FORMULA, result: 0 }, 12),
+      lease('Free Year Co', 4700, null, { formula: FORMULA, result: 0 }, 12),
     ], { formula: 'SUM(N2:N2)', result: 0 });
     const { snapshot, flags } = await parseWorkbook(file);
-    // Before: the dropped 0 read as blank and the lease fell back to 63,600 (a year of rent overstated).
+    // Before: the dropped 0 read as blank and the lease fell back to 56,400 (a year of rent overstated).
     expect(snapshot.leases.map((l) => l.annualRent)).toEqual([0]);
     expect(flags.filter((f) => f.field === 'annualRent')).toEqual([]); // 12 recorded abated months explain the 0
     expect(flags.some((f) => /no cached result/.test(f.issue))).toBe(false); // a dropped 0 is benign: not counted
@@ -654,10 +654,10 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-formula-error-annual.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Error Cell Co', 5300, null, { formula: FORMULA, result: { error: '#VALUE!' } }, 1),
+      lease('Error Cell Co', 4700, null, { formula: FORMULA, result: { error: '#VALUE!' } }, 1),
     ], { formula: 'SUM(N2:N2)', result: { error: '#VALUE!' } });
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]); // not 63,600
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]); // not 56,400
     expect(flags.some((f) => f.field === 'annualRent' && /Annual Rent cell is not numeric/.test(f.issue))).toBe(true);
     expect(snapshot.workbookTotals.rent).toBeNull();
     expect(flags.some((f) => f.field === 'workbookRentTotal')).toBe(true);
@@ -667,19 +667,19 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-error-and-text.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Dash Co', 5300, null, { formula: FORMULA, result: { error: '#VALUE!' } }, '-' as unknown as number),
+      lease('Dash Co', 4700, null, { formula: FORMULA, result: { error: '#VALUE!' } }, '-' as unknown as number),
     ], { formula: 'SUM(N2:N2)', result: { error: '#VALUE!' } });
     // '-' is a dash placeholder = blank (0 months), so the error cell derives to monthly x 12 here.
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([63600]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([56400]);
     expect(flags.some((f) => f.field === 'annualRent' && /Annual Rent cell is not numeric/.test(f.issue))).toBe(true);
     // Genuine text in Abated Months is unreadable: no derivation possible, still flagged.
     const file2 = join(dir, 'fixture-error-and-real-text.xlsx');
     await writeLiveLayoutWorkbook(file2, 'Annual Rent', [
-      lease('Text Co', 5300, null, { formula: FORMULA, result: { error: '#VALUE!' } }, 'n/a' as unknown as number),
+      lease('Text Co', 4700, null, { formula: FORMULA, result: { error: '#VALUE!' } }, 'n/a' as unknown as number),
     ], { formula: 'SUM(N2:N2)', result: { error: '#VALUE!' } });
     const r2 = await parseWorkbook(file2);
-    expect(r2.snapshot.leases.map((l) => l.annualRent)).toEqual([63600]);
+    expect(r2.snapshot.leases.map((l) => l.annualRent)).toEqual([56400]);
     expect(r2.flags.some((f) => f.field === 'annualRent' && /using monthly rent × 12/.test(f.issue))).toBe(true);
   });
 
@@ -687,11 +687,11 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-uncached-annual.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Uncached Co', 5300, null, { formula: FORMULA } as ExcelJS.CellFormulaValue, 1),
+      lease('Uncached Co', 4700, null, { formula: FORMULA } as ExcelJS.CellFormulaValue, 1),
       lease('Uncached Two Co', 2000, null, { formula: FORMULA } as ExcelJS.CellFormulaValue, null),
     ], { formula: 'SUM(N2:N3)' } as ExcelJS.CellFormulaValue);
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent).sort((a, b) => a - b)).toEqual([24000, 58300]);
+    expect(snapshot.leases.map((l) => l.annualRent).sort((a, b) => a - b)).toEqual([24000, 51700]);
     expect(flags.filter((f) => /no cached result/.test(f.issue))).toHaveLength(1);
     expect(flags.find((f) => /no cached result/.test(f.issue))!.issue).toMatch(/^2 lease row/);
   });
@@ -711,8 +711,8 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('still flags a real mismatch when Abated Months is a formula with a dropped 0 (detection is preserved)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-formula-abated-mismatch.xlsx');
-    // Abated Months reads 0 (dropped), but Annual Rent is 58,300 (one month abated): the mismatch is named.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Mismatch Co', 5300, null, 58300, { formula: '0', result: 0 })], 58300);
+    // Abated Months reads 0 (dropped), but Annual Rent is 51,700 (one month abated): the mismatch is named.
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Mismatch Co', 4700, null, 51700, { formula: '0', result: 0 })], 51700);
     const { flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'annualRent' && /≠ monthly rent/.test(f.issue))).toBe(true);
   });
@@ -770,9 +770,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('derives a blank Annual Rent on a row that records abated months, and says so', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-blank-annual-with-abatement.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Deleted Formula Co', 5300, null, null, 1)], 0);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Deleted Formula Co', 4700, null, null, 1)], 0);
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]); // not 63,600
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]); // not 56,400
     expect(flags.some((f) => f.field === 'annualRent' && /Annual Rent cell is blank on a row with 1 abated month/.test(f.issue))).toBe(true);
   });
 
@@ -780,10 +780,10 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-uncached-and-text-abated.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Both Bad Co', 5300, null, { formula: 'F2*12' } as ExcelJS.CellFormulaValue, 'n/a' as unknown as number),
-    ], 63600);
+      lease('Both Bad Co', 4700, null, { formula: 'F2*12' } as ExcelJS.CellFormulaValue, 'n/a' as unknown as number),
+    ], 56400);
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([63600]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([56400]);
     expect(flags.some((f) => f.field === 'annualRent' && /no cached result AND the Abated Months cell is not numeric/.test(f.issue))).toBe(true);
   });
 
@@ -801,7 +801,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-derived-out-of-range.xlsx');
     await writeLiveLayoutWorkbook(file, 'Annual Rent', [
-      lease('Derived Neg Co', 5300, null, { formula: FORMULA } as ExcelJS.CellFormulaValue, -1),
+      lease('Derived Neg Co', 4700, null, { formula: FORMULA } as ExcelJS.CellFormulaValue, -1),
     ], { formula: 'SUM(N2:N2)' } as ExcelJS.CellFormulaValue);
     const { flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'annualRent' && /outside 0–12/.test(f.issue))).toBe(true);
@@ -810,9 +810,9 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('is not hijacked by a legend row above the header that carries a bare "Tenant Name" cell', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-legend-row.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300, { legendRow: true });
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700, { legendRow: true });
     const { snapshot, flags } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]);
     expect(flags.some((f) => f.field === 'annualRentHeader')).toBe(false);
   });
 
@@ -901,35 +901,35 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   });
 
   it('still finds the header when a "Portfolio Total" summary line sits ABOVE it (totals-on-top)', async () => {
-    const { snapshot, flags } = await parseLive('fixture-totals-on-top', { totalsOnTop: true }, lease('Abated Tenant Co', 5300, null, 58300, 1), 58300);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]); // header-driven, abatement honoured
+    const { snapshot, flags } = await parseLive('fixture-totals-on-top', { totalsOnTop: true }, lease('Abated Tenant Co', 4700, null, 51700, 1), 51700);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]); // header-driven, abatement honoured
     expect(flags.some((f) => f.field === 'annualRentHeader')).toBe(false);
     // The real (bottom) total is captured, not the numberless summary line above the header.
-    expect(snapshot.workbookTotals.rent).toBe(58300);
+    expect(snapshot.workbookTotals.rent).toBe(51700);
     expect(flags.some((f) => f.field === 'workbookRentTotal')).toBe(false);
   });
 
   it('totals-on-top with a NUMERIC total and no bottom total: the top total is adopted, so the tie-out still runs', async () => {
-    const { snapshot, flags } = await parseLive('fixture-top-total-only', { totalsOnTop: true, topTotalValue: 58300, noBottomTotal: true }, lease('Abated Tenant Co', 5300, null, 58300, 1));
-    expect(snapshot.workbookTotals.rent).toBe(58300);
+    const { snapshot, flags } = await parseLive('fixture-top-total-only', { totalsOnTop: true, topTotalValue: 51700, noBottomTotal: true }, lease('Abated Tenant Co', 4700, null, 51700, 1));
+    expect(snapshot.workbookTotals.rent).toBe(51700);
     expect(flags.some((f) => f.field === 'workbookRentTotal')).toBe(false);
   });
 
   it('totals-on-top with a numberless total and no bottom total: the disabled tie-out is flagged, never silent', async () => {
-    const { snapshot, flags } = await parseLive('fixture-top-total-numberless', { totalsOnTop: true, noBottomTotal: true }, lease('Abated Tenant Co', 5300, null, 58300, 1));
+    const { snapshot, flags } = await parseLive('fixture-top-total-numberless', { totalsOnTop: true, noBottomTotal: true }, lease('Abated Tenant Co', 4700, null, 51700, 1));
     expect(snapshot.workbookTotals.rent).toBeNull();
     expect(flags.some((f) => f.field === 'workbookRentTotal')).toBe(true);
   });
 
   it('a KPI summary row above a totals-on-top line does not push the parse onto the legacy col-13 read', async () => {
-    const { snapshot, flags } = await parseLive('fixture-kpi-then-total', { totalsOnTop: true, summaryRowAboveTop: true }, lease('Abated Tenant Co', 5300, null, 58300, 1), 58300);
-    // Header-driven read held: the abated lease is net of abatement (the legacy col-13 read would give 63,600).
-    expect(snapshot.leases.find((l) => l.tenantName === 'Abated Tenant Co')?.annualRent).toBe(58300);
+    const { snapshot, flags } = await parseLive('fixture-kpi-then-total', { totalsOnTop: true, summaryRowAboveTop: true }, lease('Abated Tenant Co', 4700, null, 51700, 1), 51700);
+    // Header-driven read held: the abated lease is net of abatement (the legacy col-13 read would give 56,400).
+    expect(snapshot.leases.find((l) => l.tenantName === 'Abated Tenant Co')?.annualRent).toBe(51700);
     expect(flags.some((f) => f.field === 'annualRentHeader')).toBe(false);
   });
 
   it('totals-on-top: a wrong bottom total is still captured, so checkSnapshot can refuse it', async () => {
-    const { snapshot } = await parseLive('fixture-totals-on-top-wrong', { totalsOnTop: true }, lease('Abated Tenant Co', 5300, null, 58300, 1), 999999);
+    const { snapshot } = await parseLive('fixture-totals-on-top-wrong', { totalsOnTop: true }, lease('Abated Tenant Co', 4700, null, 51700, 1), 999999);
     expect(snapshot.workbookTotals.rent).toBe(999999);
   });
 
@@ -953,7 +953,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-vacant-named-tenant.xlsx');
     // Active tenant "Vacant Land LLC" with a hard-coded wrong Annual Rent: must still be flagged.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Vacant Land LLC', 5300, null, 6360, null)], 6360);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Vacant Land LLC', 4700, null, 5640, null)], 5640);
     const { flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'annualRent' && /≠ monthly rent/.test(f.issue))).toBe(true);
   });
@@ -1041,8 +1041,8 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('names an Abated Months value outside 0-12 on its row', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-abated-out-of-range.xlsx');
-    // -1 abated months with Annual Rent 68,900 (= 5,300 x 13): internally consistent but impossible.
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Negative Abated Co', 5300, null, 68900, -1)], 68900);
+    // -1 abated months with Annual Rent 61,100 (= 4,700 x 13): internally consistent but impossible.
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Negative Abated Co', 4700, null, 61100, -1)], 61100);
     const { flags } = await parseWorkbook(file);
     expect(flags.some((f) => f.field === 'annualRent' && /outside 0–12/.test(f.issue))).toBe(true);
   });
@@ -1050,15 +1050,15 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   it('finds the header even with 45 title rows above it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-header-below-row-40.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], 58300, { padRows: 45 });
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], 51700, { padRows: 45 });
     const { snapshot } = await parseWorkbook(file);
-    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([58300]);
+    expect(snapshot.leases.map((l) => l.annualRent)).toEqual([51700]);
   });
 
   it('flags a Portfolio Total row that has no numeric total (the tie-out would otherwise be silently disabled)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-null-total.xlsx');
-    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 5300, null, 58300, 1)], null);
+    await writeLiveLayoutWorkbook(file, 'Annual Rent', [lease('Abated Tenant Co', 4700, null, 51700, 1)], null);
     const { snapshot, flags } = await parseWorkbook(file);
     expect(snapshot.workbookTotals.rent).toBeNull();
     expect(flags.some((f) => f.field === 'workbookRentTotal' && f.severity === 'warn')).toBe(true);
@@ -1108,7 +1108,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   // to the right of the roster's -- so its col 6 is SF where the roster's col 6 is monthlyRent.
   // parseLeases' `if (!propertyKey || !tenantName) continue` guard read col 1 via str(), which
   // STRINGIFIES a Date rather than rejecting it, so every row of that derived block was ingested as
-  // a real lease: 10 phantom leases and +$REDACTED-AMT of fabricated annual rent (each phantom's "rent"
+  // a real lease: 10 phantom leases and a six-figure amount of fabricated annual rent (each phantom's "rent"
   // was literally the unit's square footage x 12). Nothing raised a data-quality flag.
   it('ignores the trailing VACANCY & UPCOMING AVAILABILITY block instead of ingesting it as leases', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));

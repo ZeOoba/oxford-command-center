@@ -11,7 +11,7 @@ export const InsuranceStatus = z.enum([
 ]);
 export type InsuranceStatus = z.infer<typeof InsuranceStatus>;
 
-/** A policy. Source: master workbook `Insurance Renewals` (24 active, ~$166K premium). */
+/** A policy. Source: master workbook `Insurance Renewals` (24 active policies). */
 export const InsurancePolicy = z.object({
   id: z.string(),
   property: z.string(),

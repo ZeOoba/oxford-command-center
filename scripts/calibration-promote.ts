@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { parseLedger, parsePending, promoteProposal } from '../src/analytics/calibration-ledger';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 const LEDGER_PATH = join(process.cwd(), 'data', 'calibration', 'observations.json');
 const PENDING_PATH = join(process.cwd(), 'data', 'calibration', 'calibration_pending.json');
@@ -46,6 +47,9 @@ export function parseArgs(argv: string[]): { obsId: string | undefined; supersed
 }
 
 async function main(argv: string[]): Promise<number> {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('calibration-promote');
   const parsed = parseArgs(argv);
   if (typeof parsed === 'string') {
     console.error(`calibration-promote: ${parsed}`);

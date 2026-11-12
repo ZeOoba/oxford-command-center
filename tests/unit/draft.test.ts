@@ -7,15 +7,15 @@ function snap(): PortfolioSnapshot {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: '2026-06-01T00:00:00.000Z', source: 't', scenario: 'Base' },
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-06-01' },
     properties: [],
-    leases: [{ id: 'lease1', propertyKey: '29000 Information Lane', propertyId: 'p1', tenantName: 'Jane', unit: 'A', company: 'REDACTED-659, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2026-08-30', escalationDate: null, escalationPct: null, status: 'Expiring Soon', annualRent: 90000, monthsToExpiry: 2, flags: [] }],
-    loans: [{ id: 'l1', name: 'REDACTED-306', counterparty: 'Oxford', direction: 'lender', originalPrincipal: null, currentBalance: -REDACTED-AMT, absBalance: REDACTED-AMT, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.78, lender: null, balloon: true, flags: [] }],
+    leases: [{ id: 'lease1', propertyKey: '29000 Information Lane', propertyId: 'p1', tenantName: 'Jane', unit: 'A', company: 'Tenant 155 LLC, INC.', sf: 1000, monthlyRent: 8333.33, rentPerSf: null, leaseStart: null, leaseEnd: '2026-08-30', escalationDate: null, escalationPct: null, status: 'Expiring Soon', annualRent: 90000, monthsToExpiry: 2, flags: [] }],
+    loans: [{ id: 'l1', name: 'Note Party 02', counterparty: 'Oxford', direction: 'lender', originalPrincipal: null, currentBalance: -438200, absBalance: 438200, rate: 0.09, monthlyPmt: -6268, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: '2027-02-20', monthsToMaturity: 8, ltv: 0.78, lender: null, balloon: true, flags: [] }],
     cash: { asOf: '2026-06-01', totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
     insurance: [{ id: 'ins-1', property: 'Solar Field', entity: null, coverage: 'Package', effective: null, expires: '2026-07-01', policyNo: null, carrier: 'Erie', premium: 8000, daysToExpiry: 30, status: 'Renew Now', notes: null, flags: [] }],
     deals: [],
     tasks: [],
     counterparties: [
       { id: 'cp-erie', name: 'Erie', kind: 'carrier', firm: 'Erie', role: null, email: 'broker@erie.com', phone: null, market: null, notes: null, source: 'workbook', links: { properties: [], loans: [], deals: [], insurance: ['ins-1'] } },
-      { id: 'cp-phil', name: 'REDACTED-505', kind: 'counsel', firm: 'REDACTED-319', role: 'Counsel', email: 'REDACTED-326', phone: null, market: 'Columbus OH', notes: null, source: 'memory', links: { properties: [], loans: [], deals: [], insurance: [] } },
+      { id: 'cp-phil', name: 'Contact 03', kind: 'counsel', firm: 'Firm 02', role: 'Counsel', email: 'contact-03@example.com', phone: null, market: 'Columbus OH', notes: null, source: 'memory', links: { properties: [], loans: [], deals: [], insurance: [] } },
     ],
     dataQuality: [],
   };
@@ -31,7 +31,7 @@ describe('buildDraft — draft-only emails', () => {
   it('renewal draft references the tenant, property, rent, and expiry', () => {
     const d = buildDraft(snap(), { kind: 'renewal', entity: { type: 'lease', id: 'lease1' } });
     expect(d?.subject).toContain('29000 Information Lane');
-    expect(d?.body).toContain('REDACTED-659, INC.');
+    expect(d?.body).toContain('Tenant 155 LLC, INC.');
     // tenant-facing figure is CONTRACT rent (monthlyRent x 12 = 99,999.96), never the net-of-abatement annualRent (90,000)
     expect(d?.body).toContain('$100,000');
     expect(d?.body).not.toContain('$90,000');
@@ -40,8 +40,8 @@ describe('buildDraft — draft-only emails', () => {
 
   it('refi draft uses full-precision balance and a maturity date', () => {
     const d = buildDraft(snap(), { kind: 'refi', entity: { type: 'loan', id: 'l1' } });
-    expect(d?.body).toContain('$REDACTED-AMT');
-    expect(d?.subject).toContain('REDACTED-306');
+    expect(d?.body).toContain('$438,200');
+    expect(d?.subject).toContain('Note Party 02');
   });
 
   it('insurance draft auto-fills the carrier email from the relationship graph', () => {
@@ -51,7 +51,7 @@ describe('buildDraft — draft-only emails', () => {
 
   it('general counterparty draft uses the contact email', () => {
     const d = buildDraft(snap(), { kind: 'general', entity: { type: 'counterparty', id: 'cp-phil' } });
-    expect(d?.to).toBe('REDACTED-326');
+    expect(d?.to).toBe('contact-03@example.com');
   });
 
   it('mailtoHref encodes cc, subject and body but no auto-send', () => {

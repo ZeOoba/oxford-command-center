@@ -36,7 +36,7 @@ function makeSnap(): PortfolioSnapshot {
     meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: new Date().toISOString(), source: 't', scenario: 'Base' },
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-06-01' },
     properties: [
-      { id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex', sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000, debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'REDACTED-672', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000, cashOnCash: null, holdYrs: null, encumbered: true, flags: [] },
+      { id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex', sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000, debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Firm 03', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000, cashOnCash: null, holdYrs: null, encumbered: true, flags: [] },
     ],
     leases: [],
     loans: [],
@@ -63,7 +63,7 @@ function makeSnap(): PortfolioSnapshot {
       { id: 'cp-only', name: 'Hale & Marsh LLP', kind: 'counsel', firm: 'Hale & Marsh', role: 'Buyer counsel', email: 'partner@halemarsh.example', phone: null, market: 'Midwest', notes: null, source: 'memory', links: { properties: [], loans: [], deals: ['d-conf'], insurance: [] } },
       // Linked to the confidential deal AND a property: survives, because it is not orphaned BY the
       // redaction — the property link stands on its own.
-      { id: 'cp-mixed', name: 'REDACTED-672', kind: 'lender', firm: 'REDACTED-672', role: 'Lender', email: null, phone: null, market: 'Mid-Atlantic', notes: null, source: 'workbook', links: { properties: ['p1'], loans: [], deals: ['d-conf'], insurance: [] } },
+      { id: 'cp-mixed', name: 'Firm 03', kind: 'lender', firm: 'Firm 03', role: 'Lender', email: null, phone: null, market: 'Mid-Atlantic', notes: null, source: 'workbook', links: { properties: ['p1'], loans: [], deals: ['d-conf'], insurance: [] } },
       // Untouched by any confidential link.
       { id: 'cp-clean', name: 'Kegler Brown', kind: 'counsel', firm: 'Kegler Brown', role: 'Counsel', email: null, phone: null, market: 'Columbus', notes: null, source: 'memory', links: { properties: [], loans: [], deals: ['d-pub'], insurance: [] } },
     ],
@@ -85,7 +85,7 @@ function egressText(r: { data: unknown; refs: unknown }): string {
  *  below), which would make every OTHER test's blanket `not.toContain(SECRET_SHORT)` assertion
  *  fail for the wrong reason. Balloon <180d on a `borrower` loan -> CRITICAL. */
 function collisionLoan() {
-  return { id: 'l-collide', name: `${SECRET_SHORT} Point Distribution Loan`, counterparty: 'Third-Party Borrower', direction: 'borrower', originalPrincipal: null, currentBalance: 1500000, absBalance: 1500000, rate: 0.07, monthlyPmt: 9000, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: daysFromNow(60), monthsToMaturity: 2, ltv: 0.5, lender: 'REDACTED-672', balloon: true, flags: [] };
+  return { id: 'l-collide', name: `${SECRET_SHORT} Point Distribution Loan`, counterparty: 'Third-Party Borrower', direction: 'borrower', originalPrincipal: null, currentBalance: 1500000, absBalance: 1500000, rate: 0.07, monthlyPmt: 9000, annualInterest: null, annualPrincipal: null, loanType: 'Balloon', status: 'Balloon', isDemand: false, maturity: daysFromNow(60), monthsToMaturity: 2, ltv: 0.5, lender: 'Firm 03', balloon: true, flags: [] };
 }
 
 describe('OI-225 layer 1 — tool boundary drops confidential rows', () => {
@@ -153,7 +153,7 @@ describe('OI-225 layer 1 — tool boundary drops confidential rows', () => {
 
   it('get_relationships keeps counterparties with links that survive the redaction', () => {
     const out = egressText(runTool('get_relationships', makeSnap(), {}));
-    expect(out).toContain('REDACTED-672');
+    expect(out).toContain('Firm 03');
     expect(out).toContain('Kegler Brown');
   });
 
@@ -202,8 +202,8 @@ describe('OI-225 layer 1 — tool boundary drops confidential rows', () => {
   });
 
   it('search_entities still returns a counterparty that survives the redaction', () => {
-    const r = runTool('search_entities', makeSnap(), { query: 'REDACTED-672' });
-    expect(egressText(r)).toContain('REDACTED-672');
+    const r = runTool('search_entities', makeSnap(), { query: 'firm 03' });
+    expect(egressText(r)).toContain('Firm 03');
   });
 });
 

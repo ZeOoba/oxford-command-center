@@ -6,6 +6,7 @@
  * Exported functions allow unit testing without process.exit side effects.
  */
 import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
 export interface GovernanceResult {
@@ -450,6 +451,124 @@ export function checkStatusJson(root: string): GovernanceResult {
   return { pass: errors.length === 0, errors, warnings };
 }
 
+// ── real-data copy rule (refute round 7) — kept identical to scripts/prepush-confidential-scan.mjs ──
+// tests/unit/real-data-copy-rule-parity.test.ts proves both checkers agree on the same probe set.
+
+/** What may follow a listed file's stem in a copy's name: end of name, or a separator (space, '-',
+ *  '_', '(', '.', '~'): "x - Copy.ts", "x (1).json", "x_old.json", "x.json.tmp-1", "x.json~". */
+const STEM_SEPARATOR = /[\s\-_(.~]/;
+
+/** The declared copy markers, anchored on name-segment boundaries so ordinary words never match. */
+export const COPY_MARKER = /(?:^|[\s.\-_~()])(?:corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)(?:$|[\s.\-_~()\d])/i;
+
+/** True when `p` lies under a copy of the folder `dir` ("a/b - Copy/", "a/b.bak/", "a/b (1)/"). */
+function inCopiedFolder(p: string, dir: string): boolean {
+  const trimmed = dir.replace(/\/$/, '');
+  if (!trimmed) return false;
+  const cut = trimmed.lastIndexOf('/');
+  const parent = cut >= 0 ? trimmed.slice(0, cut + 1) : '';
+  const folder = trimmed.slice(cut + 1);
+  if (!p.startsWith(parent + folder)) return false;
+  const rest = p.slice(parent.length + folder.length);
+  const end = rest.indexOf('/');
+  return end > 0 && STEM_SEPARATOR.test(rest.charAt(0));
+}
+
+/**
+ * True when the normalized path `p` is a copy of the normalized listed file `listed`: at any depth under
+ * the listed file's folder (or a copy of that folder), a name that starts with the listed stem followed
+ * by the end of the name or a separator, or a name that carries the stem on a non-alphanumeric boundary
+ * after a declared copy marker ("Copy of x.json", "backup_x.json").
+ */
+export function isCopyOf(p: string, listed: string): boolean {
+  const slash = listed.lastIndexOf('/');
+  const dir = slash >= 0 ? listed.slice(0, slash + 1) : '';
+  if (!p.startsWith(dir) && !inCopiedFolder(p, dir)) return false;
+  const base = listed.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  const stem = (dot > 0 ? base.slice(0, dot) : base).replace(/^\./, ''); // '.x.json' -> 'x'
+  if (!stem) return false;
+  const name = p.slice(p.lastIndexOf('/') + 1).replace(/^\./, ''); // '.x.json.swp' (vim) is a copy too
+  if (name.startsWith(stem)) {
+    const next = name.charAt(stem.length);
+    if (next === '' || STEM_SEPARATOR.test(next)) return true;
+  }
+  const at = name.indexOf(stem);
+  if (at > 0 && !/[a-z0-9]/.test(name.charAt(at - 1))) {
+    const after = name.charAt(at + stem.length);
+    if ((after === '' || !/[a-z0-9]/.test(after)) && COPY_MARKER.test(name.slice(0, at))) return true;
+  }
+  return false;
+}
+
+/** A listed real-data dir, or a copy of a listed file; the manifest's copyRuleAllow entries never match. */
+export function isRealCopyOrPath(nf: string, manifest: { files: string[]; dirs: string[]; allow?: string[] }, norm: (x: string) => string): boolean {
+  if ((manifest.allow ?? []).some((a) => norm(a) === nf)) return false;
+  if (manifest.dirs.some((d) => nf.startsWith(norm(d)))) return true;
+  return manifest.files.some((m) => isCopyOf(nf, norm(m)));
+}
+
+/**
+ * Real firm data is never tracked (ruling 2026-11-10). scripts/fixtures/real-data-manifest.json names
+ * every real-data path (exact files + directory prefixes); each is gitignored and local-only, with a
+ * synthetic stand-in at fixtures/synthetic/<same path>. Fails when any manifest path is in the index
+ * (`git add -f`, a negated ignore rule), and fails closed when the manifest or the index cannot be
+ * read. The pre-push scan (scripts/prepush-confidential-scan.mjs) blocks the same paths at push time;
+ * this catches them at gate / CI time.
+ *
+ * @param tracked test seam: the tracked file list; defaults to `git ls-files` in `root`.
+ */
+export function checkRealDataUntracked(root: string, tracked?: readonly string[]): GovernanceResult {
+  const errors: string[] = [];
+  let manifest: { files: string[]; dirs: string[]; allow: string[] };
+  try {
+    const parsed = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf-8')) as {
+      files?: unknown;
+      dirs?: unknown;
+      neverTrack?: { files?: unknown; dirs?: unknown };
+      copyRuleAllow?: unknown;
+    };
+    const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []);
+    // `neverTrack`: real-data paths with no synthetic stand-in (baked outputs, overlay, warehouse,
+    // raw exports). Not seeded; checked here exactly like the manifest paths.
+    manifest = {
+      files: [...strings(parsed.files), ...strings(parsed.neverTrack?.files)],
+      dirs: [...strings(parsed.dirs), ...strings(parsed.neverTrack?.dirs)],
+      // Tracked files sharing a listed stem that are not copies of it, each with its reason.
+      allow: parsed.copyRuleAllow && typeof parsed.copyRuleAllow === 'object' ? Object.keys(parsed.copyRuleAllow) : [],
+    };
+    if (manifest.files.length === 0 && manifest.dirs.length === 0) throw new Error('lists no paths');
+  } catch (e) {
+    errors.push(`REAL_DATA: scripts/fixtures/real-data-manifest.json is unreadable (${(e as Error).message}); cannot verify real data is untracked`);
+    return { pass: false, errors, warnings: [] };
+  }
+  let files: readonly string[];
+  try {
+    files =
+      tracked ??
+      execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+        .split('\0')
+        .filter(Boolean);
+  } catch (e) {
+    errors.push(`REAL_DATA: could not list tracked files (git ls-files: ${(e as Error).message.split('\n')[0]}); cannot verify real data is untracked`);
+    return { pass: false, errors, warnings: [] };
+  }
+  // Case-insensitive and normalized (NTFS, core.ignorecase): a case variant is the same file there.
+  const norm = (x: string): string => x.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+  for (const raw of files) {
+    const f = raw.replace(/\\/g, '/');
+    const nf = norm(f);
+    if (nf.startsWith('fixtures/synthetic/')) continue;
+    if (isRealCopyOrPath(nf, manifest, norm)) {
+      errors.push(
+        `REAL_DATA_TRACKED: ${f} is real firm data (scripts/fixtures/real-data-manifest.json, ruling 2026-11-10) and must not be tracked. ` +
+          'Untrack it (git rm --cached) and keep the synthetic stand-in under fixtures/synthetic/.',
+      );
+    }
+  }
+  return { pass: errors.length === 0, errors, warnings: [] };
+}
+
 /** Run all checks, print results, and exit with appropriate code. */
 /**
  * Migration prefixes must be unique — a shared numeric prefix makes apply order depend on a
@@ -495,6 +614,7 @@ function main(): void {
     checkGovernorLiteralCoupling(root),
     checkStatusJson(root),
     checkMigrationPrefixUniqueness(root),
+    checkRealDataUntracked(root),
   ];
 
   for (const result of checks) {

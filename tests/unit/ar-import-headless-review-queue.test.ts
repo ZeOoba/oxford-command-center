@@ -3,17 +3,17 @@
 // 2026-09-14 weekly financial-code sweep, Fix B: the Format B (unit-only) review-queue write path.
 // Two real defects, both visible in the committed data on 2026-09-14:
 //
-//   1. DUPLICATE: data/ar/review-queue.json held one row -- "C 4 (storage)", $0.38, Northwood,
+//   1. DUPLICATE: data/ar/review-queue.json held one row -- "C 4 (storage)", $0.42, Northwood,
 //      sourceFile "2203-2207 Northwood Delinquency 8.21.2026.xlsx" -- while portfolio.json's
 //      arBalances ALREADY carried that same source row, attributed to 2207-northwood-c4-anibal-
-//      REDACTED-669: same sourceFile, same as-of (2026-08-21), same $0.38. The queue's dedup key
+//      duketa: same sourceFile, same as-of (2026-08-21), same $0.42. The queue's dedup key
 //      (`tenant::sourceFile::reason`) uses the RAW unit label, so the annotated "C 4 (storage)"
 //      and the roster's "C4" never matched. Before queuing, a Format B row is now keyed by
 //      (sourceFile, as-of date, CANONICAL unit tokens, amount) -- reusing resolve-by-unit.ts's
 //      expandUnitTokens, which already strips the '(storage)' annotation -- and skipped when this
 //      run already attributed the same source row, or the queue already holds it.
 //
-//   2. UNREACHABLE SKIP: data/ar-mapping-cache.json holds "REDACTED-486": "SKIP" -- a durable
+//   2. UNREACHABLE SKIP: data/ar-mapping-cache.json holds "tenant 059 llc": "SKIP" -- a durable
 //      human ruling keyed by tenant name (mapping-cache.ts cacheKey) -- but a Format B queue row
 //      carries NO tenant name, so nothing could ever consult that ruling against it. The queued
 //      row now names who the roster puts at that unit (any status), and shows the cache's ruling
@@ -40,21 +40,21 @@ const AS_OF = new Date('2026-08-21T00:00:00.000Z');
 const NOW = '2026-09-02T10:43:09.439Z';
 
 // Shaped like the real roster record (portfolio.json leases[]): Expired since 2024-09-01.
-const REDACTED-669: UnitLease = {
-  id: 'REDACTED-197',
+const DUKETA: UnitLease = {
+  id: '2207-northwood-c4-tenant-059-llc',
   unit: 'C4',
   propertyId: NORTHWOOD,
   status: 'Expired',
-  annualRent: REDACTED-AMT,
-  tenantName: 'REDACTED-486',
+  annualRent: 4500,
+  tenantName: 'Tenant 059 LLC',
 };
 const ROSTER: UnitLease[] = [
-  REDACTED-669,
-  { id: 'REDACTED-246', unit: 'A4', propertyId: NORTHWOOD, status: 'Active', annualRent: REDACTED-AMT, tenantName: 'REDACTED-556' },
+  DUKETA,
+  { id: '2207-northwood-a4-tenant-035-llc', unit: 'A4', propertyId: NORTHWOOD, status: 'Active', annualRent: 13500, tenantName: 'Person 015' },
 ];
 
 // The real Format B source row, as the export prints it.
-const STORAGE_ROW: BucketedUnitRow = { unit: 'C 4 (storage)', property: NBC_C, d30: 0.38, d30plus: 0 };
+const STORAGE_ROW: BucketedUnitRow = { unit: 'C 4 (storage)', property: NBC_C, d30: 0.42, d30plus: 0 };
 
 function buildStorageRow(cacheEntries: Record<string, string> = {}): QueuedReview {
   return buildBucketedReviewRow({
@@ -71,22 +71,22 @@ function buildStorageRow(cacheEntries: Record<string, string> = {}): QueuedRevie
 
 describe('sourceRowKey -- identity of ONE real-world source row across the two parse shapes', () => {
   it('keys the annotated "C 4 (storage)" and the plain "C4" to the SAME source row', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C 4 (storage)', 0.38)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38));
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C 4 (storage)', 0.42)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.42));
   });
 
   it('accepts the as-of date as a Date, an ISO string, or a bare YYYY-MM-DD (persisted vs in-run shapes)', () => {
-    const fromDate = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38);
-    expect(sourceRowKey(SOURCE_FILE, '2026-08-21T00:00:00.000Z', NORTHWOOD, 'C4', 0.38)).toBe(fromDate);
-    expect(sourceRowKey(SOURCE_FILE, '2026-08-21', NORTHWOOD, 'C4', 0.38)).toBe(fromDate);
+    const fromDate = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.42);
+    expect(sourceRowKey(SOURCE_FILE, '2026-08-21T00:00:00.000Z', NORTHWOOD, 'C4', 0.42)).toBe(fromDate);
+    expect(sourceRowKey(SOURCE_FILE, '2026-08-21', NORTHWOOD, 'C4', 0.42)).toBe(fromDate);
   });
 
   it('a different amount, file, date, property, or unit is a DIFFERENT source row', () => {
-    const base = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38);
+    const base = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.42);
     expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.39)).not.toBe(base);
-    expect(sourceRowKey('2203-2207 Northwood Delinquency 8.28.2026.xlsx', AS_OF, NORTHWOOD, 'C4', 0.38)).not.toBe(base);
-    expect(sourceRowKey(SOURCE_FILE, new Date('2026-08-28T00:00:00.000Z'), NORTHWOOD, 'C4', 0.38)).not.toBe(base);
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'some-other-property', 'C4', 0.38)).not.toBe(base);
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C5', 0.38)).not.toBe(base);
+    expect(sourceRowKey('2203-2207 Northwood Delinquency 8.28.2026.xlsx', AS_OF, NORTHWOOD, 'C4', 0.42)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, new Date('2026-08-28T00:00:00.000Z'), NORTHWOOD, 'C4', 0.42)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'some-other-property', 'C4', 0.42)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C5', 0.42)).not.toBe(base);
   });
 
   it('rounds the amount to the cent so float-order noise cannot split one row into two', () => {
@@ -94,29 +94,29 @@ describe('sourceRowKey -- identity of ONE real-world source row across the two p
   });
 
   it('an undated row still keys (as "undated") -- but never matches a dated one', () => {
-    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.38)).not.toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.38)).not.toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38));
+    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.42)).not.toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.42)).not.toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.42));
   });
 
   it('returns null when there is no unit identity to key on (missing, blank, or annotation-only label)', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, null, 0.38)).toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, undefined, 0.38)).toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, '(storage)', 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, null, 0.42)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, undefined, 0.42)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, '(storage)', 0.42)).toBeNull();
   });
 
   it('returns null for an unresolved property (refute 2026-09-22): no write ever carries one, so such a row can never be proven a duplicate', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, null, 'C4', 0.38)).toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, undefined, 'C4', 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, null, 'C4', 0.42)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, undefined, 'C4', 0.42)).toBeNull();
   });
 });
 
 describe('buildBucketedReviewRow -- a Format B review row carries its source-row identity and the roster candidate', () => {
   it('the real "C 4 (storage)" row: still queued at none confidence (Expired-only unit), never auto-attributed', () => {
-    const r = buildStorageRow({ 'REDACTED-486': 'SKIP' });
+    const r = buildStorageRow({ 'tenant 059 llc': 'SKIP' });
     expect(r).toMatchObject({
       tenant: `${NBC_C} / C 4 (storage)`,
       property: NBC_C,
-      d30: 0.38,
+      d30: 0.42,
       d60: 0,
       d90: 0,
       d90plus: 0,
@@ -139,21 +139,21 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
 
   it('names who the roster puts at that unit -- including a DEAD lease -- so a human can see who it probably is', () => {
     const r = buildStorageRow();
-    expect(r.candidateTenant).toBe('REDACTED-486 [Expired]');
-    expect(r.candidateLeaseIds).toEqual(['REDACTED-197']);
+    expect(r.candidateTenant).toBe('Tenant 059 LLC [Expired]');
+    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-tenant-059-llc']);
   });
 
-  it('surfaces the mapping cache\'s ruling for that candidate name (the real "REDACTED-486": "SKIP") -- display only', () => {
-    const r = buildStorageRow({ 'REDACTED-486': 'SKIP' });
-    expect(r.candidateCacheRuling).toBe('REDACTED-486 → SKIP');
+  it('surfaces the mapping cache\'s ruling for that candidate name (the real "tenant 059 llc": "SKIP") -- display only', () => {
+    const r = buildStorageRow({ 'tenant 059 llc': 'SKIP' });
+    expect(r.candidateCacheRuling).toBe('tenant 059 llc → SKIP');
     // NOT auto-applied: the row is still a queued review at none confidence with no proposal.
     expect(r.proposedLeaseId).toBeNull();
     expect(r.confidence).toBe('none');
   });
 
   it('shows a confirmed-mapping ruling too, and null when the cache has no entry for the candidate', () => {
-    expect(buildStorageRow({ 'REDACTED-486': 'REDACTED-197' }).candidateCacheRuling).toBe(
-      'REDACTED-486 → REDACTED-197',
+    expect(buildStorageRow({ 'tenant 059 llc': '2207-northwood-c4-tenant-059-llc' }).candidateCacheRuling).toBe(
+      'tenant 059 llc → 2207-northwood-c4-tenant-059-llc',
     );
     expect(buildStorageRow({}).candidateCacheRuling).toBeNull();
   });
@@ -180,7 +180,7 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
       res: resolveByUnit(row, ROSTER, NORTHWOOD),
       propertyId: NORTHWOOD,
       unitLeases: ROSTER,
-      cacheEntries: { 'REDACTED-486': 'SKIP' },
+      cacheEntries: { 'tenant 059 llc': 'SKIP' },
       sourceFile: SOURCE_FILE,
       asOfDate: AS_OF,
       queuedAt: NOW,
@@ -210,7 +210,7 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
 
   it('a re-let unit (dead + live sibling) names BOTH candidates with their status, and keeps the ambiguous reason', () => {
     const roster: UnitLease[] = [
-      REDACTED-669,
+      DUKETA,
       { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' },
     ];
     const r = buildBucketedReviewRow({
@@ -225,16 +225,16 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
     });
     expect(r.ambiguous).toBe(true);
     expect(r.reason).toMatch(/more than one lease/);
-    expect(r.candidateTenant).toBe('REDACTED-486 [Expired] | New Tenant LLC [Active]');
-    expect(r.candidateLeaseIds).toEqual(['REDACTED-197', 'new-tenant-c4']);
+    expect(r.candidateTenant).toBe('Tenant 059 LLC [Expired] | New Tenant LLC [Active]');
+    expect(r.candidateLeaseIds).toEqual(['2207-northwood-c4-tenant-059-llc', 'new-tenant-c4']);
   });
 });
 
 describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is not also queued', () => {
   const attributedWrite = {
-    leaseId: 'REDACTED-197',
-    arrears: { d30: 0.38, d60: 0, d90: 0, d90plus: 0, asOfDate: AS_OF, sourceFile: SOURCE_FILE },
-    tenant: 'REDACTED-486',
+    leaseId: '2207-northwood-c4-tenant-059-llc',
+    arrears: { d30: 0.42, d60: 0, d90: 0, d90plus: 0, asOfDate: AS_OF, sourceFile: SOURCE_FILE },
+    tenant: 'Tenant 059 LLC',
   };
 
   it('drops the "C 4 (storage)" review row when the same file/as-of/unit/amount was attributed to the C4 lease this run', () => {
@@ -260,7 +260,7 @@ describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is no
 
   it('keeps it when the attributed lease sits on a DIFFERENT unit (same money elsewhere is not this row)', () => {
     const review = buildStorageRow();
-    const a4 = { ...attributedWrite, leaseId: 'REDACTED-246' };
+    const a4 = { ...attributedWrite, leaseId: '2207-northwood-a4-tenant-035-llc' };
     expect(dropReviewsAlreadyAttributed([review], [a4], ROSTER).kept).toEqual([review]);
   });
 
@@ -284,7 +284,7 @@ describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is no
     const nameRow: QueuedReview = {
       tenant: 'Zzz Nomatch Corp',
       property: null,
-      d30: 0.38,
+      d30: 0.42,
       d60: 0,
       d90: 0,
       d90plus: 0,
@@ -308,11 +308,11 @@ describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is no
   it('refute 2026-09-22: an UNMAPPED-property row is never dropped by a mapped-property write that coincides on file / as-of / unit tokens / cents', () => {
     // A Format B export lists several buildings. A fourth header not yet in BUCKETED_PROPERTY_HEADERS
     // must surface as a review row carrying the "add it to the table" reason; a recurring
-    // finance-charge amount ($0.38) on the same unit label at a mapped building in the same file
+    // finance-charge amount ($0.42) on the same unit label at a mapped building in the same file
     // must not make it vanish. Before the property joined the key, this row was silently dropped.
     const live: UnitLease = { id: 'nw-c4-live', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'Live C4 LLC' };
     const roster: UnitLease[] = [live];
-    const unmapped: BucketedUnitRow = { unit: 'C 4', property: 'nbc-d - 9999 Unknown Building', d30: 0.38, d30plus: 0 };
+    const unmapped: BucketedUnitRow = { unit: 'C 4', property: 'nbc-d - 9999 Unknown Building', d30: 0.42, d30plus: 0 };
     const review = buildBucketedReviewRow({
       row: unmapped,
       res: resolveByUnit(unmapped, roster, null),
@@ -344,7 +344,7 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
   const LEGACY_QUEUED: QueuedReview = {
     tenant: `${NBC_C} / C 4 (storage)`,
     property: NBC_C,
-    d30: 0.38,
+    d30: 0.42,
     d60: 0,
     d90: 0,
     d90plus: 0,
@@ -363,8 +363,8 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
 
   it('a queued new-schema "C 4 (storage)" row dedups a later "C4" row with a different label and reason (same source row)', () => {
     const queued = buildStorageRow();
-    const plainRow: BucketedUnitRow = { unit: 'C4', property: NBC_C, d30: 0.38, d30plus: 0 };
-    const roster: UnitLease[] = [REDACTED-669, { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' }];
+    const plainRow: BucketedUnitRow = { unit: 'C4', property: NBC_C, d30: 0.42, d30plus: 0 };
+    const roster: UnitLease[] = [DUKETA, { id: 'new-tenant-c4', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'New Tenant LLC' }];
     const incoming = buildBucketedReviewRow({
       row: plainRow,
       res: resolveByUnit(plainRow, roster, NORTHWOOD), // ambiguous now -> a DIFFERENT reason text
@@ -382,7 +382,7 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
   it('does NOT dedup by source row against a legacy row that carries no unit/as-of identity when the label differs', () => {
     // It cannot be proven to be the same source row from the old schema alone; queue it rather
     // than silently drop a possibly-different delinquency.
-    const plainRow: BucketedUnitRow = { unit: 'C4', property: NBC_C, d30: 0.38, d30plus: 0 };
+    const plainRow: BucketedUnitRow = { unit: 'C4', property: NBC_C, d30: 0.42, d30plus: 0 };
     const incoming = buildBucketedReviewRow({
       row: plainRow,
       res: resolveByUnit(plainRow, ROSTER, NORTHWOOD),
@@ -414,7 +414,7 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
   });
 
   it('refute 2026-09-22: a queued row at one property does not dedup an unmapped-property row with the same unit label and cents', () => {
-    const unmapped: BucketedUnitRow = { unit: 'C4', property: 'nbc-d - 9999 Unknown Building', d30: 0.38, d30plus: 0 };
+    const unmapped: BucketedUnitRow = { unit: 'C4', property: 'nbc-d - 9999 Unknown Building', d30: 0.42, d30plus: 0 };
     const incoming = buildBucketedReviewRow({
       row: unmapped,
       res: resolveByUnit(unmapped, ROSTER, null),

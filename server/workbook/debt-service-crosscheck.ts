@@ -6,7 +6,7 @@
  * the count was 12. Independent review and an adversarial REFUTE pass both found it could not
  * detect the defect it was built for: reverting `External Loans Summary!H9` to the buggy
  * `SUMPRODUCT((dates>=TODAY())*(dates<TODAY()+366)*amount)` left its output byte-identical —
- * all clean — while annual debt service re-inflated to $REDACTED-AMT. It asserted a property of
+ * all clean — while annual debt service re-inflated to the overstated figure. It asserted a property of
  * the schedule DATA; the bug lived in the FORMULA, which it never read.
  *
  * So this is a CROSS-CHECK of two independent computations:
@@ -68,7 +68,7 @@ export interface CrossCheckInput {
   /** Oxford-share multiplier applied by the formula (1.0 or 0.5). */
   share: number;
   bookInterest: number;
-  /** null when the workbook's principal is synthetic (REDACTED-554: I16 = D16-E16). */
+  /** null when the workbook's principal is synthetic (100 Note Party St: I16 = D16-E16). */
   bookPrincipal: number | null;
   asOf: Date;
   /**
@@ -95,8 +95,8 @@ export interface ScanResult {
   firstRowBeyondGap: number | null;
   /**
    * Whether the walk actually inspected every row up to the formula's declared range end.
-   * A schedule that simply stops early inside a generously over-declared range (Restoration
-   * Church Trust declares B11:B310 for a 26-row schedule) is NORMAL and must stay silent; the
+   * A schedule that simply stops early inside a generously over-declared range (Note Party 02
+   * declares B11:B310 for a 26-row schedule) is NORMAL and must stay silent; the
    * real hazard is running out of probe budget before reaching the declared end, which would
    * leave the truncation check unable to fire.
    */
@@ -146,7 +146,7 @@ export interface ScheduleColumns {
  *
  * Deliberately strict about "Interest Paid" vs "Payment Amount": a prototype of this check
  * guessed 29000 Information Lane's interest column as B ("Payment Amount") and over-reported
- * that loan by $REDACTED-AMT — a false positive that would have read as a real workbook defect.
+ * that loan by a five-figure amount — a false positive that would have read as a real workbook defect.
  */
 export function resolveScheduleColumns(header: Record<string, string>): ScheduleColumns {
   const out: ScheduleColumns = {};
@@ -216,7 +216,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
 
   // ── 2. declared range vs the schedule's true extent (OI-094) ─────────────────────────────
   // Structural: fires even when today's delta is zero, because the excluded rows are simply
-  // outside the current window. Banwick's excluded row 71 carries a $3.35M balloon that only
+  // outside the current window. Banwick's excluded row 71 carries a seven-figure balloon that only
   // starts to matter around mid-2030 — by which point nothing would be watching.
   if (declaredRangeEnd !== null) {
     // rows is scan-ordered ascending (scanSchedule walks r upward), so the last element is the
@@ -337,7 +337,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
 
   // ── 3. duplicate payment dates (the OI-096-shaped double-count) ──────────────────────────
   // A date-predicate SUMPRODUCT sums every matching ROW, so two rows sharing a date are both
-  // captured. REDACTED-554's r45/r46 shape (final regular payment and payoff row both dated
+  // captured. 100 Note Party St's r45/r46 shape (final regular payment and payoff row both dated
   // 2028-09-26, both carrying that month's interest) is the reference case, since fixed at
   // source — but the check must still catch its recurrence anywhere else.
   const byDate = new Map<number, ScheduleRow[]>();
@@ -348,7 +348,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   for (const [, dupes] of byDate) {
     if (dupes.length < 2) continue;
     // Two rows CAN legitimately share a date: a balloon settles on the same day as the final
-    // regular payment (REDACTED-306 r35/r36). That is not a double-count. The
+    // regular payment (Note Party 02 r35/r36). That is not a double-count. The
     // double-count signature is the SAME amount repeated in the SAME column — compared with
     // TOLERANCE, not bit-for-bit equality, since a payoff row is typically computed differently
     // from the amortizing rows above it and can land a cent off an otherwise-identical figure.
@@ -378,10 +378,10 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   }
 
   // ── 4. principal reconciliation against the remaining-balance column ─────────────────────
-  // The one check that can see a balloon parked outside the principal column. Restoration Church
-  // Trust's $REDACTED-AMT balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
+  // The one check that can see a balloon parked outside the principal column. Note Party 02's
+  // balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
   // missed it and the workbook and a naive recomputation agreed while both understated Oxford's
-  // returning capital by $REDACTED-AMT. Only the balance column exposes that shape.
+  // returning capital by a six-figure amount. Only the balance column exposes that shape.
   //
   // Applies uniformly to every loan, lender rows included — this was NOT always the design.
   // Gabriel's first-pass ruling on RCT's exclusion (2026-08-05, ~17:00) held it as intentional:
@@ -390,7 +390,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // and RCT's lender balloon not. That ruling was ITSELF superseded same-day ("Turn 149"): the
   // real root cause was that I14/I15/I16 computed principal on three inconsistent bases, not one
   // deliberate design choice. All three were fixed to a single consistent forward-looking basis,
-  // and RCT's balloon is now included (I15 -$REDACTED-AMT, confirmed live). The tracker records
+  // and Note Party 02's balloon is now included (in I15, confirmed live). The tracker records
   // this explicitly as a detector constraint: "must NOT be built to treat balloon-excluded lender
   // principal as correct." A prior version of this check carried an `isLender` exemption built
   // against the first, superseded ruling — removed; it would have silently exempted a real
@@ -410,8 +410,8 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     // indistinguishable here. The previous positional reads (findIndex, the physical predecessor,
     // and reverse().find for the closing balance) flipped the verdict in BOTH directions on the
     // documented RCT r35/r36 same-date pair: a payoff row placed above its same-dated final regular
-    // payment MASKED a real $995K balloon-outside-principal defect, and on a correct workbook the
-    // reverse arrangement fired a false $995K accusation. These sheets are hand-maintained and
+    // payment MASKED a real balloon-outside-principal defect, and on a correct workbook the
+    // reverse arrangement fired a false accusation. These sheets are hand-maintained and
     // multi-section (gapTolerance exists because of interior banners), so nothing guarantees
     // chronological row order. (2026-08-11 integrity sweep, M3.)
     //
@@ -549,7 +549,7 @@ function cellText(ws: Worksheet, col: string, row: number): string | null {
  * `result` entirely whenever the cached value is `0` — making "cached 0" indistinguishable from
  * "never calculated". The underlying `cell.model.result` keeps it.
  *
- * This is not hypothetical: ELS `I16` (REDACTED-312 / REDACTED-554) is an interest-only
+ * This is not hypothetical: ELS `I16` (Note Party 03 LLC / 100 Note Party St) is an interest-only
  * position with no principal scheduled in the next 12 months, so its cached value is a real `0`
  * (`<v>0</v>` in the sheet XML). Reading the getter alone made the detector report "I16 is a
  * schedule formula but has no cached value — recalculate and save the workbook in Excel", which is
@@ -655,7 +655,7 @@ export function scanSchedule(
   // Reaching the sheet's PHYSICAL end counts as reaching the declared end. Rows past `rowCount` are
   // absent from the sheet XML, so there is nothing there to have missed -- claiming the loan is
   // "unverified" in that case is factually wrong. Without this, the sheet-extent cap above turned the
-  // ordinary over-declared range into a permanent false flag: REDACTED-306 declares
+  // ordinary over-declared range into a permanent false flag: Note Party 02 declares
   // B11:B310 over a 60-row sheet, and the live workbook went from 0 flags to 1 on every refresh --
   // the exact shape ScanResult's own doc calls NORMAL and says must stay silent. Found by the refute
   // pass on this branch, reproduced against the real workbook; the first pass's own comment asserting
@@ -752,7 +752,7 @@ function formulaOf(ws: Worksheet, addr: string): string | null {
 const ELS_LOAN_ROWS = [6, 7, 8, 9, 10, 14, 15, 16];
 
 /**
- * The subset of `ELS_LOAN_ROWS` that IS schedule-backed today (excludes 10, the LAST Non note
+ * The subset of `ELS_LOAN_ROWS` that IS schedule-backed today (excludes 10, the NOTE PARTY 08 note
  * computed as `G10*E10`, and 14, the 1100 Rarig demand note computed as `-ABS(G14*E14)`).
  *
  * This is the coverage FLOOR, and it is deliberately NOT derived by re-parsing the live

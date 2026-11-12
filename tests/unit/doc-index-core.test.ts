@@ -16,7 +16,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'REDACTED-659', docName: 'REDACTED-659 Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'dibita', docName: 'Dibita Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -83,26 +83,26 @@ describe('doc-index-core — worker-side ops match the in-process path', () => {
   it('a partially-embedded (resumable) index counts every planned chunk and only returns embedded ones', async () => {
     const p = join(tempRoot(), 'doc-index.sqlite');
     writeChunkPlan(p, CHUNKS, 3);
-    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // REDACTED-659 + Roof embedded; Rent planned only
+    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // Dibita + Roof embedded; Rent planned only
     const h = createDocIndexHandler();
     const loaded = run(h, { type: 'load', dbPath: p })[1];
     expect(loaded).toMatchObject({ type: 'loaded', info: { chunkCount: 3 } });
     const [qv] = await fakeEmbedder(['rent']);
-    expect(rowsOf(run(h, { type: 'knn', id: 1, vector: qv!, limit: 3 })[0]).map((r) => r.chunk.docName).sort()).toEqual(['REDACTED-659 Lease.pdf', 'Roof Warranty.pdf']);
+    expect(rowsOf(run(h, { type: 'knn', id: 1, vector: qv!, limit: 3 })[0]).map((r) => r.chunk.docName).sort()).toEqual(['Dibita Lease.pdf', 'Roof Warranty.pdf']);
     h.close();
   });
 });
 
 describe('scopedChunks — every embedded chunk of EXACTLY the named documents, scored against the query', () => {
-  const EURO = 'Business\\55 New Plant Court\\Lease REDACTED-659 10-2022.pdf';
-  const COMM = 'Business\\55 New Plant Court\\REDACTED-659 Commission Agreement.docx';
-  const IMH = 'Business\\IMH\\IMH Lease.docx';
+  const EURO = 'Business\\55 New Plant Court\\Lease Dibita 10-2022.pdf';
+  const COMM = 'Business\\55 New Plant Court\\Dibita Commission Agreement.docx';
+  const HKT = 'Business\\HKT\\HKT Lease.docx';
   const PCT = 'Business\\X\\100%_match.pdf';
   const CORPUS: DocChunk[] = [
     { docId: 'e1', docName: EURO, idx: 0, text: 'Tenant has one option to renew for five years.' },
     { docId: 'e2', docName: EURO, idx: 1, text: 'The roof is the landlord responsibility.' },
     { docId: 'c1', docName: COMM, idx: 0, text: 'Commission rent is 4 percent.' },
-    { docId: 'o1', docName: IMH, idx: 0, text: 'Tenant may renew once.' },
+    { docId: 'o1', docName: HKT, idx: 0, text: 'Tenant may renew once.' },
     { docId: 'u1', docName: PCT, idx: 0, text: 'Percent sign in a file name.' },
   ];
   async function corpusIndex(): Promise<string> {
@@ -117,9 +117,9 @@ describe('scopedChunks — every embedded chunk of EXACTLY the named documents, 
     try {
       const [qv] = await fakeEmbedder(['renewal']);
       expect(names(scopedChunks(db, qv!, [EURO, COMM, EURO, 'Business\\Nope\\missing.pdf', ''], 100))).toEqual([
-        'REDACTED-659 Commission Agreement.docx#0',
-        'Lease REDACTED-659 10-2022.pdf#0',
-        'Lease REDACTED-659 10-2022.pdf#1',
+        'Dibita Commission Agreement.docx#0',
+        'Lease Dibita 10-2022.pdf#0',
+        'Lease Dibita 10-2022.pdf#1',
       ]);
       expect(scopedChunks(db, qv!, [], 100)).toEqual([]);
     } finally { db.close(); }
@@ -163,10 +163,10 @@ describe('scopedChunks — every embedded chunk of EXACTLY the named documents, 
       const [qv] = await fakeEmbedder(['renewal']);
       // More names than the bound-variable limit of one statement (999 historically, 32,766 in current SQLite).
       const many = Array.from({ length: 40000 }, (_, i) => `Business\\Filler\\doc ${i}.pdf`);
-      expect(names(scopedChunks(db, qv!, [...many.slice(0, 20000), EURO, ...many.slice(20000), IMH], 100))).toEqual([
-        'IMH Lease.docx#0',
-        'Lease REDACTED-659 10-2022.pdf#0',
-        'Lease REDACTED-659 10-2022.pdf#1',
+      expect(names(scopedChunks(db, qv!, [...many.slice(0, 20000), EURO, ...many.slice(20000), HKT], 100))).toEqual([
+        'HKT Lease.docx#0',
+        'Lease Dibita 10-2022.pdf#0',
+        'Lease Dibita 10-2022.pdf#1',
       ]);
     } finally { db.close(); }
   });
@@ -174,12 +174,12 @@ describe('scopedChunks — every embedded chunk of EXACTLY the named documents, 
   it('chunks that were planned but never embedded are not returned', async () => {
     const p = join(tempRoot(), 'doc-index.sqlite');
     writeChunkPlan(p, CHUNKS, 3);
-    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // REDACTED-659 + Roof embedded; Rent planned only
+    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // Dibita + Roof embedded; Rent planned only
     const db = openRo(p);
     try {
       const [qv] = await fakeEmbedder(['rent']);
       expect(scopedChunks(db, qv!, ['Rent Schedule.pdf'], 100)).toEqual([]); // no vector yet
-      expect(scopedChunks(db, qv!, ['REDACTED-659 Lease.pdf'], 100)).toHaveLength(1);
+      expect(scopedChunks(db, qv!, ['Dibita Lease.pdf'], 100)).toHaveLength(1);
     } finally { db.close(); }
   });
 

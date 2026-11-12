@@ -99,7 +99,7 @@ export function saveState(state: AlertState, path = STATE_PATH): void {
  * set was overwritten with the current set on every run, so any condition that transiently
  * vanished from the snapshot was forgotten immediately and re-alerted the moment it came back.
  * That produced the 07-12 and 07-24 re-alert storms: on 07-24 the 14:00 run re-sent ONLY
- * REDACTED-562 (it had dropped out of the 13:01 run and returned) while every other open
+ * Fixture Countertops (it had dropped out of the 13:01 run and returned) while every other open
  * condition stayed correctly quiet. The upstream snapshot is known to flap — see the
  * parseLeases phantom-lease and portfolio.json Notion seed-fallback regressions.
  *

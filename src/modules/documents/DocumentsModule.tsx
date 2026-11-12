@@ -21,7 +21,7 @@ const DOC_VIEWS: Array<{ value: DocView; label: string }> = [
 /**
  * Documents (Phase 6) — lease/PSA/OM corpus the agent searches (RAG). Indexing runs on the local
  * Brain Server only; the read-only mirror has no document index. Search itself is via the Ask panel
- * ("what's the renewal option in the REDACTED-659 lease") — answers cite the passage.
+ * ("what's the renewal option in the Tenant 155 LLC lease") — answers cite the passage.
  */
 export function DocumentsModule() {
   const ui = useUi();

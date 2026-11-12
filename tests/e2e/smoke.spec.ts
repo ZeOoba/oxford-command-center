@@ -3,11 +3,14 @@ import { test, expect } from '@playwright/test';
 // Run in a clean environment: `npx playwright install chromium` once, then `npm run test:e2e`.
 // (The Playwright webServer starts `npm run dev`, so no Brain Server should already be on :8911.)
 
+// Portfolio figures are matched by shape, never by value: a literal here would be a real firm amount.
+const COMPACT_MILLIONS = /^\$\d+(\.\d+)?M$/;
+
 test('overview renders the real portfolio', async ({ page }) => {
   await page.goto('/?still=1');
   await expect(page.getByText('Command Overview')).toBeVisible();
   await expect(page.getByText('Portfolio Value')).toBeVisible();
-  await expect(page.getByText('$59.6M')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(COMPACT_MILLIONS).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('command palette opens and finds an entity', async ({ page }) => {
@@ -21,9 +24,11 @@ test('command palette opens and finds an entity', async ({ page }) => {
 
 test('scenario switch recomputes the portfolio', async ({ page }) => {
   await page.goto('/?still=1');
-  await expect(page.getByText('$59.6M')).toBeVisible({ timeout: 15_000 });
+  const value = page.getByText(COMPACT_MILLIONS).first();
+  await expect(value).toBeVisible({ timeout: 15_000 });
+  const base = (await value.textContent()) ?? '';
   await page.getByRole('radio', { name: 'Downside' }).click();
-  await expect(page.getByText('$51.1M')).toBeVisible();
+  await expect(value).not.toHaveText(base);
 });
 
 test('leasing shows the rent roll', async ({ page }) => {
@@ -33,7 +38,7 @@ test('leasing shows the rent roll', async ({ page }) => {
   await page.getByRole('tab', { name: /^Rent roll/ }).click();
   // exact:true — the tab strip and the view switch also carry "Rent roll" labels (different case).
   await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/REDACTED-659/).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Tenant 155 LLC/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('entity drill-through opens and closes with Escape', async ({ page }) => {

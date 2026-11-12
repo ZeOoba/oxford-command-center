@@ -16,10 +16,10 @@ describe('PremiumHistoryCard', () => {
   it('renders the policy-year chart and a sparkline for each multi-term line only', () => {
     const qc = new QueryClient();
     qc.setQueryData(PREMIUM_HISTORY_KEY, {
-      byYear: [{ year: 2025, premium: 190000, lines: 30 }, { year: 2026, premium: REDACTED-AMT, lines: 30 }],
+      byYear: [{ year: 2025, premium: 154800, lines: 30 }, { year: 2026, premium: 157390, lines: 30 }],
       lines: [
-        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: REDACTED-AMT }, { effectiveDate: '2026-07-05', premium: REDACTED-AMT }] },
-        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 595 }] },
+        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: 6413 }, { effectiveDate: '2026-07-05', premium: 6163 }] },
+        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 640 }] },
       ],
     });
     render(<QueryClientProvider client={qc}><PremiumHistoryCard /></QueryClientProvider>);

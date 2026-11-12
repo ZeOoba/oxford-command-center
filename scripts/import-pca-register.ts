@@ -30,6 +30,7 @@ import {
 } from '../src/contracts/property-condition';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 // ── property resolution ───────────────────────────────────────────────────────────────────────
 
@@ -501,6 +502,9 @@ export function parseArgs(argv: string[]): { xlsxPath: string; db?: string } {
 }
 
 async function main(argv: string[]): Promise<number> {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('import-pca-register');
   let args: { xlsxPath: string; db?: string };
   try {
     args = parseArgs(argv);

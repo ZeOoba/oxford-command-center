@@ -1,9 +1,10 @@
 // tests/unit/property-financials-module.test.tsx — T5 of
 // docs/superpowers/plans/2026-10-05-property-financials-module.md. Render smoke tests of the Property
 // Financials destination against the REAL committed dataset: masthead read from dataset meta, the
-// six-view strip on ?view=, Overview KPIs equal to the calc-lib outputs (golden +2.6% / +6.6%), the
+// six-view strip on ?view=, Overview KPIs equal to the calc-lib outputs (and the value lock), the
 // computed lede, chart crosshair + tooltips, the insight workflow (dismiss requires a reason; PUT
 // carries X-ORA-Client), Scorecard n/m reasons, sorting, row detail and the Explorer hand-off.
+import { pfGolden } from './golden-helpers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -11,7 +12,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { pct, usd } from '@analytics/property-financials/format';
 import { PropertyFinancialsModule } from '../../src/modules/property-financials/PropertyFinancialsModule';
 import { PF_KEYS } from '../../src/modules/property-financials/hooks';
-import { overviewKpis, overviewLede, whereTheMoneyIs } from '../../src/modules/property-financials/model';
+import { opexDeltaItems, overviewKpis, overviewLede, whereTheMoneyIs } from '../../src/modules/property-financials/model';
 import type { PfDatasetResponse, PfInsightStatusResponse } from '../../src/modules/property-financials/types';
 import { loadDataset } from './property-financials-helpers';
 
@@ -114,6 +115,13 @@ describe('Overview (real dataset)', () => {
     expect(screen.queryByTestId('pf-partial-note')).toBeNull();
   });
 
+  /** One KPI tile, found by its label (tiles can show the same percentage text; never query across them). */
+  const tile = (label: RegExp): HTMLElement => {
+    const t = within(screen.getByTestId('pf-kpis')).getByText(label).closest('.pf-kpi');
+    expect(t, String(label)).not.toBeNull();
+    return t as HTMLElement;
+  };
+
   it('F1: a partial same-store member -> KPI changes n/m, lede prints no %, chart note names the member', () => {
     const m = structuredClone(D);
     (m.properties['1100 Rarig'].periods as Record<string, { n_months: number }>).YTD26!.n_months = 8;
@@ -121,26 +129,28 @@ describe('Overview (real dataset)', () => {
     const lede = screen.getByTestId('pf-lede').textContent!;
     expect(lede).toBe(overviewLede(m));
     expect(lede).not.toMatch(/\d+\.\d%/);
-    const kpis = screen.getByTestId('pf-kpis');
-    expect(within(kpis).queryByText('+2.6%')).toBeNull();
-    expect(within(kpis).queryByText('+6.6%')).toBeNull();
+    expect(within(tile(/^Base rent,/)).queryByText(pfGolden().sameStoreYtd.baseRent)).toBeNull();
+    expect(within(tile(/^Opex excl\. RE tax,/)).queryByText(pfGolden().sameStoreYtd.opexExTax)).toBeNull();
     expect(screen.getByTestId('pf-partial-note').textContent).toBe(
       'Percent changes are n/m: 1100 Rarig: partial period: 8 of 9 months. The dollar bars compare unequal month counts; read them as indicative only.',
     );
   });
 
-  it('KPI tiles equal the calc-lib outputs: base rent +2.6%, opex excl. RE tax +6.6%', () => {
+  it('KPI tiles equal the calc-lib outputs and the value lock (base rent, opex excl. RE tax)', () => {
     renderModule();
-    const kpis = screen.getByTestId('pf-kpis');
-    expect(within(kpis).getByText(usd(k.baseRent.current))).toBeTruthy();
-    expect(within(kpis).getByText('+2.6%')).toBeTruthy();
-    expect(pct(k.baseRent.change.value)).toBe('+2.6%');
-    expect(within(kpis).getByText(usd(k.opexExTax.current))).toBeTruthy();
-    expect(within(kpis).getByText('+6.6%')).toBeTruthy();
-    expect(within(kpis).getByText(usd(k.noiFy.current))).toBeTruthy();
-    expect(within(kpis).getByText(pct(k.noiFy.change.value))).toBeTruthy();
-    expect(within(kpis).getByText(String(k.high.count))).toBeTruthy();
-    expect(within(kpis).getByText(new RegExp(`${usd(k.high.grossSwing, 'k').replace('$', '\\$')} gross annual swing`))).toBeTruthy();
+    const rent = tile(/^Base rent,/);
+    expect(within(rent).getByText(usd(k.baseRent.current))).toBeTruthy();
+    expect(within(rent).getByText(pfGolden().sameStoreYtd.baseRent)).toBeTruthy();
+    expect(pct(k.baseRent.change.value)).toBe(pfGolden().sameStoreYtd.baseRent);
+    const opex = tile(/^Opex excl\. RE tax,/);
+    expect(within(opex).getByText(usd(k.opexExTax.current))).toBeTruthy();
+    expect(within(opex).getByText(pfGolden().sameStoreYtd.opexExTax)).toBeTruthy();
+    const noi = tile(/^NOI FY2025$/);
+    expect(within(noi).getByText(usd(k.noiFy.current))).toBeTruthy();
+    expect(within(noi).getByText(pct(k.noiFy.change.value))).toBeTruthy();
+    const high = tile(/^High-severity items$/);
+    expect(within(high).getByText(String(k.high.count))).toBeTruthy();
+    expect(within(high).getByText(new RegExp(`${usd(k.high.grossSwing, 'k').replace('$', '\\$')} gross annual swing`))).toBeTruthy();
   });
 
   it('both charts render with a legend, a keyboard crosshair tooltip and a data table', () => {
@@ -156,10 +166,15 @@ describe('Overview (real dataset)', () => {
     // diverging bars: every bar is a focusable mark with a tooltip; both directions in the legend
     expect(screen.getByText('Cost up')).toBeTruthy();
     expect(screen.getByText('Cost down')).toBeTruthy();
-    const util = screen.getByRole('img', { name: /^Utilities: \+/ });
+    const util = screen.getByRole('img', { name: /^Utilities: [+-]/ });
     fireEvent.focus(util);
     expect(screen.getAllByRole('status').some((s) => s.textContent?.startsWith('Utilities'))).toBe(true);
-    expect(screen.getByTestId('pf-tax-note').textContent).toMatch(/cash basis/);
+    // The cash-basis caveat appears exactly when same-store RE tax reads down year to date (on the
+    // real file it does; the synthetic copy's direction is a draw).
+    const tax = opexDeltaItems(D.portfolio.same_store_YTD26_vs_YTD25.view, null).find((x) => x.category === 'Real estate & property tax')!;
+    const note = screen.getByTestId('pf-tax-note').textContent!;
+    if (tax.value < 0) expect(note).toMatch(/cash basis/);
+    else expect(note).not.toMatch(/cash basis/);
   });
 
   it('"Where the money is" lists High items by |impact| with icon+label severity pills', () => {

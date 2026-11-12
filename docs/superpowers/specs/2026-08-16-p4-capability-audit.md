@@ -110,7 +110,7 @@ Five verified facts, in causal order:
 4. No mapping cache, no review queue on disk — `ar-import-headless.ts` has never completed a run.
 5. Nothing schedules it.
 
-Consequence: `arBalances[]` is empty, the `arrears-*` and `ar-stale` conditions never fire, and the daily brief's Section 4c collections block has no data. Meanwhile `_pipeline` computed **$REDACTED-AMT** of AR from the same eight files on 2026-07-17 and wrote it to a standalone HTML dashboard nothing else reads.
+Consequence: `arBalances[]` is empty, the `arrears-*` and `ar-stale` conditions never fire, and the daily brief's Section 4c collections block has no data. Meanwhile `_pipeline` computed a six-figure AR total ([amount redacted]) from the same eight files on 2026-07-17 and wrote it to a standalone HTML dashboard nothing else reads.
 
 ---
 

@@ -1,0 +1,364 @@
+{
+  "overlay": {
+    "corrections": [
+      {
+        "propertyKey": "info-lane",
+        "reportId": "R08",
+        "set": {
+          "reportDate": "2025-10-29",
+          "immediateUsd": 900,
+          "shortTermUsd": 0,
+          "psfYrStated": 0.21
+        },
+        "reason": "Synthetic: the register lists the Year 1 and Year 2 reserve outlays as Immediate / Short-term; the DRAFT states Immediate $900 (ADA) and Short-term $0.",
+        "provenance": {
+          "sourceFile": "synthetic PCA report (fixtures/synthetic) §2/§6; synthetic consultant DRAFT",
+          "sourceDate": "2025-10-29",
+          "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+          "status": "DRAFT"
+        }
+      },
+      {
+        "propertyKey": "raytown",
+        "reportId": "R06",
+        "set": {
+          "reservesUninflUsd": 288000,
+          "psfYrStated": null
+        },
+        "reason": "Synthetic: the report states a total its own year columns do not sum to; the corrected figure is used.",
+        "provenance": {
+          "sourceFile": "synthetic PCA register (fixtures/synthetic) (Flags_Open_Items #4)",
+          "sourceDate": "2024-10-07",
+          "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+          "status": "CURRENT"
+        }
+      }
+    ],
+    "flags": {
+      "e-fulton": [
+        "No roof access (roof ages inferred)",
+        "Synthetic: one collapse area not costed",
+        "Synthetic: roof reserve likely understated"
+      ],
+      "e-livingston": [
+        "DRAFT — final PCA not obtained",
+        "Synthetic: signed price difference unexplained"
+      ],
+      "northwood": [
+        "Synthetic: roof condition conflicts with a later inspection",
+        "No roof replacement in reserve",
+        "Only an inflated reserve is stated — $/SF/yr not derivable"
+      ],
+      "raytown": [
+        "Synthetic: stated total differs from the year columns",
+        "Table has wrong address / year / SF"
+      ],
+      "sunburst": [
+        "Comment letter, not a full PCA — no reserves, no SF"
+      ],
+      "info-lane": [
+        "DRAFT — final PCR and fire-code response outstanding",
+        "CO / lot / vintage mismatch",
+        "Synthetic: occupancy class vs tenant use [SPECULATIVE]",
+        "Synthetic: paving looks light [SPECULATIVE; no bid]"
+      ]
+    },
+    "rentRolls": [
+      {
+        "propertyKey": "info-lane",
+        "propertyLabel": "29000 Information Ln",
+        "asOf": "2025-10-17",
+        "stale": true,
+        "note": "Synthetic: several leases ended since the roll was pulled; pull a current roll before relying on WALT.",
+        "provenance": {
+          "sourceFile": "synthetic PCA report (fixtures/synthetic) §6",
+          "sourceDate": "2025-10-17",
+          "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+          "status": "STALE"
+        }
+      }
+    ]
+  },
+  "infoLaneDetail": {
+    "propertyKey": "info-lane",
+    "label": "29000 Information Ln",
+    "sf": 48000,
+    "provenance": {
+      "sourceFile": "synthetic PCA report (fixtures/synthetic) §2/§6; synthetic consultant DRAFT",
+      "sourceDate": "2025-10-29",
+      "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+      "status": "DRAFT"
+    },
+    "facts": [
+      {
+        "label": "Report",
+        "value": "Synthetic consultant PCR — DRAFT 2025-10-29"
+      },
+      {
+        "label": "Purpose",
+        "value": "Synthetic stand-in"
+      },
+      {
+        "label": "Site",
+        "value": "5 buildings, 48,000 SF"
+      },
+      {
+        "label": "Condition",
+        "value": "Good / Fair"
+      },
+      {
+        "label": "Basis",
+        "value": "Today’s dollars, 12 yrs, 2.5% escalation — PCA consultant estimate"
+      }
+    ],
+    "immediateUsd": 900,
+    "immediateItems": [
+      {
+        "item": "ADA van space",
+        "usd": 300
+      },
+      {
+        "item": "ADA signs",
+        "usd": 250
+      },
+      {
+        "item": "ADA aisles",
+        "usd": 350
+      }
+    ],
+    "shortTermUsd": 0,
+    "reservesUninflUsd": 120000,
+    "reservesInflUsd": 132000,
+    "termYears": 12,
+    "reserveScheduleUninfl": {
+      "yr1": 40000,
+      "yr2": 20000,
+      "yr6": 10000,
+      "yr7": 30000,
+      "yr10": 12000,
+      "yr11": 8000
+    },
+    "systems": [
+      {
+        "system": "Paving",
+        "usd": 60000
+      },
+      {
+        "system": "Exterior (paint / sealants)",
+        "usd": 36000
+      },
+      {
+        "system": "Roof maintenance",
+        "usd": 24000
+      }
+    ],
+    "unitCosts": [
+      {
+        "item": "Full-depth asphalt",
+        "usd": 40,
+        "uom": "SY"
+      },
+      {
+        "item": "Seal & stripe",
+        "usd": 1.25,
+        "uom": "SY"
+      },
+      {
+        "item": "Exterior paint",
+        "usd": 1.25,
+        "uom": "SF"
+      },
+      {
+        "item": "Sealants",
+        "usd": 3,
+        "uom": "LF"
+      }
+    ],
+    "conflicts": [
+      {
+        "text": "Synthetic: CO / lot / vintage mismatch.",
+        "speculative": false
+      },
+      {
+        "text": "Synthetic: occupancy class vs tenant use — insurer / lender exposure.",
+        "speculative": true
+      },
+      {
+        "text": "Synthetic: paving and paint quantities look light vs photos; no bid obtained.",
+        "speculative": true
+      },
+      {
+        "text": "Synthetic: rent roll (2025-10-17) is stale; WALT figure not current.",
+        "speculative": false
+      }
+    ],
+    "correctionNote": "Synthetic: the register showed the Year 1 / Year 2 reserve outlays as Immediate / Short-term; they are never displayed as Immediate / Short-term.",
+    "rentRoll": {
+      "asOf": "2025-10-17",
+      "leases": 20,
+      "baseRentUsd": 600000,
+      "baseRentPsf": 12.5,
+      "waltYears": 2,
+      "nnnLeases": 18,
+      "grossLeases": 2,
+      "rolloverSfByLeaseEndYear": {
+        "2025": 2000,
+        "2026": 10000,
+        "2027": 12000,
+        "2028": 10000,
+        "2029": 8000,
+        "2030": 6000
+      }
+    }
+  },
+  "extraAssetFacts": [
+    {
+      "propertyKey": "info-lane",
+      "propertyLabel": "29000 Information Ln",
+      "component": "Metal-panel roof B2–B4",
+      "installYear": 2001,
+      "eul": 40,
+      "rul": null,
+      "rulAsOfYear": null,
+      "warrantyEndYear": null,
+      "note": "No warranty; landlord responsibility",
+      "supersedes": "Buildings / metal roofs",
+      "supersedesPropertyKey": "easton-tech-commons",
+      "provenance": {
+        "sourceFile": "synthetic PCA report (fixtures/synthetic) §2/§6; synthetic consultant DRAFT",
+        "sourceDate": "2025-10-29",
+        "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+        "status": "DRAFT"
+      }
+    },
+    {
+      "propertyKey": "info-lane",
+      "propertyLabel": "29000 Information Ln",
+      "component": "Metal-panel roof B1, B5",
+      "installYear": 2007,
+      "eul": 40,
+      "rul": null,
+      "rulAsOfYear": null,
+      "warrantyEndYear": null,
+      "note": "No warranty; landlord responsibility",
+      "supersedes": null,
+      "provenance": {
+        "sourceFile": "synthetic PCA report (fixtures/synthetic) §2/§6; synthetic consultant DRAFT",
+        "sourceDate": "2025-10-29",
+        "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+        "status": "DRAFT"
+      }
+    },
+    {
+      "propertyKey": "info-lane",
+      "propertyLabel": "29000 Information Ln",
+      "component": "Asphalt ~10,000 SY",
+      "installYear": 2001,
+      "eul": null,
+      "rul": 1,
+      "rulAsOfYear": 2025,
+      "warrantyEndYear": null,
+      "note": "Synthetic: RUL 1 per the consultant",
+      "supersedes": null,
+      "provenance": {
+        "sourceFile": "synthetic PCA report (fixtures/synthetic) §2/§6; synthetic consultant DRAFT",
+        "sourceDate": "2025-10-29",
+        "priceBasis": "PCA_CONSULTANT_ESTIMATE",
+        "status": "DRAFT"
+      }
+    },
+    {
+      "propertyKey": "e-fifth",
+      "propertyLabel": "3540 E Fifth Ave",
+      "component": "Roof — TPO 26,700 SF",
+      "installYear": 2022,
+      "eul": null,
+      "rul": null,
+      "rulAsOfYear": null,
+      "warrantyEndYear": 2042,
+      "note": "Warranty end DERIVED: 20-yr term from the 2022-10-21 start (the register states the term and start, not an end date)",
+      "supersedes": "Roof — TPO 26,700",
+      "supersedesPropertyKey": "e-fifth",
+      "provenance": {
+        "sourceFile": "synthetic PCA register (fixtures/synthetic) > Asset_Facts (synthetic contractor proposal, start 2022-10-21)",
+        "sourceDate": "2022-10-21",
+        "priceBasis": "CONTRACTOR_QUOTE",
+        "status": "CURRENT"
+      }
+    }
+  ],
+  "issues": [
+    {
+      "no": 1,
+      "property": "3520 E Fulton",
+      "title": "Scope gaps",
+      "detail": "Synthetic: no roof access; one collapse area uncosted; the follow-up package is unsigned.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 2,
+      "property": "Banwick / Morrison",
+      "title": "Summary errors",
+      "detail": "Synthetic: the summary conflicts with the consultant report on SF and roof types.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 3,
+      "property": "Banwick",
+      "title": "Address in no source",
+      "detail": "Synthetic: an address appears in no source. Close unless one is found.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 4,
+      "property": "Raytown",
+      "title": "Reserve understated",
+      "detail": "Synthetic: the stated total differs from its own year columns; use the corrected figure.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 5,
+      "property": "Northwood",
+      "title": "Roof conflict",
+      "detail": "Synthetic: roof condition conflicts between two inspections; no roof replacement in the reserve.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 6,
+      "property": "Missing documents",
+      "title": "Final reports outstanding",
+      "detail": "Synthetic: final PCR and fire-code response; Livingston final PCA.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 7,
+      "property": "Address checks",
+      "title": "Sheriff and E 14th",
+      "detail": "Synthetic: two address variants to confirm.",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 8,
+      "property": "29000 Info Ln",
+      "title": "Compliance, rent roll and cost conflicts",
+      "detail": "Synthetic: CO / lot / vintage mismatch; occupancy class vs tenant use [SPECULATIVE]; stale rent roll; paving looks light [SPECULATIVE; no bid].",
+      "status": "Open",
+      "owner": ""
+    },
+    {
+      "no": 9,
+      "property": "Cost seg (D1–D14)",
+      "title": "Cost segregation discrepancies",
+      "detail": "D1–D14 (synthetic): Livingston GBA differs from the study; Northwood use [SPECULATIVE]; Fishel PIS date. Full list on the Cost seg view.",
+      "status": "Open",
+      "owner": ""
+    }
+  ]
+}

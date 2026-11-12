@@ -25,7 +25,7 @@ const STATUS = {
   docs: [{ name: 'lease-a.pdf', chunks: 5 }, { name: 'psa-b.pdf', chunks: 4 }],
 };
 const HITS = [
-  { docId: 'd1', chunkIdx: 0, doc: 'REDACTED-659/lease.pdf', snippet: 'renewal option of five years', score: 0.9 },
+  { docId: 'd1', chunkIdx: 0, doc: 'Tenant 155 LLC/lease.pdf', snippet: 'renewal option of five years', score: 0.9 },
   { docId: 'd2', chunkIdx: 0, doc: 'Widgets/psa.pdf', snippet: 'renewal option in the PSA', score: 0.8 },
 ];
 
@@ -100,15 +100,15 @@ describe('DocumentsModule — Search/Corpus views', () => {
   it('state survives a tab round-trip: search query, results and folder filter', async () => {
     renderDocs();
     fireEvent.change(screen.getByLabelText('Semantic document search'), { target: { value: 'renewal option' } });
-    await waitFor(() => expect(screen.getByText('REDACTED-659/lease.pdf')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'REDACTED-659' })); // folder chip → filters to that folder
+    await waitFor(() => expect(screen.getByText('Tenant 155 LLC/lease.pdf')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Tenant 155 LLC' })); // folder chip → filters to that folder
     expect(screen.queryByText('Widgets/psa.pdf')).toBeNull();
 
     selectView('Corpus');
     selectView('Search');
 
     expect((screen.getByLabelText('Semantic document search') as HTMLInputElement).value).toBe('renewal option');
-    expect(screen.getByText('REDACTED-659/lease.pdf')).toBeTruthy();
+    expect(screen.getByText('Tenant 155 LLC/lease.pdf')).toBeTruthy();
     expect(screen.queryByText('Widgets/psa.pdf')).toBeNull();
   });
 });

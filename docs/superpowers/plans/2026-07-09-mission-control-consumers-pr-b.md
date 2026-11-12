@@ -815,7 +815,7 @@ export interface PortfolioFilterBarProps {
   /** Distinct property-manager names, computed by the mounting component from its
    *  already-fetched data (see PortfolioFilterContext.tsx for why this may be empty). */
   managers: string[];
-  /** Display-only slice readout ("12 of 31 assets · $4.2M NOI"), computed by the
+  /** Display-only slice readout ("12 of 31 assets · $2.7M NOI"), computed by the
    *  mounting component from already-fetched data — no new fetching here. */
   slice?: { shown: number; total: number; noiUsd?: number };
 }

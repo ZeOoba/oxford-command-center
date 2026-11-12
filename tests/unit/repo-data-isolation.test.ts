@@ -4,13 +4,12 @@ import { relative, resolve, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 
 /**
- * Regression guard for test-run contamination of the TRACKED files under data/.
+ * Regression guard for test-run contamination of the data files under data/.
  *
- * data/snapshots/portfolio.json is auto-committed and auto-pushed to origin/main by the
- * ora-lease-snapshot-refresh / ora-cc-snapshot-refresh scheduled tasks, which decide whether to
- * commit from the working tree's state. So residue a test run leaves there is a real contamination
- * path into an unattended commit -- as well as a false positive for dirty-tree-triage and the
- * shared-checkout single-writer discipline.
+ * On the live machine these are the REAL firm data (local-only and gitignored since 2026-11-10: real
+ * data is never tracked; CI and fresh clones run on synthetic stand-ins from fixtures/synthetic/).
+ * The app and the scheduled refresh tasks read them, so residue a test run leaves there silently
+ * corrupts live data with no git history to restore it from.
  *
  * tests/setup.ts defaults every repo-data write target to a per-worker sandbox under os.tmpdir().
  * This pins that: if someone drops the override, or adds a fourth tracked data file with a new env
@@ -53,9 +52,10 @@ describe('repo-data write isolation (tests/setup.ts)', () => {
     expect(insideRepo(value!), `${envVar}=${value} resolves inside the checkout`).toBe(false);
   });
 
-  it('the tracked data files a test run could clobber still exist and are not the write target', () => {
-    // Sanity: these are the real repo files the redirect exists to protect. If a rename ever moves
-    // them, the env defaults above must move with them -- this catches the drift.
+  it('the data files a test run could clobber still exist and are not the write target', () => {
+    // Sanity: these are the (local-only) data files the redirect exists to protect; vitest globalSetup
+    // seeds the synthetic stand-ins where they are absent. If a rename ever moves them, the env
+    // defaults above must move with them -- this catches the drift.
     for (const f of ['data/snapshots/portfolio.json', 'data/ar-mapping-cache.json', 'data/ar/review-queue.json']) {
       expect(existsSync(resolve(REPO, f)), `${f} missing -- update the sandbox defaults if it moved`).toBe(true);
     }

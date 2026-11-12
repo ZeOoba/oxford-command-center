@@ -146,7 +146,7 @@ describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
       INSERT INTO acq_candidates
         (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status, content_hash)
       VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, 'active', 'h1')
-    `).run('hubspot:123', 'REDACTED-116');
+    `).run('hubspot:123', 'Pipeline Deal 21');
   }
 
   it('/acq/intel returns 200 and includes the row', async () => {
@@ -283,7 +283,7 @@ Also update the existing `'expiring < 60d is critical'` test body to:
 ```ts
   // Dedup (2026-09-23 review): inside the 0–90d no-renewal window the legacy `expiring-<id>` insight
   // and L-1 `lease-expiry-<id>` fire on the same lease with the same annualRent impact, so
-  // totalsBySpine() summed that rent twice (REDACTED-450's $38K counted as $76K). L-1 carries the
+  // totalsBySpine() summed that rent twice (Example Trucking's rent counted at double its amount). L-1 carries the
   // stronger "no renewal signal" message and is always critical there — keep it, drop the legacy twin.
   {
     const l1Leases = new Set(out.filter((i) => i.id.startsWith('lease-expiry-')).map((i) => i.entityId));
@@ -408,10 +408,10 @@ describe('checkStaleLeaseRows', () => {
   const meta = { asOf: '2026-09-23' } as PortfolioSnapshot['meta'];
   const l = (o: Partial<Lease>) => ({ id: 'x', tenantName: 'T', status: 'Active', leaseEnd: null, ...o }) as Lease;
   it('flags a non-Expired row whose leaseEnd passed > 365d ago (retired tenant still on the rent roll)', () => {
-    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'adk', tenantName: 'REDACTED-523', leaseEnd: '2024-09-01' })] });
+    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'adk', tenantName: 'Tenant 038 LLC', leaseEnd: '2024-09-01' })] });
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ entity: 'reconciliation', field: 'lease.adk.leaseEnd', severity: 'warn' });
-    expect(flags[0]!.issue).toContain('REDACTED-523');
+    expect(flags[0]!.issue).toContain('Tenant 038 LLC');
   });
   it('ignores recent holdovers and rows already marked Expired', () => {
     expect(checkStaleLeaseRows({ meta, leases: [
@@ -433,7 +433,7 @@ const STALE_LEASE_ROW_DAYS = 365;
 /**
  * A lease row that is not marked Expired but ended more than a year ago is almost always a tenant
  * already retired in the Notion Tenant DB whose workbook row was never cleared (2026-09-23 review:
- * REDACTED-523 / REDACTED-486, 752d past end, still inflating Calendar + Renewals). Warn so a human
+ * Tenant 038 LLC / Tenant 059 LLC, 752d past end, still inflating Calendar + Renewals). Warn so a human
  * fixes the workbook — nothing here edits or hides the row.
  */
 export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'>): DataQualityFlag[] {
@@ -1235,7 +1235,7 @@ import { compSourceCount, humanizeDealId } from '../../src/modules/market/comps-
 
 describe('comps display helpers', () => {
   it('humanizes an orphan Notion deal slug', () => {
-    expect(humanizeDealId('notion-liberty-office-park-west-chester-oh-45069')).toBe('REDACTED-390 West Chester OH 45069');
+    expect(humanizeDealId('notion-maple-grove-park-springfield-oh-45501')).toBe('Maple Grove Park Springfield OH 45501');
   });
   it('counts distinct comp sources when the set-level sources list is empty', () => {
     expect(compSourceCount({ sources: [], saleComps: [{ source: 'a' }, { source: 'b' }, { source: 'a' }], rentComps: [{ source: 'c' }] })).toBe(3);
@@ -1828,19 +1828,19 @@ const master = new Map([['3034-westerville-rd-columbus-oh', '3034 Westerville Rd
 describe('buildPremiumHistory', () => {
   it('groups terms per policy line, drops duplicate terms within 300d at the same premium, sums by policy year', () => {
     const r = buildPremiumHistory([
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2024-09-24', premium_annual: REDACTED-AMT },
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-09-18', premium_annual: REDACTED-AMT }, // DQ duplicate
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-07-05', premium_annual: REDACTED-AMT },
-      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2026-07-05', premium_annual: REDACTED-AMT },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2024-09-24', premium_annual: 6420 },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-09-18', premium_annual: 6420 }, // DQ duplicate
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2025-07-05', premium_annual: 6413 },
+      { property_id: 'ins-3034westerville-pckg', policy_type: 'Package (PCKG)', effective_date: '2026-07-05', premium_annual: 6163 },
       { property_id: 'ins-x-gl', policy_type: 'GL', effective_date: null, premium_annual: 100 },
     ], master);
     expect(() => PremiumHistoryReport.parse(r)).not.toThrow();
     expect(r.lines[0]!.property).toBe('3034 Westerville Rd, Columbus OH');
-    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([REDACTED-AMT, REDACTED-AMT, REDACTED-AMT]);
+    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([6420, 6413, 6163]);
     expect(r.byYear).toEqual([
-      { year: 2024, premium: REDACTED-AMT, lines: 1 },
-      { year: 2025, premium: REDACTED-AMT, lines: 1 },
-      { year: 2026, premium: REDACTED-AMT, lines: 1 },
+      { year: 2024, premium: 6420, lines: 1 },
+      { year: 2025, premium: 6413, lines: 1 },
+      { year: 2026, premium: 6163, lines: 1 },
     ]);
   });
 });
@@ -1872,7 +1872,7 @@ interface Row { property_id: string; policy_type: string; effective_date: string
 const DUP_WINDOW_DAYS = 300;
 
 /** Per-line premium terms + policy-year totals. Skips undated/unpriced rows; collapses a same-premium
- *  term re-keyed within 300d (the 3034 Westerville $REDACTED-AMT duplicate in data_quality_issues). */
+ *  term re-keyed within 300d (the 3034 Westerville duplicate in data_quality_issues). */
 export function buildPremiumHistory(rows: Row[], masterNames: ReadonlyMap<string, string>): PremiumHistoryReport {
   const byLine = new Map<string, { policyType: string; terms: Array<{ effectiveDate: string; premium: number }> }>();
   for (const r of rows) {
@@ -1946,10 +1946,10 @@ describe('PremiumHistoryCard', () => {
   it('renders the policy-year chart and a sparkline for each multi-term line only', () => {
     const qc = new QueryClient();
     qc.setQueryData(PREMIUM_HISTORY_KEY, {
-      byYear: [{ year: 2025, premium: 190000, lines: 30 }, { year: 2026, premium: REDACTED-AMT, lines: 30 }],
+      byYear: [{ year: 2025, premium: 154800, lines: 30 }, { year: 2026, premium: 157390, lines: 30 }],
       lines: [
-        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: REDACTED-AMT }, { effectiveDate: '2026-07-05', premium: REDACTED-AMT }] },
-        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 595 }] },
+        { lineKey: 'a', property: '3034 Westerville Rd', policyType: 'PCKG', terms: [{ effectiveDate: '2025-07-05', premium: 6413 }, { effectiveDate: '2026-07-05', premium: 6163 }] },
+        { lineKey: 'b', property: '1100 Rarig', policyType: 'BCL', terms: [{ effectiveDate: '2026-03-19', premium: 640 }] },
       ],
     });
     render(<QueryClientProvider client={qc}><PremiumHistoryCard /></QueryClientProvider>);
@@ -2398,7 +2398,7 @@ git commit -m "fix(alerts): per-property LTV insight no longer reads as an aggre
 | R4 | Lease Market never computed | `npm run lease-market:ingest` (CoStar exports), then `npm run lease-market:compute`; schedule weekly | `register-scheduled-task` |
 | R5 | Document index from 2026-06-06 | `npm run index:docs` (reads OneDrive read-only); schedule monthly | `register-scheduled-task` |
 | R6 | Insurance: 8 policy lines show expired (1100 Rarig, ETC POA, 1851 S Club, 9050 Red Branch, 3034 Westerville); TIV null on all 30 | Confirm renewals were bound; import new terms + TIV from dec pages (`scripts/import-insurance-data.ts`). TIV unblocks rate benchmarking and re-bid/self-insure | Gabriel supplies dec pages; `insurance-declaration-checker` agent verifies |
-| R7 | Workbook rows: REDACTED-453 $0 rent "Active"; REDACTED-523 / REDACTED-486 ended 2024-09-01 | Fix in the Master Workbook (Task 5 surfaces these as flags) | Gabriel |
+| R7 | Workbook rows: Example Consulting $0 rent "Active"; Tenant 038 LLC / Tenant 059 LLC ended 2024-09-01 | Fix in the Master Workbook (Task 5 surfaces these as flags) | Gabriel |
 | R8 | Leasing velocity has no data (`lease_events` = 0 rows) | Spec an importer that derives vacate/commence events from historical rent rolls or the Notion Tenant DB history, then add the velocity trend chart | New spec (brainstorming → /plan) |
 
 ## Verification before calling this done

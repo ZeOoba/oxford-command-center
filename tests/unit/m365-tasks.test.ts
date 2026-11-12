@@ -6,7 +6,7 @@ import { _resetGraphTokenCache } from '../../server/sources/graph-auth';
 describe('m365-tasks — Graph To-Do mapping', () => {
   it('maps an open task to a contract-valid Task', () => {
     const t = mapGraphTask(
-      { id: 'AAMk-123', title: 'Renew REDACTED-659 insurance COI', status: 'notStarted', dueDateTime: { dateTime: '2030-12-01T00:00:00Z' }, body: { content: '<p>Get the <b>updated</b> certificate</p>' } },
+      { id: 'AAMk-123', title: 'Renew Tenant 155 LLC insurance COI', status: 'notStarted', dueDateTime: { dateTime: '2030-12-01T00:00:00Z' }, body: { content: '<p>Get the <b>updated</b> certificate</p>' } },
       'Acquisitions',
     );
     expect(t).not.toBeNull();

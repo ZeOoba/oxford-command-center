@@ -7,10 +7,10 @@ Every item is a **source-data gap** the Command Center is correctly reporting. F
 
 Rolling the Renewals row to the current term also clears the matching "no 2025 Premium History row" info flag for that policy, because the join key moves to the new policy year (a 2026 history row is then what is needed).
 
-- [ ] **ETC POA** — Airport Road, Easton MD (Erie, $990): term ended 2026-04-05. Roll Renewals row; add 2026 Premium History row.
-- [ ] **1100 Rarig Ave**, Columbus OH (Erie, $5,643): term ended 2026-03-19. Roll Renewals row; add 2026 Premium History row.
-- [ ] **9050 Red Branch Rd**, Columbia MD (Erie, $REDACTED-AMT): term ended 2026-08-31. Roll Renewals row; add 2026 Premium History row.
-- [ ] **3034 Westerville Rd**, Columbus OH (Erie, $REDACTED-AMT): term ended 2026-09-18. Premium History row 12 already carries 2026-27 — only the Renewals row needs rolling.
+- [ ] **ETC POA** — Airport Road, Easton MD (Erie): term ended 2026-04-05. Roll Renewals row; add 2026 Premium History row.
+- [ ] **1100 Rarig Ave**, Columbus OH (Erie): term ended 2026-03-19. Roll Renewals row; add 2026 Premium History row.
+- [ ] **9050 Red Branch Rd**, Columbia MD (Erie): term ended 2026-08-31. Roll Renewals row; add 2026 Premium History row.
+- [ ] **3034 Westerville Rd**, Columbus OH (Erie): term ended 2026-09-18. Premium History row 12 already carries 2026-27 — only the Renewals row needs rolling.
 
 Need from you: the current dec pages / binders (carrier, effective, expiry, premium, building limit) for the four terms.
 
@@ -22,18 +22,18 @@ Need from you: the current dec pages / binders (carrier, effective, expiry, prem
 
 ## C. Insurance — caveat (warn)
 
-- [ ] **FVC package** — TIV $REDACTED-AMT comes from Premium History row 20 whose basis note says "reconstructed (base declaration missing)". Clears only if the base declaration is located and the basis note updated.
+- [ ] **FVC package** — the TIV comes from Premium History row 20 whose basis note says "reconstructed (base declaration missing)". Clears only if the base declaration is located and the basis note updated.
 
 ## D. Rent roll — stale "Active" rows (2 × warn)
 
-- [ ] **2207 Northwood A8 — REDACTED-508 (REDACTED-523)**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
-- [ ] **2207 Northwood C4 — REDACTED-486**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
+- [ ] **2207 Northwood A8 — Person 017 (Tenant 038 LLC)**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
+- [ ] **2207 Northwood C4 — Tenant 059 LLC**: lease ended 2024-09-01, still "Active". Retire the row or record the renewal.
 
 Decision needed: vacated, holdover, or renewed? (Affects occupancy and rent roll NOI.)
 
 ## E. Debt — affiliate basis gap (1 × warn)
 
-Property NOI sheet affiliate-lender rows $REDACTED-AMT vs loan schedule affiliate-borrower loans $REDACTED-AMT → gap **$689,716**.
+Property NOI sheet affiliate-lender rows exceed the loan schedule's affiliate-borrower loans → a **material gap** (amounts in the live workbook, not repeated here).
 
 - [ ] Either add the missing affiliate loans to the loan schedule, **or** confirm the gap is expected (e.g. affiliate notes carried on property rows but intentionally off the loan schedule) so the check can be made tolerant by a ratified rule. Per the 2026-09-24 ruling affiliate notes are excluded from investment debt/LTV either way.
 

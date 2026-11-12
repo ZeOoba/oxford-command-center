@@ -59,12 +59,12 @@ function schedule(
 const ASOF = d(2026, 8, 31);
 
 /**
- * A schedule whose final balloon is recorded OUTSIDE the principal column (the Restoration Church
- * Trust shape: the balloon sits in Payment Amount, with the principal/interest cells empty), so a
+ * A schedule whose final balloon is recorded OUTSIDE the principal column (the Note Party 02
+ * shape: the balloon sits in Payment Amount, with the principal/interest cells empty), so a
  * principal-column sum misses it and only the remaining-balance column exposes the gap.
  */
 function balloonOutsidePrincipalColumn(): ScheduleRow[] {
-  const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: REDACTED-AMT });
+  const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: 1_384_902.40 });
   const last = rows[rows.length - 1]!;
   rows.push({ row: last.row + 1, date: last.date, interest: null, principal: null, balance: 0 });
   return rows;
@@ -163,11 +163,11 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
   });
 
   it('does not flag a loan whose schedule legitimately ends inside the window', () => {
-    // REDACTED-306 shape: matures 2027-02-20, only 6 payments left. A short count
+    // Note Party 02 shape: matures 2027-02-20, only 6 payments left. A short count
     // is CORRECT here, and over-capture is structurally impossible — no 13th payment exists.
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -179,14 +179,14 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
   });
 
   it('compares interest only when the workbook principal is synthetic', () => {
-    // REDACTED-554: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
-    const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
+    // 100 Note Party St: I16 = D16-E16, not a schedule sum. Principal must not be cross-checked.
+    const rows = schedule(2026, 9, 26, 24, 1180, 0);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
-      bookInterest: REDACTED-AMT * 12,
+      bookInterest: 1180 * 12,
       bookPrincipal: null,
       asOf: ASOF,
     });
@@ -218,7 +218,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
 
   it('FIRES on a truncated declared range even when the delta is currently zero (OI-094)', () => {
     // Banwick: schedule runs to r71 (the 2031-06-05 balloon) but the formula sums B11:B70.
-    // Immaterial today, $3.35M understatement from ~mid-2030. Must be caught structurally.
+    // Immaterial today, a seven-figure understatement from ~mid-2030. Must be caught structurally.
     const rows = schedule(2026, 9, 5, 60, 15000, 7900);
     const flags = crossCheckSchedule({
       id: 'banwick-morrison',
@@ -252,18 +252,18 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
     expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
   });
 
-  it('FIRES on duplicate payment dates (the REDACTED-554 double-count)', () => {
-    const rows = schedule(2026, 9, 26, 24, REDACTED-AMT, 0);
+  it('FIRES on duplicate payment dates (the 100 Note Party St double-count)', () => {
+    const rows = schedule(2026, 9, 26, 24, 1180, 0);
     // rows 45/46 both carry the same date — September interest counted twice.
     const dupe = rows[5]!;
     rows.splice(6, 0, { ...dupe, row: dupe.row + 100 });
 
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: Math.max(...rows.map((r) => r.row)),
       share: 1,
-      bookInterest: REDACTED-AMT * 13, // the double-counted total the workbook actually produces
+      bookInterest: 1180 * 13, // the double-counted total the workbook actually produces
       bookPrincipal: null,
       asOf: ASOF,
     });
@@ -313,12 +313,12 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
 });
 
 describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling, 2026-08-05)', () => {
-  // Gabriel's FIRST ruling on RCT's balloon exclusion (~17:00, 2026-08-05) held it as
+  // Gabriel's FIRST ruling on Note Party 02's balloon exclusion (~17:00, 2026-08-05) held it as
   // intentional: "C = total payment, D/E = the itemized split a balloon legitimately doesn't
   // carry" — a principled borrower/lender asymmetry. That ruling was ITSELF superseded same-day
   // ("Turn 149"): the real root cause was I14/I15/I16 computing principal on three inconsistent
   // bases, not one deliberate design choice. All three were fixed to a single consistent
-  // forward-looking basis, and RCT's balloon is now genuinely included (I15 -$REDACTED-AMT,
+  // forward-looking basis, and Note Party 02's balloon is now genuinely included (in I15,
   // confirmed live). The tracker records this explicitly as a detector constraint: "must NOT be
   // built to treat balloon-excluded lender principal as correct."
   //
@@ -327,7 +327,7 @@ describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling
   // column is now a real defect and must fire, exactly like a borrower row's would.
   it('FIRES on a lender-row balloon excluded from the principal column', () => {
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows: balloonOutsidePrincipalColumn(),
       declaredRangeEnd: 17,
       share: 0.5,
@@ -342,7 +342,7 @@ describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling
   it('still cross-checks a lender row TOTAL the same as any other row', () => {
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
-      id: 'REDACTED-701',
+      id: 'note-party-02',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -409,7 +409,7 @@ describe('resolveScheduleColumns — header-derived, not hardcoded', () => {
   });
 
   it('does not confuse "Payment Amount" with "Interest Paid"', () => {
-    // The prototype did exactly this on 29000 and over-reported by $REDACTED-AMT.
+    // The prototype did exactly this on 29000 and over-reported by a five-figure amount.
     const got = resolveScheduleColumns({ A: 'Payment Date', B: 'Payment Amount', D: 'Interest Paid' });
     expect(got.interest).toBe('D');
   });
@@ -514,7 +514,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     const wb = buildFixtureWorkbook({
       loans: [
         { row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 4000, n: 24, payDay: 1 },
-        { row: 15, label: 'REDACTED-306', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 24, payDay: 20, wrapInAbs: true },
+        { row: 15, label: 'Note Party 02', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 24, payDay: 20, wrapInAbs: true },
       ],
     });
     const flags = crossCheckDebtService(wb);
@@ -552,7 +552,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     // exempt design choice — and the -ABS(...) sign wrapper must not matter either way.
     const wb = buildFixtureWorkbook({
       loans: [
-        { row: 15, label: 'REDACTED-306', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 6, payDay: 20, wrapInAbs: true },
+        { row: 15, label: 'Note Party 02', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 6, payDay: 20, wrapInAbs: true },
       ],
     });
     const sched = wb.getWorksheet('Sched-RCT')!;
@@ -587,7 +587,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
   });
 
   it('does not claim "no cached value" when the cached principal is legitimately 0', () => {
-    // Live defect, 2026-08-09: REDACTED-312 (REDACTED-554, ELS row 16) is an
+    // Live defect, 2026-08-09: Note Party 03 LLC (100 Note Party St, ELS row 16) is an
     // interest-only position — no principal is contractually scheduled in the next 12 months, so
     // I16's cached value is a real 0 (`<v>0</v>` in the sheet XML). ExcelJS's public `cell.value`
     // getter OMITS `result` whenever it is falsy, so cellNumber() read undefined and the detector
@@ -731,7 +731,7 @@ describe('crossCheckSchedule — F-1: opening balance is read independently, not
 describe('crossCheckSchedule — M3: check 4 must be invariant under same-date row permutation', () => {
   /** Prior-period row, then a final regular payment and a payoff row sharing one date. */
   function sameDatePair(payoffPrincipal: number | null, closingBalance: number) {
-    const prior: ScheduleRow = { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: 1_000_000 };
+    const prior: ScheduleRow = { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: 1_250_000 };
     const payoff: ScheduleRow = { row: 35, date: d(2027, 3, 1), interest: null, principal: payoffPrincipal, balance: 0 };
     const regular: ScheduleRow = { row: 36, date: d(2027, 3, 1), interest: 4000, principal: 5000, balance: closingBalance };
     return { prior, payoff, regular };
@@ -750,9 +750,9 @@ describe('crossCheckSchedule — M3: check 4 must be invariant under same-date r
   }
 
   it('FIRES on a real balloon-outside-principal defect regardless of which row is physically last', () => {
-    // Balloon parked outside the principal column: $995,000 retired per the balance column,
+    // Balloon parked outside the principal column: $1,245,000 retired per the balance column,
     // only $5,000 in the principal column. This is the defect check 4 exists to catch.
-    const { prior, payoff, regular } = sameDatePair(null, 995_000);
+    const { prior, payoff, regular } = sameDatePair(null, 1_245_000);
 
     const payoffLast = run([prior, regular, payoff], 5000);
     const payoffFirst = run([prior, payoff, regular], 5000);
@@ -763,11 +763,11 @@ describe('crossCheckSchedule — M3: check 4 must be invariant under same-date r
   });
 
   it('stays SILENT on a correct workbook regardless of physical order (no false accusation)', () => {
-    // Balloon correctly recorded IN the principal column: 5,000 + 995,000 = 1,000,000 retired.
-    const { prior, payoff, regular } = sameDatePair(995_000, 995_000);
+    // Balloon correctly recorded IN the principal column: 5,000 + 1,245,000 = 1,250,000 retired.
+    const { prior, payoff, regular } = sameDatePair(1_245_000, 1_245_000);
 
-    expect(run([prior, regular, payoff], 1_000_000)).toHaveLength(0);
-    expect(run([prior, payoff, regular], 1_000_000)).toHaveLength(0);
+    expect(run([prior, regular, payoff], 1_250_000)).toHaveLength(0);
+    expect(run([prior, payoff, regular], 1_250_000)).toHaveLength(0);
   });
 
   it('reports a schedule whose dates run backwards in row order rather than trusting position', () => {
@@ -994,8 +994,8 @@ describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent'
   /**
    * REFUTE-PASS REGRESSION (HIGH, confirmed by execution against the live Master Workbook).
    *
-   * The first version of the L3 cap made REDACTED-306 — H15 declares
-   * 'REDACTED-306'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
+   * The first version of the L3 cap made Note Party 02 — H15 declares
+   * 'Note Party 02'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
    * budget ... this loan's total and its truncation check are both unverified" on EVERY refresh.
    * Old code: 0 flags. New code: 1 permanent false flag on a real loan, in the DSCR-denominator
    * audit channel. That over-declared shape is the exact one ScanResult's own doc calls NORMAL and
@@ -1023,7 +1023,7 @@ describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent'
 
     // And end-to-end: no scheduleRange flag of any kind for this loan.
     const flags = crossCheckSchedule({
-      id: 'REDACTED-306', rows: out.rows, declaredRangeEnd: 310, share: 1,
+      id: 'Note Party 02', rows: out.rows, declaredRangeEnd: 310, share: 1,
       bookInterest: 0, bookPrincipal: null, asOf: ASOF,
       scanReachedDeclaredEnd: out.reachedDeclaredEnd,
       scanFirstRowBeyondGap: out.firstRowBeyondGap,
@@ -1105,12 +1105,12 @@ describe('crossCheckSchedule — REFUTE: the origination path must be permutatio
 
 describe('crossCheckSchedule — D: duplicate-date detection tolerates a rounding cent', () => {
   it('still FIRES when the repeated amount is one cent off, not bit-identical', () => {
-    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 0); // interest-only, matches REDACTED-704's shape
+    const rows = schedule(2027, 3, 26, 6, 1180, 0); // interest-only, matches Note Party 03's shape
     const dupeDate = rows[2]!.date;
-    rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 1365.01, principal: null, balance: 0 });
+    rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 1180.01, principal: null, balance: 0 });
 
     const flags = crossCheckSchedule({
-      id: 'REDACTED-708',
+      id: 'note-party-03',
       rows,
       declaredRangeEnd: rows[rows.length - 1]!.row,
       share: 1,
@@ -1127,7 +1127,7 @@ describe('crossCheckSchedule — D: duplicate-date detection tolerates a roundin
     // payment and an unrelated fee/adjustment row, say) can legitimately land on the same calendar
     // date. Only a REPEATED amount signals the double-counting shape; two rows that merely share a
     // date but disagree on both interest and principal must not fire.
-    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 500);
+    const rows = schedule(2027, 3, 26, 6, 1180, 500);
     const dupeDate = rows[2]!.date;
     rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 9999, principal: 8888, balance: 0 });
 

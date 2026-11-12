@@ -9,7 +9,7 @@ export function fmtUsd(n: number | null | undefined, cents = false): string {
   return cents ? usd2.format(n) : usd0.format(n);
 }
 
-/** Compact money: $59.6M, $3.91M, $520K. */
+/** Compact money: $12.4M, $2.07M, $520K. */
 export function fmtUsdCompact(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   const abs = Math.abs(n);

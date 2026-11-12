@@ -33,14 +33,14 @@ const sig = (over: Partial<RenewalSignal> & Pick<RenewalSignal, 'leaseId' | 'exp
 describe('summarizeUnbucketed', () => {
   it('splits past-end leases into month-to-month vs expired, and counts no-end-date leases', () => {
     const s = summarizeUnbucketed([
-      sig({ leaseId: 'a', expiryBucket: 'expired', monthToMonth: true, annualRent: REDACTED-AMT }),
-      sig({ leaseId: 'b', expiryBucket: 'expired', monthToMonth: true, annualRent: REDACTED-AMT }),
+      sig({ leaseId: 'a', expiryBucket: 'expired', monthToMonth: true, annualRent: 7_215.4 }),
+      sig({ leaseId: 'b', expiryBucket: 'expired', monthToMonth: true, annualRent: 3_960 }),
       sig({ leaseId: 'c', expiryBucket: 'expired', monthToMonth: false, annualRent: 0 }),
       sig({ leaseId: 'd', expiryBucket: 'unknown', annualRent: 600 }),
       sig({ leaseId: 'e', expiryBucket: '0-6m', annualRent: 99_000 }),
     ]);
     expect(s.total).toBe(4);
-    expect(s.mtm).toEqual({ count: 2, rent: REDACTED-AMT + REDACTED-AMT });
+    expect(s.mtm).toEqual({ count: 2, rent: 7_215.4 + 3_960 });
     expect(s.expired).toEqual({ count: 1, rent: 0 });
     expect(s.noEnd).toEqual({ count: 1, rent: 600 });
   });
@@ -56,12 +56,12 @@ describe('unbucketedFootnote', () => {
   it('names each non-empty group with its rent, omitting empty groups', () => {
     const text = unbucketedFootnote({
       total: 5,
-      mtm: { count: 2, rent: REDACTED-AMT },
+      mtm: { count: 2, rent: 11_872.4 },
       expired: { count: 2, rent: 0 },
       noEnd: { count: 1, rent: 600 },
     });
     expect(text).toBe(
-      '5 leases not in a bucket: 2 month-to-month past end date ($13K/yr), 2 expired ($0/yr), 1 with no end date ($600/yr).',
+      '5 leases not in a bucket: 2 month-to-month past end date ($12K/yr), 2 expired ($0/yr), 1 with no end date ($600/yr).',
     );
     expect(
       unbucketedFootnote({ total: 1, mtm: { count: 1, rent: 5_000 }, expired: { count: 0, rent: 0 }, noEnd: { count: 0, rent: 0 } }),

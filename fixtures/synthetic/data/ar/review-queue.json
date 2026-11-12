@@ -1,0 +1,17 @@
+[
+  {
+    "tenant": "nbc-c - 2203 Marvel Road Salisbury, MD 21801 / C 4 (storage)",
+    "property": "nbc-c - 2203 Marvel Road Salisbury, MD 21801",
+    "d30": 655.43,
+    "d60": 0,
+    "d90": 0,
+    "d90plus": 0,
+    "proposedLeaseId": null,
+    "proposedCandidate": null,
+    "confidence": "none",
+    "ambiguous": false,
+    "reason": "Synthetic reason 001.",
+    "sourceFile": "2203-2207 Northwood Delinquency 8.21.2026.xlsx",
+    "queuedAt": "2026-09-02T10:43:09.439Z"
+  }
+]

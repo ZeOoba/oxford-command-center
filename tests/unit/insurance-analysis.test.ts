@@ -601,7 +601,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
   // recognize it as the same logical policy, so the prior term was never superseded and both
   // rows flowed into the "current" view (renewalCalendar/policiesN/premiumAnnualTotal/benchmark).
   // Live repro (2026-08-17): policiesN 34 vs the correct 26; "ins-1900broadway-ufx" showed the
-  // OLD 2025-26 term ($REDACTED-AMT, daysToExpiry 10) instead of the 2026-27 rollover ($REDACTED-AMT).
+  // OLD 2025-26 term (daysToExpiry 10) instead of the 2026-27 rollover (fixture premiums are synthetic).
   //
   // REAL-DATA SHAPES (corrected 2026-08-17 after an adversarial refute pass — the original claim
   // "every duplicate is a sequential rollover, old.expiration_date == new.effective_date" was
@@ -618,10 +618,10 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'REDACTED-612',
+      policyNumber: 'POL-0017',
       effectiveDate: '2025-08-27',
       expirationDate: '2026-08-27',
-      premiumAnnual: REDACTED-AMT,
+      premiumAnnual: 11_111,
       coverageTiv: 4_000_000,
       sourceDate: '2025-09-01',
     });
@@ -630,10 +630,10 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-1900broadway',
       policyType: 'Property',
       insurer: 'Unified Fire & Casualty',
-      policyNumber: 'REDACTED-612',
+      policyNumber: 'POL-0017',
       effectiveDate: '2026-08-27',
       expirationDate: '2027-08-27',
-      premiumAnnual: REDACTED-AMT,
+      premiumAnnual: 12_345,
       coverageTiv: 4_000_000,
       sourceDate: '2026-08-17',
     });
@@ -642,9 +642,9 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
 
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-1900broadway');
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.premium).toBe(REDACTED-AMT);
+    expect(rows[0]?.premium).toBe(12_345);
     expect(report.policiesN).toBe(1);
-    expect(report.premiumAnnualTotal).toBeCloseTo(REDACTED-AMT, 2);
+    expect(report.premiumAnnualTotal).toBeCloseTo(12_345, 2);
   });
 
   it('sequential rollover (shape a) with a DIFFERENT policy_number: old.expiration_date == new.effective_date still collapses', () => {
@@ -673,10 +673,10 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
       propertyId: 'p-9620state350',
       policyType: 'Property',
       insurer: 'XPT Specialty',
-      policyNumber: 'REDACTED-600',
+      policyNumber: 'POL0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
-      premiumAnnual: REDACTED-AMT,
+      premiumAnnual: 22_222,
       coverageTiv: null,
       sourceDate: '2026-08-16',
     });
@@ -685,11 +685,11 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     insertPolicy(db, {
       propertyId: 'p-9620state350',
       policyType: 'Property',
-      insurer: 'REDACTED-047',
-      policyNumber: 'REDACTED-477',
+      insurer: 'Carrier 03',
+      policyNumber: 'POL-0010',
       effectiveDate: '2025-10-18',
       expirationDate: '2026-10-18',
-      premiumAnnual: REDACTED-AMT,
+      premiumAnnual: 23_456,
       coverageTiv: null,
       sourceDate: '2026-08-17',
     });
@@ -698,29 +698,29 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
 
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620state350');
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.premium).toBe(REDACTED-AMT);
-    expect(rows[0]?.carrier).toBe('REDACTED-047');
+    expect(rows[0]?.premium).toBe(23_456);
+    expect(rows[0]?.carrier).toBe('Carrier 03');
   });
 
   it('REGRESSION GUARD: removing the source_date tiebreak would silently restore the stale premium (pins why it is load-bearing)', () => {
     // Same fixture as the shape-(b) test above. If a future edit removed/weakened the source_date
     // ordering (e.g. reverting to max-effective_date-only, which ties here), this assertion would
-    // flip to the STALE premium ($REDACTED-AMT) while every other test in this file stayed green —
+    // flip to the STALE premium ($22,222) while every other test in this file stayed green —
     // exactly the failure mode an adversarial refute pass found was unpinned.
     const db = freshDb();
     insertPolicy(db, {
-      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-OLD', premiumAnnual: REDACTED-AMT,
+      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-OLD', premiumAnnual: 22_222,
       coverageTiv: null, effectiveDate: '2025-10-18', expirationDate: '2026-10-18', sourceDate: '2026-08-16',
     });
     insertPolicy(db, {
-      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-NEW-002', premiumAnnual: REDACTED-AMT,
+      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-NEW-002', premiumAnnual: 23_456,
       coverageTiv: null, effectiveDate: '2025-10-18', expirationDate: '2026-10-18', sourceDate: '2026-08-17',
     });
 
     const report = buildInsuranceAnalysis(db, AS_OF);
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620-guard');
-    expect(rows[0]?.premium).toBe(REDACTED-AMT);
-    expect(rows[0]?.premium).not.toBe(REDACTED-AMT);
+    expect(rows[0]?.premium).toBe(23_456);
+    expect(rows[0]?.premium).not.toBe(22_222);
   });
 
   it('a backdated (downward) effective_date CORRECTION is not masked by a stale future-dated capture', () => {
@@ -731,12 +731,12 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     // captured later, so it wins regardless of which direction effective_date moved.
     const db = freshDb();
     insertPolicy(db, {
-      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: REDACTED-AMT,
+      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: 11_111,
       coverageTiv: 4_000_000, effectiveDate: '2027-08-27', expirationDate: '2028-08-27', sourceDate: '2026-08-01',
     });
     // Corrected: the real effective_date, captured later.
     insertPolicy(db, {
-      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: REDACTED-AMT,
+      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: 12_345,
       coverageTiv: 4_000_000, effectiveDate: '2026-08-27', expirationDate: '2027-08-27', sourceDate: '2026-08-15',
     });
 
@@ -744,7 +744,7 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
 
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-typo');
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.premium).toBe(REDACTED-AMT);
+    expect(rows[0]?.premium).toBe(12_345);
     expect(rows[0]?.daysToExpiry).toBeLessThan(700); // the corrected 2027-08-27 expiry (~417d out), not the typo'd 2028-08-27 one (~782d out).
   });
 
@@ -1021,16 +1021,16 @@ describe('collapseSameTermReissues — same-term reissues only, rollovers and di
 
   it('keeps the most recently CAPTURED row of an identical eff/exp pair (live 9620 State 350 shape)', () => {
     const out = collapseSameTermReissues([
-      r(1, '2025-10-18', '2026-10-18', '2025-11-03', 2628),
-      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2576),
+      r(1, '2025-10-18', '2026-10-18', '2025-11-03', 2222),
+      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2468),
     ]);
-    expect(out.map((x) => x.premium)).toEqual([2576]);
+    expect(out.map((x) => x.premium)).toEqual([2468]);
   });
 
   it('does NOT collapse a sequential rollover (old.exp === new.eff) or a shared policy_number across terms', () => {
     const out = collapseSameTermReissues([
-      r(1, '2024-10-18', '2025-10-18', '2025-11-03', 2500),
-      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2576, { policy_number: 'P-1' }),
+      r(1, '2024-10-18', '2025-10-18', '2025-11-03', 2400),
+      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2468, { policy_number: 'P-1' }),
     ]);
     expect(out.map((x) => x.id).sort()).toEqual([1, 2]);
   });
@@ -1047,8 +1047,8 @@ describe('collapseSameTermReissues — same-term reissues only, rollovers and di
 
   it('agrees with collapseToCurrentTerm on the winner when a group holds ONLY same-term rows (equal source_date → higher id)', () => {
     const rows = [
-      r(1, '2025-10-18', '2026-10-18', '2026-01-01', 2628),
-      r(2, '2025-10-18', '2026-10-18', '2026-01-01', 2576),
+      r(1, '2025-10-18', '2026-10-18', '2026-01-01', 2222),
+      r(2, '2025-10-18', '2026-10-18', '2026-01-01', 2468),
       r(3, '2025-10-18', '2026-10-18', '2025-06-01', 2700), // older capture, must lose
     ];
     expect(collapseSameTermReissues(rows).map((x) => x.id)).toEqual([2]);

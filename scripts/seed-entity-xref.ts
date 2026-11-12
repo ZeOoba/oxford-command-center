@@ -21,12 +21,16 @@ import { join } from 'node:path';
 import { openWarehouseNoMigrate } from '../server/warehouse/db';
 import { marketStatesFromConfig, seedFromLeaseMarket, unmatchedReport } from '../server/warehouse/entity-xref';
 import { loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 const dbPath =
   process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 const write = process.argv.includes('--write');
 
 function main(): void {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('seed-entity-xref');
   const db = openWarehouseNoMigrate(dbPath);
   try {
     const before = (db.prepare('SELECT COUNT(*) AS n FROM entity_xref').get() as { n: number }).n;

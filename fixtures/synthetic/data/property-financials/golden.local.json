@@ -1,0 +1,344 @@
+{
+  "note": "Value lock: written only by `npm run golden:ratify` from the data in place. Never edit by hand.",
+  "noi": {
+    "1100 Rarig": {
+      "FY2024": 124817,
+      "FY2025": 131818
+    },
+    "1900 Broadway": {
+      "FY2024": 234746,
+      "FY2025": 223501
+    },
+    "29000 Info Lane": {
+      "FY2024": 363914,
+      "FY2025": 361298
+    },
+    "3034 Westerville": {
+      "FY2024": 6892,
+      "FY2025": 124148
+    },
+    "3540 E 5th": {
+      "FY2024": 318335,
+      "FY2025": 292081
+    },
+    "3883 Livingston": {
+      "FY2024": 0,
+      "FY2025": -15836
+    },
+    "9050 Red Branch": {
+      "FY2024": 1878624,
+      "FY2025": 2375878
+    },
+    "9620 State 350": {
+      "FY2024": -165609,
+      "FY2025": 91863
+    },
+    "FVC": {
+      "FY2024": 1090641,
+      "FY2025": 1548539
+    },
+    "55 New Plant (EGFLLC)": {
+      "FY2024": 248145,
+      "FY2025": 243845
+    },
+    "1851 South Club Solar": {
+      "FY2024": 3821,
+      "FY2025": 2753
+    }
+  },
+  "mgmtFeeTtm26": {
+    "1100 Rarig": 0.035504592464245865,
+    "1900 Broadway": 0.03620946346950812,
+    "29000 Info Lane": 0.029324941333335054,
+    "3034 Westerville": 0.053845410532100846,
+    "3540 E 5th": 0.03857551898432047,
+    "3883 Livingston": 0.0703582897971284,
+    "9050 Red Branch": 0.018317461535437972,
+    "9620 State 350": 0.03944388531051275,
+    "FVC": 0.01915370826417326
+  },
+  "latestNoi": {
+    "1100 Rarig": {
+      "period": "YTD26",
+      "noi": 106303
+    },
+    "1900 Broadway": {
+      "period": "YTD26",
+      "noi": 128932
+    },
+    "29000 Info Lane": {
+      "period": "YTD26",
+      "noi": 274504
+    },
+    "3034 Westerville": {
+      "period": "YTD26",
+      "noi": 134262
+    },
+    "3540 E 5th": {
+      "period": "YTD26",
+      "noi": 231111
+    },
+    "3883 Livingston": {
+      "period": "YTD26",
+      "noi": 60428
+    },
+    "9050 Red Branch": {
+      "period": "YTD26",
+      "noi": 2293743
+    },
+    "9620 State 350": {
+      "period": "YTD26",
+      "noi": 303184
+    },
+    "FVC": {
+      "period": "YTD26",
+      "noi": 1299377
+    },
+    "55 New Plant (EGFLLC)": {
+      "period": "YTD26_partial_thru_2026-06-12",
+      "noi": 117435
+    },
+    "1851 South Club Solar": {
+      "period": "YTD26_partial_thru_2026-06-12",
+      "noi": 1733
+    }
+  },
+  "locks": {
+    "rentStepEvents": 62,
+    "rarigOpex2025": 78369.13,
+    "rarigBaseRentFy2025": 164436.36,
+    "rarigRunRateQ3": {
+      "q3_2025": 160824.12,
+      "q3_2026": 201182.76
+    },
+    "credit9620ReTaxS26": -51646.23,
+    "credit3540Grounds2024": -15504.15,
+    "westervilleRent": {
+      "current": 16946.86,
+      "next": 17540
+    },
+    "recovery9620Lever": 20208.653000000002,
+    "pool29000TenPoints": 17332.938000000002,
+    "rev09Impact": -65696,
+    "exp07Lever": 41887.30555
+  },
+  "leaseRun": {
+    "401-sunburst-hwy-cambridge-md": {
+      "stabilizedNoi": 67130.5,
+      "indicativeValue": 839131.25,
+      "noiByYear": {
+        "LY '27": 67130.5,
+        "LY '28": 67130.5,
+        "LY '29": 76830.5,
+        "LY '30": 76830.5,
+        "LY '31": 76830.5,
+        "LY '32": 76830.5,
+        "LY '33": 76830.5,
+        "LY '34": 79158.5,
+        "LY '35": 81556.34,
+        "LY '36": 84026.12,
+        "LY '37": 86569.98,
+        "LY '38": 89190.17,
+        "LY '39": 91888.96,
+        "LY '40": 94668.71,
+        "LY '41": 97531.86,
+        "LY '42": 100480.9,
+        "LY '43": 103518.41
+      },
+      "periods": {
+        "LY '27": {
+          "baseRent": 70000,
+          "egr": 70000,
+          "managementFee": -2100,
+          "reserve": -769.5
+        },
+        "LY '28": {
+          "baseRent": 70000,
+          "egr": 70000,
+          "managementFee": -2100,
+          "reserve": -769.5
+        },
+        "LY '29": {
+          "baseRent": 80000,
+          "egr": 80000,
+          "managementFee": -2400,
+          "reserve": -769.5
+        },
+        "LY '30": {
+          "baseRent": 80000,
+          "egr": 80000,
+          "managementFee": -2400,
+          "reserve": -769.5
+        },
+        "LY '31": {
+          "baseRent": 80000,
+          "egr": 80000,
+          "managementFee": -2400,
+          "reserve": -769.5
+        },
+        "LY '32": {
+          "baseRent": 80000,
+          "egr": 80000,
+          "managementFee": -2400,
+          "reserve": -769.5
+        },
+        "LY '33": {
+          "baseRent": 80000,
+          "egr": 80000,
+          "managementFee": -2400,
+          "reserve": -769.5
+        },
+        "LY '34": {
+          "baseRent": 82400,
+          "egr": 82400,
+          "managementFee": -2472,
+          "reserve": -769.5
+        },
+        "LY '35": {
+          "baseRent": 84872,
+          "egr": 84872,
+          "managementFee": -2546.16,
+          "reserve": -769.5
+        },
+        "LY '36": {
+          "baseRent": 87418.16,
+          "egr": 87418.16,
+          "managementFee": -2622.54,
+          "reserve": -769.5
+        },
+        "LY '37": {
+          "baseRent": 90040.7,
+          "egr": 90040.7,
+          "managementFee": -2701.22,
+          "reserve": -769.5
+        },
+        "LY '38": {
+          "baseRent": 92741.93,
+          "egr": 92741.93,
+          "managementFee": -2782.26,
+          "reserve": -769.5
+        },
+        "LY '39": {
+          "baseRent": 95524.18,
+          "egr": 95524.18,
+          "managementFee": -2865.73,
+          "reserve": -769.5
+        },
+        "LY '40": {
+          "baseRent": 98389.91,
+          "egr": 98389.91,
+          "managementFee": -2951.7,
+          "reserve": -769.5
+        },
+        "LY '41": {
+          "baseRent": 101341.61,
+          "egr": 101341.61,
+          "managementFee": -3040.25,
+          "reserve": -769.5
+        },
+        "LY '42": {
+          "baseRent": 104381.85,
+          "egr": 104381.85,
+          "managementFee": -3131.46,
+          "reserve": -769.5
+        },
+        "LY '43": {
+          "baseRent": 107513.31,
+          "egr": 107513.31,
+          "managementFee": -3225.4,
+          "reserve": -769.5
+        }
+      }
+    },
+    "7658-fishel-dr-n-dublin-oh": {
+      "stabilizedNoi": 85446,
+      "indicativeValue": 1068075,
+      "noiByYear": {
+        "LY '26": 83700,
+        "LY '27": 85446,
+        "LY '28": 87226.92,
+        "LY '29": 89043.46,
+        "LY '30": 90896.32,
+        "LY '31": 92786.25,
+        "LY '32": 94713.98,
+        "LY '33": 96680.26,
+        "LY '34": 98685.86,
+        "LY '35": 100731.58,
+        "LY '36": 102818.22
+      },
+      "periods": {
+        "LY '26": {
+          "baseRent": 90000,
+          "egr": 90000,
+          "managementFee": -2700,
+          "reserve": -3600
+        },
+        "LY '27": {
+          "baseRent": 91800,
+          "egr": 91800,
+          "managementFee": -2754,
+          "reserve": -3600
+        },
+        "LY '28": {
+          "baseRent": 93636,
+          "egr": 93636,
+          "managementFee": -2809.08,
+          "reserve": -3600
+        },
+        "LY '29": {
+          "baseRent": 95508.72,
+          "egr": 95508.72,
+          "managementFee": -2865.26,
+          "reserve": -3600
+        },
+        "LY '30": {
+          "baseRent": 97418.89,
+          "egr": 97418.89,
+          "managementFee": -2922.57,
+          "reserve": -3600
+        },
+        "LY '31": {
+          "baseRent": 99367.27,
+          "egr": 99367.27,
+          "managementFee": -2981.02,
+          "reserve": -3600
+        },
+        "LY '32": {
+          "baseRent": 101354.62,
+          "egr": 101354.62,
+          "managementFee": -3040.64,
+          "reserve": -3600
+        },
+        "LY '33": {
+          "baseRent": 103381.71,
+          "egr": 103381.71,
+          "managementFee": -3101.45,
+          "reserve": -3600
+        },
+        "LY '34": {
+          "baseRent": 105449.34,
+          "egr": 105449.34,
+          "managementFee": -3163.48,
+          "reserve": -3600
+        },
+        "LY '35": {
+          "baseRent": 107558.33,
+          "egr": 107558.33,
+          "managementFee": -3226.75,
+          "reserve": -3600
+        },
+        "LY '36": {
+          "baseRent": 109709.5,
+          "egr": 109709.5,
+          "managementFee": -3291.28,
+          "reserve": -3600
+        }
+      }
+    }
+  },
+  "sameStoreYtd": {
+    "baseRent": "+23.0%",
+    "opexExTax": "+28.3%",
+    "noi": "+22.8%"
+  }
+}

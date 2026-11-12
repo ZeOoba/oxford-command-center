@@ -166,7 +166,7 @@ describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
     const s = snap(
       [deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true })],
       [cp({
-        id: 'counsel-1', name: 'REDACTED-505', kind: 'counsel', source: 'memory',
+        id: 'counsel-1', name: 'Contact 03', kind: 'counsel', source: 'memory',
         links: { properties: [], loans: [], deals: [], insurance: [] },
       })],
     );

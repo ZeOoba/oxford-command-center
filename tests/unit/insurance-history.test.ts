@@ -45,26 +45,26 @@ function row(
 describe('buildPremiumHistory', () => {
   it('groups terms per policy line, drops a same-premium duplicate term re-keyed inside one policy year, sums by policy year', () => {
     const r = buildPremiumHistory([
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', REDACTED-AMT),
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-09-18', REDACTED-AMT), // DQ duplicate
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-07-05', REDACTED-AMT),
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2026-07-05', REDACTED-AMT),
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', 7000),
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-09-18', 7000), // DQ duplicate
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-07-05', 7100),
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2026-07-05', 7200),
       row('ins-x-gl', 'GL', null, 100),
     ], master);
     expect(() => PremiumHistoryReport.parse(r)).not.toThrow();
     expect(r.lines[0]!.property).toBe('3034 Westerville Rd, Columbus OH');
-    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([REDACTED-AMT, REDACTED-AMT, REDACTED-AMT]);
+    expect(r.lines[0]!.terms.map((t) => t.premium)).toEqual([7000, 7100, 7200]);
     expect(r.byYear).toEqual([
-      { year: 2024, premium: REDACTED-AMT, lines: 1 },
-      { year: 2025, premium: REDACTED-AMT, lines: 1 },
-      { year: 2026, premium: REDACTED-AMT, lines: 1 },
+      { year: 2024, premium: 7000, lines: 1 },
+      { year: 2025, premium: 7100, lines: 1 },
+      { year: 2026, premium: 7200, lines: 1 },
     ]);
   });
 
   it('keeps a flat renewal a full policy year later, counts each line once per year when lines share a property, and orders same-property lines by lineKey', () => {
     const r = buildPremiumHistory([
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', REDACTED-AMT),
-      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-09-24', REDACTED-AMT), // flat renewal, 365d
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', 7000),
+      row('ins-3034westerville-pckg', 'Package (PCKG)', '2025-09-24', 7000), // flat renewal, 365d
       row('ins-3034westerville-bcl', 'BCL', '2025-02-01', 1000),
       // Unpriced/invalid row on its OWN term: skipped. (Same eff/exp as the $1,000 row would make it
       // a same-term reissue and — being the later capture — the engine-rule winner, which is then
@@ -75,10 +75,10 @@ describe('buildPremiumHistory', () => {
     expect(r.lines.map((l) => l.property)).toEqual(['3034 Westerville Rd, Columbus OH', '3034 Westerville Rd, Columbus OH']);
     // Finding 4: deterministic tiebreak on the same property name.
     expect(r.lines.map((l) => l.lineKey)).toEqual(['ins-3034westerville-bcl', 'ins-3034westerville-pckg']);
-    expect(r.lines.find((l) => l.lineKey === 'ins-3034westerville-pckg')!.terms.map((t) => t.premium)).toEqual([REDACTED-AMT, REDACTED-AMT]);
+    expect(r.lines.find((l) => l.lineKey === 'ins-3034westerville-pckg')!.terms.map((t) => t.premium)).toEqual([7000, 7000]);
     expect(r.byYear).toEqual([
-      { year: 2024, premium: REDACTED-AMT, lines: 1 },
-      { year: 2025, premium: 8838, lines: 2 },
+      { year: 2024, premium: 7000, lines: 1 },
+      { year: 2025, premium: 8000, lines: 2 },
     ]);
   });
 
@@ -88,38 +88,38 @@ describe('buildPremiumHistory', () => {
   // or the policy-year total double-counts the term.
   it('collapses a same-term reissue (identical eff/exp, different premium) to the latest capture, per line', () => {
     const r = buildPremiumHistory([
-      row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2628,
-        { id: 10, policy_number: 'REDACTED-600', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
-      row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2576,
-        { id: 11, policy_number: 'REDACTED-477', expiration_date: '2026-10-18', source_date: '2026-02-10' }),
-      row('ins-9620state350-prop', 'Property', '2025-10-18', REDACTED-AMT,
+      row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2222,
+        { id: 10, policy_number: 'POL0010', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
+      row('ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2468,
+        { id: 11, policy_number: 'POL-0010', expiration_date: '2026-10-18', source_date: '2026-02-10' }),
+      row('ins-9620state350-prop', 'Property', '2025-10-18', 22222,
         { id: 12, policy_number: 'PRP1001', expiration_date: '2026-10-18', source_date: '2025-11-03' }),
-      row('ins-9620state350-prop', 'Property', '2025-10-18', REDACTED-AMT,
+      row('ins-9620state350-prop', 'Property', '2025-10-18', 23456,
         { id: 13, policy_number: 'PRP1001-002', expiration_date: '2026-10-18', source_date: '2026-02-10' }),
       // Prior year on the GL line — a genuine renewal, must survive.
-      row('ins-9620state350-gl', 'General Liability (GL)', '2024-10-18', 2500,
+      row('ins-9620state350-gl', 'General Liability (GL)', '2024-10-18', 2400,
         { id: 9, policy_number: 'MMF17962783', expiration_date: '2025-10-18', source_date: '2025-11-03' }),
     ], master);
     const gl = r.lines.find((l) => l.lineKey === 'ins-9620state350-gl')!;
     const prop = r.lines.find((l) => l.lineKey === 'ins-9620state350-prop')!;
     expect(gl.terms).toEqual([
-      { effectiveDate: '2024-10-18', premium: 2500 },
-      { effectiveDate: '2025-10-18', premium: 2576 },
+      { effectiveDate: '2024-10-18', premium: 2400 },
+      { effectiveDate: '2025-10-18', premium: 2468 },
     ]);
-    expect(prop.terms).toEqual([{ effectiveDate: '2025-10-18', premium: REDACTED-AMT }]);
+    expect(prop.terms).toEqual([{ effectiveDate: '2025-10-18', premium: 23456 }]);
     expect(r.byYear).toEqual([
-      { year: 2024, premium: 2500, lines: 1 },
-      { year: 2025, premium: 2576 + REDACTED-AMT, lines: 2 },
+      { year: 2024, premium: 2400, lines: 1 },
+      { year: 2025, premium: 2468 + 23456, lines: 2 },
     ]);
   });
 
   it('same-term reissue with an equal capture date falls through to the higher id (engine tiebreak)', () => {
     const r = buildPremiumHistory([
-      row('ins-9620state350-gl', 'GL', '2025-10-18', 2628, { id: 20, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
-      row('ins-9620state350-gl', 'GL', '2025-10-18', 2576, { id: 21, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
+      row('ins-9620state350-gl', 'GL', '2025-10-18', 2222, { id: 20, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
+      row('ins-9620state350-gl', 'GL', '2025-10-18', 2468, { id: 21, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
     ], master);
-    expect(r.lines[0]!.terms).toEqual([{ effectiveDate: '2025-10-18', premium: 2576 }]);
-    expect(r.byYear).toEqual([{ year: 2025, premium: 2576, lines: 1 }]);
+    expect(r.lines[0]!.terms).toEqual([{ effectiveDate: '2025-10-18', premium: 2468 }]);
+    expect(r.byYear).toEqual([{ year: 2025, premium: 2468, lines: 1 }]);
   });
 
   it('does not treat rows with the same effective_date but different expiration_date as one term', () => {
@@ -208,8 +208,8 @@ describe('GET /api/warehouse/insurance/analysis/history', () => {
   it('200s with a contract-valid history resolved to property master display names', async () => {
     const db = freshDb();
     db.prepare('INSERT INTO property_master (id, name) VALUES (?, ?)').run('3034-westerville-rd-columbus-oh', '3034 Westerville Rd, Columbus OH');
-    insertPolicy(db, 'ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', REDACTED-AMT);
-    insertPolicy(db, 'ins-3034westerville-pckg', 'Package (PCKG)', '2025-07-05', REDACTED-AMT);
+    insertPolicy(db, 'ins-3034westerville-pckg', 'Package (PCKG)', '2024-09-24', 7000);
+    insertPolicy(db, 'ins-3034westerville-pckg', 'Package (PCKG)', '2025-07-05', 7100);
     insertPolicy(db, 'ins-etcpoa-pckg', 'Package (PCKG)', null, 999);
 
     const res = await insuranceAnalysisApi(() => db).request('/history');
@@ -220,24 +220,24 @@ describe('GET /api/warehouse/insurance/analysis/history', () => {
         lineKey: 'ins-3034westerville-pckg',
         property: '3034 Westerville Rd, Columbus OH',
         policyType: 'Package (PCKG)',
-        terms: [{ effectiveDate: '2024-09-24', premium: REDACTED-AMT }, { effectiveDate: '2025-07-05', premium: REDACTED-AMT }],
+        terms: [{ effectiveDate: '2024-09-24', premium: 7000 }, { effectiveDate: '2025-07-05', premium: 7100 }],
       },
     ]);
-    expect(body.byYear).toEqual([{ year: 2024, premium: REDACTED-AMT, lines: 1 }, { year: 2025, premium: REDACTED-AMT, lines: 1 }]);
+    expect(body.byYear).toEqual([{ year: 2024, premium: 7000, lines: 1 }, { year: 2025, premium: 7100, lines: 1 }]);
   });
 
   it('route SELECT carries the columns the same-term rule needs: a live-shape reissue collapses to the latest capture', async () => {
     const db = freshDb();
-    insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2628,
-      { policyNumber: 'REDACTED-600', expirationDate: '2026-10-18', sourceDate: '2025-11-03' });
-    insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2576,
-      { policyNumber: 'REDACTED-477', expirationDate: '2026-10-18', sourceDate: '2026-02-10' });
+    insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2222,
+      { policyNumber: 'POL0010', expirationDate: '2026-10-18', sourceDate: '2025-11-03' });
+    insertPolicy(db, 'ins-9620state350-gl', 'General Liability (GL)', '2025-10-18', 2468,
+      { policyNumber: 'POL-0010', expirationDate: '2026-10-18', sourceDate: '2026-02-10' });
 
     const res = await insuranceAnalysisApi(() => db).request('/history');
     expect(res.status).toBe(200);
     const body = PremiumHistoryReport.parse(await res.json());
     expect(body.lines).toHaveLength(1);
-    expect(body.lines[0]!.terms).toEqual([{ effectiveDate: '2025-10-18', premium: 2576 }]);
-    expect(body.byYear).toEqual([{ year: 2025, premium: 2576, lines: 1 }]);
+    expect(body.lines[0]!.terms).toEqual([{ effectiveDate: '2025-10-18', premium: 2468 }]);
+    expect(body.byYear).toEqual([{ year: 2025, premium: 2468, lines: 1 }]);
   });
 });

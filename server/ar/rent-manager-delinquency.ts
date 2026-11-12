@@ -79,8 +79,8 @@ function nonNeg(n: number): number {
 
 /** Round to the nearest cent. Real defect (2026-09-06 adversarial review, MEDIUM): a plain running
  *  float sum of per-charge amounts is sensitive to the ORDER those charges happen to be enumerated
- *  in the worksheet (classic float non-associativity — verified on real exports: the same three
- *  charges summed 225.66+385+142.20 vs 142.20+385+225.66 land on REDACTED-AMT vs 752.86).
+ *  in the worksheet (classic float non-associativity — e.g. the same three charges summed
+ *  234.56+400+100.30 vs 100.30+400+234.56 land on 734.8599999999999 vs 734.86).
  *  resolve-latest.ts's sameBuckets compares bucket vectors with `===`, so that last-ulp drift made
  *  an unchanged re-import of the same report look like two DIFFERENT totals and stranded the write
  *  behind a false ambiguousTies conflict. Round every bucket to the cent as soon as it's finalized —

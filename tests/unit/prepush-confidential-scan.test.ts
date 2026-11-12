@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -31,6 +31,16 @@ import {
   shouldBlockOnDiffError,
   resolveDiffBase,
   collectRefScan,
+  loadRealDataManifest,
+  isRealDataPath,
+  parseRealDataPaths,
+  realDataPathsFor,
+  isCopyOf,
+  COPY_MARKER,
+  realAmountFingerprints,
+  scanAddedLinesForRealAmounts,
+  FINGERPRINT_BLOCK_MIN,
+  FINGERPRINT_BLOCK_MIN_SYNTHETIC,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -241,9 +251,11 @@ describe('prepush-confidential-scan / scanDiffForContextTerms', () => {
   });
 });
 
-// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
-// Gabriel's ruling: formalize the repo as an intentional in-perimeter confidential store, but
-// make the push gate assert that precondition structurally rather than assuming it.
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21): the push gate asserts
+// structurally that a confidential:true payload only leaves a registered confidential store. The
+// 2026-08-21 ruling that let the snapshot carry real records in git is superseded (real firm data is
+// never tracked, ruling 2026-11-10; see the real-data describe block below); this check stays as a
+// second, payload-shaped line of defense.
 describe('prepush-confidential-scan / scanDiffForConfidentialFlag', () => {
   it('flags a "confidential": true payload', () => {
     const added = [{ file: 'data/snapshots/portfolio.json', lineNo: 42, text: '    "confidential": true,' }];
@@ -650,5 +662,360 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
     const local = commitOnFeature('a.txt', 'plain text\n');
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(0);
+  });
+});
+
+// Real firm data is never tracked (ruling 2026-11-10). scripts/fixtures/real-data-manifest.json names
+// every real-data path; a push that adds or modifies one is blocked with no override, while deleting
+// (untracking) one and committing the synthetic stand-ins under fixtures/synthetic/ are allowed.
+describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () => {
+  const manifest = { files: ['data/snapshots/portfolio.json', 'src/data/seed-deals.ts'], dirs: ['data/calibration/'] };
+
+  it('loads the committed manifest, and it covers the snapshot and the seed files', () => {
+    const m = loadRealDataManifest();
+    expect(m.files).toContain('data/snapshots/portfolio.json');
+    expect(m.files).toContain('src/data/seed-deals.ts');
+    expect(m.dirs).toContain('data/building-specs/');
+  });
+
+  it('fails closed (throws) on a missing or empty manifest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'prepush-manifest-'));
+    try {
+      expect(() => loadRealDataManifest(join(dir, 'missing.json'))).toThrow();
+      writeFileSync(join(dir, 'empty.json'), '{"files":[],"dirs":[]}');
+      expect(() => loadRealDataManifest(join(dir, 'empty.json'))).toThrow(/no paths/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('every firm-data .gitignore rule, wildcards included, is covered by the push-time path block (refute rounds 4-5 F7/F5/F9)', () => {
+    // A path protected only by .gitignore can still be pushed with `git add -f`; every ignore rule for
+    // firm data (or a byte-copy / derived output of it) must also be blocked. Wildcard rules are
+    // expanded into a sample path instead of being skipped.
+    const m = loadRealDataManifest();
+    const sample = (rule: string): string => {
+      const r = rule.replace(/^\//, '').replace(/\[ _\(\.~-\]/g, '_').replace(/\*\*\//g, 'x/').replace(/\*/g, 'x');
+      return r.endsWith('/') || /^(dist|dist-server)$/.test(r) ? `${r.replace(/\/$/, '')}/x.json` : r;
+    };
+    const rules = [
+      ...readFileSync(join(process.cwd(), '.gitignore'), 'utf8').split(/\r?\n/),
+      ...readFileSync(join(process.cwd(), 'scripts/property-financials/.gitignore'), 'utf8').split(/\r?\n/).map((l) => (l.trim() && !l.startsWith('#') ? `scripts/property-financials/${l.trim()}` : l)),
+    ]
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith('!'))
+      .filter((l) => /^\/?(data\/|data$|public\/|dist$|dist-server$|config\/local|src\/data\/|scripts\/property-financials\/|scripts\/data\/|docs\/superpowers\/specs\/.*seed|tests\/fixtures\/property-financials\/)/.test(l))
+      .filter((l) => !/\.log$/.test(l))
+      // Explorer / browser copies of ANY file and folder copies are ignored more broadly than they are
+      // blocked (a copy of an unlisted file is not real data); the copy-forms test below covers them.
+      .filter((l) => !/ - Copy|\(\?|\]\*\/$/.test(l));
+    expect(rules.length).toBeGreaterThan(30);
+    expect(rules.some((r) => r.includes('*'))).toBe(true); // wildcard rules are checked, not dropped
+    const uncovered = rules.filter((l) => !isRealDataPath(sample(l), m));
+    expect(uncovered).toEqual([]);
+  });
+
+  it('quarantine, temp and backup copies of every listed file are both gitignored and push-blocked', () => {
+    const m = loadRealDataManifest();
+    const explicit = [
+      'data/ar/review-queue.corrupt-1700000000000.json', // ar-import-headless backupCorruptQueue
+      'data/alert-inbox.json.corrupt-2026-11-12T00-00-00-000Z', // alerts/store.ts
+      'data/alert-state.json.corrupt-2026-11-12T00-00-00-000Z', // brief/state.ts
+      'data/snapshots/portfolio.json.tmp-123-456', // atomic-write temp left by a crash
+      'data/ar/review-queue.json.tmp-123',
+      'data/overlay.json.tmp-1-2-3',
+      'data/property-financials-status.json.123.abc.tmp',
+    ];
+    const generated = m.files
+      .filter((f) => !f.startsWith('fixtures/'))
+      .flatMap((f) => {
+        const dot = f.lastIndexOf('.');
+        const stem = dot > f.lastIndexOf('/') ? f.slice(0, dot) : f;
+        const ext = dot > f.lastIndexOf('/') ? f.slice(dot) : '';
+        return [`${f}.corrupt-1700000000000`, `${stem}.corrupt-1700000000000${ext}`, `${f}.tmp-1-2`, `${f}.bak`, `${f}.quarantine`];
+      });
+    const paths = [...explicit, ...generated];
+    expect(paths.filter((p) => !isRealDataPath(p, m))).toEqual([]);
+    const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' }).stdout.split(/\r?\n/).filter(Boolean);
+    expect(paths.filter((p) => !ignored.includes(p))).toEqual([]);
+    // a legitimate sibling that does not start with the listed stem plus a separator stays allowed
+    expect(isRealDataPath('src/data/seed-dealership.ts', m)).toBe(false);
+  });
+
+  // Refute round 7: the copy forms are generated here from the manifest alone, never from the
+  // .gitignore patterns, so this test cannot pass by construction.
+  it('Explorer, browser, editor and archive copies of every listed file, at any depth, are both gitignored and push-blocked', () => {
+    const m = loadRealDataManifest();
+    const listed = m.files.filter((f) => !f.startsWith('fixtures/'));
+    const forms = (f: string): string[] => {
+      const slash = f.lastIndexOf('/');
+      const dir = slash >= 0 ? f.slice(0, slash + 1) : '';
+      const base = f.slice(slash + 1);
+      const dot = base.lastIndexOf('.');
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const ext = dot > 0 ? base.slice(dot) : '';
+      const folder = dir.replace(/\/$/, '');
+      const out = [
+        `${dir}${stem} - Copy${ext}`, // Explorer
+        `${dir}${stem} - Copy (2)${ext}`,
+        `${dir}${stem} (1)${ext}`, // browser download
+        `${dir}${stem} (12)${ext}`,
+        `${dir}Copy of ${base}`,
+        `${dir}${stem}_old${ext}`,
+        `${dir}${stem}-old${ext}`,
+        `${dir}${stem}.backup${ext}`,
+        `${dir}${base}.backup`,
+        `${dir}${base}~`, // editor
+        `${dir}.${base}.swp`,
+        `${dir}${stem}.2026-11-10${ext}`, // date tag
+        `${dir}${stem}_2026-11-10${ext}`,
+        `${dir}old/${base}`, // nested archive folders
+        `${dir}backup/${stem}_old${ext}`,
+        `${dir}archive/2026/${base}`,
+        `${dir}old/${stem} (1)${ext}`,
+      ];
+      if (folder) out.push(`${folder} - Copy/${base}`, `${folder}.bak/${base}`, `${folder} (1)/${base}`, `${folder}_old/${base}`);
+      return out;
+    };
+    const paths = listed.flatMap(forms);
+    expect(paths.length).toBeGreaterThan(listed.length * 15);
+    expect(paths.filter((p) => !isRealDataPath(p, m))).toEqual([]);
+    const ignored = new Set(
+      spawnSync('git', ['check-ignore', '--no-index', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' }).stdout.split(/\r?\n/).filter(Boolean),
+    );
+    expect(paths.filter((p) => !ignored.has(p))).toEqual([]);
+  });
+
+  it('the copy rule is anchored to the listed stem: ordinary names and other folders are not copies', () => {
+    const m = loadRealDataManifest();
+    for (const p of [
+      'src/data/seed-dealership.ts', // stem followed by a letter
+      'src/data/my-seed-deals.ts', // stem mid-word, no copy marker
+      'src/data2/seed-deals.ts', // a different folder, not a copy of src/data
+      'src/data/queries.ts',
+      'scripts/property-financials/config/curated/meta.json',
+      'scripts/property-financials/config/curated/sfx.json',
+      'tests/fixtures/property-financials/raw-records.synthetic.json',
+      'fixtures/synthetic/src/data/seed-deals (1).ts', // synthetic stand-ins never match
+    ]) {
+      expect(isRealDataPath(p, m), p).toBe(false);
+    }
+    expect(isCopyOf('src/data/old/seed-deals.ts', 'src/data/seed-deals.ts')).toBe(true);
+    expect(isCopyOf('src/data/backup_seed-deals.ts', 'src/data/seed-deals.ts')).toBe(true);
+    expect(isCopyOf('src/data/golden_seed-deals.ts', 'src/data/seed-deals.ts')).toBe(false);
+  });
+
+  it('COPY_MARKER matches only the declared markers on name-segment boundaries', () => {
+    for (const w of ['Copy of ', 'x.bak', 'x_old', 'x-tmp-1', 'x.orig', 'x (copy)', 'x.quarantine', 'x.corrupt-1', 'backup_', 'x.temp']) {
+      expect(COPY_MARKER.test(w), w).toBe(true);
+    }
+    for (const w of ['golden', 'template', 'copyright', 'bold', 'temperature', 'origin', 'tmpfile', 'oldest', 'backups2go']) {
+      expect(COPY_MARKER.test(w), w).toBe(false);
+    }
+  });
+
+  it('copyRuleAllow is reasoned, and no tracked file is flagged by the copy rule', () => {
+    const raw = JSON.parse(readFileSync(join(process.cwd(), 'scripts/fixtures/real-data-manifest.json'), 'utf8'));
+    for (const [path, reason] of Object.entries(raw.copyRuleAllow ?? {})) {
+      expect(typeof reason === 'string' && (reason as string).length > 20, path).toBe(true);
+    }
+    const m = loadRealDataManifest();
+    const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).split('\0').filter(Boolean);
+    expect(tracked.length).toBeGreaterThan(500);
+    expect(tracked.filter((f) => isRealDataPath(f, m))).toEqual([]);
+  });
+
+  describe('content fingerprint (real amounts in a renamed copy or pasted into any file)', () => {
+    // All amounts below are SYNTHETIC test values, never real figures.
+    let root: string;
+    const writeManifest = (r: string) => {
+      mkdirSync(join(r, 'scripts', 'fixtures'), { recursive: true });
+      writeFileSync(join(r, 'scripts', 'fixtures', 'real-data-manifest.json'), JSON.stringify({ files: ['data/a.json', 'notes/b.md'], dirs: ['data/specs/'] }));
+    };
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), 'prepush-fp-'));
+      writeManifest(root);
+    });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+    it('returns null (fail open) when no listed file exists: CI and synthetic checkouts', () => {
+      expect(realAmountFingerprints(root)).toBeNull();
+    });
+
+    it('returns null when every present file is seeded or byte-identical to its synthetic stand-in', () => {
+      mkdirSync(join(root, 'data'), { recursive: true });
+      mkdirSync(join(root, 'fixtures', 'synthetic', 'data'), { recursive: true });
+      writeFileSync(join(root, 'data', 'a.json'), '{"rent": 123456.78}');
+      writeFileSync(join(root, 'fixtures', 'synthetic', 'data', 'a.json'), '{"rent": 123456.78}');
+      expect(realAmountFingerprints(root)).toBeNull();
+      writeFileSync(join(root, 'data', 'a.json'), '{"rent": 223456.78}');
+      writeFileSync(join(root, 'data', '.synthetic-seeded.json'), JSON.stringify({ seeded: ['data/a.json'] }));
+      expect(realAmountFingerprints(root)).toBeNull();
+    });
+
+    it('collects distinctive money amounts and skips quantities, round thousands and short numbers', () => {
+      mkdirSync(join(root, 'data', 'specs'), { recursive: true });
+      mkdirSync(join(root, 'notes'), { recursive: true });
+      writeFileSync(join(root, 'data', 'a.json'), JSON.stringify({ rent: 123456.78, noi: 987654, sf: 345678, flat: 250000, small: 999, rows: [{ amt: 4567.89 }] }));
+      writeFileSync(join(root, 'data', 'specs', 'x.json'), JSON.stringify({ cost: 765432.1 }));
+      writeFileSync(join(root, 'notes', 'b.md'), 'Paid $54,321.09 and 123456 units');
+      const fp = realAmountFingerprints(root)!;
+      expect([...fp].sort()).toEqual(['123456.78', '4567.89', '54321.09', '765432.1', '987654'].sort());
+    });
+
+    it(`blocks a file whose added lines carry ${FINGERPRINT_BLOCK_MIN}+ distinct real amounts, in any number format`, () => {
+      const fp = new Set(['123456.78', '987654', '4567.89', '765432.1']);
+      const hits = scanAddedLinesForRealAmounts(
+        [
+          { file: 'src/renamed.ts', lineNo: 1, text: 'const a = 123,456.78; const b = $987,654;' },
+          { file: 'src/renamed.ts', lineNo: 2, text: 'const c = 4567.89; const d = 4567.89;' },
+          { file: 'src/other.ts', lineNo: 1, text: 'const z = 123456.78, y = 987654;' },
+        ],
+        fp,
+      );
+      expect(hits).toEqual([{ file: 'src/renamed.ts', count: 3 }]);
+    });
+
+    it('holds the committed synthetic fixtures to the higher coincidence threshold', () => {
+      const fp = new Set(Array.from({ length: 60 }, (_, i) => String(100001.25 + i)));
+      const lines = (file: string, n: number) => [{ file, lineNo: 1, text: [...fp].slice(0, n).join(' ') }];
+      expect(scanAddedLinesForRealAmounts(lines('fixtures/synthetic/data/x.json', 10), fp)).toEqual([]);
+      expect(scanAddedLinesForRealAmounts(lines('fixtures/synthetic/data/x.json', FINGERPRINT_BLOCK_MIN_SYNTHETIC), fp)).toHaveLength(1);
+      expect(scanAddedLinesForRealAmounts(lines('src/x.json', 10), fp)).toHaveLength(1);
+    });
+  });
+
+  it('neverTrack paths (no synthetic stand-in) are blocked like manifest paths', () => {
+    const m = loadRealDataManifest();
+    for (const p of ['data/property-financials/monthly-long.csv', 'public/snapshot.json', 'public/warehouse.json', 'data/overlay.json', 'data/warehouse/finance.sqlite', 'data/lease-market/raw.csv', 'PUBLIC/Snapshot.json']) {
+      expect(isRealDataPath(p, m), p).toBe(true);
+    }
+    expect(isRealDataPath('public/index.html', m)).toBe(false);
+  });
+
+  it('matches exact files and directory prefixes, either slash style, but never fixtures/synthetic/', () => {
+    expect(isRealDataPath('data/snapshots/portfolio.json', manifest)).toBe(true);
+    expect(isRealDataPath('data\\calibration\\observations.json', manifest)).toBe(true);
+    expect(isRealDataPath('./src/data/seed-deals.ts', manifest)).toBe(true);
+    expect(isRealDataPath('fixtures/synthetic/data/snapshots/portfolio.json', manifest)).toBe(false);
+    expect(isRealDataPath('fixtures/synthetic/data/calibration/observations.json', manifest)).toBe(false);
+    // fail closed: a name that starts with a listed stem plus a separator is treated as a copy
+    expect(isRealDataPath('src/data/seed-deals.test.ts', manifest)).toBe(true);
+    expect(isRealDataPath('src/data/seed-dealership.ts', manifest)).toBe(false);
+    expect(isRealDataPath('data/snapshots/other.json', manifest)).toBe(false);
+    expect(isRealDataPath('docs/superpowers/specs/other.md', manifest)).toBe(false);
+  });
+
+  it('matches case variants (NTFS / core.ignorecase) and normalizes separators', () => {
+    expect(isRealDataPath('data/snapshots/Portfolio.json', manifest)).toBe(true);
+    expect(isRealDataPath('DATA/calibration/observations.json', manifest)).toBe(true);
+    expect(isRealDataPath('.\\SRC\\data\\seed-deals.ts', manifest)).toBe(true);
+    expect(parseRealDataPaths('A\tdata/snapshots/Portfolio.json\nA\tDATA/calibration/observations.json', manifest)).toHaveLength(2);
+    expect(isRealDataPath('Fixtures/Synthetic/data/snapshots/portfolio.json', manifest)).toBe(false);
+  });
+
+  it('parses --name-status output: added/modified/renamed-to paths hit, deletions do not', () => {
+    const text = [
+      'A\tdata/snapshots/portfolio.json',
+      'M\tdata/calibration/observations.json',
+      'D\tsrc/data/seed-deals.ts',
+      'R100\tsomewhere/else.ts\tsrc/data/seed-deals.ts',
+      'A\tfixtures/synthetic/data/snapshots/portfolio.json',
+      'M\tsrc/app.ts',
+    ].join('\n');
+    expect(parseRealDataPaths(text, manifest)).toEqual([
+      'data/snapshots/portfolio.json',
+      'data/calibration/observations.json',
+      'src/data/seed-deals.ts',
+    ]);
+  });
+
+  it('collectRefScan collects real-data hits only when given the manifest, and records their errors', () => {
+    const sha = 'c'.repeat(40);
+    const stdin = `refs/heads/x ${sha} refs/heads/x ${'0'.repeat(40)}\n`;
+    const base = { diffFor: () => '', binaryPathsFor: () => [] as string[] };
+    expect(collectRefScan(stdin, undefined, { ...base, realDataPathsFor: () => ['data/snapshots/portfolio.json'] }).realDataHits).toEqual([]);
+    const hit = collectRefScan(stdin, undefined, { ...base, manifest, realDataPathsFor: () => ['data/snapshots/portfolio.json'] });
+    expect(hit.realDataHits).toEqual(['data/snapshots/portfolio.json']);
+    const err = collectRefScan(stdin, undefined, {
+      ...base,
+      manifest,
+      realDataPathsFor: () => {
+        throw new Error('fatal: bad object');
+      },
+    });
+    expect(err.diffErrors).toEqual([{ localSha: sha, message: 'real-data paths: fatal: bad object' }]);
+    expect(shouldBlockOnDiffError(err.diffErrors, {})).toBe(true);
+  });
+
+  describe('against a real git repo', () => {
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
+    const ZERO = '0000000000000000000000000000000000000000';
+    const script = join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs');
+    let repo: string;
+    let home: string;
+
+    beforeEach(() => {
+      repo = mkdtempSync(join(tmpdir(), 'prepush-realdata-'));
+      home = mkdtempSync(join(tmpdir(), 'prepush-realdata-home-'));
+      mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
+      writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), '{"_meta":{}}');
+      git(repo, 'init', '-q', '-b', 'main');
+      mkdirSync(join(repo, 'data', 'snapshots'), { recursive: true });
+      writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[]}\n');
+      writeFileSync(join(repo, 'README.md'), 'base\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'base with a tracked snapshot');
+      git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    });
+    afterEach(() => {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    const runHook = (stdin: string) => {
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+      delete env['PREPUSH_ALLOW_DIFF_ERROR'];
+      delete env['PREPUSH_ALLOW_NO_ROSTER'];
+      return spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env });
+    };
+
+    it('BLOCKS a push that modifies a manifest path', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[1]}\n');
+      git(repo, 'commit', '-qam', 'modify snapshot');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual(['data/snapshots/portfolio.json']);
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('PUSH BLOCKED');
+      expect(r.stderr).toContain('data/snapshots/portfolio.json');
+      expect(r.stderr).toContain('real firm data');
+    });
+
+    it('BLOCKS a force-added manifest file in a new directory (data/building-specs/)', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      mkdirSync(join(repo, 'data', 'building-specs'), { recursive: true });
+      writeFileSync(join(repo, 'data', 'building-specs', 'reports.json'), '[]\n');
+      git(repo, 'add', '-f', 'data/building-specs/reports.json');
+      git(repo, 'commit', '-qm', 'force-add');
+      const r = runHook(`refs/heads/feat ${git(repo, 'rev-parse', 'HEAD')} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('data/building-specs/reports.json');
+    });
+
+    it('ALLOWS untracking a manifest path and adding its synthetic stand-in', () => {
+      git(repo, 'checkout', '-q', '-b', 'feat');
+      git(repo, 'rm', '-q', '--cached', 'data/snapshots/portfolio.json');
+      mkdirSync(join(repo, 'fixtures', 'synthetic', 'data', 'snapshots'), { recursive: true });
+      writeFileSync(join(repo, 'fixtures', 'synthetic', 'data', 'snapshots', 'portfolio.json'), '{"leases":[]}\n');
+      git(repo, 'add', 'fixtures');
+      git(repo, 'commit', '-qm', 'untrack + synthetic');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(0);
+    });
   });
 });

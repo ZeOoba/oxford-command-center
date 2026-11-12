@@ -20,6 +20,7 @@ import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { calibrationReport } from '../server/warehouse/calibration';
 import { INTEL_CONFIG } from '../server/warehouse/intel-config';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 /** The anti-overfit governor on the calibration PROCESS: no single weight may move more than this
  *  per re-fit (spec §4.3, "no single weight moves more than ±0.05/year"). */
@@ -220,6 +221,9 @@ function parseArgs(argv: string[]): { db?: string; out?: string } {
 }
 
 function main(argv: string[]): number {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('calibration-refit');
   const args = parseArgs(argv);
   const dbPath = args.db ?? 'data/warehouse.sqlite';
   let db: WarehouseDb;

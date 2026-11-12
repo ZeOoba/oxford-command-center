@@ -26,7 +26,7 @@
  *      failed OPEN until this was added (caught in review 2026-08-04, before any entry existed).
  *
  * Ids are the merged snapshot ids — for an EXTRAS (unmatched, Notion-only) deal, that is the
- * Notion PAGE UUID (e.g. "REDACTED-154"), readable from the deal's Notion
+ * Notion PAGE UUID (e.g. "00000000-0000-4000-8000-000000000009"), readable from the deal's Notion
  * URL. It is NOT a slug of the deal name.
  *
  * CORRECTED 2026-08-13 (adversarial review, all 3 lenses independently). Before this date, an
@@ -42,7 +42,7 @@
  * feedback_verified_null_vs_inferred_null.md calls a defect, not a non-issue.
  *
  * A NEW entry here should therefore use the page UUID, not the deal name. A SEED-matched deal
- * (e.g. REDACTED-467, REDACTED-399) never goes through this list at all — its
+ * (e.g. deal-02, deal-05) never goes through this list at all — its
  * `confidential` flag lives in src/data/seed-deals.ts and is the seed's own decision, documented
  * inline on that row.
  *

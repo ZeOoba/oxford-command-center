@@ -201,7 +201,7 @@ const FORMAT_DIGITS: Readonly<Record<EvaluationThreshold['format'], number>> = {
 
 /**
  * A cell value printed by the test's format: 66% / 4.5% / +5.9% / -12%. When rounding would print
- * the value onto a boundary it sits on the other side of (a red REDACTED-AMT fee shown as "5.0%" next to
+ * the value onto a boundary it sits on the other side of (a red fee just above 5% shown as "5.0%" next to
  * "red > 5.0%"), digits are added until the printed figure carries the same status as the value.
  */
 export function formatThresholdValue(t: EvaluationThreshold, v: number): string {

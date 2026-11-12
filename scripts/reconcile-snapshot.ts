@@ -5,13 +5,14 @@
 // which is exactly why it cannot run on GitHub-hosted CI (.github/workflows/ci.yml says so
 // explicitly) and previously ran only via full-gate-selfhosted.yml, which is workflow_dispatch
 // ONLY (never automatic). That gap is how the 2026-08-03 phantom-vacancy-lease corruption
-// (server/workbook/parse.ts:476, fixed in PR #250; +10 leases, +$REDACTED-AMT annualized rent) shipped
+// (server/workbook/parse.ts:476, fixed in PR #250; +10 leases, a six-figure annualized-rent overstatement) shipped
 // to the committed snapshot under "Data-quality flags: 0" with nothing blocking it.
 //
 // This script closes that gap WITHOUT touching the workbook: it runs checkSnapshot()
 // (server/reconcile-runtime.ts -- already the in-process check every brain.refresh() call runs,
-// already unit-tested in tests/unit/reconcile-runtime.test.ts) against the COMMITTED
-// data/snapshots/portfolio.json. Zero workbook I/O, so it runs on every PR via gate:ci, not just
+// already unit-tested in tests/unit/reconcile-runtime.test.ts) against data/snapshots/portfolio.json
+// (local-only real data on the live machine; in CI and on a fresh clone the synthetic stand-in from
+// fixtures/synthetic/, ruling 2026-11-10). Zero workbook I/O, so it runs on every PR via gate:ci, not just
 // on the self-hosted runner. It is deliberately a SUBSET of the full workbook-backed reconcile --
 // it can only catch what's already inconsistent within the snapshot itself (e.g. Σ lease
 // annualRent vs the workbook's own declared total, captured into the snapshot at parse time), not
@@ -28,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { SNAPSHOT_PATH } from '../server/config';
 import { PortfolioSnapshot } from '../src/contracts/index';
 import { checkSnapshot } from '../server/reconcile-runtime';
+import { syntheticNotice } from '../server/real-data-status';
 import type { DataQualityFlag } from '../src/contracts/common';
 
 export function evaluateFlags(flags: DataQualityFlag[]): { ok: boolean; errorCount: number; warnCount: number } {
@@ -37,6 +39,9 @@ export function evaluateFlags(flags: DataQualityFlag[]): { ok: boolean; errorCou
 }
 
 function main() {
+  // In CI the snapshot is the synthetic stand-in by design; anywhere else say so loudly.
+  const synthetic = syntheticNotice('reconcile:snapshot');
+  if (synthetic) console.error(synthetic);
   const raw = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
   // Zod parse, not a bare cast: a schema-shape drift (a renamed/removed field) should fail this
   // check loudly rather than let checkSnapshot silently read `undefined` off a field that no

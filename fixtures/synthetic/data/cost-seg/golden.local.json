@@ -1,0 +1,97 @@
+{
+  "note": "Value lock: written only by `npm run golden:ratify` from the data in place. Never edit by hand.",
+  "studies": {
+    "CS-RAR": {
+      "total": 2063798,
+      "alloc": {
+        "5yr": 691619,
+        "7yr": 5666,
+        "15yr": 105428,
+        "39yr": 1261085,
+        "9yr_ads": 0
+      }
+    },
+    "CS-BWY": {
+      "total": 1214674,
+      "alloc": {
+        "5yr": 138191,
+        "7yr": 0,
+        "15yr": 433795,
+        "39yr": 642688,
+        "9yr_ads": 0
+      }
+    },
+    "CS-RDB": {
+      "total": 2823014,
+      "alloc": {
+        "5yr": 106650,
+        "7yr": 72451,
+        "15yr": 226907,
+        "39yr": 2417006,
+        "9yr_ads": 0
+      }
+    },
+    "CS-NWD": {
+      "total": 5104572,
+      "alloc": {
+        "5yr": 111760,
+        "7yr": 0,
+        "15yr": 94069,
+        "39yr": 4867707,
+        "9yr_ads": 31036
+      }
+    },
+    "CS-LIV": {
+      "total": 1365429,
+      "alloc": {
+        "5yr": 300796,
+        "7yr": 0,
+        "15yr": 360660,
+        "39yr": 703973,
+        "9yr_ads": 0
+      }
+    },
+    "CS-FIS": {
+      "total": 1984446,
+      "alloc": {
+        "5yr": 604787,
+        "7yr": 0,
+        "15yr": 190935,
+        "39yr": 1188724,
+        "9yr_ads": 0
+      }
+    }
+  },
+  "calibration": {
+    "new-plant:roof_epdm:vendor-28:2017-02": {
+      "property": "55 New Plant Ct",
+      "variancePct": 5.065217391304348,
+      "ratio": 6.065217391304348
+    },
+    "e-fifth:roof_tpo:vendor-10:2022-04": {
+      "property": "3540 E Fifth Ave",
+      "variancePct": 1.6607142857142856,
+      "ratio": 2.6607142857142856
+    },
+    "e-livingston:roof_tpo:vendor-01:2026-08": {
+      "property": "3875-3883 E Livingston",
+      "variancePct": 0.906474820143885,
+      "ratio": 1.906474820143885
+    },
+    "e-fulton:roof_epdm:vendor-01:2026-05": {
+      "property": "3520 E Fulton St",
+      "variancePct": 1.7426900584795324,
+      "ratio": 2.7426900584795324
+    },
+    "banwick:roof_epdm:quote-low:2026": {
+      "property": "2800-2826 Banwick",
+      "variancePct": -0.8372365339578454,
+      "ratio": 0.16276346604215458
+    },
+    "banwick:roof_epdm:quote-high:2026": {
+      "property": "2800-2826 Banwick",
+      "variancePct": 2.2169811320754715,
+      "ratio": 3.2169811320754715
+    }
+  }
+}

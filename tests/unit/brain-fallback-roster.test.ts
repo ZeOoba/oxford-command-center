@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Deal } from '../../src/contracts/index';
 import type * as ConfigModule from '../../server/config';
+import type * as RealDataStatusModule from '../../server/real-data-status';
 
 // Hard Invariant 3 regression (2026-10-13 re-verification, regression-sweep lens): when the workbook
 // parse throws, Brain.refresh serves loadFallback()'s on-disk snapshot. A stored deal with
@@ -25,6 +26,7 @@ const h = vi.hoisted(() => ({
   snapshotPath: '',
   parseError: null as Error | null,
   base: null as unknown,
+  synthetic: [] as unknown[],
 }));
 
 vi.mock('../../server/config', async (importOriginal) => ({
@@ -39,6 +41,10 @@ vi.mock('../../server/workbook/parse', () => ({
   }),
 }));
 vi.mock('chokidar', () => ({ watch: vi.fn(() => ({ on: vi.fn() })) }));
+vi.mock('../../server/real-data-status', async (importOriginal) => ({
+  ...(await importOriginal<typeof RealDataStatusModule>()),
+  syntheticDataFlags: vi.fn(() => h.synthetic),
+}));
 
 let dir: string;
 const originalPath = process.env.CONFIDENTIAL_TERMS_PATH;
@@ -66,6 +72,7 @@ beforeEach(() => {
   h.snapshotPath = join(dir, 'portfolio.json');
   h.parseError = new Error('workbook locked');
   h.base = null;
+  h.synthetic = [];
   vi.resetModules();
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -149,5 +156,26 @@ describe('Brain — a roster change AFTER a snapshot is adopted still reaches se
     const byId = Object.fromEntries(brain.getSnapshot()!.deals.map((d) => [d.id, d.confidential]));
     expect(byId.a).toBe(true);
     expect(byId.b).toBe(false);
+  });
+});
+
+describe('Brain loadFallback — cold start on synthetic stand-ins is flagged (refute 2026-11-11 review)', () => {
+  it('re-derives the synthetic-data error flags for the files in place, never trusting the stored copy', async () => {
+    const stale = { entity: 'data-source', field: 'old', issue: 'old is the committed SYNTHETIC stand-in, not real firm data', severity: 'error' };
+    const fresh = { entity: 'data-source', field: 'data/snapshots/portfolio.json', issue: 'data/snapshots/portfolio.json is the committed SYNTHETIC stand-in, not real firm data', severity: 'error' };
+    writeFileSync(h.snapshotPath, JSON.stringify({ ...snapshotWith([deal({ id: 'a' })]), dataQuality: [stale] }), 'utf8');
+    h.synthetic = [fresh];
+    const { brain, state } = await refreshIntoFallback();
+    expect(state.source).toBe('snapshot-fallback');
+    const dq = brain.getSnapshot()!.dataQuality;
+    expect(dq).toContainEqual(fresh);
+    expect(dq).not.toContainEqual(stale);
+  });
+
+  it('serves no synthetic flag when the files in place are real (a stale stored flag is dropped)', async () => {
+    const stale = { entity: 'data-source', field: 'old', issue: 'old is the committed SYNTHETIC stand-in, not real firm data', severity: 'error' };
+    writeFileSync(h.snapshotPath, JSON.stringify({ ...snapshotWith([deal({ id: 'a' })]), dataQuality: [stale] }), 'utf8');
+    const { brain } = await refreshIntoFallback();
+    expect(brain.getSnapshot()!.dataQuality.some((f) => f.issue.includes('SYNTHETIC stand-in'))).toBe(false);
   });
 });

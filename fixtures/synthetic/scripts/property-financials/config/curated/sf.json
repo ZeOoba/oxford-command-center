@@ -1,0 +1,90 @@
+{
+  "$note": "Square footage per entity from the Master Workbook (Property NOI + Master Tenant Rent Roll tabs, as of the `source` date). Carried verbatim into dataset.sf; `sf`/`leased_sf`/`occ` also populate properties[id].sf/leased_sf/occupancy. Replace with the live Master Workbook read (T9b) when built.",
+  "sf": {
+    "1100 Rarig": {
+      "sf": 21000,
+      "leased_sf": 18000,
+      "occ": 0.8571,
+      "tenants": 9,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "1900 Broadway": {
+      "sf": 27671,
+      "leased_sf": 27171,
+      "occ": 1,
+      "tenants": 3,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "common_area_sf": 500,
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "29000 Info Lane": {
+      "sf": 48000,
+      "leased_sf": 45000,
+      "occ": 0.9375,
+      "tenants": 21,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "3034 Westerville": {
+      "sf": 18360,
+      "leased_sf": 18360,
+      "occ": 1,
+      "tenants": 2,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "3540 E 5th": {
+      "sf": 35886,
+      "leased_sf": 35886,
+      "occ": 1,
+      "tenants": 1,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "3883 Livingston": {
+      "sf": 10950,
+      "leased_sf": 10950,
+      "occ": 1,
+      "tenants": 1,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "9050 Red Branch": {
+      "sf": 90000,
+      "leased_sf": 85000,
+      "occ": 0.9444,
+      "tenants": 12,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Red Branch: 5,000 SF is notice-given vacant (Property NOI tab shows 94.4%). Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "9620 State 350": {
+      "sf": 34300,
+      "leased_sf": 28555,
+      "occ": 0.8325,
+      "tenants": 9,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "FVC": {
+      "sf": 109657,
+      "leased_sf": 93697,
+      "occ": 0.8545,
+      "tenants": 38,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Mapped to the Sepich portfolio (Banwick 24,000 + Morrison 31,200 + Zettler 47,056 + 4595 E 5th 4,140 + 4601 E 5th 3,261 = 109,657 SF; 41 tenants). Inferred by reconciliation: rent roll annualized rent $159,605 vs FVC TTM Sep-26 base rent $6,444 (+3%). Confirm. Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "55 New Plant (EGFLLC)": {
+      "sf": 34534,
+      "leased_sf": 34534,
+      "occ": 1,
+      "tenants": 1,
+      "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
+      "note": "Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+    },
+    "1851 South Club Solar": {
+      "sf": null,
+      "note": "Solar entity: not applicable"
+    }
+  }
+}

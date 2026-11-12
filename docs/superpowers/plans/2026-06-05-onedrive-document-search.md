@@ -74,11 +74,11 @@ describe('extractXlsxText — flat cell-text dump for search', () => {
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('RentRoll');
       ws.addRow(['Tenant', 'Suite', 'Annual Rent']);
-      ws.addRow(['REDACTED-659', '100', 123450]);
+      ws.addRow(['Tenant 155 LLC', '100', 123450]);
       await wb.xlsx.writeFile(file);
       const text = await extractXlsxText(file);
       expect(text).toContain('RentRoll');
-      expect(text).toContain('REDACTED-659');
+      expect(text).toContain('Tenant 155 LLC');
       expect(text).toContain('123450');
     } finally {
       rmSync(root, { recursive: true, force: true });

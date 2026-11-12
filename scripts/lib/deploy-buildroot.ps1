@@ -182,3 +182,73 @@ function Install-DeployBuildRootDeps {
   Set-Content -LiteralPath $stamp -Value $lockHash -Encoding ASCII
   $true
 }
+
+function Copy-RealDataIntoBuildRoot {
+  <#
+    .SYNOPSIS Supply every real-data manifest path to the build root from the canonical checkout.
+    .DESCRIPTION
+      Real firm data is never tracked (ruling 2026-11-10): every path in
+      scripts/fixtures/real-data-manifest.json is gitignored and local-only, so the clean build root
+      has none of it -- like .env and WAREHOUSE_DB, it must come from the canonical checkout. A
+      production mirror must NEVER ship the committed synthetic stand-ins, so this fails closed,
+      before any bake, when:
+        - a manifest file (or a manifest directory) is missing from the canonical checkout,
+        - a canonical file is listed in data/.synthetic-seeded.json or is byte-identical to its
+          fixtures/synthetic/ stand-in,
+        - the build root holds a seed marker, or a file under a manifest directory that the
+          canonical checkout does not have (a stale synthetic left by an earlier seeding).
+      The caller sets ORA_NO_SYNTHETIC_SEED=1 for the build root so `npm ci` never seeds it.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$RepoRoot,
+    [Parameter(Mandatory)][string]$BuildRoot
+  )
+  $manifestPath = Join-Path $BuildRoot 'scripts\fixtures\real-data-manifest.json'
+  if (-not (Test-Path -LiteralPath $manifestPath)) { throw "No real-data manifest in build root ($manifestPath) -- refusing to bake." }
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+
+  $seeded = @()
+  $marker = Join-Path $RepoRoot 'data\.synthetic-seeded.json'
+  if (Test-Path -LiteralPath $marker) {
+    try { $seeded = @((Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json).seeded) } catch { throw "Unreadable $marker -- refusing to bake." }
+  }
+  if (Test-Path -LiteralPath (Join-Path $BuildRoot 'data\.synthetic-seeded.json')) {
+    throw "The build root holds data\.synthetic-seeded.json (it was seeded with synthetic stand-ins) -- refusing to bake."
+  }
+
+  $rels = New-Object System.Collections.Generic.List[string]
+  # `optional` is absent from older manifests; StrictMode forbids reading a missing property.
+  $optional = @(if ($manifest.PSObject.Properties['optional']) { @($manifest.optional) })
+  foreach ($f in @($manifest.files)) { $rels.Add([string]$f) }
+  foreach ($d in @($manifest.dirs)) {
+    $src = Join-Path $RepoRoot ($d -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $src)) { throw "Real-data directory missing from the canonical checkout: $d -- refusing to bake." }
+    foreach ($file in Get-ChildItem -LiteralPath $src -Recurse -File) {
+      $rels.Add(($d.TrimEnd('/') + '/' + $file.FullName.Substring($src.TrimEnd('\').Length + 1).Replace('\', '/')))
+    }
+    $dst = Join-Path $BuildRoot ($d -replace '/', '\')
+    if (Test-Path -LiteralPath $dst) {
+      foreach ($file in Get-ChildItem -LiteralPath $dst -Recurse -File) {
+        $rel = $file.FullName.Substring($dst.TrimEnd('\').Length + 1)
+        if (-not (Test-Path -LiteralPath (Join-Path $src $rel))) { throw "Build root has $d$rel that the canonical checkout does not (stale stand-in?) -- refusing to bake." }
+      }
+    }
+  }
+
+  foreach ($rel in $rels) {
+    # Optional manifest files (value locks, local operator tables) are never bake inputs.
+    if ($optional -contains $rel) { continue }
+    $src = Join-Path $RepoRoot ($rel -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $src)) { throw "Real-data file missing from the canonical checkout: $rel -- refusing to bake (restore it; see docs/ops/2026-11-11-real-data-untrack-pull-runbook.md)." }
+    if ($seeded -contains $rel) { throw "Canonical $rel is listed in data\.synthetic-seeded.json (synthetic stand-in) -- refusing to bake." }
+    $fixture = Join-Path $RepoRoot ('fixtures\synthetic\' + ($rel -replace '/', '\'))
+    if ((Test-Path -LiteralPath $fixture) -and ((Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $fixture -Algorithm SHA256).Hash)) {
+      throw "Canonical $rel is byte-identical to its synthetic stand-in -- refusing to bake."
+    }
+    $dst = Join-Path $BuildRoot ($rel -replace '/', '\')
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+    Copy-Item -LiteralPath $src -Destination $dst -Force
+  }
+  Write-Host "  Supplied $($rels.Count) real-data file(s) from the canonical checkout"
+  $rels.Count
+}

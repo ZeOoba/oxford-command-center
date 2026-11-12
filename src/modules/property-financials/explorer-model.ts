@@ -531,7 +531,7 @@ export interface StackTotalsData {
   readonly credits: readonly number[];
   /** 'Total $64.9K (incl. -$6.6K credit)': accessible / compact text. */
   readonly text: readonly string[];
-  /** '$REDACTED-AMT (incl. -$REDACTED-AMT credit)': the data-table Total cell. */
+  /** '$NN,NNN (incl. -$N,NNN credit)': the data-table Total cell. */
   readonly tableText: readonly string[];
   /** 'incl. -$6.6K credit' under the chart's total label, or null when the column has no credit. */
   readonly creditNote: ReadonlyArray<string | null>;

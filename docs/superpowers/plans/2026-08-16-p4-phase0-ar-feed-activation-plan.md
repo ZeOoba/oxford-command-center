@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Light up the existing, never-run AR ingestion pipeline so the $REDACTED-AMT of accounts receivable currently invisible to the Command Center flows into `tenantArrears` → `arBalances[]` → the dormant `arrears-*` / `ar-stale` conditions → the daily brief's Section 4c.
+**Goal:** Light up the existing, never-run AR ingestion pipeline so the accounts receivable currently invisible to the Command Center flows into `tenantArrears` → `arBalances[]` → the dormant `arrears-*` / `ar-stale` conditions → the daily brief's Section 4c.
 
 **Architecture:** No new subsystem. `scripts/ar-import-headless.ts` and `server/ar/*` already implement parsing, tenant→lease matching, confidence partitioning, and overlay writes; they have simply never been fed. This plan creates the inbox, proves the chain end-to-end on the format already supported, then adds the two missing formats in ascending order of difficulty.
 
@@ -32,7 +32,7 @@ Eight files in `Business/A.R. Reports/`, all dated 7.15.2026, in three formats:
 | **C** | `DB Caption:` | 29000 Info Lane · 1900 Broadway + 9050 Red Branch | `Lease` column (names) | Missing | 11 |
 | **B** | `Delinquency` + `Exported On:` | 2203-2207 Northwood | **Unit only — no name** | Missing + needs new match path | 6 |
 
-Independent cross-check from `_pipeline/output/sync_log.json` (built 2026-07-17 from these same files): **`ar_total` $REDACTED-AMT · `ar_total_active` $REDACTED-AMT · `ar_tenants` 31 · 0 unmapped.**
+Independent cross-check from `_pipeline/output/sync_log.json` (built 2026-07-17 from these same files): **`ar_total` [amount redacted] · `ar_total_active` [amount redacted] · `ar_tenants` 31 · 0 unmapped.**
 
 **Format A needs no code.** It is 26 of 31 tenants — the bulk of the value — and Task 1 delivers it.
 
@@ -110,7 +110,7 @@ npx tsx scripts/ar-import-headless.ts
 
 Expected: exit 0, log showing `5 file(s) · 138 lease(s) loaded`. Any file landing in `data/ar-dryrun/failed/` is a finding — record the quarantine reason verbatim and stop.
 
-**Actual result, 2026-08-16 (run completed):** all five parsed as `rent-manager-delinquency`, `18 lease(s) written · 8 queued for review · 0 skipped · 5/5 archived` — 26 rows total, exactly matching `_pipeline`'s count for these five files. Written $54,762.78; review queue $75,213.11; combined **$129,975.89**, leaving $74,812.59 for Formats B and C. **`REDACTED-238` surfaced in the review queue at $20,457.24**, matching the documented balance to the cent — acceptance criterion (a) satisfied. Both real files verified byte-identical before and after.
+**Actual result, 2026-08-16 (run completed):** all five parsed as `rent-manager-delinquency`, `18 lease(s) written · 8 queued for review · 0 skipped · 5/5 archived` — 26 rows total, exactly matching `_pipeline`'s count for these five files. Written $54,762.78; review queue $75,213.11; combined **$129,975.89**, leaving $74,812.59 for Formats B and C. **`AR Tenant 022` surfaced in the review queue at $20,457.24**, matching the documented balance to the cent — acceptance criterion (a) satisfied. Both real files verified byte-identical before and after.
 
 - [ ] **Step 5: Verify what was written**
 
@@ -421,21 +421,21 @@ describe('parseDelinquencyBucketed', () => {
   it('parses unit rows under their property group header', () => {
     const ws = sheet([...PREAMBLE, HEADER,
       ['grp-a - 100 Example Dr'],
-      ['4A', REDACTED-AMT, null, 1200, 'Current', null, null, 999.99, REDACTED-AMT, 0],
-      ['11-12A', REDACTED-AMT, null, 1925, 'Current', null, null, 1598, REDACTED-AMT, 0],
+      ['4A', 1111.25, null, 1100, 'Current', null, null, 900, 1111.25, 0],
+      ['11-12A', 2222.5, null, 2000, 'Current', null, null, 1500, 2222.5, 0],
     ]);
     const rows = parseDelinquencyBucketed(ws);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual({ unit: '4A', property: 'grp-a - 100 Example Dr', d30: REDACTED-AMT, d30plus: 0 });
+    expect(rows[0]).toEqual({ unit: '4A', property: 'grp-a - 100 Example Dr', d30: 1111.25, d30plus: 0 });
     expect(rows[1].unit).toBe('11-12A');
   });
 
   it('switches property on each new group header', () => {
     const ws = sheet([...PREAMBLE, HEADER,
       ['grp-a - 100 Example Dr'],
-      ['4A', REDACTED-AMT, null, 1200, 'Current', null, null, 999.99, REDACTED-AMT, 0],
+      ['4A', 1111.25, null, 1100, 'Current', null, null, 900, 1111.25, 0],
       ['grp-b - 200 Example Dr'],
-      ['01B', REDACTED-AMT, null, 955, 'Current', null, null, 799, REDACTED-AMT, 0.03],
+      ['01B', 1050.03, null, 950, 'Current', null, null, 800, 1050, 0.03],
     ]);
     const rows = parseDelinquencyBucketed(ws);
     expect(rows[1].property).toBe('grp-b - 200 Example Dr');
@@ -445,8 +445,8 @@ describe('parseDelinquencyBucketed', () => {
   it('skips per-property subtotal rows (blank Unit)', () => {
     const ws = sheet([...PREAMBLE, HEADER,
       ['grp-a - 100 Example Dr'],
-      ['4A', REDACTED-AMT, null, 1200, 'Current', null, null, 999.99, REDACTED-AMT, 0],
-      [null, 4266.75, null, 3325, null, null, null, 3997.99, 4066.75, 200],
+      ['4A', 1111.25, null, 1100, 'Current', null, null, 900, 1111.25, 0],
+      [null, 4444.75, null, 3300, null, null, null, 3600, 4244.75, 200],
     ]);
     expect(parseDelinquencyBucketed(ws)).toHaveLength(1);
   });
@@ -454,8 +454,8 @@ describe('parseDelinquencyBucketed', () => {
   it('excludes the final Total row', () => {
     const ws = sheet([...PREAMBLE, HEADER,
       ['grp-a - 100 Example Dr'],
-      ['4A', REDACTED-AMT, null, 1200, 'Current', null, null, 999.99, REDACTED-AMT, 0],
-      ['Total', 10094.37, null, 4910, null, null, null, 7693.99, 8549.69, 1544.68],
+      ['4A', 1111.25, null, 1100, 'Current', null, null, 900, 1111.25, 0],
+      ['Total', 12345.67, null, 5000, null, null, null, 7000, 11111.11, 1234.56],
     ]);
     const rows = parseDelinquencyBucketed(ws);
     expect(rows).toHaveLength(1);
@@ -465,7 +465,7 @@ describe('parseDelinquencyBucketed', () => {
   it('clamps credit balances to zero', () => {
     const ws = sheet([...PREAMBLE, HEADER,
       ['grp-a - 100 Example Dr'],
-      ['9B', -398, null, 0, 'Current', null, null, 0, -398, 0],
+      ['9B', -250, null, 0, 'Current', null, null, 0, -250, 0],
     ]);
     expect(parseDelinquencyBucketed(ws)[0].d30).toBe(0);
   });
@@ -867,11 +867,11 @@ const s=require('./data/ar-dryrun/portfolio.json');
 const ta=s.tenantArrears??{};
 const tot=Object.values(ta).reduce((a,b)=>a+b.d30+b.d60+b.d90+b.d90plus,0);
 console.log('tenants written:',Object.keys(ta).length,'| total \$'+tot.toFixed(2));
-console.log('_pipeline reference: 31 tenants | \$REDACTED-AMT | active \$REDACTED-AMT');
+console.log('_pipeline reference: 31 tenants | compare total and active against the _pipeline sheet');
 "
 ```
 
-The written total will be **lower** than $REDACTED-AMT — review-queue rows are deliberately unwritten. Confirm `written + review ≈ $REDACTED-AMT`. **A material unexplained gap is a finding: stop and report it rather than proceeding to a live run.**
+The written total will be **lower** than the `_pipeline` reference total — review-queue rows are deliberately unwritten. Confirm `written + review ≈` that reference total. **A material unexplained gap is a finding: stop and report it rather than proceeding to a live run.**
 
 - [ ] **Step 5: Full suite and commit**
 

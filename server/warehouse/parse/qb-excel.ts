@@ -61,7 +61,7 @@ const HEADER_CELL_RE = /period to date|year to date|selected period|%|total|annu
 const HEADER_PRIMARY_RE = /year to date|ytd|total|annual/i;
 const HEADER_SECONDARY_RE = /period to date|selected period/i;
 
-// Numeric-only text ("REDACTED-AMT", "(98.81)", "1") is a VALUE cell, never an account label.
+// Numeric-only text ("123456.78", "(55.55)", "1") is a VALUE cell, never an account label.
 function isNumericText(s: string): boolean {
   return /^[\d.,()$\s-]*$/.test(s.trim());
 }
@@ -144,7 +144,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   interface SectionAcc { name: string; leafSum: number; statedTotal: number | null; closed: boolean }
   const sections: SectionAcc[] = [];
   let current: SectionAcc | null = null;
-  // Bare-TOTAL block stated values ("TOTAL → INCOME REDACTED-AMT") are FILE-level totals:
+  // Bare-TOTAL block stated values ("TOTAL → INCOME 113333.33") are FILE-level totals:
   // each is footed against the side's section-scoped leaf sums AS OF the row's pass
   // time, via a synthetic "<SIDE> (file total)" section emitted at end of parse.
   const fileTotals: Record<'income' | 'expense', { stated: number; scopedLeafSum: number } | null> =
@@ -279,8 +279,8 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     if (!periodLabel && /^[A-Z][a-z]{2}\s*-\s*[A-Z][a-z]{2}\s+\d{2}$/.test(first)) { periodLabel = first; return; }
 
     // Bare-TOTAL stated-value rows, two shapes: a lone section word under an armed
-    // TOTAL block ("INCOME 216461.4" / the NET INCOME SUMMARY recap), or the merged
-    // Rent-Manager "TOTAL | EXPENSE | REDACTED-AMT" row — whose preceding TOTAL header
+    // TOTAL block ("INCOME 113333.33" / the NET INCOME SUMMARY recap), or the merged
+    // Rent-Manager "TOTAL | EXPENSE | 111111.11" row — whose preceding TOTAL header
     // can carry a stray % numeric (9620) and never arm the TOTAL section state.
     // FIRST capture per side wins, snapshotting that side's section leaf sums AT PASS
     // TIME: the first bare total a report emits for a side is its section-scoped
@@ -290,7 +290,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     // original capture path below, unchanged.
     //
     // Value cell: header-driven column when one exists; otherwise the LEFTMOST numeric
-    // — NOT rightmost-wins. 9620's merged "TOTAL | INCOME | REDACTED-AMT | 1" rows carry
+    // — NOT rightmost-wins. 9620's merged "TOTAL | INCOME | 123456.78 | 1" rows carry
     // the "% Income" fraction as a trailing NUMERIC (leaf rows hold it as text
     // "92.83 %", so leaves are unaffected); the dollar amount precedes it.
     {
@@ -310,9 +310,9 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
       const trimmed = t.text.trim();
       if (SECTION_RE.test(trimmed)) {
         if (anyNumeric) {
-          // section word + amount on one row = a total-value row ("INCOME 216461.4"),
+          // section word + amount on one row = a total-value row ("INCOME 113333.33"),
           // not a header — skip without changing section. Under the bare-TOTAL section
-          // (QB "TOTAL → INCOME 216461.4" footer) that row IS the report's stated
+          // (QB "TOTAL → INCOME 113333.33" footer) that row IS the report's stated
           // top-level total: record it while skipping.
           if (section === 'TOTAL' && rowNum !== null) {
             if (/^INCOME$/i.test(trimmed)) totalIncome = rowNum;
@@ -358,7 +358,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     const m = trimmed.match(/^(?<code>\d[\d.-]*)\s+(?<name>.+)$/);
     const code = m?.groups?.['code'] ?? null;
     const name = (m?.groups?.['name'] ?? trimmed).trim();
-    if (/^[\d.,()$\s-]*$/.test(name)) return; // numeric-only candidate ("REDACTED-AMT" → code 105647.9 + name "1") = a report summary value, not an account
+    if (/^[\d.,()$\s-]*$/.test(name)) return; // numeric-only candidate ("123456.78" → code 123456.7 + name "8") = a report summary value, not an account
     if (DERIVED_SUMMARY_RE.test(name.toLowerCase())) return; // derived totals ("NET OPERATING INCOME", "CASH FLOW") are not accounts
     if (/^Total\b/i.test(name) || /\bTotal\b/.test(name.split(/\s+/).slice(0, 2).join(' '))) {
       // subtotal row ("5002 Total RENTAL INCOME") — skipped even when it carries an

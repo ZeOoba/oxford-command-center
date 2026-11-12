@@ -5,6 +5,8 @@
 // dataset's own derived blocks (recovery ratio, Q3 run-rate, driver nature, rent-step events), the
 // THRESHOLDS config + RAG function (single-threshold flip), and the formatters.
 import { describe, expect, it } from 'vitest';
+import { loadLeaseTermSeeds } from '../../server/warehouse/lease-terms';
+import { DEFAULT_LEASE_RUN_ASSUMPTIONS, projectLeaseRun } from '../../server/warehouse/lease-run';
 import {
   OPEX_CATEGORIES,
   PF_ENTITY_IDS,
@@ -43,6 +45,7 @@ import {
 } from '@analytics/property-financials/metrics';
 import { EVALUATION_TEST_IDS, THRESHOLDS, ragMatrix, ragStatus, type RagStatus } from '@analytics/property-financials/thresholds';
 import { DASH, NM, axisUsd, fmtResult, pct, pctLevel, usd } from '@analytics/property-financials/format';
+import { isSynthetic, pfGolden } from './golden-helpers';
 import { loadDataset } from './property-financials-helpers';
 
 const D = loadDataset();
@@ -59,25 +62,76 @@ function monthlyProp(id: (typeof PF_MONTHLY_ENTITY_IDS)[number]): PfMonthlyPrope
 // -------------------------------------------------------------------------------------------------
 
 describe('golden normalized NOI (USD, rounded)', () => {
-  const GOLDEN: Record<string, [fy24: number, fy25: number]> = {
-    '1100 Rarig': [129_656, REDACTED-AMT],
-    // v03.2 (Gabriel ruling 2026-10-06, mapping v3): Yardi "Prepaid Rental Income" is excluded from revenue
-    // like AppFolio unallocated prepays. Was [360_191, 365_562] when it counted as contra-revenue.
-    '1900 Broadway': [358_852, 366_902],
-    '29000 Info Lane': [466_052, 487_373],
-    '3540 E 5th': [271_807, 279_963],
-    // v03.2 prepaid-rent ruling: was [837_125, 905_390].
-    '9050 Red Branch': [838_196, 912_337],
-    FVC: [793_335, 837_090],
-    '55 New Plant (EGFLLC)': [404_495, 422_488],
-    '1851 South Club Solar': [630_825, 507_472],
-  };
+  // Value lock (refute run 2026-11-11): the exact per-entity NOI lives in the gitignored
+  // data/property-financials/golden.local.json, written only by `npm run golden:ratify` from the real
+  // dataset (in CI: the committed synthetic copy). A builder / mapping regression fails here until a
+  // human re-ratifies on purpose. The FY figures must also agree with the history and monthly blocks.
+  const G = pfGolden();
+  const SYNTH = isSynthetic('data/property-financials/dataset.json');
+  const GOLDEN_IDS = ['1100 Rarig', '1900 Broadway', '29000 Info Lane', '3540 E 5th', '9050 Red Branch', 'FVC', '55 New Plant (EGFLLC)', '1851 South Club Solar'] as const;
 
-  for (const [id, [fy24, fy25]] of Object.entries(GOLDEN)) {
-    it(`${id}: FY2024 ${fy24.toLocaleString()} / FY2025 ${fy25.toLocaleString()}`, () => {
+  it('the value lock covers every golden entity', () => {
+    for (const id of GOLDEN_IDS) expect(G.noi[id], id).toBeDefined();
+  });
+
+  it('the value lock keys are exactly the entities with FY2024 and FY2025 data', () => {
+    const withFy = PF_ENTITY_IDS.filter((id) => {
+      const per = D.properties[id].periods as Record<string, { noi?: unknown } | undefined>;
+      return typeof per['FY2024']?.noi === 'number' && typeof per['FY2025']?.noi === 'number';
+    });
+    expect(Object.keys(G.noi).sort()).toEqual([...withFy].sort());
+  });
+
+  it('EVERY locked entity: FY2024 / FY2025 NOI equal the value lock and the history years where present', () => {
+    for (const [id, lock] of Object.entries(G.noi)) {
       const p = D.properties[id as (typeof PF_ENTITY_IDS)[number]];
-      expect(Math.round(p.periods.FY2024.noi)).toBe(fy24);
-      expect(Math.round(p.periods.FY2025.noi)).toBe(fy25);
+      expect(p, id).toBeDefined();
+      expect(Math.round(p.periods.FY2024.noi), `${id}/FY2024`).toBe(lock.FY2024);
+      expect(Math.round(p.periods.FY2025.noi), `${id}/FY2025`).toBe(lock.FY2025);
+      for (const [per, y] of [['FY2024', '2024'], ['FY2025', '2025']] as const) {
+        const h = D.history[id as (typeof PF_ENTITY_IDS)[number]].yr[y];
+        if (h) expect(Math.round(h.noi), `${id}/${per} history`).toBe(Math.round(p.periods[per].noi));
+      }
+    }
+  });
+
+  it('latest-period NOI (YTD26 / partial 2026) of every entity equals the value lock', () => {
+    expect(Object.keys(G.latestNoi).sort()).toEqual([...PF_ENTITY_IDS].sort());
+    // exactly one period of each entity matches the latest-period rule (no first-match pick)
+    for (const id of PF_ENTITY_IDS) {
+      const keys = Object.keys(D.properties[id].periods).filter((k) => k === 'YTD26' || k.startsWith('YTD26_partial'));
+      expect(keys, id).toHaveLength(1);
+    }
+    for (const id of PF_ENTITY_IDS) {
+      const lock = G.latestNoi[id]!;
+      const per = D.properties[id].periods as Record<string, { noi: number } | undefined>;
+      expect(per[lock.period], `${id}/${lock.period}`).toBeDefined();
+      expect(Math.round(per[lock.period]!.noi), `${id}/${lock.period}`).toBe(lock.noi);
+    }
+    // monthly entities: the history Jan-Sep 2026 block agrees with the locked YTD26 figure
+    for (const id of PF_MONTHLY_ENTITY_IDS) {
+      expect(G.latestNoi[id]!.period, id).toBe('YTD26');
+      expect(Math.round(D.history[id].ytd['2026']!.noi), `${id} history ytd 2026`).toBe(G.latestNoi[id]!.noi);
+    }
+  });
+
+  for (const id of GOLDEN_IDS) {
+    it(`${id}: FY2024 / FY2025 NOI equal the ratified value lock and agree across blocks`, () => {
+      const p = D.properties[id];
+      expect(Math.round(p.periods.FY2024.noi)).toBe(G.noi[id]!.FY2024);
+      expect(Math.round(p.periods.FY2025.noi)).toBe(G.noi[id]!.FY2025);
+      for (const [per, y] of [['FY2024', '2024'], ['FY2025', '2025']] as const) {
+        const noi = p.periods[per].noi;
+        expect(Math.round(D.history[id].yr[y]!.noi), `${id}/${per} history`).toBe(Math.round(noi));
+        if (p.kind === 'monthly') {
+          const months = Object.entries(D.monthly[id as keyof typeof D.monthly] ?? {}).filter(([m]) => m.startsWith(`${y}-`));
+          expect(months, `${id}/${per} months`).toHaveLength(12);
+          // exact on the real data; the synthetic copy rounds each month separately (<= 12 cents)
+          const sum = months.reduce((a, [, f]) => a + f.noi, 0);
+          if (SYNTH) expect(Math.abs(sum - noi), `${id}/${per} monthly sum`).toBeLessThanOrEqual(0.12);
+          else expect(sum, `${id}/${per} monthly sum`).toBeCloseTo(noi, 2);
+        }
+      }
     });
   }
 
@@ -91,9 +145,9 @@ describe('golden normalized NOI (USD, rounded)', () => {
     }
   });
 
-  // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; NOI moved
-  // +5.3% -> +4.9% (YTD25 2,288,999 -> 2,297,654; YTD26 2,409,726 -> 2,409,530).
-  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent +2.6%, opex excl. RE tax +6.6%, NOI +4.9%', () => {
+  // v03.2 prepaid-rent ruling (2026-10-06): base rent and opex do not touch the excluded rows; only the
+  // same-store NOI change moved.
+  it('same-store Jan-Sep 2026 vs Jan-Sep 2025: base rent, opex excl. RE tax and NOI changes equal the value lock', () => {
     const sum = (per: 'YTD25' | 'YTD26', f: (x: PfMonthlyProperty['periods']['YTD25']) => number) =>
       SAME_STORE.reduce((a, id) => a + f(monthlyProp(id).periods[per]), 0);
     const baseRent = pctChange(sum('YTD25', (x) => x.base_rent), sum('YTD26', (x) => x.base_rent));
@@ -102,9 +156,10 @@ describe('golden normalized NOI (USD, rounded)', () => {
       sum('YTD26', (x) => x.opex - x.opex_by[RE_TAX]),
     );
     const noi = pctChange(sum('YTD25', (x) => x.noi), sum('YTD26', (x) => x.noi));
-    expect(pct(baseRent.value)).toBe('+2.6%');
-    expect(pct(opexExTax.value)).toBe('+6.6%');
-    expect(pct(noi.value)).toBe('+4.9%'); // was +5.3% before v03.2
+    // ratified values (golden lock); the v03.2 ruling moved NOI from +5.3% to +4.9% on the real data
+    expect(pct(baseRent.value)).toBe(G.sameStoreYtd.baseRent);
+    expect(pct(opexExTax.value)).toBe(G.sameStoreYtd.opexExTax);
+    expect(pct(noi.value)).toBe(G.sameStoreYtd.noi);
   });
 });
 
@@ -170,8 +225,8 @@ describe('period rules', () => {
   });
 
   /**
-   * Known dataset deviation from the rule: 9620 State 350 TTM26 vs TTM25 NOI is -3.28 in the file
-   * (NOI went from -$REDACTED-AMT to +$REDACTED-AMT). A percent on a negative base is meaningless; the module
+   * Known dataset deviation from the rule: 9620 State 350 TTM26 vs TTM25 NOI carries a percent in the
+   * file although TTM25 NOI is negative. A percent on a negative base is meaningless; the module
    * shows n/m there. Pinned so a refreshed dataset that drops the figure makes this list shrink
    * visibly rather than silently.
    */
@@ -229,7 +284,8 @@ describe('per-SF', () => {
     const ytd = perSf(r.periods.YTD26.base_rent, r.sf);
     expect(ytd.value).toBeCloseTo(r.periods.YTD26.base_rent / 21_000, 10);
     const fy = perSf(r.periods.FY2025.base_rent, r.sf);
-    expect(fy.value).toBeCloseTo(REDACTED-AMT / 21_000, 10);
+    expect(r.periods.FY2025.base_rent).toBeCloseTo(pfGolden().locks.rarigBaseRentFy2025, 2); // value lock
+    expect(fy.value).toBeCloseTo(pfGolden().locks.rarigBaseRentFy2025 / 21_000, 6);
     // 9-month figure is ~3/4 of the annual, not scaled up to it.
     expect((ytd.value ?? 0) < (fy.value ?? 0)).toBe(true);
   });
@@ -404,7 +460,10 @@ describe('rent-step events', () => {
       });
       total += got.length;
     }
-    expect(total).toBe(62);
+    // every monthly entity's persisted steps are reproduced, and the count equals the value lock
+    expect(total).toBe(PF_MONTHLY_ENTITY_IDS.reduce((a, id) => a + D.history[id].ev.length, 0));
+    expect(total).toBe(pfGolden().locks.rentStepEvents);
+    expect(total).toBeGreaterThan(0);
   });
 
   it('ignores a step below $500 or below 2% and enforces the 4-month gap', () => {
@@ -480,22 +539,26 @@ describe('THRESHOLDS + ragStatus', () => {
     expect(v.recoveryRatio).toBeCloseTo((t.recoveries + t.utility_reimb) / t.pool, 10);
     expect(v.mgmtFeePct).toBeCloseTo(t.opex_by['Management fees'] / t.revenue, 10);
     expect(v.contraRevenue).toBeCloseTo(Math.abs(t.vacancy_waivers) / t.base_rent, 10);
-    expect(v.rentRunRateGrowth).toBeCloseTo(REDACTED-AMT / REDACTED-AMT - 1, 6);
+    // the run-rate pair is a value lock (the growth would otherwise be read from the same fields it checks)
+    const rr = pfGolden().locks.rarigRunRateQ3;
+    expect(r.base_rent_runrate_q3.q3_2025!).toBeCloseTo(rr.q3_2025, 2);
+    expect(r.base_rent_runrate_q3.q3_2026!).toBeCloseTo(rr.q3_2026, 2);
+    expect(v.rentRunRateGrowth).toBeCloseTo(rr.q3_2026 / rr.q3_2025 - 1, 6);
     // Without the cube the artifact's displayed (2-dp) run-rate growth is used.
     expect(evaluationInputs(r).rentRunRateGrowth).toBe(r.base_rent_runrate_q3.yoy_2026);
     expect(v.utilityGrowth).toBeCloseTo(r.periods.YTD26.opex_by.Utilities / r.periods.YTD25.opex_by.Utilities - 1, 10);
     expect(v.repairsGrowth).toBeCloseTo(r.periods.YTD26.opex_by['Repairs & maintenance'] / r.periods.YTD25.opex_by['Repairs & maintenance'] - 1, 10);
     // Livingston: no Q3-2025 -> run-rate n/m. Its Jan-Sep 2025 window holds only 3 of 9 months, so the
-    // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which both prior
-    // bases clear (utilities $REDACTED-AMT, repairs $REDACTED-AMT). A 3-month vs 9-month comparison would
-    // have read +489.6% / -66.8%; the partial rule refuses before any arithmetic.
+    // utility / repairs growth is n/m for the PARTIAL PERIOD — not the $1,000 floor, which the repairs
+    // prior base clears. A 3-month vs 9-month comparison would read as a huge swing; the partial rule
+    // refuses before any arithmetic.
     const liv = monthlyProp('3883 Livingston');
     const l = evaluationInputs(liv, D.monthly['3883 Livingston']);
     expect(l.rentRunRateGrowth).toBeNull();
     const ly = liv.periods.YTD25.opex_by;
     expect(liv.periods.YTD25.n_months).toBe(3);
-    expect(ly.Utilities).toBeCloseTo(REDACTED-AMT, 2);
-    expect(ly['Repairs & maintenance']).toBeCloseTo(REDACTED-AMT, 2);
+    expect(ly.Utilities).toBeGreaterThan(0);
+    expect(ly['Repairs & maintenance']).toBeGreaterThan(THRESHOLDS.repairsGrowth.minPriorBase ?? 0);
     expect(l.utilityGrowth).toBeNull();
     expect(l.repairsGrowth).toBeNull();
     const lr = evaluationResults(liv, D.monthly['3883 Livingston']);
@@ -506,8 +569,13 @@ describe('THRESHOLDS + ragStatus', () => {
   it('changing ONE threshold flips exactly the cells it governs and nothing else', () => {
     const inputs = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, evaluationInputs(monthlyProp(id), D.monthly[id])]));
     const before = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, ragMatrix(inputs[id]!, THRESHOLDS)])) as Record<string, Record<string, RagStatus>>;
-    // Raise the NOI-margin green floor from 65% to 70%.
-    const tweaked = { ...THRESHOLDS, noiMargin: { ...THRESHOLDS.noiMargin, green: 0.7 } };
+    // Raise the NOI-margin green floor from 65% to just above the smallest green margin in THIS
+    // dataset (real or synthetic, whose margins are its own draws), so the
+    // flip is observed on any dataset.
+    const greens = PF_MONTHLY_ENTITY_IDS.map((id) => inputs[id]!.noiMargin).filter((v): v is number => v !== null && v >= THRESHOLDS.noiMargin.green);
+    expect(greens.length).toBeGreaterThan(0);
+    const bump = Math.min(...greens) + 1e-9;
+    const tweaked = { ...THRESHOLDS, noiMargin: { ...THRESHOLDS.noiMargin, green: bump } };
     const after = Object.fromEntries(PF_MONTHLY_ENTITY_IDS.map((id) => [id, ragMatrix(inputs[id]!, tweaked)])) as Record<string, Record<string, RagStatus>>;
     let flipped = 0;
     for (const id of PF_MONTHLY_ENTITY_IDS) {
@@ -519,7 +587,7 @@ describe('THRESHOLDS + ragStatus', () => {
           continue;
         }
         const v = inputs[id]![test];
-        const shouldFlip = v !== null && v >= 0.65 && v < 0.7;
+        const shouldFlip = v !== null && v >= 0.65 && v < bump;
         expect(a !== b, `${id}/noiMargin flip`).toBe(shouldFlip);
         if (shouldFlip) {
           expect(b).toBe('g');
@@ -528,9 +596,9 @@ describe('THRESHOLDS + ragStatus', () => {
         }
       }
     }
-    // The portfolio really has margins in [65%, 70%), so the flip is observed, not vacuous.
+    // At least the smallest green margin flips, so the check is observed, not vacuous.
     expect(flipped).toBeGreaterThan(0);
-    expect(flipped).toBe(PF_MONTHLY_ENTITY_IDS.filter((id) => { const v = inputs[id]!.noiMargin; return v !== null && v >= 0.65 && v < 0.7; }).length);
+    expect(flipped).toBe(PF_MONTHLY_ENTITY_IDS.filter((id) => { const v = inputs[id]!.noiMargin; return v !== null && v >= 0.65 && v < bump; }).length);
   });
 });
 
@@ -543,7 +611,7 @@ describe('formatters (reference artifact usd / pc / pl)', () => {
     expect(usd(1_234_567)).toBe('$1.23M');
     expect(usd(1_234_567, 'f')).toBe('$1,234,567');
     expect(usd(-1_234_567)).toBe('-$1.23M');
-    expect(usd(REDACTED-AMT)).toBe('$222,188');
+    expect(usd(123_456.78)).toBe('$123,457');
     expect(usd(12_345, 'k')).toBe('$12.3K');
     expect(usd(1_234_567, 'k')).toBe('$1,234.6K');
     expect(usd(-500, 'k')).toBe('-$0.5K');
@@ -573,5 +641,28 @@ describe('formatters (reference artifact usd / pc / pl)', () => {
     expect(axisUsd(520_000)).toBe('$520K');
     expect(axisUsd(120)).toBe('$120');
     expect(axisUsd(-50_000)).toBe('-$50K');
+  });
+});
+
+describe('value lock — lease-run engine on the operator lease-term roster', () => {
+  // The roster is config/local/lease-term-seeds.json: synthetic in CI, the real abstracts on the live
+  // machine. The lock (pfGolden().leaseRun) is a snapshot of engine output; golden:ratify refuses
+  // to write one that disagrees with the pre-untrack Excel-model figures (scripts/golden/leaserun-baseline.ts).
+  const seeds = loadLeaseTermSeeds();
+  const G = pfGolden();
+
+  it('locks exactly the properties of the roster', () => {
+    expect(Object.keys(G.leaseRun).sort()).toEqual(seeds.map((t) => t.propertyId).sort());
+  });
+
+  it.each(seeds.map((t) => [t.propertyId, t] as const))('%s: stabilized NOI, indicative value and every lease-year NOI match the lock', (id, t) => {
+    const p = projectLeaseRun(t, DEFAULT_LEASE_RUN_ASSUMPTIONS);
+    const g = G.leaseRun[id]!;
+    expect(p.stabilizedNoi === null ? null : Math.round(p.stabilizedNoi * 100) / 100).toBe(g.stabilizedNoi);
+    expect(p.indicativeValue === null ? null : Math.round(p.indicativeValue * 100) / 100).toBe(g.indicativeValue);
+    expect(Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, Math.round(x.noi * 100) / 100]))).toEqual(g.noiByYear);
+    // EGR (vacancy), base rent and the opex lines are locked too, so offsetting moves cannot hide.
+    const c = (v: number): number => Math.round(v * 100) / 100;
+    expect(Object.fromEntries(p.periods.map((x) => [x.leaseYearLabel, { baseRent: c(x.baseRent), egr: c(x.egr), managementFee: c(x.managementFee), reserve: c(x.reserve) }]))).toEqual(g.periods);
   });
 });

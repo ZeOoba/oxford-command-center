@@ -37,7 +37,7 @@ Empty warehouse tables that engines depend on: `lease_terms`, `lease_events`, `l
 
 ### 2b. Data quality (decision-impact order)
 
-1. **Spine A NOI = gross rent on 7/14 properties.** `expenses` = 0 for 55 New Plant, 9050 Red Branch, 3540 E 5th, Livingston, 401 Sunburst, 7658 Fishel, 9510 Persimmon. The other 7 carry round placeholders ($65K/$90K/$150K/$160K). QB shows 9050 at ~$140K and 3540 at ~$44K of 2024 expenses. Root: `parse.ts:431` `num(row(ws,r,12)) ?? 0` turns a blank cell into a real-looking $0. This flows into portfolio NOI, value, cap rate and DSCR.
+1. **Spine A NOI = gross rent on 7/14 properties.** `expenses` = 0 for 55 New Plant, 9050 Red Branch, 3540 E 5th, Livingston, 401 Sunburst, 7658 Fishel, 9510 Persimmon. The other 7 carry round placeholder values. QB shows materially higher 2024 expenses for 9050 and a non-zero figure for 3540. Root: `parse.ts:431` `num(row(ws,r,12)) ?? 0` turns a blank cell into a real-looking $0. This flows into portfolio NOI, value, cap rate and DSCR.
 2. **A↔B NOI tie-out covers ~85% of NOI.** Northwood, Fishel/Sunburst and FVC are untieable. `reconcile:noi-crosscheck` and `warehouse:drift` exit 0 when the DB is absent.
 3. **Lease data:** 10 escalation dates passed without a rent change. Northwood A8/C4 are "Active" with a 2024-09-01 end. 2 expired leases are still on the roll. The `Lease` contract has no recovery/CAM type, options or deposit, so recovery leakage is unmeasurable.
 4. **Insurance:** 10/30 rows are past expiry, 24/30 have no TIV, and 30/30 have no deductible or limit. The self-insure view runs on placeholder loss events.

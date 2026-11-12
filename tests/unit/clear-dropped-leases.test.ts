@@ -62,7 +62,7 @@ describe('computeDroppedLeaseClears', () => {
 
   it('zero-stamps a persisted lease whose tenant is absent from a newer same-series report', () => {
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const clears = computeDroppedLeaseClears(persisted, [report(newFile, new Date('2026-08-21'))], []);
     expect(clears['mlc-academy']).toEqual({
@@ -72,14 +72,14 @@ describe('computeDroppedLeaseClears', () => {
 
   it('does NOT clear a lease this sweep actually wrote a fresh balance for FROM the series’ newest report', () => {
     const persisted: Record<string, TenantArrears> = {
-      'REDACTED-686': rec({ d30: 1000, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'haul-foods': rec({ d30: 1000, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const clears = computeDroppedLeaseClears(
       persisted,
       [report(newFile, new Date('2026-08-21'))],
-      [{ leaseId: 'REDACTED-686', sourceFile: newFile }], // written from the newest report -- still delinquent
+      [{ leaseId: 'haul-foods', sourceFile: newFile }], // written from the newest report -- still delinquent
     );
-    expect(clears['REDACTED-686']).toBeUndefined();
+    expect(clears['haul-foods']).toBeUndefined();
   });
 
   // Real defect (2026-09-06 self-review, HIGH — confirmed by all 5 adversarial lenses): a tenant
@@ -212,21 +212,21 @@ describe('applyWritesAndClears (correct write-then-clear ordering)', () => {
 
   it('a fresh write from the series’ newest report this sweep is preserved (not clobbered by an unrelated clear)', () => {
     const persisted: Record<string, TenantArrears> = {
-      'REDACTED-686': rec({ d30: 1000, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'haul-foods': rec({ d30: 1000, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const freshWrite = rec({ d30: 1200, asOfDate: '2026-08-21', sourceFile: newFile });
     const { newArrears, clearedLeaseIds } = applyWritesAndClears(
       persisted,
       [report(newFile, new Date('2026-08-21'))],
-      [{ leaseId: 'REDACTED-686', arrears: freshWrite }],
+      [{ leaseId: 'haul-foods', arrears: freshWrite }],
     );
     expect(clearedLeaseIds).toEqual([]);
-    expect(newArrears['REDACTED-686']).toEqual(freshWrite);
+    expect(newArrears['haul-foods']).toEqual(freshWrite);
   });
 
   it('a lease with no write this sweep and absent from the newer report is still cleared', () => {
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
     const { newArrears, clearedLeaseIds } = applyWritesAndClears(persisted, [report(newFile, new Date('2026-08-21'))], []);
     expect(clearedLeaseIds).toContain('mlc-academy');
@@ -249,9 +249,9 @@ describe('hadUnresolvedRow: a cached SKIP must not exempt a series (unlike a gen
     const oldFile = `${property} 7.15.2026.xlsx`;
     const newFile = `${property} 8.21.2026.xlsx`;
     const persisted: Record<string, TenantArrears> = {
-      'mlc-academy': rec({ d30: REDACTED-AMT, asOfDate: '2026-07-15', sourceFile: oldFile }),
+      'mlc-academy': rec({ d30: 4321.09, asOfDate: '2026-07-15', sourceFile: oldFile }),
     };
-    // 'REDACTED-696' is a cached SKIP on this report -- NOT counted toward
+    // '(Past) Example Movers, Inc.' is a cached SKIP on this report -- NOT counted toward
     // hadUnresolvedRow (only genuine review rows are).
     const clears = computeDroppedLeaseClears(
       persisted,

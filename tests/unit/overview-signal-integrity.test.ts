@@ -36,10 +36,10 @@ const valuation = m({
   id: 'cf-hurdle-drag::fishel',
   category: 'CF',
   severity: 'warning',
-  impactUsd: REDACTED-AMT,
-  title: 'Premium valuation: 7658 Fishel yields 5.50% vs 8.25% market median',
+  impactUsd: 61_840,
+  title: 'Premium valuation: 7658 Fishel yields 6.10% vs 7.40% market median',
 });
-const holdover = m({ id: 'lease-lapsed-L9', severity: 'warning', impactUsd: REDACTED-AMT, title: 'Lapsed — Tenant 9' });
+const holdover = m({ id: 'lease-lapsed-L9', severity: 'warning', impactUsd: 7_215, title: 'Lapsed — Tenant 9' });
 
 describe('finding 1 — valuation observations are not actions', () => {
   it('recognises the hurdle-drag generator as an observation, and nothing else', () => {
@@ -52,7 +52,7 @@ describe('finding 1 — valuation observations are not actions', () => {
     const tier = buildPriorityActionsTier([valuation, holdover], 7);
     expect(tier.items.map((i) => i.id)).toEqual(['lease-lapsed-L9']);
     expect(tier.heldBack).toEqual({ rows: 0, signals: 0 });
-    expect(tier.totalsBySpine?.[0]?.totalUsd).toBe(REDACTED-AMT); // rent at risk only, no $52K valuation spread
+    expect(tier.totalsBySpine?.[0]?.totalUsd).toBe(7_215); // rent at risk only, no valuation spread
   });
 
   it('still ranks the holdover even when the valuation row carries more dollars', () => {
@@ -64,7 +64,7 @@ describe('finding 1 — valuation observations are not actions', () => {
 describe('finding 2 — the Results summary counts actions, not observations', () => {
   it('excludes valuation rows from risk dollars and the action count, not from the board count', () => {
     const s = buildSummary([valuation, holdover]);
-    expect(s.riskImpactBySpine[0]!.totalUsd).toBe(REDACTED-AMT);
+    expect(s.riskImpactBySpine[0]!.totalUsd).toBe(7_215);
     expect(s.actionCount).toBe(1);
     expect(s.count).toBe(2); // the Insights board still lists the valuation row
   });
@@ -156,7 +156,7 @@ describe('review fixes', () => {
     attribution: { inputs: {} },
     confidence: 0.7,
     goal: 1,
-    materialityUsd: REDACTED-AMT,
+    materialityUsd: 61_840,
     title: 'Premium valuation: P1',
     discovery: '',
     prov: { source: 'capital-allocation-report', confidence: 'derived', asOf: '2026-10-30' },
@@ -186,8 +186,8 @@ describe('review fixes', () => {
     const tiers = buildTiers([valuation, holdover]);
     const priority = tiers.find((t) => t.key === 'priority')!;
     expect(priority.items.map((i) => i.id)).toContain('cf-hurdle-drag::fishel'); // still listed
-    expect(priority.totalsBySpine?.[0]?.totalUsd).toBe(REDACTED-AMT);
-    expect(buildSummary([valuation, holdover]).riskImpactBySpine[0]!.totalUsd).toBe(REDACTED-AMT);
+    expect(priority.totalsBySpine?.[0]?.totalUsd).toBe(7_215);
+    expect(buildSummary([valuation, holdover]).riskImpactBySpine[0]!.totalUsd).toBe(7_215);
   });
 
   it('builds a group preview in the same order as its children (A3)', () => {

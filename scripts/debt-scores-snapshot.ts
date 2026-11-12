@@ -18,6 +18,7 @@ import { propertyPeriodMetrics } from '../server/warehouse/metrics';
 import { loadGovernors } from '../server/warehouse/governors';
 import { fetchFredMacro } from '../server/macro/fred';
 import { referenceDate } from '../server/config';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 export interface CliArgs {
   dbPath?: string;
@@ -48,6 +49,9 @@ function defaultDbPath(): string {
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('debt-scores-snapshot');
   const args = parseArgs(argv);
   const dbPath = args.dbPath ?? defaultDbPath();
   const snapshotDate = args.snapshotDate ?? referenceDate();

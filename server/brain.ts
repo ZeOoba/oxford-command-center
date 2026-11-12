@@ -7,6 +7,7 @@ import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, mutateOverlay, overlayPath, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
+import { syntheticDataFlags } from './real-data-status';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
@@ -141,7 +142,7 @@ class Brain extends EventEmitter {
       // fires far more often than either CLI writer, so a transient read/parse failure here (a
       // OneDrive sync lock on QUICKBOOKS_CSV, a momentary schema hiccup) is MORE likely to hit,
       // not less -- and this path feeds `this.snapshot`, which persist() below writes straight to
-      // the git-tracked, auto-committed mirror. Bare loadQuickbooks() would null a populated block
+      // the shared on-disk mirror (local, gitignored state). Bare loadQuickbooks() would null a populated block
       // on any such failure and reproduce the exact 828-line-deletion incident this fix closed for
       // the two CLI writers, just via the server path instead. Same pattern as
       // scripts/extract-workbook.ts / scripts/lease-snapshot-drift-check.ts.
@@ -150,7 +151,8 @@ class Brain extends EventEmitter {
       else if (preservedFrom) console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
       const withQb = { ...merged, quickbooks };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
-      const rtFlags = checkSnapshot(withQb);
+      // A snapshot built on synthetic stand-ins (outside CI / tests) carries error-severity flags.
+      const rtFlags = [...checkSnapshot(withQb), ...syntheticDataFlags()];
       const adopted = this.adoptSnapshot(rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb);
       this.persist(adopted);
       this.setState({
@@ -192,8 +194,10 @@ class Brain extends EventEmitter {
     // self-clearing on any deal-stage click. It also means the persist() gate below could not fire on
     // this path at all, so M1 and H2 are one change. `this.base` never carries rtFlags (it is the
     // pre-overlay parse result), so recomputing cannot double-add them.
-    // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.)
-    const rtFlags = checkSnapshot(merged);
+    // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.) The synthetic-data flags are
+    // re-added for the same reason: refresh() adds them, and dropping them here would clear the
+    // "running on synthetic stand-ins" error flags on the first UI write-back (refute 2026-11-11, F3).
+    const rtFlags = [...checkSnapshot(merged), ...syntheticDataFlags()];
     const adopted = this.adoptSnapshot(
       rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged,
     );
@@ -311,7 +315,7 @@ class Brain extends EventEmitter {
   private persist(snapshot: PortfolioSnapshot) {
     // The live server keeps SERVING a deals-degraded snapshot (the UI staying up matters more than
     // the deals section being live), but it must not write those seed placeholders to the shared,
-    // git-tracked portfolio.json -- that mirror is what the scheduled refresh commits and pushes,
+    // on-disk portfolio.json -- that mirror is what the scheduled refresh and every reader load,
     // and this path runs neither evaluateReconciliationGate nor requireLiveDealsSource. Declining
     // the write leaves the last good mirror in place; the next healthy refresh rewrites it.
     //
@@ -322,7 +326,7 @@ class Brain extends EventEmitter {
     // the flag alone therefore left this writer open in precisely the mode the code documents as
     // supported: a token-less server adopts the ~6-deal seed set with no flag at all and rewrote
     // this mirror on every refresh (and every UI write-back), reproducing the 2026-08-09 wipe on a
-    // file that is auto-committed unattended. ANY degradation disqualifies the SHARED mirror;
+    // file that is rewritten unattended. ANY degradation disqualifies the SHARED mirror;
     // in-memory serving is unchanged. (2026-08-11 integrity sweep H1 -- 2 of 3 lenses, independently.)
     const dealsReason = this.dealsDegraded?.reason ?? null;
     if (dealsReason !== null || hasDealsPipelineFailure(snapshot.dataQuality)) {
@@ -336,7 +340,7 @@ class Brain extends EventEmitter {
     }
     // The same policy, for the M365 To-Do source (2026-09-05). Gated on the RAW degradation for the
     // same reason as deals: m365TasksDegradationFlag maps `not-configured` to NO flag so a Graph-less
-    // dev box isn't permanently dirty, but this mirror is git-tracked and auto-committed, and a
+    // dev box isn't permanently dirty, but this mirror is shared state every reader trusts, and a
     // Graph-less server writing it drops every live M365 row a Graph-configured writer had put there
     // -- the identical 56-row loss, just sourced from a missing credential instead of a failed fetch.
     // Serving from memory is unchanged; only the shared mirror is declined.
@@ -356,7 +360,7 @@ class Brain extends EventEmitter {
     // OPEN to EMPTY_OVERLAY on a missing, unparseable or wrong-shaped file, and rederive() merges
     // that into the mirror on EVERY UI write-back without re-parsing. A server started against an
     // absent or truncated overlay would therefore publish tenantArrears/arBalances/renewalStages/
-    // dealComps/marketRents/noiBudgets as EMPTY to a git-tracked, auto-committed, auto-pushed file
+    // dealComps/marketRents/noiBudgets as EMPTY to the shared mirror every reader trusts
     // -- the exact 2026-09-05 loss, from the one writer the CLI-side fix did not cover.
     //
     // expectEnriched, like both CLI writers: this path MERGES the overlay onto a snapshot rather
@@ -373,7 +377,7 @@ class Brain extends EventEmitter {
     // "BOTH portfolio.json writers", but there are FOUR publication paths and this is the third -- so
     // the error-severity inconsistencies those writers REFUSE (cash total vs Σ entities, duplicate
     // property ids, near-duplicate deal rows) were still published here by every live-server refresh,
-    // to a mirror that is auto-committed and pushed off-machine. This path's own comment above conceded
+    // to the shared mirror every reader trusts. This path's own comment above conceded
     // it "runs neither evaluateReconciliationGate nor requireLiveDealsSource"; that is now only true of
     // requireLiveDealsSource.
     //
@@ -461,7 +465,11 @@ class Brain extends EventEmitter {
     try {
       const stored = PortfolioSnapshot.parse(JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')));
       // The stored deals[] were stamped when the snapshot was written; adoptSnapshot re-checks them.
-      this.adoptSnapshot(stored);
+      // The synthetic-data flags are re-derived for the files in place NOW (never trusted from the
+      // stored copy), so a cold start on a seeded checkout with no workbook is flagged too.
+      const synthetic = syntheticDataFlags();
+      const kept = stored.dataQuality.filter((f) => !(f.entity === 'data-source' && f.issue.includes('SYNTHETIC stand-in')));
+      this.adoptSnapshot({ ...stored, dataQuality: [...kept, ...synthetic] });
       return true;
     } catch {
       return false;

@@ -189,7 +189,12 @@ try {
   $buildRoot = Get-DeployBuildRoot -RepoRoot $repo
   Assert-BuildRootIsolated -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
   $buildHeadSha = Sync-DeployBuildRoot -RepoRoot $repo -BuildRoot $buildRoot -Ref 'origin/main'
+  # Real firm data is never tracked (ruling 2026-11-10): `npm ci`'s postinstall must never seed the
+  # build root with synthetic stand-ins, and every real-data manifest path is supplied from the
+  # canonical checkout below (fails closed, before any bake, if one is missing or synthetic).
+  $env:ORA_NO_SYNTHETIC_SEED = '1'
   Install-DeployBuildRootDeps -BuildRoot $buildRoot | Out-Null
+  Copy-RealDataIntoBuildRoot -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
   Write-Host "  Building from $buildRoot (origin/main @ $buildHeadSha), NOT from the shared checkout"
 
   # 2) Bake (confidential included -- target is Access-gated) + build.

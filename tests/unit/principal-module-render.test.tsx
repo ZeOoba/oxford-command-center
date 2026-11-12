@@ -34,7 +34,7 @@ const ASOF = '2026-09-23';
 const investment: Property = {
   id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex',
   sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7_310_000, grossIncome: 0, expenses: 0, noi: 511_000, noiScenarioAdj: 511_000,
-  debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'REDACTED-672', loanBalance: 2_770_000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1_000_000,
+  debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Firm 03', loanBalance: 2_770_000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1_000_000,
   cashOnCash: null, holdYrs: null, encumbered: true, flags: [],
 } as Property;
 const residence: Property = {

@@ -10,10 +10,11 @@
 // built-in denylist and WARN — we never block all pushes just because the roster is missing.
 //
 // Node built-ins only (runs in a git hook with no install step).
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Generic patterns the repo should never push. Intentionally NOT real deal terms — keep this
 // list synthetic/structural so the file itself is safe to commit. Extend cautiously: anything
@@ -116,6 +117,251 @@ export function shouldBlockOnMissingRoster(rosterOk, env) {
   return env['PREPUSH_ALLOW_NO_ROSTER'] !== '1';
 }
 
+// ── real-data paths (ruling 2026-11-10) ──────────────────────────────────────────────────────────
+// Real firm data is never tracked. scripts/fixtures/real-data-manifest.json lists every real-data
+// path (exact files + directory prefixes); each is gitignored, and fixtures/synthetic/<same path>
+// holds the committed synthetic stand-in. A push that ADDS or MODIFIES a manifest path (a `git add -f`,
+// a negated ignore rule, a rename into place) is blocked. Deleting one (untracking) is always fine.
+
+const REAL_DATA_MANIFEST = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'real-data-manifest.json');
+const SYNTHETIC_PREFIX = 'fixtures/synthetic/';
+
+/**
+ * Load the real-data manifest. Throws when it is missing or malformed, so the caller fails closed.
+ * @param {string} [pathOverride] - test seam.
+ * @returns {{files: string[], dirs: string[]}}
+ */
+export function loadRealDataManifest(pathOverride) {
+  const parsed = JSON.parse(readFileSync(pathOverride ?? REAL_DATA_MANIFEST, 'utf8'));
+  const strings = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : []);
+  // `neverTrack` lists real-data paths that have no synthetic stand-in (baked outputs, the overlay, the
+  // warehouse, raw exports): never seeded, but blocked here exactly like the manifest paths.
+  const files = [...strings(parsed?.files), ...strings(parsed?.neverTrack?.files)];
+  const dirs = [...strings(parsed?.dirs), ...strings(parsed?.neverTrack?.dirs)];
+  if (files.length === 0 && dirs.length === 0) throw new Error('real-data manifest lists no paths');
+  // Tracked files that share a listed file's stem but are not copies of it, each with its reason.
+  const allow = parsed?.copyRuleAllow && typeof parsed.copyRuleAllow === 'object' ? Object.keys(parsed.copyRuleAllow) : [];
+  return { files, dirs, allow };
+}
+
+/** What may follow a listed file's stem in a copy's name: end of name, or a separator (space, '-',
+ *  '_', '(', '.', '~'). Explorer / browser / editor / writer copies all take one of these shapes:
+ *  "x - Copy.ts", "x (1).json", "x_old.json", "x.json.tmp-1", "x.json~", "x.2026-11-10.json". */
+const STEM_SEPARATOR = /[\s\-_(.~]/;
+
+/** The declared copy markers (corrupt, tmp, temp, bak, backup, orig, old, quarantine, copy), anchored on
+ *  name-segment boundaries so ordinary words ("golden", "template", "copyright") never match. Used for
+ *  names that carry the stem later, such as "Copy of x.json" or "backup_x.json". */
+export const COPY_MARKER = /(?:^|[\s.\-_~()])(?:corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)(?:$|[\s.\-_~()\d])/i;
+
+/** Normalized repo-relative path: forward slashes, no leading './', lower case (NTFS / core.ignorecase). */
+const normPath = (x) => String(x).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+
+/**
+ * True when `path` is a copy of the listed file `listed` (refute rounds 5-6): anywhere at any depth
+ * under the listed file's folder, a name that starts with the listed stem followed by the end of the
+ * name or a separator, or a name that contains the stem (anchored on a non-alphanumeric boundary)
+ * together with a declared copy marker. Kept identical to scripts/governance-check.ts isCopyOf.
+ * @param {string} p - normalized path
+ * @param {string} listed - normalized listed file
+ */
+export function isCopyOf(p, listed) {
+  const slash = listed.lastIndexOf('/');
+  const dir = slash >= 0 ? listed.slice(0, slash + 1) : '';
+  if (!p.startsWith(dir) && !inCopiedFolder(p, dir)) return false;
+  const base = listed.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  const stem = (dot > 0 ? base.slice(0, dot) : base).replace(/^\./, ''); // '.x.json' -> 'x'
+  if (!stem) return false;
+  const name = p.slice(p.lastIndexOf('/') + 1).replace(/^\./, ''); // '.x.json.swp' (vim) is a copy too
+  if (name.startsWith(stem)) {
+    const next = name.charAt(stem.length);
+    if (next === '' || STEM_SEPARATOR.test(next)) return true;
+  }
+  const at = name.indexOf(stem);
+  if (at > 0 && !/[a-z0-9]/.test(name.charAt(at - 1))) {
+    const after = name.charAt(at + stem.length);
+    if ((after === '' || !/[a-z0-9]/.test(after)) && COPY_MARKER.test(name.slice(0, at))) return true;
+  }
+  return false;
+}
+
+/** True when `p` lies under a copy of the folder `dir` (for "a/b/" that is "a/b - Copy/", "a/b.bak/",
+ *  "a/b (1)/" ...): the listed folder's own name followed by a separator, beside the original. */
+function inCopiedFolder(p, dir) {
+  const trimmed = dir.replace(/\/$/, '');
+  if (!trimmed) return false;
+  const cut = trimmed.lastIndexOf('/');
+  const parent = cut >= 0 ? trimmed.slice(0, cut + 1) : '';
+  const folder = trimmed.slice(cut + 1);
+  if (!p.startsWith(parent + folder)) return false;
+  const rest = p.slice(parent.length + folder.length);
+  const end = rest.indexOf('/');
+  return end > 0 && STEM_SEPARATOR.test(rest.charAt(0));
+}
+
+/**
+ * True when `path` is a real-data path the manifest covers: a listed file or directory, or a copy of a
+ * listed file (isCopyOf). Synthetic stand-ins under fixtures/synthetic/ never match, and neither do the
+ * reasoned tracked siblings in the manifest's copyRuleAllow.
+ * @param {string} path - repo-relative, either slash style.
+ * @param {{files: string[], dirs: string[], allow?: string[]}} manifest
+ */
+export function isRealDataPath(path, manifest) {
+  const p = normPath(path);
+  if (p.startsWith(SYNTHETIC_PREFIX)) return false;
+  if ((manifest.allow ?? []).some((a) => normPath(a) === p)) return false;
+  if (manifest.dirs.some((d) => p.startsWith(normPath(d)))) return true;
+  return manifest.files.some((f) => isCopyOf(p, normPath(f)));
+}
+
+// ── content fingerprint (refute round 6) ─────────────────────────────────────────────────────────
+// A path rule cannot see a renamed copy, or real figures pasted into an ordinary file. This check
+// reads the REAL manifest files on this machine, collects their distinctive amounts, and blocks a
+// push whose added lines in any one file carry FINGERPRINT_BLOCK_MIN or more of them. It FAILS OPEN
+// where no real data exists (CI and synthetic checkouts: every manifest file is absent or a synthetic
+// stand-in, so there is nothing to compare against); the path rules above still apply there.
+
+/** Distinct real amounts in one file's added lines that block the push. */
+export const FINGERPRINT_BLOCK_MIN = 3;
+/** The same threshold for the committed synthetic fixtures. Their money is seeded random draws (each
+ *  proved to be its own public draw #0 in CI), and across thousands of drawn values a handful equal a
+ *  real amount from some other field by pure coincidence (the generator's own leak check is field-aware
+ *  and reports none). A copy of real data would carry hundreds or thousands; coincidences stay in the
+ *  single digits. */
+export const FINGERPRINT_BLOCK_MIN_SYNTHETIC = 50;
+
+/** JSON keys whose numbers are quantities, not money (square feet, counts, pages). */
+const NON_MONEY_KEYS = /^(sf|leased_sf|common_area_sf|rentable_sf|rentableSf|building_sf|land_sf|qty|n|nm|n_months|index|tenants|tenantCount|pages_total|pages_without_text|pages_read|source_page|buildings|year|units)$/i;
+
+/** Canonical form of a numeric token: separators and '$' dropped, absolute value. */
+const canonAmount = (raw) => {
+  const n = Number(String(raw).replace(/[$,_\s]/g, ''));
+  return Number.isFinite(n) ? String(Math.abs(n)) : null;
+};
+
+/** Distinctive: at least 1,000, not a round thousand, six or more significant digits. */
+const distinctiveAmount = (c) => {
+  const n = Number(c);
+  if (!(n >= 1000) || Number.isInteger(n / 1000)) return false;
+  return c.replace(/\D/g, '').replace(/^0+/, '').length >= 6;
+};
+
+const NUMBER_TOKEN = /\$?\d{1,3}(?:[,_]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g;
+
+/**
+ * The distinctive amounts of the REAL manifest files under `root`, or null when none is real (CI, a
+ * synthetic checkout): the caller then fails open. A file counts as synthetic when it is listed in
+ * data/.synthetic-seeded.json or byte-identical to its stand-in under fixtures/synthetic/.
+ * @param {string} root
+ * @param {string} [manifestPath] - test seam
+ * @returns {Set<string> | null}
+ */
+export function realAmountFingerprints(root, manifestPath) {
+  const parsed = JSON.parse(readFileSync(manifestPath ?? join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf8'));
+  const marker = join(root, 'data', '.synthetic-seeded.json');
+  let seeded = new Set();
+  try {
+    if (existsSync(marker)) seeded = new Set((JSON.parse(readFileSync(marker, 'utf8')).seeded ?? []).map((x) => normPath(x)));
+  } catch {
+    seeded = new Set(['*']); // unreadable marker: treat everything as synthetic (no comparison possible)
+  }
+  const rels = [...(parsed.files ?? [])];
+  const walk = (d) => {
+    const abs = join(root, d);
+    if (!existsSync(abs)) return;
+    for (const n of readdirSync(abs)) {
+      const rel = `${d.replace(/\/$/, '')}/${n}`;
+      if (statSync(join(root, rel)).isDirectory()) walk(rel);
+      else rels.push(rel);
+    }
+  };
+  for (const d of parsed.dirs ?? []) walk(d);
+  const out = new Set();
+  let realFiles = 0;
+  const add = (c) => {
+    if (c && distinctiveAmount(c)) out.add(c);
+  };
+  const walkJson = (v, key) => {
+    if (Array.isArray(v)) v.forEach((x) => walkJson(x, key));
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walkJson(x, k);
+    else if (typeof v === 'number' && !NON_MONEY_KEYS.test(key)) add(canonAmount(v));
+  };
+  for (const rel of rels) {
+    const abs = join(root, rel);
+    if (!existsSync(abs) || seeded.has('*') || seeded.has(normPath(rel))) continue;
+    const text = readFileSync(abs, 'utf8');
+    const fixture = join(root, 'fixtures', 'synthetic', rel);
+    if (existsSync(fixture) && readFileSync(fixture, 'utf8') === text) continue;
+    realFiles += 1;
+    const embedded = rel.endsWith('.html') ? /<script type="application\/json" id="data">(.*)<\/script>/.exec(text)?.[1] : undefined;
+    try {
+      if (rel.endsWith('.json')) walkJson(JSON.parse(text), '');
+      else if (embedded !== undefined) walkJson(JSON.parse(embedded), '');
+      else for (const m of text.matchAll(NUMBER_TOKEN)) if (m[0].includes('.')) add(canonAmount(m[0])); // non-JSON: cents only
+    } catch {
+      for (const m of text.matchAll(NUMBER_TOKEN)) if (m[0].includes('.')) add(canonAmount(m[0]));
+    }
+  }
+  return realFiles === 0 ? null : out;
+}
+
+/**
+ * Files whose added lines carry FINGERPRINT_BLOCK_MIN or more distinct real amounts.
+ * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {Set<string>} fingerprints
+ * @returns {{file: string, count: number}[]}
+ */
+export function scanAddedLinesForRealAmounts(addedLines, fingerprints) {
+  const byFile = new Map();
+  for (const a of addedLines) {
+    for (const m of a.text.matchAll(NUMBER_TOKEN)) {
+      const c = canonAmount(m[0]);
+      if (c && fingerprints.has(c)) {
+        const set = byFile.get(a.file) ?? new Set();
+        set.add(c);
+        byFile.set(a.file, set);
+      }
+    }
+  }
+  const min = (file) => (normPath(file).startsWith(SYNTHETIC_PREFIX) ? FINGERPRINT_BLOCK_MIN_SYNTHETIC : FINGERPRINT_BLOCK_MIN);
+  return [...byFile].filter(([file, set]) => set.size >= min(file)).map(([file, set]) => ({ file, count: set.size }));
+}
+
+/**
+ * Parse `git diff --name-status --no-renames --diff-filter=AMT` output and return every added or
+ * modified real-data path.
+ * @param {string} nameStatusText
+ * @param {{files: string[], dirs: string[]}} manifest
+ * @returns {string[]}
+ */
+export function parseRealDataPaths(nameStatusText, manifest) {
+  const out = [];
+  for (const line of String(nameStatusText ?? '').split('\n')) {
+    // "A\tpath", "M\tpath", "T\tpath"; a rename/copy row ("R100\told\tnew") carries the new path last.
+    const m = /^([AMTCR])\d*\t(?:[^\t]+\t)?(.+)$/.exec(line.trimEnd());
+    if (!m || !m[2]) continue;
+    if (isRealDataPath(m[2], manifest)) out.push(m[2].replace(/\\/g, '/'));
+  }
+  return out;
+}
+
+/** @param {string} remoteSha
+ * @param {string} localSha
+ * @param {{files: string[], dirs: string[]}} manifest
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @returns {string[]} */
+export function realDataPathsFor(remoteSha, localSha, manifest, cwd) {
+  const base = resolveDiffBase(remoteSha, localSha, cwd);
+  const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--name-status', '--no-renames', '--diff-filter=AMT', `${base}..${localSha}`], {
+    encoding: 'utf8',
+    maxBuffer: Infinity,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd,
+  });
+  return parseRealDataPaths(text, manifest);
+}
+
 const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
 
 /**
@@ -157,15 +403,15 @@ function readJsonSafe(path) {
   }
 }
 
-// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
-// Gabriel's ruling: this repo's data/snapshots/portfolio.json deliberately carries real
-// confidential-deal records (the .gitignore negation at .gitignore:14 is intentional, not a
-// leak) — formalized as an in-perimeter confidential store rather than redacted. The gap was
-// that the ONLY control on that boundary was a term denylist with no structural rule about the
-// payload SHAPE: nothing asserted that a `"confidential": true` record may only ever be pushed
-// from a repo actually registered as an intentional confidential store. This closes that gap
-// structurally — it does not change what data may be committed to THIS repo (still real data,
-// deliberately), it only makes the control assert its own precondition instead of assuming it.
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21). The 2026-08-21
+// ruling that let data/snapshots/portfolio.json carry real confidential-deal records in git is
+// SUPERSEDED: real firm data is never tracked (ruling 2026-11-10). The snapshot and every other path
+// in scripts/fixtures/real-data-manifest.json are gitignored and local-only; the tracked copies under
+// fixtures/synthetic/ are synthetic, and the real-data path check below blocks any push that adds or
+// modifies a manifest path. This flag check stays as a second, payload-shaped line of defense:
+// a `"confidential": true` record may only ever be pushed from a repo registered as an intentional
+// confidential store (the synthetic fixtures carry the flag so the code paths that read it are
+// exercised), and it is independent of whether any term denylist entry also matched.
 // Matches both the JSON-quoted-key shape ("confidential": true) and the unquoted object-literal
 // shape (confidential: true) — the latter is the idiomatic form this codebase's own TS source
 // and test fixtures actually use to construct these records (e.g. src/data/public-deals.ts),
@@ -484,14 +730,21 @@ function errorLine(err) {
  * records its own diffErrors entry but never discards a text diff that succeeded, so its added
  * lines are still term-scanned (refute run wf_44a3341e-b41, low).
  *
+ * When `deps.manifest` is given, each ref's added/modified real-data paths (ruling 2026-11-10) are
+ * collected into realDataHits, in a third try block with its own diffErrors entry.
+ *
  * @param {string} stdinText
  * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[]}} [deps] - test seam; defaults to the real git calls.
- * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], diffErrors: {localSha: string, message: string}[]}}
+ * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[], realDataPathsFor?: (remoteSha: string, localSha: string, manifest: {files: string[], dirs: string[]}, cwd?: string) => string[], manifest?: {files: string[], dirs: string[]}}} [deps] - test seam; defaults to the real git calls.
+ * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], realDataHits: string[], diffErrors: {localSha: string, message: string}[]}}
  */
 export function collectRefScan(stdinText, cwd, deps) {
   const getDiff = deps?.diffFor ?? diffFor;
   const getBinaries = deps?.binaryPathsFor ?? binaryPathsFor;
+  const getRealData = deps?.realDataPathsFor ?? realDataPathsFor;
+  const manifest = deps?.manifest;
+  /** @type {string[]} */
+  const realDataHits = [];
   /** @type {{file: string, lineNo: number, text: string}[][]} */
   const addedByRef = [];
   /** @type {string[]} */
@@ -514,11 +767,37 @@ export function collectRefScan(stdinText, cwd, deps) {
     } catch (err) {
       diffErrors.push({ localSha, message: `binary numstat: ${errorLine(err)}` });
     }
+    if (manifest) {
+      try {
+        realDataHits.push(...getRealData(remoteSha ?? '', localSha, manifest, cwd));
+      } catch (err) {
+        diffErrors.push({ localSha, message: `real-data paths: ${errorLine(err)}` });
+      }
+    }
   }
-  return { addedByRef, binaryHits, diffErrors };
+  return { addedByRef, binaryHits, realDataHits, diffErrors };
+}
+
+/**
+ * `node scripts/prepush-confidential-scan.mjs --staged`: the real-data path and content-fingerprint
+ * checks over what is staged for the next commit (git diff --cached). Not installed as a hook (the
+ * hooks directory is shared by every worktree of the live checkout); run it by hand or from CI.
+ */
+function stagedMain() {
+  const manifest = loadRealDataManifest();
+  const names = execFileSync('git', ['diff', '--cached', '--name-status', '--no-renames', '--diff-filter=AMT'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const pathHits = parseRealDataPaths(names, manifest);
+  const added = parseAddedLines(execFileSync('git', ['diff', '--cached', '-U0', '--no-color'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
+  const fps = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  const amountHits = fps ? scanAddedLinesForRealAmounts(added, fps) : [];
+  if (!fps) console.log('[prepush-confidential-scan --staged] content fingerprint check skipped: no real data on this machine.');
+  for (const p of pathHits) console.error(`real-data path staged: ${p}`);
+  for (const h of amountHits) console.error(`real amounts staged: ${h.file} (${h.count})`);
+  process.exit(pathHits.length || amountHits.length ? 1 : 0);
 }
 
 function main() {
+  if (process.argv.includes('--staged')) return stagedMain();
   const { alwaysTerms, contextGroups, rosterOk, rosterDetail } = loadTerms();
   if (!rosterOk && process.env['PREPUSH_ALLOW_NO_ROSTER'] === '1') {
     console.warn(`[prepush-confidential-scan] WARN: PREPUSH_ALLOW_NO_ROSTER=1 - roster gate BYPASSED for this push (${rosterDetail}).`);
@@ -532,8 +811,20 @@ function main() {
     );
     process.exit(1);
   }
+  // Real firm data is never tracked (ruling 2026-11-10). The manifest that names it must be readable,
+  // or the push is blocked: without it this scan cannot tell a real-data path from any other.
+  let manifest;
+  try {
+    manifest = loadRealDataManifest();
+  } catch (err) {
+    console.error(
+      `\n✖  PUSH BLOCKED — scripts/fixtures/real-data-manifest.json is unreadable (${errorLine(err)}), so the ` +
+        'real-data path check cannot run (fail closed). Restore the file and push again.\n',
+    );
+    process.exit(1);
+  }
   const stdin = readStdin();
-  const { addedByRef, binaryHits, diffErrors } = collectRefScan(stdin);
+  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin, undefined, { manifest });
   const allHits = [];
   const flagHits = [];
   for (const added of addedByRef) {
@@ -561,6 +852,40 @@ function main() {
     for (const e of diffErrors) {
       console.warn(
         `[prepush-confidential-scan] WARN: PREPUSH_ALLOW_DIFF_ERROR=1 - ref ${e.localSha} pushed UNSCANNED (${e.message}).`,
+      );
+    }
+  }
+
+  if (realDataHits.length > 0) {
+    blockOnHits(
+      [...new Set(realDataHits)],
+      'real firm data path(s) added or modified (scripts/fixtures/real-data-manifest.json; ruling 2026-11-10)',
+      (p) => p,
+      'Real firm data is never tracked. These paths are gitignored and local-only; the committed copy is ' +
+        'the synthetic stand-in under fixtures/synthetic/ (regenerate it with `npm run data:synthetic`). ' +
+        'Remove the file from the commit (git rm --cached <path>) and push again. There is no override.',
+    );
+  }
+
+  // Content fingerprint: real figures in a renamed copy or pasted into any file (fails open where no
+  // real data exists, e.g. CI).
+  let fingerprints = null;
+  try {
+    fingerprints = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  } catch (err) {
+    console.warn(`[prepush-confidential-scan] WARN: real-amount fingerprint list unavailable (${errorLine(err)}); content check skipped.`);
+  }
+  if (fingerprints === null) {
+    console.log('[prepush-confidential-scan] content fingerprint check skipped: no real data on this machine (CI or a synthetic checkout).');
+  } else {
+    const amountHits = addedByRef.flatMap((added) => scanAddedLinesForRealAmounts(added, fingerprints));
+    if (amountHits.length > 0) {
+      blockOnHits(
+        amountHits,
+        `added lines carry ${FINGERPRINT_BLOCK_MIN}+ distinct real amounts from the local real-data files`,
+        (h) => `${h.file}  ->  ${h.count} real amount(s)`,
+        'A copy of real data (renamed or pasted) is about to be pushed. Remove it from the commit and use ' +
+          'synthetic values. There is no override.',
       );
     }
   }

@@ -18,6 +18,7 @@ import { PF_KEYS } from '../../src/modules/property-financials/hooks';
 import { evaluationMatrix, filterWatchlist, topOpexMovers, WATCHLIST_ALL } from '../../src/modules/property-financials/model';
 import type { PfDatasetResponse, PfInsightStatusResponse } from '../../src/modules/property-financials/types';
 import { loadDataset, loadDatasetText } from './property-financials-helpers';
+import { pfGolden } from './golden-helpers';
 
 const D = loadDataset();
 const RAW = JSON.parse(loadDatasetText()) as { properties: Record<string, { kind: string; periods: Record<string, { opex_by: Record<string, number>; base_rent: number }> }> };
@@ -80,7 +81,8 @@ describe('Rent & NOI levers', () => {
     expect(utilRow.textContent).toContain(usd(util * 0.1, 'f'));
     const fishel = rows.find((r) => r.textContent!.includes('Fishel'))!;
     expect(fishel.textContent).toContain('$24,000');
-    expect(fishel.textContent).toContain('Lease Executed 2021 -- 7658 Fishel.pdf');
+    // the lease source cited in the basis (read from the dataset: synthetic in CI, ruling 2026-11-10)
+    expect(fishel.textContent).toContain(D.leases.find((l) => l.property.startsWith('7658 Fishel'))!.source);
     expect(within(p).getByText(/\[SPECULATIVE\]/)).toBeTruthy();
     allTablesScrollInside(p);
   });
@@ -98,7 +100,10 @@ describe('Rent & NOI levers', () => {
     expect(within(rev09).getByText('REV-09')).toBeTruthy();
     expect(within(rev09).getByText('1851 South Club Solar')).toBeTruthy();
     expect(within(rev09).getByText('Next step')).toBeTruthy();
-    expect(within(rev09).getByTestId('pf-impact').textContent).toContain(`-${usd(REDACTED-AMT, 'k')}`);
+    const rev09Impact = D.insights.find((i) => i.id === 'REV-09')!.annual_impact_usd!;
+    expect(rev09Impact).toBe(pfGolden().locks.rev09Impact); // value lock (not read back from the same file)
+    expect(rev09Impact).toBeLessThan(0);
+    expect(within(rev09).getByTestId('pf-impact').textContent).toContain(`-${usd(Math.abs(rev09Impact), 'k')}`);
     const rev06 = p.querySelector('article[data-insight="REV-06"]') as HTMLElement;
     expect(within(rev06).getByTestId('pf-impact').textContent).toMatch(/verify.*No dollar estimate/);
     expect(within(rev06).getByRole('button', { name: 'Update status' })).toBeTruthy();

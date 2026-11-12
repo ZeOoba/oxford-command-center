@@ -256,7 +256,7 @@ export function CrossCheckCard({ ds, specFacts, registerSf, registerStatus, spec
         </table>
       </div>
       <p className="num px-4 py-2 text-2xs" style={muted}>
-        Informational only: no PCA reserve or quantity is adjusted, and a cost seg value never overwrites a PCA or field-note value. Where a roof is stated as several surfaces the rows are listed for reference but not compared (D2: the PCA and Able prices stay unlinked to any surface), and a stale PCA value never decides a check when a current one exists. A match is within 2% of the PCA's whole-property value (sectional values only when there is none). A different building SF would change PCA $/SF/yr — noted in D1, not applied.
+        Informational only: no PCA reserve or quantity is adjusted, and a cost seg value never overwrites a PCA or field-note value. Where a roof is stated as several surfaces the rows are listed for reference but not compared (D2: the PCA and the roofing contractor prices stay unlinked to any surface), and a stale PCA value never decides a check when a current one exists. A match is within 2% of the PCA's whole-property value (sectional values only when there is none). A different building SF would change PCA $/SF/yr — noted in D1, not applied.
       </p>
     </Card>
   );

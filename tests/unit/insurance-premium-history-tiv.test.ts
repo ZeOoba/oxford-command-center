@@ -45,7 +45,7 @@ function policy(over: Partial<InsurancePolicy>): InsurancePolicy {
     effective: '2026-02-01',
     expires: '2027-02-01',
     policyNo: 'Q61-0000001',
-    carrier: 'REDACTED-494',
+    carrier: 'Carrier 01',
     premium: 10000,
     daysToExpiry: 100,
     status: 'Current',
@@ -84,7 +84,7 @@ describe('parseInsurancePremiumHistory — header-anchored tab read', () => {
     ws.getRow(7).values = ['100 Main St, Columbus OH', '100 Main LLC', new Date('2026-02-01'), '2025-2026', 9500, 500, 10000, null, 3_800_000, null, 0.25, 5000, 'dec'];
     ws.getRow(8).values = ['100 Main St, Columbus OH', '100 Main LLC', new Date('2026-02-01'), '2026-2027', 10000, 500, 10500, null, 4_000_000, null, 0.25, 5000, 'IN FORCE'];
     ws.getRow(9).values = ['200 Oak Ave, Dayton OH', '200 Oak LLC', 'May 28 (anniv. MOVED)', '2026-2027 (Hartford — BOUND)', 7000, 0, 7000, null, 2_000_000, null, 0.35, 5000, 'BOUND'];
-    ws.getRow(10).values = ['300 Elm Rd, Akron OH', '300 Elm LLC', new Date('2026-01-01'), '2026-2027', null, 584, 'n/a — base dec MISSING', null, null, null, null, 5000, 'DATA GAP'];
+    ws.getRow(10).values = ['300 Elm Rd, Akron OH', '300 Elm LLC', new Date('2026-01-01'), '2026-2027', null, 555, 'n/a — base dec MISSING', null, null, null, null, 5000, 'DATA GAP'];
     // blank row 11 terminates the term block; the portfolio-total block below must NOT parse.
     ws.getRow(12).values = ['PORTFOLIO TOTAL — ORA-insured assets in this review'];
     ws.getRow(13).values = [null, null, null, '2026-2027', 17000, 500, 17500, null, 6_000_000];
@@ -174,7 +174,7 @@ describe('attachPremiumHistoryTiv — join onto current-term package rows', () =
   });
 
   it('never attaches to a non-property line (BCL / GL / umbrella)', () => {
-    const [p] = attachPremiumHistoryTiv([policy({ coverage: 'Business Catastrophe Liability (BCL)', premium: 594 })], [hist({})], []);
+    const [p] = attachPremiumHistoryTiv([policy({ coverage: 'Business Catastrophe Liability (BCL)', premium: 565 })], [hist({})], []);
     expect(p?.tiv).toBeNull();
   });
 
@@ -274,7 +274,7 @@ describe('attachPremiumHistoryTiv — join onto current-term package rows', () =
     const flags: DataQualityFlag[] = [];
     const [p] = attachPremiumHistoryTiv(
       [policy({ effective: '2025-09-18', expires: '2026-09-18', daysToExpiry: -6, status: 'Expired' })],
-      [hist({ policyYearStart: 2025 }), hist({ policyYearStart: 2026, sheetRow: 8, packagePremium: REDACTED-AMT })],
+      [hist({ policyYearStart: 2025 }), hist({ policyYearStart: 2026, sheetRow: 8, packagePremium: 7_200 })],
       flags,
     );
     // The expired term still carries its own term's TIV (basis-consistent, displayed) ...
@@ -319,7 +319,7 @@ describe('captureInsurance — TIV precedence (ruling 2026-09-24: dec page wins)
   }
   const base: WarehouseInsurancePolicy = {
     propertyId: 'ins-100main-pckg',
-    insurer: 'REDACTED-494',
+    insurer: 'Carrier 01',
     policyNumber: 'Q61-0000001',
     effectiveDate: '2026-02-01',
     expirationDate: '2027-02-01',
@@ -371,7 +371,7 @@ describe('captureInsurance — TIV precedence (ruling 2026-09-24: dec page wins)
 
   it('a capture-written TIV follows the tab: a corrected value replaces it (ruling 2026-09-24 provenance-aware)', () => {
     const db = freshDb();
-    captureInsurance(db, [{ ...base, coverageTiv: REDACTED-AMT }]);
+    captureInsurance(db, [{ ...base, coverageTiv: 12_345_000 }]);
     captureInsurance(db, [{ ...base, coverageTiv: 13_000_000, sourceDate: '2026-09-24' }]);
     expect(tivOf(db)).toEqual([13_000_000]);
     expect(dq(db, 'insurance-tiv-conflict')).toEqual([]);
@@ -430,7 +430,7 @@ describe('captureInsurance — TIV precedence (ruling 2026-09-24: dec page wins)
     const db = freshDb();
     captureInsurance(db, [
       { ...base, coverageTiv: 4_000_000 },
-      { ...base, policyType: 'Business Catastrophe Liability (BCL)', premiumAnnual: 594 },
+      { ...base, policyType: 'Business Catastrophe Liability (BCL)', premiumAnnual: 565 },
     ]);
     expect(rowOf(db)).toMatchObject({ coverage_tiv: 4_000_000, premium_annual: 10_000 });
     expect(dq(db, 'insurance-ingest-duplicate-key')).toHaveLength(1);
@@ -467,7 +467,7 @@ describe('own-book benchmark + rebid verdicts over captured TIV', () => {
   const book = (sourceDate: string): WarehouseInsurancePolicy[] =>
     [2000, 2500, 3000, 3500, 4000].map((premium, i) => ({
       propertyId: `ins-p${i}-pckg`,
-      insurer: 'REDACTED-494',
+      insurer: 'Carrier 01',
       policyNumber: `Q61-${i}`,
       effectiveDate: '2026-06-01',
       expirationDate: '2027-06-01',

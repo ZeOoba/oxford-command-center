@@ -17,6 +17,7 @@ import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { classifyUsability, parseRegister, resolveProperty, type ParsedRegister } from './import-pca-register';
 import { reportStatus } from '../src/analytics/pca-intelligence';
 import { bridgeCostSegQuantities, parseCostSeg } from '../src/analytics/cost-seg';
+import { refuseIfSynthetic } from '../server/real-data-status';
 import {
   CalibrationProposal,
   classifyComponent,
@@ -341,6 +342,9 @@ function readJson<T>(path: string, parse: (raw: unknown) => T): T {
 }
 
 async function main(argv: string[]): Promise<number> {
+  // Writes manifest files (real firm data) in place: never on synthetic stand-ins outside CI / tests, or
+  // it would mix real records into a seeded file (refute 2026-11-11, F13).
+  refuseIfSynthetic('calibration-propose');
   const wbIdx = argv.indexOf('--workbook');
   const workbookPath = wbIdx >= 0 ? argv[wbIdx + 1] : process.env.PCA_REGISTER_XLSX;
   const useNotion = argv.includes('--notion');

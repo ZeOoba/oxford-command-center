@@ -6,10 +6,10 @@
 // check -- two copies of a rule that was also too narrow. Both missed:
 //
 //   - status 'Vacant': a vacancy placeholder row in the roster, never a billing tenant.
-//   - status 'Active' with annualRent === 0: a roster row that bills nothing. Real cases: Tyson
-//     Consulting Group (29000 Information Lane #202, Active, $0, $REDACTED-AMT AR persisted via a
-//     human-confirmed cache mapping) and Evans Gymnastics (2207 Northwood A15, Active, $0,
-//     $REDACTED-AMT AR). A fresh export naming either -- or, in Format B, simply carrying their unit --
+//   - status 'Active' with annualRent === 0: a roster row that bills nothing. Real cases: a consulting
+//     tenant (29000 Information Lane #202, Active, $0, AR persisted via a
+//     human-confirmed cache mapping) and Example Gymnastics (2207 Northwood A15, Active, $0,
+//     with AR). A fresh export naming either -- or, in Format B, simply carrying their unit --
 //     took a clean 'exact' hit and auto-wrote with no human review, the same failure class the
 //     2026-08-24 Expired-exclusion was built to stop (a dead lease silently absorbing a delinquency
 //     nobody confirmed belongs to it).
@@ -18,8 +18,8 @@
 // pools ONLY (the name-matcher's roster and resolveByUnit's live-hit set). It must NOT be applied to
 // loadAllLeaseIdsFromSnapshot / partitionArRows' validLeaseIds: a PREVIOUSLY human-CONFIRMED cache
 // mapping to a dead lease is a different, already-trusted decision, and narrowing that roster was a
-// real regression once (PR #302 review, $9,596.90 + $REDACTED-AMT of live arrears froze). The real
-// cache entry "REDACTED-348" -> 29000-information-lane-202-... is exactly such a mapping
+// real regression once (PR #302 review: two confirmed cache entries' worth of live arrears froze). The real
+// cache entry "tenant 072 llc" -> 29000-information-lane-202-... is exactly such a mapping
 // and must keep writing.
 //
 // The effect of "dead" is never a redirect: a name or unit that only hits a dead lease falls to

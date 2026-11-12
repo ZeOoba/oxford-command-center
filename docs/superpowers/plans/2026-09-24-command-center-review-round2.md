@@ -77,17 +77,17 @@ Enumerated at `cb461e5` with `git grep`. Each task's "Reader check" step re-runs
 
 | Item | Before | After |
 |---|---|---|
-| Overview Total Debt | $11,315,951.68 | **$10,220,369.68**, sublabel `+$1.10M affiliate notes · property loan balances · 18.8% LTV` |
-| Aggregate LTV (investment value $54,488,951.97) | REDACTED-AMT | **REDACTED-AMT** |
-| Capital › Debt External Debt | $10,605,587.68 (5 borrower loans) | **$10,220,369.68**, sublabel `+$385K affiliate notes · loan schedule · 4 third-party borrower loans` |
-| Annual Debt Service / Wtd Avg Rate | $873,194 / 5.52% | $825,299 / 5.50% |
-| `checkDebtBasis` | 1 flag, gap $REDACTED-AMT | **0 flags.** All 4 third-party loans tie to their property rows to the cent |
-| 1100 Rarig `ltv-governor-1100-rarig-ave-columbus-oh` (46.1%) | info insight | **gone** (affiliate note) |
-| Equity Invested | $16,595,000 (no sublabel) | $16,595,000, sublabel `+$900K other holdings` |
+| Overview Total Debt | live total incl. the Rarig affiliate note | **live total less that note** (equals External Debt below), sublabel `+$X affiliate notes · property loan balances · N% LTV` |
+| Aggregate LTV (live investment value) | [rate redacted] | **lower: [rate redacted]** |
+| Capital › Debt External Debt | live total (5 borrower loans) | **same figure as Overview Total Debt**, sublabel `+$Y affiliate notes · loan schedule · 4 third-party borrower loans` |
+| Annual Debt Service / Wtd Avg Rate | live ADS / [rate redacted] | ADS less the 3883 note's service / [rate redacted] |
+| `checkDebtBasis` | 1 flag, one net affiliate gap | **0 flags.** All 4 third-party loans tie to their property rows to the cent |
+| 1100 Rarig `ltv-governor-1100-rarig-ave-columbus-oh` ([rate redacted]) | info insight | **gone** (affiliate note) |
+| Equity Invested | live investment equity (no sublabel) | unchanged, sublabel `+$<residence equity> other holdings` |
 | Capital allocation entries / Notion sync writes | 14 / 14 pages | **13 / 13**. The Persimmon Tree Notion row is not written |
 | Filter bar (unfiltered) | no readout | `13 investment · 1 other holding` |
-| L-1 (ref 2026-09-24) | 5 critical | **2 critical** (REDACTED-450, REDACTED-662 at 37d) + **3 warning** (REDACTED-417 $106,923, REDACTED-329 $23,459, REDACTED-650 $9,540 at 67d). Risk $ unchanged (warnings still count as risk) |
-| L-5 | 0-6m bucket 13.3%, 6-12m 11.8% (<15%). Does not fire | no live change. Prevents a future +$731K double count |
+| L-1 (ref 2026-09-24) | 5 critical | **2 critical** (Example Trucking, EXAMPLE FREIGHT at 37d) + **3 warning** (Example Auto Salon, Example Ventures, Example Supply at 67d). Risk $ unchanged (warnings still count as risk) |
+| L-5 | 0-6m and 6-12m buckets both under 15%. Does not fire | no live change. Prevents a future double count of the bucket rent |
 | reconcile-fail | snapshot has 0 dataQuality flags | no live change |
 | AR feed | oldest record 2026-07-15 → "71d old (max 35d)", stale | newest 2026-08-21 → `7 leases with stale AR · 34d old`, amber (goes stale 2026-09-26 without a new import) |
 
@@ -132,7 +132,7 @@ git commit -m "chore: claim cc-review-round2 and add the round-2 plan" -m "Refut
 
 **Why a name list, not a heuristic:** neither the snapshot nor the workbook carries an "affiliate" field. The Property NOI row has `lender` (col 19, `server/workbook/parse.ts:415`). A borrower-direction loan has `lender = counterparty` (col 3, `parse.ts:994,1009`). No Oxford-entity list exists in config today. `config/lease-market.json` `oraOwnerNamePatterns` is `["Oxford Realty", "Oxford Realty Advisors"]`, which is an owner-screen list for a different domain and does not contain "Oxford Capital". So this task ships an explicit, whole-phrase, case-insensitive lender list, `['Oxford Capital']`, and tests it against every live lender string. **Blocking question Q1** (bottom of plan): Gabriel confirms the list is complete before PR A merges.
 
-Why the rule is limited to borrower direction: every *lender*-direction note also names "(Oxford Capital)", because Oxford is the lender there (REDACTED-306, REDACTED-521, REDACTED-378). Those positions are Capital Deployed, not debt, and stay untouched.
+Why the rule is limited to borrower direction: every *lender*-direction note also names "(Oxford Capital)", because Oxford is the lender there (Note Party 02, 100 Note Party St, Note Party 01). Those positions are Capital Deployed, not debt, and stay untouched.
 
 **Files:**
 - Create: `src/analytics/debt-basis.ts`
@@ -148,7 +148,7 @@ Why the rule is limited to borrower direction: every *lender*-direction note als
   - `investmentLoanBalance(p: { readonly lender?: string | null; readonly loanBalance?: number | null }): number`
   - `investmentLtv(p: { readonly lender?: string | null; readonly loanBalance?: number | null; readonly ltv: number | null }): number | null`
   - `propertyLtvLabel(p: same as investmentLtv): string`, which returns `'affiliate note'` or `fmtPct(p.ltv)`
-  - `affiliateNotesClause(amount: number | null | undefined): string`, e.g. `'+$1.10M affiliate notes'` or `''`
+  - `affiliateNotesClause(amount: number | null | undefined): string`, e.g. `'+$1.11M affiliate notes'` or `''`
   - `DEBT_BASIS_FIELD: 'debt.basis'` and `isDebtBasisFlag(f: { readonly entity: string; readonly field: string }): boolean`
 
 - [ ] **Step 1: Write the failing test.** Create `tests/unit/debt-basis.test.ts`:
@@ -177,16 +177,16 @@ describe('namesAffiliateLender — explicit Oxford lending-entity list, whole ph
   it.each([
     ['Oxford Capital', true], // 1100 Rarig Property NOI row lender
     ['oxford capital', true],
-    ['REDACTED-676', true], // "3883 from Oxford (50%)" borrower lender
-    ['REDACTED-026', true], // lender-direction note (name matches; direction rule excludes it)
+    ['Lender 05 / Oxford Capital — Oxford 50% share', true], // "3883 from Oxford (50%)" borrower lender
+    ['Firm 04 (Oxford Capital) — Oxford 50% share', true], // lender-direction note (name matches; direction rule excludes it)
     ['Oxford Capital Partners', true], // an Oxford entity by name
-    ['REDACTED-077', false], // 29000 Information Lane — third party
-    ['Muirkirk Properties (REDACTED-655/REDACTED-672) — Oxford 50% share', false], // 9050 Red Branch — third party
-    ['REDACTED-030', false],
-    ['REDACTED-111', false],
+    ['Oxford / Lender 03', false], // 29000 Information Lane — third party
+    ['Muirkirk Properties (Servicer 01/Firm 03) — Oxford 50% share', false], // 9050 Red Branch — third party
+    ['Lender 04', false],
+    ['Lender 01', false],
     ['Oxford Capitalist Fund', false], // no partial-word match after
     ['NotOxford Capital', false], // no partial-word match before
-    ['REDACTED-672', false],
+    ['Firm 03', false],
     ['', false],
   ])('%s → %s', (text, expected) => {
     expect(namesAffiliateLender(text)).toBe(expected);
@@ -199,13 +199,13 @@ describe('namesAffiliateLender — explicit Oxford lending-entity list, whole ph
 
 describe('isAffiliateNoteProperty — property row whose outstanding loan is owed to an Oxford lender', () => {
   it('live 1100 Rarig row → true', () => {
-    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: REDACTED-AMT })).toBe(true);
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 1_111_111 })).toBe(true);
   });
   it('affiliate lender name but nothing outstanding → false (no note to exclude)', () => {
     expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 0 })).toBe(false);
   });
   it('third-party lender → false', () => {
-    expect(isAffiliateNoteProperty({ lender: 'REDACTED-672', loanBalance: REDACTED-AMT })).toBe(false);
+    expect(isAffiliateNoteProperty({ lender: 'Firm 03', loanBalance: 3_456_789.01 })).toBe(false);
   });
   it('no lender → false', () => {
     expect(isAffiliateNoteProperty({ lender: null, loanBalance: 0 })).toBe(false);
@@ -216,8 +216,8 @@ describe('isAffiliateNoteProperty — property row whose outstanding loan is owe
 describe('isAffiliateBorrowerLoan — borrower direction only', () => {
   const live3883 = {
     direction: 'borrower',
-    lender: 'REDACTED-676',
-    counterparty: 'REDACTED-676',
+    lender: 'Lender 05 / Oxford Capital — Oxford 50% share',
+    counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share',
   };
   it('live "3883 from Oxford (50%)" → true', () => {
     expect(isAffiliateBorrowerLoan(live3883)).toBe(true);
@@ -226,37 +226,37 @@ describe('isAffiliateBorrowerLoan — borrower direction only', () => {
     expect(isAffiliateBorrowerLoan({ ...live3883, lender: null })).toBe(true);
   });
   it('a LENDER-direction note naming Oxford Capital is capital deployed, never an affiliate debt → false', () => {
-    expect(isAffiliateBorrowerLoan({ direction: 'lender', lender: null, counterparty: 'REDACTED-026' })).toBe(false);
+    expect(isAffiliateBorrowerLoan({ direction: 'lender', lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share' })).toBe(false);
   });
   it('internal-direction accrual → false (already outside External Debt)', () => {
-    expect(isAffiliateBorrowerLoan({ direction: 'internal', lender: null, counterparty: 'REDACTED-373' })).toBe(false);
+    expect(isAffiliateBorrowerLoan({ direction: 'internal', lender: null, counterparty: 'Firm 10' })).toBe(false);
   });
   it('third-party borrower → false', () => {
-    const easton = 'REDACTED-077';
+    const easton = 'Oxford / Lender 03';
     expect(isAffiliateBorrowerLoan({ direction: 'borrower', lender: easton, counterparty: easton })).toBe(false);
   });
 });
 
 describe('investment-basis helpers', () => {
-  const rarig = { lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
-  const easton = { lender: 'REDACTED-672', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
+  const rarig = { lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444444 };
+  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.4172618 };
   it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
     expect(investmentLoanBalance(rarig)).toBe(0);
-    expect(investmentLoanBalance(easton)).toBe(REDACTED-AMT);
+    expect(investmentLoanBalance(easton)).toBe(2_456_789.12);
     expect(investmentLoanBalance({ lender: null, loanBalance: null })).toBe(0);
   });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();
-    expect(investmentLtv(easton)).toBe(REDACTED-AMT);
+    expect(investmentLtv(easton)).toBe(0.4172618);
   });
   it('propertyLtvLabel names the exclusion instead of printing a number', () => {
     expect(propertyLtvLabel(rarig)).toBe('affiliate note');
-    expect(propertyLtvLabel(easton)).toBe('39.0%');
+    expect(propertyLtvLabel(easton)).toBe('41.7%');
     expect(propertyLtvLabel({ lender: null, loanBalance: 0, ltv: null })).toBe('—');
   });
   it('affiliateNotesClause formats a disclosure clause, or nothing', () => {
-    expect(affiliateNotesClause(REDACTED-AMT)).toBe('+$1.10M affiliate notes');
-    expect(affiliateNotesClause(REDACTED-AMT)).toBe('+$385K affiliate notes');
+    expect(affiliateNotesClause(1_111_111)).toBe('+$1.11M affiliate notes');
+    expect(affiliateNotesClause(333_333)).toBe('+$333K affiliate notes');
     expect(affiliateNotesClause(0)).toBe('');
     expect(affiliateNotesClause(null)).toBe('');
     expect(affiliateNotesClause(undefined)).toBe('');
@@ -291,8 +291,8 @@ describe('isDebtBasisFlag — anchored on the debt.basis field family (round-1 l
 // the residence rule). Ratified 2026-09-24 (Gabriel): Oxford-to-Oxford ("affiliate") notes are
 // EXCLUDED from investment Overview Total Debt, aggregate LTV, per-property LTV and Capital › Debt
 // External Debt, and shown separately ("+$X affiliate notes"). Live cases: the 1100 Rarig property
-// row (lender "Oxford Capital", loanBalance ≈ $1.10M) and the borrower loan "3883 from Oxford (50%)"
-// (≈ $385K). With both excluded, the Overview-vs-Capital debt-basis flag reconciles to the cent.
+// row (lender "Oxford Capital") and the borrower loan "3883 from Oxford (50%)".
+// With both excluded, the Overview-vs-Capital debt-basis flag reconciles to the cent.
 //
 // Identification: the workbook carries no "affiliate" field, so this is an explicit whole-phrase
 // lender-name list — not a fuzzy heuristic — matched against Property.lender (Property NOI col 19)
@@ -347,7 +347,7 @@ export function propertyLtvLabel(p: DebtRow & { readonly ltv: number | null }): 
   return isAffiliateNoteProperty(p) ? 'affiliate note' : fmtPct(p.ltv);
 }
 
-/** Disclosure clause for a debt headline, e.g. "+$1.10M affiliate notes"; '' when there are none. */
+/** Disclosure clause for a debt headline, e.g. "+$1.11M affiliate notes"; '' when there are none. */
 export function affiliateNotesClause(amount: number | null | undefined): string {
   return typeof amount === 'number' && amount > 0 ? `+${fmtUsdCompact(amount)} affiliate notes` : '';
 }
@@ -369,7 +369,7 @@ export * from './debt-basis';
 
 - [ ] **Step 4: Run it and confirm it passes.** Run: `npx vitest run tests/unit/debt-basis.test.ts && npx tsc --noEmit -p tsconfig.json`. Expected: PASS, with no type errors (the re-export has no name collisions).
 - [ ] **Step 5: Refute.** Invoke the `refute-financial-change` skill on `src/analytics/debt-basis.ts` with these lenses:
-  1. False positive: a third-party lender whose name contains "Oxford" (the live "Oxford / REDACTED-672…", "…— Oxford 50% share").
+  1. False positive: a third-party lender whose name contains "Oxford" (the live "Oxford / Firm 03…", "…— Oxford 50% share").
   2. False negative: an affiliate spelled differently, such as "Oxford Cap."/"OxfordCapital", or a different Oxford entity. Record any finding as input to Q1 rather than widening the list unilaterally.
   3. Direction: a lender-direction receivable must never count.
 
@@ -408,7 +408,7 @@ const loan = (o: Partial<Loan>) =>
 describe('portfolioKpis — affiliate notes excluded from Total Debt and aggregate LTV (ratified 2026-09-24)', () => {
   const s = {
     properties: [
-      p({ id: 'bank', oxfordValue: 10_000_000, loanBalance: 2_000_000, lender: 'REDACTED-672' }),
+      p({ id: 'bank', oxfordValue: 10_000_000, loanBalance: 2_000_000, lender: 'Firm 03' }),
       p({ id: 'rarig', oxfordValue: 2_000_000, loanBalance: 1_000_000, lender: 'Oxford Capital' }),
     ],
     leases: [], cash: { totalCash: 0, history: [] }, meta: { asOf: '2026-09-24' },
@@ -436,12 +436,12 @@ describe('portfolioKpis — affiliate notes excluded from Total Debt and aggrega
 });
 
 describe('debtSummary — External Debt is third-party only; affiliate notes carried separately', () => {
-  const affName = 'REDACTED-676';
+  const affName = 'Lender 05 / Oxford Capital — Oxford 50% share';
   const loans = [
-    loan({ id: 'bank', absBalance: 2_000_000, rate: 0.05, monthlyPmt: 10_000, lender: 'REDACTED-672', counterparty: 'REDACTED-672', maturity: '2030-01-01' }),
+    loan({ id: 'bank', absBalance: 2_000_000, rate: 0.05, monthlyPmt: 10_000, lender: 'Firm 03', counterparty: 'Firm 03', maturity: '2030-01-01' }),
     loan({ id: 'aff', absBalance: 400_000, rate: 0.06, monthlyPmt: 4_000, lender: affName, counterparty: affName, maturity: '2035-06-01' }),
-    loan({ id: 'rcv', direction: 'lender', absBalance: 500_000, counterparty: 'REDACTED-013', maturity: '2027-02-20', balloon: true }),
-    loan({ id: 'int', direction: 'internal', absBalance: 300_000, counterparty: 'REDACTED-493' }),
+    loan({ id: 'rcv', direction: 'lender', absBalance: 500_000, counterparty: 'Firm 05 (Oxford Capital) — Oxford 50% share', maturity: '2027-02-20', balloon: true }),
+    loan({ id: 'int', direction: 'internal', absBalance: 300_000, counterparty: 'Firm 08' }),
   ];
 
   it('externalDebt / annualDebtService / weightedAvgRate exclude the affiliate borrower loan', () => {
@@ -576,7 +576,7 @@ const d = debtSummary(s.loans);
 console.log(JSON.stringify({ totalDebt: k.totalDebt.value, affiliateDebt: k.affiliateDebt.value, ltv: k.ltv.value, externalDebt: d.externalDebt, loanAffiliateDebt: d.affiliateDebt, ads: d.annualDebtService, war: d.weightedAvgRate }));
 ```
 
-Run: `npx tsx .superpowers/live-check-debt.ts`. Expected (asOf 2026-09-13 snapshot): `totalDebt ≈ 10220369.68`, `affiliateDebt REDACTED-AMT`, `ltv ≈ REDACTED-AMT`, `externalDebt ≈ 10220369.68`, `loanAffiliateDebt REDACTED-AMT`, `ads ≈ 825298.74`, `war ≈ REDACTED-AMT`. Paste the output into the PR A body, then `rm .superpowers/live-check-debt.ts`.
+Run: `npx tsx .superpowers/live-check-debt.ts`. Expected (asOf 2026-09-13 snapshot): `totalDebt` equal to `externalDebt` (both on the third-party basis), `affiliateDebt` = the 1100 Rarig property-row balance, `ltv` ≈ the aggregate investment LTV ([rate redacted]), `loanAffiliateDebt` = the "3883 from Oxford (50%)" balance, `ads` = the prior annual debt service less that note's service, `war` ≈ the third-party weighted average rate ([rate redacted]). Paste the output into the PR A body, then `rm .superpowers/live-check-debt.ts`.
 - [ ] **Step 8: Refute.** Invoke `refute-financial-change` on `engine.ts` + `types.ts` with these lenses:
   1. Aggregate-LTV governor input moves down, which is less conservative. Confirm it moves by exactly the affiliate note and no more, and that the governor constants are unchanged.
   2. Every reader in the Pre-flight table reads the new basis consistently.
@@ -615,7 +615,7 @@ const k = (ltv: number, affiliate: number) => ({ ltv: cell(ltv), affiliateDebt: 
 
 describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', () => {
   it('live shape: affiliate clause leads', () => {
-    expect(overviewTotalDebtSublabel(k(REDACTED-AMT, REDACTED-AMT))).toBe('+$1.10M affiliate notes · property loan balances · 18.8% LTV');
+    expect(overviewTotalDebtSublabel(k(0.2317429, 1_111_111))).toBe('+$1.11M affiliate notes · property loan balances · 23.2% LTV');
   });
   it('no affiliate notes → basis leads', () => {
     expect(overviewTotalDebtSublabel(k(0.2, 0))).toBe('property loan balances · 20.0% LTV');
@@ -624,7 +624,7 @@ describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', ()
 
 describe('externalDebtSublabel', () => {
   it('live shape: 4 third-party loans + the 3883 affiliate note', () => {
-    expect(externalDebtSublabel({ affiliateDebt: REDACTED-AMT }, 4)).toBe('+$385K affiliate notes · loan schedule · 4 third-party borrower loans');
+    expect(externalDebtSublabel({ affiliateDebt: 333_333 }, 4)).toBe('+$333K affiliate notes · loan schedule · 4 third-party borrower loans');
   });
   it('singular, and no clause without affiliates', () => {
     expect(externalDebtSublabel({ affiliateDebt: 0 }, 1)).toBe('loan schedule · 1 third-party borrower loan');
@@ -745,7 +745,7 @@ git commit -m "feat(debt): disclose affiliate notes beside Total Debt and Extern
 ```ts
 describe('evaluateConditions — affiliate notes are outside per-property LTV (ratified 2026-09-24)', () => {
   it('an Oxford-affiliate note (live 1100 Rarig shape) fires neither ltv-governor nor ltv', () => {
-    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444444 })] }), opts);
     expect(out.some((i) => i.id === 'ltv-governor-p1' || i.id === 'ltv-p1')).toBe(false);
   });
   it('an affiliate note at 70% LTV does not fire the 65% ceiling warning either', () => {
@@ -753,7 +753,7 @@ describe('evaluateConditions — affiliate notes are outside per-property LTV (r
     expect(out.some((i) => i.id === 'ltv-p1')).toBe(false);
   });
   it('the same LTV on a third-party loan still fires the info governor insight (id unchanged)', () => {
-    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'REDACTED-545', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Lender 08', loanBalance: 1_111_111, ltv: 0.4444444 })] }), opts);
     expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
   });
 });
@@ -779,8 +779,8 @@ function aiSnap(over: Record<string, unknown> = {}): PortfolioSnapshot {
     meta: { schemaVersion: '1.0.0', asOf: '2026-09-13', generatedAt: '2026-09-14T00:00:00.000Z', source: 't', scenario: 'Base' },
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-09-13' },
     properties: [
-      prop({ id: 'rarig', name: '1100 Rarig Ave, Columbus OH', lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: 0.4614, oxfordValue: 2_374_719 }),
-      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'REDACTED-672', loanBalance: REDACTED-AMT, ltv: 0.3896, oxfordValue: 7_086_263 }),
+      prop({ id: 'rarig', name: '1100 Rarig Ave, Columbus OH', lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444, oxfordValue: 2_500_000 }),
+      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.42, oxfordValue: 5_850_000 }),
     ],
     leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
     renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
@@ -790,19 +790,19 @@ function aiSnap(over: Record<string, unknown> = {}): PortfolioSnapshot {
 }
 
 describe('get_property — per-property LTV on the investment basis', () => {
-  it('an affiliate-note property reports "affiliate note", not 46.1%', () => {
+  it('an affiliate-note property reports "affiliate note", not 44.4%', () => {
     const rows = runTool('get_property', aiSnap(), { query: 'rarig' }).data as Array<{ ltv: string; affiliateNote: boolean }>;
     expect(rows[0]).toMatchObject({ ltv: 'affiliate note', affiliateNote: true });
   });
   it('a third-party-debt property reports its LTV', () => {
     const rows = runTool('get_property', aiSnap(), { query: 'easton' }).data as Array<{ ltv: string; affiliateNote: boolean }>;
-    expect(rows[0]).toMatchObject({ ltv: '39.0%', affiliateNote: false });
+    expect(rows[0]).toMatchObject({ ltv: '42.0%', affiliateNote: false });
   });
 });
 ```
 
 Task 7 appends more `describe` blocks to this same file that reuse `aiSnap`.
-- [ ] **Step 3: Run them and confirm they fail.** Run: `npx vitest run tests/unit/conditions.test.ts tests/unit/ai-debt-basis.test.ts`. Expected: FAIL. `ltv-governor-p1` fires for Oxford Capital, and `ltv` is `'46.1%'`.
+- [ ] **Step 3: Run them and confirm they fail.** Run: `npx vitest run tests/unit/conditions.test.ts tests/unit/ai-debt-basis.test.ts`. Expected: FAIL. `ltv-governor-p1` fires for Oxford Capital, and `ltv` is `'44.4%'`.
 - [ ] **Step 4: Implement.** In `conditions.ts`, add `import { investmentLtv } from './debt-basis';` after line 7. Replace the LTV half of the governor loop (from `if (p.ltv !== null && p.ltv > T.ltvCeiling) {` through the closing `}` of the `else if` block) with:
 
 ```ts
@@ -885,7 +885,7 @@ git commit -m "feat(debt): per-property LTV on the investment basis — affiliat
 
 ```ts
 // 2026-09-23 review: Overview "Total Debt" (property loan balances) and Capital › Debt "External Debt"
-// (loan schedule) disagreed by ~$0.7M. Round 2 (2026-09-24): affiliate notes are excluded on BOTH
+// (loan schedule) disagreed by the affiliate notes. Round 2 (2026-09-24): affiliate notes are excluded on BOTH
 // sides (src/analytics/debt-basis.ts) and the check lists each unmatched row instead of one net gap.
 // Warn-only, entity 'debt': never picks a winner, never alters a total, never fires reconcile-fail.
 type P = { id: string; name: string; type?: string; lender?: string | null; loanBalance: number };
@@ -893,13 +893,13 @@ type L = { id: string; name: string; direction: string; absBalance: number; lend
 const debtSnap = (properties: P[], loans: L[]) => ({ properties, loans }) as never;
 
 // Live shape (data/snapshots/portfolio.json, asOf 2026-09-13), trimmed to the rows that matter.
-const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'REDACTED-672', loanBalance: REDACTED-AMT };
-const RARIG: P = { id: 'p-rarig', name: '1100 Rarig Ave, Columbus OH', type: 'Flex', lender: 'Oxford Capital', loanBalance: REDACTED-AMT };
+const EASTON: P = { id: 'p-easton', name: '29000 Information Lane, Easton MD', type: 'Flex', lender: 'Firm 03', loanBalance: 2_456_789.12 };
+const RARIG: P = { id: 'p-rarig', name: '1100 Rarig Ave, Columbus OH', type: 'Flex', lender: 'Oxford Capital', loanBalance: 1_111_111 };
 const LIVINGSTON: P = { id: 'p-liv', name: '3875-3883 E Livingston Ave, Columbus OH', type: 'Flex', lender: null, loanBalance: 0 };
 const RESIDENCE: P = { id: 'p-res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', lender: null, loanBalance: 0 };
-const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'REDACTED-077', counterparty: 'REDACTED-077', collateralProperty: '29000 Information Lane, Easton MD' };
-const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: REDACTED-AMT, lender: 'REDACTED-676', counterparty: 'REDACTED-676', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
-const RARIG_NOTE: L = { id: 'n-rarig', name: 'REDACTED-378', direction: 'lender', absBalance: REDACTED-AMT, lender: null, counterparty: 'REDACTED-026', collateralProperty: null };
+const EASTON_LOAN: L = { id: 'b-easton', name: '29000 Information Lane', direction: 'borrower', absBalance: 2_456_789.12, lender: 'Oxford / Lender 03', counterparty: 'Oxford / Lender 03', collateralProperty: '29000 Information Lane, Easton MD' };
+const LOAN_3883: L = { id: 'b-3883', name: '3883 from Oxford (50%)', direction: 'borrower', absBalance: 333_333, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' };
+const RARIG_NOTE: L = { id: 'n-rarig', name: 'Note Party 01', direction: 'lender', absBalance: 555_555, lender: null, counterparty: 'Firm 04 (Oxford Capital) — Oxford 50% share', collateralProperty: null };
 
 describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (2026-09-24)', () => {
   it('the live shape reconciles: Rarig (affiliate property row) and 3883 (affiliate borrower loan) drop out → no flags', () => {
@@ -911,12 +911,12 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ entity: 'debt', field: 'debt.basis.property.p-easton', severity: 'warn' });
     expect(flags[0]!.issue).toBe(
-      '29000 Information Lane, Easton MD: Property NOI sheet loan balance $2,800,000 vs loan schedule $2,760,612 (29000 Information Lane) — gap $39,388',
+      '29000 Information Lane, Easton MD: Property NOI sheet loan balance $2,800,000 vs loan schedule $2,456,789 (29000 Information Lane) — gap $343,211',
     );
   });
 
   it('a property row with a balance but no attributed loan is listed', () => {
-    const flags = checkDebtBasis(debtSnap([{ id: 'p-a', name: 'Alpha Flex', type: 'Flex', lender: 'REDACTED-545', loanBalance: 1_000_000 }], []));
+    const flags = checkDebtBasis(debtSnap([{ id: 'p-a', name: 'Alpha Flex', type: 'Flex', lender: 'Lender 08', loanBalance: 1_000_000 }], []));
     expect(flags.map((f) => f.field)).toEqual(['debt.basis.property.p-a']);
     expect(flags[0]!.issue).toContain('(no third-party loan attributed)');
     expect(flags[0]!.issue).toContain('gap $1,000,000');
@@ -958,7 +958,7 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
   });
 
   it('lender and internal directions never count on the loan side', () => {
-    const internal: L = { id: 'i', name: 'Internal', direction: 'internal', absBalance: 2_900_000, counterparty: 'REDACTED-493' };
+    const internal: L = { id: 'i', name: 'Internal', direction: 'internal', absBalance: 2_900_000, counterparty: 'Firm 08' };
     expect(checkDebtBasis(debtSnap([EASTON], [EASTON_LOAN, RARIG_NOTE, internal]))).toEqual([]);
   });
 
@@ -986,8 +986,8 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
 
   it('is wired into checkSnapshot and stays warn there', () => {
     const flags = checkSnapshot(base({
-      properties: [{ id: 'p1', name: 'Alpha Flex', type: 'Flex', lender: 'REDACTED-545', loanBalance: 11_300_000 }],
-      loans: [{ id: 'n1', name: 'Alpha Loan', direction: 'borrower', absBalance: 10_600_000, lender: 'REDACTED-545', counterparty: 'REDACTED-545', collateralProperty: 'Alpha Flex' }],
+      properties: [{ id: 'p1', name: 'Alpha Flex', type: 'Flex', lender: 'Lender 08', loanBalance: 11_300_000 }],
+      loans: [{ id: 'n1', name: 'Alpha Loan', direction: 'borrower', absBalance: 10_600_000, lender: 'Lender 08', counterparty: 'Lender 08', collateralProperty: 'Alpha Flex' }],
     }));
     const f = flags.find((x) => x.field === 'debt.basis.property.p1');
     expect(f).toBeDefined();
@@ -1018,7 +1018,7 @@ const DEBT_BASIS_TOLERANCE = 1000;
  * Overview "Total Debt" (property loan balances, Property NOI sheet) vs Capital › Debt "External
  * Debt" (third-party borrower loans, loan schedule), compared ROW BY ROW (item 14, 2026-09-24) so
  * the Data Quality card names the property or loan that disagrees instead of one unexplained net
- * gap (round 1 showed "$REDACTED-AMT" with no row to fix).
+ * gap (round 1 showed a single net figure with no row to fix).
  *
  * Same basis as both surfaces, by construction:
  *  - investment rows only (the residence is other holdings — isInvestmentProperty);
@@ -1098,7 +1098,7 @@ const s = JSON.parse(readFileSync('data/snapshots/portfolio.json', 'utf8')) as P
 console.log(JSON.stringify(checkDebtBasis(s), null, 2));
 ```
 
-Run: `npx tsx .superpowers/live-check-basis.ts`. Expected: `[]`. Before this task, the code produced one flag with `gap $REDACTED-AMT`. Paste the result in the PR body, then `rm .superpowers/live-check-basis.ts`.
+Run: `npx tsx .superpowers/live-check-basis.ts`. Expected: `[]`. Before this task, the code produced one flag carrying a single net gap. Paste the result in the PR body, then `rm .superpowers/live-check-basis.ts`.
 - [ ] **Step 6: Refute.** Invoke `refute-financial-change` on `server/reconcile-runtime.ts` with these lenses:
   1. Attribution. A mis-resolved collateral name must surface as "unattributed", never as a silent match. Confirm `buildLoanPropertyMap`'s ambiguous → unresolved behavior carries through.
   2. The flags are warn-only and entity `'debt'`. No total is altered.
@@ -1139,7 +1139,7 @@ vi.mock('../../src/data/brain-context', () => ({ useBrain: () => ({ state: null 
 
 import { HealthModule } from '../../src/modules/health/HealthModule';
 
-const basis: DataQualityFlag = { entity: 'debt', field: 'debt.basis.property.p1', issue: 'Alpha: gap $39,388', severity: 'warn' };
+const basis: DataQualityFlag = { entity: 'debt', field: 'debt.basis.property.p1', issue: 'Alpha: gap $343,211', severity: 'warn' };
 const reconWarn: DataQualityFlag = { entity: 'reconciliation', field: 'cash.history.date', issue: 'missing rows', severity: 'warn' };
 const reconError: DataQualityFlag = { entity: 'reconciliation', field: 'properties.noi', issue: 'Σ NOI ≠ workbook', severity: 'error' };
 const other: DataQualityFlag = { entity: 'lease', field: 'lease.l1.leaseEnd', issue: 'stale', severity: 'warn' };
@@ -1168,7 +1168,7 @@ describe('HealthModule Reconciliation card', () => {
     render(<QueryClientProvider client={qc}><HealthModule /></QueryClientProvider>);
     expect(screen.queryByText('Consistent')).toBeNull();
     expect(screen.getByText('1 debt basis gap')).toBeTruthy();
-    expect(screen.getAllByText('Alpha: gap $39,388').length).toBeGreaterThan(0); // Reconciliation + Data Quality cards
+    expect(screen.getAllByText('Alpha: gap $343,211').length).toBeGreaterThan(0); // Reconciliation + Data Quality cards
   });
 });
 ```
@@ -1182,7 +1182,7 @@ describe('HealthModule Reconciliation card', () => {
 // System Health › Reconciliation card state (item 13, 2026-09-24). Round 1 put the Overview-vs-
 // Capital debt-basis flag on entity 'debt' (so it would not fire the CRITICAL reconcile-fail
 // insight); this card only listed entity==='reconciliation' flags, so it read "Consistent" beside a
-// live ~$0.7M basis gap. It now lists reconciliation flags AND debt-basis flags and colours by
+// live affiliate-note basis gap. It now lists reconciliation flags AND debt-basis flags and colours by
 // severity: red only for an error, amber for warn-only rows, green only when both lists are empty.
 import { isDebtBasisFlag } from '@analytics/index';
 import type { DataQualityFlag } from '@contracts/index';
@@ -1251,24 +1251,24 @@ git commit -m "fix(health): Reconciliation card lists debt-basis flags and colou
 - [ ] **Step 1: Write the failing tests.** In `tests/unit/ai-debt-basis.test.ts`, add `import { respond } from '../../server/ai/respond';` to the import block at the top of the file. Then append:
 
 ```ts
-const basisFlag = { entity: 'debt', field: 'debt.basis.property.easton', issue: '29000 Information Lane, Easton MD: … gap $39,388', severity: 'warn' };
+const basisFlag = { entity: 'debt', field: 'debt.basis.property.easton', issue: '29000 Information Lane, Easton MD: … gap $343,211', severity: 'warn' };
 const loans = [
-  { id: 'b-easton', name: '29000 Information Lane', counterparty: 'REDACTED-672', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.045, monthlyPmt: 17_362, lender: 'REDACTED-672', maturity: '2031-01-01', balloon: false, isDemand: false, collateralProperty: '29000 Information Lane, Easton MD' },
-  { id: 'b-3883', name: '3883 from Oxford (50%)', counterparty: 'REDACTED-676', direction: 'borrower', absBalance: REDACTED-AMT, currentBalance: -REDACTED-AMT, rate: 0.06, monthlyPmt: 3_991, lender: 'REDACTED-676', maturity: '2035-06-01', balloon: false, isDemand: false, collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' },
+  { id: 'b-easton', name: '29000 Information Lane', counterparty: 'Firm 03', direction: 'borrower', absBalance: 2_456_789.12, currentBalance: -2_456_789.12, rate: 0.045, monthlyPmt: 15_000, lender: 'Firm 03', maturity: '2031-01-01', balloon: false, isDemand: false, collateralProperty: '29000 Information Lane, Easton MD' },
+  { id: 'b-3883', name: '3883 from Oxford (50%)', counterparty: 'Lender 05 / Oxford Capital — Oxford 50% share', direction: 'borrower', absBalance: 333_333, currentBalance: -333_333, rate: 0.06, monthlyPmt: 3_333, lender: 'Lender 05 / Oxford Capital — Oxford 50% share', maturity: '2035-06-01', balloon: false, isDemand: false, collateralProperty: '3875-3883 E Livingston Ave, Columbus OH' },
 ];
 
 describe('AI tools — each debt figure carries its basis; the gap is surfaced (item 13)', () => {
   it('get_portfolio_summary states the Total Debt basis, the excluded affiliate notes and any basis flags', () => {
     const d = runTool('get_portfolio_summary', aiSnap({ dataQuality: [basisFlag] }), {}).data as Record<string, unknown>;
     expect(d.totalDebtBasis).toBe('Σ investment-property loan balances (Property NOI sheet); Oxford-affiliate notes excluded');
-    expect(d.affiliateNotesExcluded).toBe('$1.10M');
+    expect(d.affiliateNotesExcluded).toBe('$1.11M');
     expect(d.debtBasisFlags).toEqual([basisFlag.issue]);
   });
   it('get_loans states the External Debt basis and the excluded affiliate note', () => {
     const d = runTool('get_loans', aiSnap({ loans }), {}).data as Record<string, unknown>;
-    expect(d.externalDebt).toBe('$2.76M');
+    expect(d.externalDebt).toBe('$2.46M');
     expect(d.externalDebtBasis).toBe('Σ third-party borrower loans (loan schedule); Oxford-affiliate notes excluded');
-    expect(d.affiliateNotesExcluded).toBe('$385K');
+    expect(d.affiliateNotesExcluded).toBe('$333K');
     expect(d).not.toHaveProperty('debtBasisFlags'); // none on this snapshot
   });
 });
@@ -1280,7 +1280,7 @@ describe('respond (deterministic) — never two debt bases in one sentence (item
     const ext = lines.find((l) => l.startsWith('External debt'))!;
     const ltv = lines.find((l) => l.startsWith('Portfolio LTV'))!;
     expect(ext).toContain('(loan schedule, third-party borrower loans)');
-    expect(ext).toContain('Oxford-affiliate notes of $385K are excluded');
+    expect(ext).toContain('Oxford-affiliate notes of $333K are excluded');
     expect(ext).not.toContain('LTV');
     expect(ltv).toContain('property loan balances');
     expect(ltv).not.toContain('External');
@@ -1432,7 +1432,7 @@ Branch: `git switch -c fix/cc-r2-b-residence-alerts` from PR A's head. The PR bo
 - Consumes: `overviewTotalDebtSublabel` (Task 3).
 - Produces: `PortfolioKpis.otherHoldingsEquity: Cell`, `PortfolioKpis.otherHoldingsDebt: Cell`, `otherHoldingsEquityClause(k: Pick<PortfolioKpis, 'otherHoldingsCount' | 'otherHoldingsEquity'>): string` (e.g. `'+$900K other holdings'`) and `otherHoldingsDebtClause(k: Pick<PortfolioKpis, 'otherHoldingsCount' | 'otherHoldingsDebt'>): string` (e.g. `'+$X other-holdings debt'`). `overviewTotalDebtSublabel` now takes `Pick<PortfolioKpis, 'ltv' | 'affiliateDebt' | 'otherHoldingsCount' | 'otherHoldingsDebt'>`.
 
-Equity Invested stays investment-only, as ratified. The residence's $900,000 is disclosed with the shared formatter, so it renders `+$900K other holdings` (`fmtUsdCompact` switches to K below $1M). That is the same figure as the memo's "$0.9M".
+Equity Invested stays investment-only, as ratified. The residence's equity is disclosed with the shared formatter, so it renders as `+$NNNK other holdings` (`fmtUsdCompact` switches to K below $1M). That is the same figure as the memo's. (The tests below use a synthetic 900_000.)
 
 - [ ] **Step 1: Write the failing tests.** Append to `tests/unit/portfolio-kpis-residence.test.ts`:
 
@@ -1440,7 +1440,7 @@ Equity Invested stays investment-only, as ratified. The residence's $900,000 is 
 describe('portfolioKpis — residence equity and debt are other holdings (ratified 2026-09-24)', () => {
   const s = {
     properties: [
-      p({ id: 'a', oxfordValue: 10_000_000, equityInvested: 1_000_000, loanBalance: 2_000_000, lender: 'REDACTED-672' }),
+      p({ id: 'a', oxfordValue: 10_000_000, equityInvested: 1_000_000, loanBalance: 2_000_000, lender: 'Firm 03' }),
       p({ id: 'res', type: 'Residence', oxfordValue: 2_000_000, equityInvested: 900_000, loanBalance: 400_000, lender: 'Wells' }),
     ],
     leases: [], cash: { totalCash: 0, history: [] }, meta: { asOf: '2026-09-24' },
@@ -1473,7 +1473,7 @@ const k = (ltv: number, affiliate: number, otherDebt = 0) =>
 
 ```ts
   it('residence debt, when any, is disclosed first', () => {
-    expect(overviewTotalDebtSublabel(k(0.2, REDACTED-AMT, 400_000))).toBe('+$400K other-holdings debt · +$1.10M affiliate notes · property loan balances · 20.0% LTV');
+    expect(overviewTotalDebtSublabel(k(0.2, 1_111_111, 400_000))).toBe('+$400K other-holdings debt · +$1.11M affiliate notes · property loan balances · 20.0% LTV');
   });
 ```
 
@@ -2120,9 +2120,9 @@ console.log(JSON.stringify({
 ```
 
 Run: `npx tsx .superpowers/live-check-b.ts`. Expected output:
-- `equity 16595000`, `otherEquity 900000`.
-- `l1Critical`: exactly 2 titles, `Expiring, no renewal signal — …` ending in REDACTED-376 and REDACTED-381 (37d).
-- `l1Warning`: exactly 3 titles, ending in REDACTED-068, REDACTED-189, and REDACTED-350 (67d).
+- `equity` unchanged from before this task (investment-only), `otherEquity` equal to the residence's equity.
+- `l1Critical`: exactly 2 titles, `Expiring, no renewal signal — …` ending in Tenant 026 LLC and TENANT 057 LLC (37d).
+- `l1Warning`: exactly 3 titles, ending in Tenant 039 LLC, Tenant 050 LLC, and Tenant 109 LLC (67d).
 - `l5` = `[]`, `rarigGovernor` = `false`.
 
 Paste the output into the PR body, then `rm .superpowers/live-check-b.ts`.
@@ -2664,7 +2664,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'REDACTED-659', docName: 'REDACTED-659 Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -2731,12 +2731,12 @@ describe('doc-index-core — worker-side ops match the in-process path', () => {
   it('a partially-embedded (resumable) index counts every planned chunk and only returns embedded ones', async () => {
     const p = join(tempRoot(), 'doc-index.sqlite');
     writeChunkPlan(p, CHUNKS, 3);
-    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // REDACTED-659 + Roof embedded; Rent planned only
+    await embedMissing(p, fakeEmbedder, { batchSize: 1, limit: 2 }); // Tenant 155 LLC + Roof embedded; Rent planned only
     const h = createDocIndexHandler();
     const loaded = run(h, { type: 'load', dbPath: p })[1];
     expect(loaded).toMatchObject({ type: 'loaded', info: { chunkCount: 3 } });
     const [qv] = await fakeEmbedder(['rent']);
-    expect(rowsOf(run(h, { type: 'knn', id: 1, vector: qv!, limit: 3 })[0]).map((r) => r.chunk.docName).sort()).toEqual(['REDACTED-659 Lease.pdf', 'Roof Warranty.pdf']);
+    expect(rowsOf(run(h, { type: 'knn', id: 1, vector: qv!, limit: 3 })[0]).map((r) => r.chunk.docName).sort()).toEqual(['Tenant 155 LLC Lease.pdf', 'Roof Warranty.pdf']);
     h.close();
   });
 });
@@ -2923,7 +2923,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'REDACTED-659', docName: 'REDACTED-659 Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -2950,7 +2950,7 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     const info = await c.ready;
     expect(t.handled).toBe(1);
     expect(info.chunkCount).toBe(3);
-    expect(info.docs.map((d) => d.name)).toEqual(['REDACTED-659 Lease.pdf', 'Roof Warranty.pdf', 'Rent Schedule.pdf']);
+    expect(info.docs.map((d) => d.name)).toEqual(['Tenant 155 LLC Lease.pdf', 'Roof Warranty.pdf', 'Rent Schedule.pdf']);
     expect(c.builtAt).toBe(info.builtAt);
   });
 
@@ -2959,7 +2959,7 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     const c = DocIndexClient.start(p, inProcessDocIndexTransport()); clients.push(c);
     const [qv] = await fakeEmbedder(['renewal']);
     const rows = await c.knn(qv!, 3);
-    expect(rows[0]!.chunk.docId).toBe('REDACTED-659');
+    expect(rows[0]!.chunk.docId).toBe('tenant 155 llc');
   });
 
   it('a load failure rejects ready and every later knn', async () => {
@@ -3260,7 +3260,7 @@ const fakeEmbedder: Embedder = async (texts) =>
     return new Float32Array([l.includes('renew') ? 1 : 0, l.includes('roof') ? 1 : 0, l.includes('rent') ? 1 : 0]);
   });
 const CHUNKS: DocChunk[] = [
-  { docId: 'REDACTED-659', docName: 'REDACTED-659 Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
+  { docId: 'tenant 155 llc', docName: 'Tenant 155 LLC Lease.pdf', idx: 0, text: 'Tenant has one option to renew for five years (the renewal option).' },
   { docId: 'roof', docName: 'Roof Warranty.pdf', idx: 0, text: 'The membrane roof carries a 20-year warranty.' },
   { docId: 'rent', docName: 'Rent Schedule.pdf', idx: 0, text: 'Base rent escalates 3% annually.' },
 ];
@@ -3303,7 +3303,7 @@ describe('documents.ts over DocIndexClient (item 11)', () => {
     await diskIndexAtEnv();
     counting();
     const hits = await searchDocuments('renewal', 3, fakeEmbedder);
-    expect(hits[0]).toMatchObject({ doc: 'REDACTED-659 Lease.pdf', docId: 'REDACTED-659', chunkIdx: 0 });
+    expect(hits[0]).toMatchObject({ doc: 'Tenant 155 LLC Lease.pdf', docId: 'tenant 155 llc', chunkIdx: 0 });
     expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
     const s = await docStatus();
     expect(s).toMatchObject({ documents: 3, chunks: 3 });
@@ -3584,7 +3584,7 @@ Guardrails: business-OneDrive files are edited by Gabriel only (Invariant 5). Re
 | R4 | Lease Market never computed | Supervised session | `npm run lease-market:ingest` (CoStar exports in the intake folder) then `npm run lease-market:compute`; register weekly via `register-scheduled-task`. | **Lease market compute** fresh (≤ 14d); Lease Market module shows KPIs, not the empty state | [ ] |
 | R5 | Document index built **2026-06-06** | Supervised session | `npm run index:docs -- --replan` once, then repeat `npm run index:docs` (or `scripts/reindex-loop.ps1`) until it reports 0 remaining; register monthly. Requires `DOCUMENTS_EXCLUDE` + `DOCUMENTS_INCLUDE_DIRS` in `.env` (the reindex safety guard refuses otherwise). | **Document index (Ask)** fresh (≤ 30d) | [ ] |
 | R6 | Insurance: 8 policy lines show expired (1100 Rarig, ETC POA, 1851 S Club, 9050 Red Branch, 3034 Westerville); TIV null on all 30 | Gabriel supplies dec pages; supervised session imports | Confirm renewals were bound; `npx tsx scripts/import-insurance-data.ts --dec-pages <policies.json>` (terms + TIV) and `--policies <policies.json>` (premium history); verify with the `insurance-declaration-checker` agent. | Not a Data Feeds row — Obligations › Insurance shows a **Rate vs Benchmark** value and no Expired lines in the Policy Tracker | [ ] |
-| R7 | Workbook rows: **REDACTED-453** $0 rent "Active"; **REDACTED-523** / **REDACTED-486** ended 2024-09-01 (retire) | Gabriel | Fix Tyson's rent/status and retire the REDACTED-673 and REDACTED-669 rows in the Master Workbook (no code change — ratified 2026-09-24). | **Workbook snapshot** fresh (≤ 2d) after re-parse; Health › Data Quality has no `lease.<id>.leaseEnd` flag for those tenants | [ ] |
+| R7 | Workbook rows: **Example Consulting** $0 rent "Active"; **Tenant 038 LLC** / **Tenant 059 LLC** ended 2024-09-01 (retire) | Gabriel | Fix Example Consulting's rent/status and retire the Tenant 038 and Tenant 059 rows in the Master Workbook (no code change — ratified 2026-09-24). | **Workbook snapshot** fresh (≤ 2d) after re-parse; Health › Data Quality has no `lease.<id>.leaseEnd` flag for those tenants | [ ] |
 | R8 | Leasing velocity has no data (`lease_events` = 0 rows) | New spec session | Spec an importer that derives vacate/commence events from historical rent rolls or the Notion Tenant DB history (brainstorming → `/plan`), then add the velocity trend chart. Output: `docs/superpowers/specs/<date>-lease-events-importer.md`. | Not a Data Feeds row — spec merged; velocity chart ticket opened | [ ] |
 
 Close-out: when every box is checked and Data Feeds reads "0 need attention", set Status to CLOSED with the date and
@@ -3622,7 +3622,7 @@ git commit -m "docs(ops): R1-R8 tracked runbook until Data Feeds is all green" -
   - `KnnRow` / `DocIndexTransport` / `DocIndexClient` are used in Tasks 18–20.
   - `arFeedInput` / `note` are used in Task 15.
 - **Known trade-offs and blocking questions for Gabriel.**
-  - **Q1 (blocks the PR A merge).** No affiliate field exists in the workbook or snapshot. Identification is an explicit whole-phrase lender list, `['Oxford Capital']`, applied to the property `lender` and the borrower-loan lender/counterparty. Confirm the list is complete. Specifically: is any of "LAST Non"/"REDACTED-668", "REDACTED-493", "EG(Oxford)" or "Muirkirk Properties" an Oxford affiliate that could appear as the *lender* on a borrower note? Today those names appear only on internal-direction rows, or on third-party loans as the borrower entity. The robust long-term fix is an "Affiliate" column on the Loan Index and Property NOI sheets.
+  - **Q1 (blocks the PR A merge).** No affiliate field exists in the workbook or snapshot. Identification is an explicit whole-phrase lender list, `['Oxford Capital']`, applied to the property `lender` and the borrower-loan lender/counterparty. Confirm the list is complete. Specifically: is any of "NOTE PARTY 08"/"NOTEPARTY08", "Firm 08", "EG(Oxford)" or "Muirkirk Properties" an Oxford affiliate that could appear as the *lender* on a borrower note? Today those names appear only on internal-direction rows, or on third-party loans as the borrower entity. The robust long-term fix is an "Affiliate" column on the Loan Index and Property NOI sheets.
   - **Q2 (non-blocking).** 1100 Rarig's DSCR (2.53x) is still computed on its affiliate debt service. The ruling covers Total Debt and LTV only, so this plan leaves DSCR unchanged.
-  - **Q3 (non-blocking).** External Debt's weighted rate and annual debt service move to the third-party basis (5.50%, $825K). The maturity ladder keeps the affiliate note, and Capital Deployed keeps the REDACTED-378 lender position.
+  - **Q3 (non-blocking).** External Debt's weighted rate and annual debt service move to the third-party basis ([rate redacted]). The maturity ladder keeps the affiliate note, and Capital Deployed keeps the Note Party 01 lender position.
   - **Architect ack (blocks Tasks 0, 2, 8 and 15).** These tasks touch `architecture/status.json`, `src/analytics/engine.ts` and `server/index.ts`.

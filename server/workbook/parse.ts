@@ -596,7 +596,7 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // P&L filenames. "Banwick" is not a hypothetical: it is literally the token named in this
 // function's own comment below as the example a bare-word match must NOT trust, confirmed live
 // (cc-audit-army finding unresolved-lease-propertyid-silent, 2026-08-21) as one of the Sepich
-// sub-property names actually driving 39 of 41 unresolved rent-roll rows ($1.08M of $1.14M).
+// sub-property names actually driving 39 of 41 unresolved rent-roll rows (most of their rent).
 // Only alias names with that level of direct corroboration. The 2026-08-21 pass left
 // "4595 E. 5th Ave" unresolved for want of "comparable evidence"; that evidence has since been
 // located in the source of record and the call is REVERSED (Gabriel directive, 2026-08-24) --
@@ -622,7 +622,7 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // already-committed data/snapshots/portfolio.json quickbooks block (a stale prior parse) carries an
 // EM DASH ('FVC — ...') for the identical class -- the export apparently varies the dash on
 // different QuickBooks report runs. Both forms are aliased so neither a fresh parse of the live CSV
-// nor a read of the already-persisted snapshot regresses. This is the '~$1.42M QB fix' the
+// nor a read of the already-persisted snapshot regresses. This is the 'QB fix' the
 // 2026-08-24 sweep and this PR's own commit claimed to close -- verified live: adding ONLY the
 // em-dash form (matching the committed snapshot) would have left the ACTUAL next CSV parse
 // unresolved, since resolvePropertyId never ran the token/number-gate path successfully for this
@@ -1554,8 +1554,8 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string
         // Cols 5 and 11 (the workbook's own Δ% and 12-mo Δ% cells) are deliberately NOT read. They
         // divide by the prior / 12-month-ago balance as-is, so when that balance is NEGATIVE (an
         // overdrawn operating account, a start-up entity) the cell's sign inverts against its own
-        // dollar figure -- found live 2026-09-14: deltaDollar -REDACTED-AMT served beside deltaPct +4.1%,
-        // growth12Dollar +REDACTED-AMT beside growth12Pct -1186%, and the UI colours the percent green or
+        // dollar figure -- found live 2026-09-14: a negative deltaDollar served beside a positive deltaPct,
+        // a positive growth12Dollar beside a large negative growth12Pct, and the UI colours the percent green or
         // red on its own sign. Recomputed here from the dollar move and the balance it is measured
         // against; a denominator <= 0 or missing yields null -- "verified null over a wrong-signed
         // number" -- because a percent of a negative or zero base has no meaning a reader can act on.

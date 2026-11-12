@@ -68,6 +68,7 @@ import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { isIsoCalendarDate, MAX_LOSS_EVENT_USD } from '../server/warehouse/placeholder-data';
+import { refuseIfSynthetic } from '../server/real-data-status';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -693,6 +694,9 @@ function defaultDbPath(): string {
 }
 
 function main(argv: string[]): number {
+  // Writes the warehouse from inputs that may be synthetic stand-ins: never on synthetic data outside
+  // CI / tests (refute round 4 F8).
+  refuseIfSynthetic('import-insurance-data');
   let args: CliArgs;
   try {
     args = parseArgs(argv);

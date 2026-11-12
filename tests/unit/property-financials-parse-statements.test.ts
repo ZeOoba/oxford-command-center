@@ -102,33 +102,33 @@ const AF_ROWS: Row[] = [
   { L: 'Amount', M: 'Amount' },
   {},
   { B: 'INCOME' },
-  { C: '     4700 Unallocated Prepays', L: 968 },
+  { C: '     4700 Unallocated Prepays', L: 500 },
   { C: '     5002 RENTAL INCOME' },
-  { C: '          5064 Rent', L: 9855 },
-  { C: '          5002 Total RENTAL INCOME', L: 9855 },
+  { C: '          5064 Rent', L: 4000 },
+  { C: '          5002 Total RENTAL INCOME', L: 4000 },
   { C: '     5019 SECURITY DEPOSIT ACTIVITY' },
-  { C: '          5070 Security Deposit', L: -2415 },
-  { C: '          5019 Total SECURITY DEPOSIT ACTIVITY', L: -2415 },
-  { B: 'TOTAL', D: 'INCOME', L: 8408 },
+  { C: '          5070 Security Deposit', L: -1200 },
+  { C: '          5019 Total SECURITY DEPOSIT ACTIVITY', L: -1200 },
+  { B: 'TOTAL', D: 'INCOME', L: 3300 },
   { B: 'EXPENSE' },
   { C: '     6160 REPAIR' },
-  { C: '          6240 Door Repair', L: 141 },
-  { C: '          6320 Misc Repair', L: 1508.25 },
-  { C: '          6160 Total REPAIR', L: REDACTED-AMT },
-  { B: 'TOTAL', D: 'EXPENSE', L: REDACTED-AMT },
+  { C: '          6240 Door Repair', L: 123 },
+  { C: '          6320 Misc Repair', L: 1234.25 },
+  { C: '          6160 Total REPAIR', L: 1357.25 },
+  { B: 'TOTAL', D: 'EXPENSE', L: 1357.25 },
   {},
-  { B: 'NOI', L: 6758.75 },
+  { B: 'NOI', L: 1942.75 },
   { B: 'N/O EXPENSE' },
   { C: '     7400 DEBT' },
-  { C: '          7402 Distribution to Owner', L: 5000 },
-  { C: '          7400 Total DEBT', L: 5000 },
-  { B: 'TOTAL', D: 'N/O EXPENSE', L: 5000 },
-  { B: 'NET INCOME', L: 1758.75 },
+  { C: '          7402 Distribution to Owner', L: 1000 },
+  { C: '          7400 Total DEBT', L: 1000 },
+  { B: 'TOTAL', D: 'N/O EXPENSE', L: 1000 },
+  { B: 'NET INCOME', L: 942.75 },
   {},
   { E: 'NET INCOME SUMMARY' },
-  { F: 'Income', J: 8408 },
-  { F: 'Expense', J: -REDACTED-AMT },
-  { F: 'NET INCOME', J: 1758.75 },
+  { F: 'Income', J: 3300 },
+  { F: 'Expense', J: -1357.25 },
+  { F: 'NET INCOME', J: 942.75 },
 ];
 
 describe('layout AF — AppFolio consolidated P&L', () => {
@@ -136,17 +136,17 @@ describe('layout AF — AppFolio consolidated P&L', () => {
     const out = parseAppFolioPl(sheet(AF_ROWS), '1100 Rarig');
     expect(out.periods).toEqual(['2023-10']);
     expect(nonTotals(out.records)).toEqual([
-      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', null, 'Unallocated Prepays', 968),
-      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', '5002 RENTAL INCOME', 'Rent', 9855),
-      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', '5019 SECURITY DEPOSIT ACTIVITY', 'Security Deposit', -2415),
-      rec('1100 Rarig', '2023-10', 'AF', 'EXPENSE', '6160 REPAIR', 'Door Repair', 141),
-      rec('1100 Rarig', '2023-10', 'AF', 'EXPENSE', '6160 REPAIR', 'Misc Repair', 1508.25),
-      rec('1100 Rarig', '2023-10', 'AF', 'NON OPERATING EXPENSE', '7400 DEBT', 'Distribution to Owner', 5000),
+      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', null, 'Unallocated Prepays', 500),
+      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', '5002 RENTAL INCOME', 'Rent', 4000),
+      rec('1100 Rarig', '2023-10', 'AF', 'INCOME', '5019 SECURITY DEPOSIT ACTIVITY', 'Security Deposit', -1200),
+      rec('1100 Rarig', '2023-10', 'AF', 'EXPENSE', '6160 REPAIR', 'Door Repair', 123),
+      rec('1100 Rarig', '2023-10', 'AF', 'EXPENSE', '6160 REPAIR', 'Misc Repair', 1234.25),
+      rec('1100 Rarig', '2023-10', 'AF', 'NON OPERATING EXPENSE', '7400 DEBT', 'Distribution to Owner', 1000),
     ]);
     const totals = out.records.filter((r) => r.isTotal).map((r) => [r.section, r.group, r.account, r.amount]);
-    expect(totals).toContainEqual(['INCOME', '5019 SECURITY DEPOSIT ACTIVITY', 'INCOME', 8408]);
-    expect(totals).toContainEqual(['EXPENSE', '6160 REPAIR', 'NOI', 6758.75]);
-    expect(totals).toContainEqual(['NON OPERATING EXPENSE', '7400 DEBT', 'NET INCOME', 1758.75]);
+    expect(totals).toContainEqual(['INCOME', '5019 SECURITY DEPOSIT ACTIVITY', 'INCOME', 3300]);
+    expect(totals).toContainEqual(['EXPENSE', '6160 REPAIR', 'NOI', 1942.75]);
+    expect(totals).toContainEqual(['NON OPERATING EXPENSE', '7400 DEBT', 'NET INCOME', 942.75]);
     // the summary block (columns E/F/J) is never read as accounts
     expect(out.records.some((r) => r.account === 'Income' || r.account === 'Expense')).toBe(false);
     expect(out.totalChecks).toBeGreaterThanOrEqual(5);
@@ -155,14 +155,14 @@ describe('layout AF — AppFolio consolidated P&L', () => {
   it('a group-level line that carries an amount is an account under the current group', () => {
     const rows = AF_ROWS.map((r) => ({ ...r }));
     rows.splice(14, 0, { C: '     5080 MISC', L: 10 }); // after the deposit group, before TOTAL INCOME
-    rows[14 + 1] = { B: 'TOTAL', D: 'INCOME', L: 8418 };
+    rows[14 + 1] = { B: 'TOTAL', D: 'INCOME', L: 3310 };
     const out = parseAppFolioPl(sheet(rows), 'X');
     expect(nonTotals(out.records)).toContainEqual(rec('X', '2023-10', 'AF', 'INCOME', '5019 SECURITY DEPOSIT ACTIVITY', 'MISC', 10));
   });
 
   it('fails naming file, sheet and row when a stated section total does not equal the sum of its accounts', () => {
     const rows = AF_ROWS.map((r) => ({ ...r }));
-    rows[14] = { B: 'TOTAL', D: 'INCOME', L: 8409 };
+    rows[14] = { B: 'TOTAL', D: 'INCOME', L: 3301 };
     expect(() => parseAppFolioPl(sheet(rows, { file: 'Rarig/ProfitLoss_1.xlsx', sheet: 'Sheet1' }), 'X')).toThrow(StatementParseError);
     try {
       parseAppFolioPl(sheet(rows, { file: 'Rarig/ProfitLoss_1.xlsx', sheet: 'Sheet1' }), 'X');
@@ -173,13 +173,13 @@ describe('layout AF — AppFolio consolidated P&L', () => {
       expect(err.row).toBe(15);
       expect(err.message).toMatch(/Rarig\/ProfitLoss_1\.xlsx/);
       expect(err.message).toMatch(/row 15/);
-      expect(err.message).toMatch(/8409/);
+      expect(err.message).toMatch(/3301/);
     }
   });
 
   it('fails on a group total that does not tie, and on a missing Amount header', () => {
     const rows = AF_ROWS.map((r) => ({ ...r }));
-    rows[19] = { C: '          6160 Total REPAIR', L: 1649 };
+    rows[19] = { C: '          6160 Total REPAIR', L: 1357 };
     expect(() => parseAppFolioPl(sheet(rows), 'X')).toThrow(/row 20/);
     const rows2 = AF_ROWS.map((r) => ({ ...r }));
     rows2[4] = { L: 'Total' };
@@ -198,10 +198,10 @@ describe('layout AF — AppFolio consolidated P&L', () => {
   it('a merged label replicated across columns (B..J = "INCOME") is still one section header, and TOTAL rows find their section past the replicated "TOTAL"', () => {
     const rows = AF_ROWS.map((r) => ({ ...r }));
     rows[6] = { B: 'INCOME', C: 'INCOME', D: 'INCOME' };
-    rows[14] = { B: 'TOTAL', C: 'TOTAL', D: 'INCOME', E: 'INCOME', L: 8408 };
+    rows[14] = { B: 'TOTAL', C: 'TOTAL', D: 'INCOME', E: 'INCOME', L: 3300 };
     const out = parseAppFolioPl(sheet(rows), 'X');
-    expect(nonTotals(out.records)[0]).toEqual(rec('X', '2023-10', 'AF', 'INCOME', null, 'Unallocated Prepays', 968));
-    expect(out.records.filter((r) => r.isTotal && r.account === 'INCOME' && r.amount === 8408)).toHaveLength(1);
+    expect(nonTotals(out.records)[0]).toEqual(rec('X', '2023-10', 'AF', 'INCOME', null, 'Unallocated Prepays', 500));
+    expect(out.records.filter((r) => r.isTotal && r.account === 'INCOME' && r.amount === 3300)).toHaveLength(1);
   });
 });
 
@@ -301,12 +301,12 @@ describe('layout CF — 12-month cash flow statement', () => {
       {},
       {},
       { A: ' RENTAL REVENUE' },
-      { A: '    Rental Revenue', B: REDACTED-AMT, C: REDACTED-AMT },
-      { A: ' TOTAL RENTAL REVENUE', B: REDACTED-AMT, C: REDACTED-AMT },
+      { A: '    Rental Revenue', B: 12345.6, C: 12345.6 },
+      { A: ' TOTAL RENTAL REVENUE', B: 12345.6, C: 12345.6 },
     ];
     const out = parseCashFlow12(sheet(rows), 'X');
     expect(out.periods).toEqual(['2025-09']);
-    expect(nonTotals(out.records)).toEqual([rec('X', '2025-09', 'CF', null, 'RENTAL REVENUE', 'Rental Revenue', REDACTED-AMT)]);
+    expect(nonTotals(out.records)).toEqual([rec('X', '2025-09', 'CF', null, 'RENTAL REVENUE', 'Rental Revenue', 12345.6)]);
   });
 
   it('an annual "Cash Flow Statement" (Period to Date column) yields one YYYY-FY period from column B', () => {
@@ -318,12 +318,12 @@ describe('layout CF — 12-month cash flow statement', () => {
       { B: ' Period to Date', C: '%', D: ' Year to Date', E: '%' },
       {},
       { A: ' RENTAL REVENUE' },
-      { A: '    Rental Revenue', B: REDACTED-AMT, C: 68.17, D: REDACTED-AMT, E: 68.17 },
-      { A: ' TOTAL RENTAL REVENUE', B: REDACTED-AMT, C: 68.36, D: REDACTED-AMT, E: 68.36 },
+      { A: '    Rental Revenue', B: 234567.8, C: 68.17, D: 234567.8, E: 68.17 },
+      { A: ' TOTAL RENTAL REVENUE', B: 234567.8, C: 68.36, D: 234567.8, E: 68.36 },
     ];
     const out = parseCashFlow12(sheet(rows), 'X');
     expect(out.periods).toEqual(['2024-FY']);
-    expect(nonTotals(out.records)).toEqual([rec('X', '2024-FY', 'CF', null, 'RENTAL REVENUE', 'Rental Revenue', REDACTED-AMT)]);
+    expect(nonTotals(out.records)).toEqual([rec('X', '2024-FY', 'CF', null, 'RENTAL REVENUE', 'Rental Revenue', 234567.8)]);
   });
 
   it('fails naming the row when a group total does not tie in some month', () => {
@@ -393,11 +393,11 @@ const A12_ROWS: Row[] = [
   { A: 'NOI', E: -242.5, F: -1200, I: 20, L: -1250, Q: 1800, R: -375, S: -1247.5 },
   { A: 'N/O EXPENSE' },
   { B: '    5060 Legal & Professional Fees' },
-  { B: '        5062 Legal Fees', E: 755, S: 755 },
-  { B: '        5060 Total Legal & Professional Fees', E: 755, S: 755 },
-  { B: '    6252 Vacant Utilities', E: 87.18, F: 0, S: 87.18 },
-  { A: 'TOTAL', C: 'N/O EXPENSE', E: 842.18, S: 842.18 },
-  { A: 'NET INCOME', E: -1084.68, S: -2089.68 },
+  { B: '        5062 Legal Fees', E: 700, S: 700 },
+  { B: '        5060 Total Legal & Professional Fees', E: 700, S: 700 },
+  { B: '    6252 Vacant Utilities', E: 80, F: 0, S: 80 },
+  { A: 'TOTAL', C: 'N/O EXPENSE', E: 780, S: 780 },
+  { A: 'NET INCOME', E: -1022.5, S: -2027.5 },
   {},
   { A: 'NET INCOME SUMMARY' },
   { B: 'Income', E: 12.5, S: 1857.5 },
@@ -422,8 +422,8 @@ describe('layout A12 — 12-month recap', () => {
     ]);
     const totals = out.records.filter((r) => r.isTotal && r.period === '2025-10').map((r) => [r.section, r.account, r.amount]);
     expect(totals).toContainEqual(['INCOME', 'INCOME', 12.5]);
-    expect(totals).toContainEqual(['NON OPERATING EXPENSE', 'N/O EXPENSE', 842.18]);
-    expect(totals).toContainEqual(['NON OPERATING EXPENSE', 'NET INCOME', -1084.68]);
+    expect(totals).toContainEqual(['NON OPERATING EXPENSE', 'N/O EXPENSE', 780]);
+    expect(totals).toContainEqual(['NON OPERATING EXPENSE', 'NET INCOME', -1022.5]);
     expect(out.records.some((r) => r.account === 'Income' || r.account === 'Expense')).toBe(false);
   });
 
@@ -446,18 +446,18 @@ describe('layout A12 — 12-month recap', () => {
       { B: 'Period Adjustments Excluded' },
       { E: 'SEP 25', S: 'TOTAL' },
       { B: '    4100 RENTAL PROPERTY INCOME' },
-      { B: '        4110 Rental Income', E: REDACTED-AMT, S: REDACTED-AMT },
-      { A: 'TOTAL', C: 'INCOME', E: REDACTED-AMT, S: REDACTED-AMT },
+      { B: '        4110 Rental Income', E: 11111.11, S: 11111.11 },
+      { A: 'TOTAL', C: 'INCOME', E: 11111.11, S: 11111.11 },
       { B: '    5500 CAM EXPENSES' },
-      { B: '        5115 CAM - Grounds', E: 580, S: 580 },
-      { B: '    5100 REPAIRS & MAINTENANCE', E: REDACTED-AMT, S: REDACTED-AMT },
-      { A: 'TOTAL', C: 'EXPENSE', E: 1309.24, S: 1309.24 },
+      { B: '        5115 CAM - Grounds', E: 500, S: 500 },
+      { B: '    5100 REPAIRS & MAINTENANCE', E: 222.22, S: 222.22 },
+      { A: 'TOTAL', C: 'EXPENSE', E: 722.22, S: 722.22 },
     ];
     const out = parseRecap12(sheet(rows), 'X');
     expect(nonTotals(out.records)).toEqual([
-      rec('X', '2025-09', 'A12', null, '4100 RENTAL PROPERTY INCOME', 'Rental Income', REDACTED-AMT),
-      rec('X', '2025-09', 'A12', null, '5500 CAM EXPENSES', 'CAM - Grounds', 580),
-      rec('X', '2025-09', 'A12', null, '5500 CAM EXPENSES', 'REPAIRS & MAINTENANCE', REDACTED-AMT),
+      rec('X', '2025-09', 'A12', null, '4100 RENTAL PROPERTY INCOME', 'Rental Income', 11111.11),
+      rec('X', '2025-09', 'A12', null, '5500 CAM EXPENSES', 'CAM - Grounds', 500),
+      rec('X', '2025-09', 'A12', null, '5500 CAM EXPENSES', 'REPAIRS & MAINTENANCE', 222.22),
     ]);
   });
 
@@ -476,43 +476,43 @@ describe('layout A12 — 12-month recap', () => {
 const QB_NEW_PLANT_ROWS: Row[] = [
   { E: 'Jan - Dec 24' },
   { B: 'Income' },
-  { C: 'Rents', E: REDACTED-AMT },
-  { C: 'Tax Refund', E: 1500 },
-  { B: 'Total Income', E: REDACTED-AMT },
+  { C: 'Rents', E: 200000.25 },
+  { C: 'Tax Refund', E: 1000 },
+  { B: 'Total Income', E: 201000.25 },
   { B: 'Expense' },
-  { C: 'Amortization Expense', E: REDACTED-AMT },
+  { C: 'Amortization Expense', E: 11000 },
   { C: 'Insurance', E: 0 },
-  { C: 'Interest Expense', E: REDACTED-AMT },
+  { C: 'Interest Expense', E: 33333.33 },
   { C: 'Tax' },
-  { D: 'Fed', E: 7000 },
-  { D: 'Property', E: 309 },
-  { C: 'Total Tax', E: 7309 },
-  { B: 'Total Expense', E: 83569.84 },
-  { A: 'Net Income', E: 343380.65 },
+  { D: 'Fed', E: 4000 },
+  { D: 'Property', E: 200 },
+  { C: 'Total Tax', E: 4200 },
+  { B: 'Total Expense', E: 48533.33 },
+  { A: 'Net Income', E: 152466.92 },
 ];
 
 const QB_SOLAR_ROWS: Row[] = [
   { G: 'Jan 1 - Jun 12, 26' },
   { B: 'Ordinary Income/Expense' },
   { D: 'Income' },
-  { E: 'Electricity Income -- PS', G: REDACTED-AMT },
-  { E: 'SREC Income', G: REDACTED-AMT },
-  { D: 'Total Income', G: REDACTED-AMT },
-  { C: 'Gross Profit', G: REDACTED-AMT },
+  { E: 'Electricity Income -- PS', G: 55555.55 },
+  { E: 'SREC Income', G: 66666.5 },
+  { D: 'Total Income', G: 122222.05 },
+  { C: 'Gross Profit', G: 122222.05 },
   { D: 'Expense' },
   { E: 'Bank Service Charges' },
-  { F: 'Wire Fee', G: 15 },
-  { F: 'Bank Service Charges - Other', G: 30 },
-  { E: 'Total Bank Service Charges', G: 45 },
-  { E: 'Insurance Expense', G: REDACTED-AMT },
-  { D: 'Total Expense', G: 13723.25 },
-  { B: 'Net Ordinary Income', G: 213790.64 },
+  { F: 'Wire Fee', G: 10 },
+  { F: 'Bank Service Charges - Other', G: 20 },
+  { E: 'Total Bank Service Charges', G: 30 },
+  { E: 'Insurance Expense', G: 7777.25 },
+  { D: 'Total Expense', G: 7807.25 },
+  { B: 'Net Ordinary Income', G: 114414.8 },
   { B: 'Other Income/Expense' },
   { C: 'Other Expense' },
-  { D: 'Tax -- Md State', G: 13400 },
-  { C: 'Total Other Expense', G: 13400 },
-  { B: 'Net Other Income', G: -13400 },
-  { A: 'Net Income', G: 200390.64 },
+  { D: 'Tax -- Md State', G: 5000 },
+  { C: 'Total Other Expense', G: 5000 },
+  { B: 'Net Other Income', G: -5000 },
+  { A: 'Net Income', G: 109414.8 },
 ];
 
 describe('layout QB — QuickBooks entity statement', () => {
@@ -521,20 +521,20 @@ describe('layout QB — QuickBooks entity statement', () => {
     expect(out.periods).toEqual(['2024-FY']);
     const e = '55 New Plant (EGFLLC)';
     expect(nonTotals(out.records)).toEqual([
-      rec(e, '2024-FY', 'QB', 'Income', null, 'Rents', REDACTED-AMT),
-      rec(e, '2024-FY', 'QB', 'Income', null, 'Tax Refund', 1500),
-      rec(e, '2024-FY', 'QB', 'Expense', null, 'Amortization Expense', REDACTED-AMT),
+      rec(e, '2024-FY', 'QB', 'Income', null, 'Rents', 200000.25),
+      rec(e, '2024-FY', 'QB', 'Income', null, 'Tax Refund', 1000),
+      rec(e, '2024-FY', 'QB', 'Expense', null, 'Amortization Expense', 11000),
       rec(e, '2024-FY', 'QB', 'Expense', null, 'Insurance', 0),
-      rec(e, '2024-FY', 'QB', 'Expense', null, 'Interest Expense', REDACTED-AMT),
-      rec(e, '2024-FY', 'QB', 'Expense', 'Tax', 'Fed', 7000),
-      rec(e, '2024-FY', 'QB', 'Expense', 'Tax', 'Property', 309),
+      rec(e, '2024-FY', 'QB', 'Expense', null, 'Interest Expense', 33333.33),
+      rec(e, '2024-FY', 'QB', 'Expense', 'Tax', 'Fed', 4000),
+      rec(e, '2024-FY', 'QB', 'Expense', 'Tax', 'Property', 200),
     ]);
     const totals = out.records.filter((r) => r.isTotal).map((r) => [r.section, r.group, r.account, r.amount]);
     expect(totals).toEqual([
-      ['Income', null, 'Total Income', REDACTED-AMT],
-      ['Expense', 'Tax', 'Total Tax', 7309],
-      ['Expense', null, 'Total Expense', 83569.84],
-      [null, null, 'Net Income', 343380.65],
+      ['Income', null, 'Total Income', 201000.25],
+      ['Expense', 'Tax', 'Total Tax', 4200],
+      ['Expense', null, 'Total Expense', 48533.33],
+      [null, null, 'Net Income', 152466.92],
     ]);
   });
 
@@ -544,12 +544,12 @@ describe('layout QB — QuickBooks entity statement', () => {
     const p = '2026-YTD(thru 2026-06-12)';
     const e = '1851 South Club Solar';
     expect(nonTotals(out.records)).toEqual([
-      rec(e, p, 'QB', 'Income', null, 'Electricity Income -- PS', REDACTED-AMT),
-      rec(e, p, 'QB', 'Income', null, 'SREC Income', REDACTED-AMT),
-      rec(e, p, 'QB', 'Expense', 'Bank Service Charges', 'Wire Fee', 15),
-      rec(e, p, 'QB', 'Expense', 'Bank Service Charges', 'Bank Service Charges - Other', 30),
-      rec(e, p, 'QB', 'Expense', null, 'Insurance Expense', REDACTED-AMT),
-      rec(e, p, 'QB', 'Other Expense', null, 'Tax -- Md State', 13400),
+      rec(e, p, 'QB', 'Income', null, 'Electricity Income -- PS', 55555.55),
+      rec(e, p, 'QB', 'Income', null, 'SREC Income', 66666.5),
+      rec(e, p, 'QB', 'Expense', 'Bank Service Charges', 'Wire Fee', 10),
+      rec(e, p, 'QB', 'Expense', 'Bank Service Charges', 'Bank Service Charges - Other', 20),
+      rec(e, p, 'QB', 'Expense', null, 'Insurance Expense', 7777.25),
+      rec(e, p, 'QB', 'Other Expense', null, 'Tax -- Md State', 5000),
     ]);
     // Gross Profit / Net Ordinary Income / Net Other Income are computed lines, never accounts
     expect(out.records.filter((r) => r.isTotal).map((r) => r.account)).toEqual([
@@ -566,7 +566,7 @@ describe('layout QB — QuickBooks entity statement', () => {
 
   it('fails on a Total that does not tie, on an unrecognised period header, and on an account outside any section', () => {
     const bad = QB_NEW_PLANT_ROWS.map((r) => ({ ...r }));
-    bad[12] = { C: 'Total Tax', E: 7310 };
+    bad[12] = { C: 'Total Tax', E: 4201 };
     expect(() => parseQuickBooks(sheet(bad), 'X')).toThrow(/row 13/);
     const bad2 = QB_NEW_PLANT_ROWS.map((r) => ({ ...r }));
     bad2[0] = { E: 'Q1 2024' };

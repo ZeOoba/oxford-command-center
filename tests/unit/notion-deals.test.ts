@@ -19,7 +19,7 @@ const page = (over: Record<string, unknown> = {}) => ({
     'Levered IRR': { type: 'number', number: 0.18 }, // decimal → unchanged
     'Equity Multiple': { type: 'number', number: 2.4 },
     Stage: { type: 'select', select: { name: 'Under Contract' } },
-    Lender: { type: 'rich_text', rich_text: [{ plain_text: 'REDACTED-672' }] },
+    Lender: { type: 'rich_text', rich_text: [{ plain_text: 'Firm 03' }] },
     'Deal Owner': { type: 'rich_text', rich_text: [{ plain_text: 'Gabriel' }] },
     'Next Action': { type: 'rich_text', rich_text: [{ plain_text: 'Order PCA' }] },
     ...over,

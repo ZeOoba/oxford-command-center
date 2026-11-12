@@ -3,6 +3,7 @@
 // Module 10 — Cost Segregation Property Data. A second source type next to the PCA reports: engineering takeoffs and
 // RSMeans / Marshall & Swift modeled pricing for tax classification. Never a condition assessment, never a reserve,
 // near-term, intensity or calibration input; quantities reach calibration only as pending candidates a human promotes.
+import { costGolden } from './golden-helpers';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,14 +79,21 @@ describe('committed dataset', () => {
     expect(ds.facts.every((f) => f.source_type === 'COST_SEG' && f.price_basis === 'COST_SEG_MODELED_RSMEANS_M&S')).toBe(true);
   });
 
-  it('class allocations tie to the study totals', () => {
-    const expected: Record<string, number> = { 'CS-RAR': REDACTED-AMT, 'CS-BWY': REDACTED-AMT, 'CS-RDB': REDACTED-AMT, 'CS-NWD': REDACTED-AMT, 'CS-LIV': 621600, 'CS-FIS': REDACTED-AMT };
-    for (const [id, total] of Object.entries(expected)) {
-      const s = ds.studies[id]!;
-      expect(s.total).toBe(total);
-      expect(allocationSum(s)).toBeCloseTo(total, 2);
+  it('class allocations tie to the study totals, and every total and class equals the value lock', () => {
+    // Exact values come from the gitignored data/cost-seg/golden.local.json (written only by
+    // `npm run golden:ratify`; in CI the committed synthetic copy), never from literals here.
+    const G = costGolden();
+    expect(Object.keys(G.studies).sort()).toEqual(Object.keys(ds.studies).sort());
+    for (const [id, s] of Object.entries(ds.studies)) {
+      expect(s.total, id).toBe(G.studies[id]!.total);
+      for (const [cls, v] of Object.entries(G.studies[id]!.alloc)) expect(s.alloc[cls], `${id} ${cls}`).toBe(v);
+      expect(allocationSum(s), id).toBeCloseTo(s.total, 2);
+      // the QC block carries the same total the allocation re-sums to
+      const qc = ds.qc.find((c) => c.check === id)!;
+      expect(qc.computed).toBeCloseTo(s.total, 2);
+      expect(qc.expected).toBeCloseTo(s.total, 2);
     }
-    expect(ds.studies['CS-NWD']!.alloc['9yr_ads']).toBe(2936); // Northwood includes ADS 9-yr property
+    expect(ds.studies['CS-NWD']!.alloc['9yr_ads']).toBeGreaterThan(0); // Northwood includes ADS 9-yr property
   });
 
   it('studyRegister recomputes the tie from the allocation (not from the stored flag) and keeps the QC result', () => {
@@ -103,10 +111,14 @@ describe('committed dataset', () => {
 
   it('Fishel 5-yr and 15-yr line items re-sum to the stated class totals (QC block)', () => {
     const q = (name: string) => ds.qc.find((c) => c.check === name)!;
-    expect(q('FIS 5yr detail')).toMatchObject({ computed: REDACTED-AMT, expected: REDACTED-AMT, ok: true });
-    expect(q('FIS 15yr detail')).toMatchObject({ computed: REDACTED-AMT, expected: REDACTED-AMT, ok: true });
-    expect(ds.studies['CS-FIS']!.alloc['5yr']).toBe(REDACTED-AMT);
-    expect(ds.studies['CS-FIS']!.alloc['15yr']).toBe(REDACTED-AMT);
+    const fis = ds.studies['CS-FIS']!;
+    const G = costGolden().studies['CS-FIS']!.alloc;
+    for (const [name, cls] of [['FIS 5yr detail', '5yr'], ['FIS 15yr detail', '15yr']] as const) {
+      expect(q(name).ok).toBe(true);
+      expect(q(name).computed).toBe(q(name).expected);
+      expect(q(name).expected).toBe(G[cls]);
+      expect(fis.alloc[cls]).toBe(G[cls]);
+    }
   });
 
   it('Livingston: 3883 roof surfaces sum to 9,040 SF and GBA 9,040 + 2,240 = 11,280 SF', () => {
@@ -198,7 +210,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
     expect(compareQuantity(11280, [11280])).toMatchObject({ status: 'match' });
     expect(compareQuantity(11280, [11100])).toMatchObject({ status: 'match' }); // 1.6%
     expect(compareQuantity(11280, [])).toMatchObject({ status: 'no-pca' });
-    expect(compareQuantity(53700, [REDACTED-AMT, 53700])).toMatchObject({ status: 'match' }); // any PCA value within tolerance
+    expect(compareQuantity(53700, [52900, 53700])).toMatchObject({ status: 'match' }); // any PCA value within tolerance
   });
 
   it('compareQuantity never divides by zero or trusts a non-positive quantity', () => {
@@ -233,7 +245,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
   });
 
   it('a per-building modeled roof is not flagged against a whole-property PCA total', () => {
-    const cmp = { propertyKey: 'northwood', buildingSf: [], pavingArea: [], doors: [], roofArea: [{ value: REDACTED-AMT, label: 'King', vintage: 'CURRENT', scoped: false }] };
+    const cmp = { propertyKey: 'northwood', buildingSf: [], pavingArea: [], doors: [], roofArea: [{ value: 50000, label: 'PCA', vintage: 'CURRENT', scoped: false }] };
     const per = crossCheck(ds.facts, 'CS-NWD', cmp).find((r) => r.metric === 'Roof area (per building, modeled)')!;
     expect(per.status).toBe('no-pca'); // only building-level PCA values could be compared
   });
@@ -307,7 +319,7 @@ describe('PCA vs cost-seg quantity cross-check', () => {
 describe('quantity bridge → calibration_pending only', () => {
   const proposal = (over: Record<string, unknown> = {}): CalibrationProposal =>
     CalibrationProposal.parse({
-      obs_id: 'e-fulton:roof_epdm:x:1', property: '9050 Red Branch Rd', component: 'roof_epdm', unit: 'SF', qty: null, pca_unit_cost: 5,
+      obs_id: 'e-fulton:roof_epdm:x:1', property: '9050 Red Branch Rd', component: 'roof_epdm', unit: 'SF', qty: null, pca_unit_cost: 4,
       pca_source: { consultant: 'PCI', report_date: '2025-01', source_file: 'f', source_date: '2025-01', price_basis: 'PCA_CONSULTANT_ESTIMATE', status: 'CURRENT' },
       contractor_unit_cost: null,
       contractor_source: { vendor: 'V', doc_date: '2026-01-01', status: 'BID', source_file: 'q', source_date: '2026-01-01', price_basis: 'CONTRACTOR_QUOTE' },
@@ -326,7 +338,7 @@ describe('quantity bridge → calibration_pending only', () => {
     expect(out.qty).toBe(52500);
     expect(out.qty_source).toBe('STATED');
     const filled = bridgeCostSegQuantities([proposal()], ds.facts)[0]!;
-    expect(filled.pca_unit_cost).toBe(5);
+    expect(filled.pca_unit_cost).toBe(4);
     expect(filled.contractor_unit_cost).toBeNull();
   });
 
@@ -398,7 +410,7 @@ describe('isolation — cost seg never feeds reserve / near-term / intensity / c
   it('PCA reserve / near-term / calibration outputs are identical before and after the cost seg code runs over the same data', () => {
     const pcaProp = {
       propertyKey: 'e-livingston', propertyLabel: 'Livingston', propertyMasterId: null, history: [], ageYears: 1, reservesPsfYr: null, hasDollarFigures: true,
-      current: { reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft' as const, usabilityRaw: null, sf: 10950, immediateUsd: 10400, shortTermUsd: 59000, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: 118129, termYears: 12, psfYrStated: null, notes: null },
+      current: { reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft' as const, usabilityRaw: null, sf: 10950, immediateUsd: 11000, shortTermUsd: 22000, reservesUninflUsd: 123456, reservesInflUsd: 130000, termYears: 12, psfYrStated: null, notes: null },
     };
     const report = { asOf: '2026-10-13', loaded: true, properties: [pcaProp], totals: { propertiesTotal: 1, propertiesWithFigures: 1, immediateUsd: 0, shortTermUsd: 0, reservesUninflUsd: 0 }, schedule: [], lifecycle: [], calibration: [], quotes: [], priceBook: [], openItems: [] };
     const ledger = parseLedger(JSON.parse(readFileSync(join(process.cwd(), 'data', 'calibration', 'observations.json'), 'utf-8')));
@@ -407,7 +419,7 @@ describe('isolation — cost seg never feeds reserve / near-term / intensity / c
     for (const id of Object.keys(ds.studies)) crossCheck(ds.facts, id, pcaComparators([], null, 10950));
     bridgeCostSegQuantities([], ds.facts);
     expect(snap()).toBe(before);
-    expect(JSON.parse(before).rollup.totalUsd).toBe(69400); // Livingston 10,400 + 59,000 — unmoved by cost seg
+    expect(JSON.parse(before).rollup.totalUsd).toBe(33000); // Livingston 11,000 + 22,000 (synthetic) — unmoved by cost seg
   });
 
   it('no cost seg fact carries PCA vintage / reserve fields, and every study_id has a study record', () => {

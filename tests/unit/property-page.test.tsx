@@ -10,32 +10,32 @@ import type { Lease, Property } from '../../src/contracts/index';
 const property = (over: Partial<Property>): Property => ({
   id: 'p1',
   index: 1,
-  name: '9050 Red Branch Rd, Columbia MD',
-  address: '9050 Red Branch Rd',
+  name: 'Example Flex Park, Anytown MD',
+  address: '100 Example Pkwy',
   city: null,
   state: null,
   market: 'Mid-Atlantic',
   type: 'Flex',
-  sf: 90000,
+  sf: 72000,
   tenantCount: 2,
-  occPct: 0.94,
+  occPct: 0.88,
   acqDate: null,
   estValue100: 1,
   oxfordOwnPct: 0.5,
   oxfordValue: 1,
-  grossIncome: REDACTED-AMT,
+  grossIncome: 431250,
   expenses: 0,
-  noi: REDACTED-AMT,
+  noi: 431250,
   noiScenarioAdj: 0,
   debtService: 0,
   netCashFlow: 0,
   capRate: null,
-  dscr: 3.74,
+  dscr: 2.41,
   lender: null,
   loanBalance: 0,
-  ltv: 0.154,
+  ltv: 0.237,
   valuePerSf: null,
-  rentPerSf: 6.08,
+  rentPerSf: 5.99,
   equityInvested: 0,
   cashOnCash: null,
   holdYrs: null,
@@ -46,21 +46,21 @@ const property = (over: Partial<Property>): Property => ({
 
 const lease: Lease = {
   id: 'L1',
-  propertyKey: '9050 Red Branch',
+  propertyKey: 'Example Flex Park',
   propertyId: 'p1',
-  tenantName: 'REDACTED-688',
-  unit: 'O',
+  tenantName: 'Tenant 214 LLC',
+  unit: 'K',
   company: null,
-  sf: 5000,
-  monthlyRent: REDACTED-AMT,
-  rentPerSf: 13.5,
+  sf: 3600,
+  monthlyRent: 3450,
+  rentPerSf: 11.5,
   leaseStart: null,
-  leaseEnd: '2027-02-28',
+  leaseEnd: '2027-04-30',
   escalationDate: null,
   escalationPct: null,
   status: 'Active',
-  annualRent: 67500,
-  monthsToExpiry: 4,
+  annualRent: 41400,
+  monthsToExpiry: 6,
   flags: [],
 };
 
@@ -77,13 +77,13 @@ vi.mock('../../src/brain/ui-context', () => ({ useUi: () => ({ openEntity: vi.fn
 vi.mock('../../src/modules/leasing/hooks', () => ({ useLeaseForecast: () => ({ data: undefined }) }));
 vi.mock('../../src/modules/property/hooks', () => ({
   usePropertyLedger: () => ({
-    entity: '9050 Red Branch',
+    entity: 'Example Flex Park',
     months: [],
     t12: [
-      { month: '2026-08', value: 900_000 },
-      { month: '2026-09', value: 912_000 },
+      { month: '2026-08', value: 780_000 },
+      { month: '2026-09', value: 795_000 },
     ],
-    sf: 90000,
+    sf: 72000,
   }),
   usePropertyOccupancy: () => null,
 }));
@@ -125,7 +125,7 @@ describe('PropertyPage', () => {
 
   it('lists the lease in the rollover ladder with an unsourced market rent', async () => {
     await renderAt('/property/p1');
-    expect(screen.getByText('REDACTED-688')).toBeTruthy();
+    expect(screen.getByText('Tenant 214 LLC')).toBeTruthy();
     expect(screen.getByText('0–12 months')).toBeTruthy();
     expect(screen.getByText('not yet sourced')).toBeTruthy();
   });

@@ -147,8 +147,8 @@ the same day.
 - **HubSpot sync UI trigger (PR #221).** `syncHubSpotPipeline()` / `POST /acq/sync/hubspot` (PR #203)
   had no frontend trigger — unlike the symmetric Notion sync. Added `handleHubSpotSync()` + a "Sync
   from HubSpot" button in `AcquisitionsModule.tsx`, mirroring the Notion pattern exactly. Live-verified
-  against the real HubSpot Acquisitions pipeline: 4 real deals (REDACTED-458, REDACTED-398,
-  REDACTED-367, REDACTED-340) currently have no path into `acq_candidates`. Button
+  against the real HubSpot Acquisitions pipeline: 4 real deals (200 Example Pkwy, Pipeline Deal 05,
+  Pipeline Deal 04, Pipeline Deal 06) currently have no path into `acq_candidates`. Button
   will 400 until Gabriel adds a `HUBSPOT_TOKEN` (Private App, `crm.objects.deals.read`) to `.env` —
   a credential, not something any PR sets. No scheduled/automatic sync added, matching Notion's
   existing manual-trigger-only design.
@@ -487,7 +487,7 @@ The intel module becomes an operating layer over the analytics engine — not an
   of the filtered set (`lib/export.downloadCsv`), with a live "_n_ of 137" count and filtered-rent total.
 - **Fix — rollover horizon no longer drops long-dated rent.** `rolloverSchedule` bucketed only
   `baseYear … baseYear+4` and silently discarded anything later; beyond-horizon expirations now roll
-  into a `YYYY+` catch-all (e.g. the 2033 leases that were invisible now appear as `2030+`, $934K).
+  into a `YYYY+` catch-all (e.g. the 2033 leases that were invisible now appear as `2030+`, [amount redacted]).
 - Tests: `criticalDates` (sort/horizon/overdue-holdover/past-escalation-drop) + rollover catch-all
   (90 total). Verified live against the baked 137-lease snapshot (filter, export, drill-through).
 
@@ -593,10 +593,10 @@ The intel module becomes an operating layer over the analytics engine — not an
 ## Phase 4 — Data-integrity polish (2026-06-03)
 
 - **#6 balloon precision (verified, then fixed).** Confirmed via the live Loan Index that it has **no
-  balloon-payment column** — the `$REDACTED-AMT` payoff lives only in a Monthly-Checklist task note, so a
+  balloon-payment column** — the balloon payoff lives only in a Monthly-Checklist task note, so a
   typed `balloonPayment` field would be fabricated and was NOT added. Instead standardized the
-  current-balance figure to full precision ($REDACTED-AMT) in the balloon insight and the Debt "Balloon
-  watch" so it matches the loan drawer and never reads as two different numbers ($981K vs $REDACTED-AMT).
+  current-balance figure to full precision in the balloon insight and the Debt "Balloon
+  watch" so it matches the loan drawer and never reads as two different numbers (a rounded vs an exact balance).
   Test asserts the balloon metric is full precision.
 - **#7 count unit label.** Added an explicit caption to the Portfolio view: "N investment assets · the
   Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share."
@@ -656,11 +656,11 @@ The intel module becomes an operating layer over the analytics engine — not an
 - **Value by Market shows value, not NOI (Defect 3).** Added `marketByValue` to the analytics bundle
   and bound it in `PortfolioModule`. Regression test in `tests/unit/analytics.test.ts`.
 - **Counterparty contact identity (Defect 4).** `deriveCounterparties` no longer copies a person's
-  email/notes onto a same-named derived firm (the lender "REDACTED-672" no longer carries the title
+  email/notes onto a same-named derived firm (the lender "Firm 03" no longer carries the title
   coordinator's address). Regression test: `tests/unit/counterparties.test.ts`.
 - **Task banner ingestion (Defect 9, upgraded from Low).** `parseTasks` now rejects Monthly-Checklist
   banner/summary rows (`isTaskBannerRow`) that were ingested as junk task cards. Verified end-to-end:
-  banner smears gone, the legit `$REDACTED-AMT` balloon-payoff task preserved. Regression test in
+  banner smears gone, the legit balloon-payoff task preserved. Regression test in
   `tests/unit/parse.test.ts`.
 - **Scheduled freshness (local).** Added `scripts/deploy-mirror.ps1` (bake confidential → deploy →
   re-verify Access 302) and `scripts/register-mirror-task.ps1` (daily Windows scheduled task). Chosen

@@ -49,14 +49,14 @@ describe('mergeDeals — the id is the whole join', () => {
   it('JOINS rows whose names are completely different, because the ids agree', () => {
     // The alias map existed for exactly this and was a standing source of defects. The id makes the
     // names irrelevant: NOTION_DEALS_NAME_ALIASES is retired, not replaced.
-    const seed = [deal({ id: 'seed-fulton', name: 'REDACTED-260', notionDealId: 'DEAL-3' })];
+    const seed = [deal({ id: 'seed-fulton', name: 'Pipeline Deal 02', notionDealId: 'DEAL-3' })];
     const live = [deal({ id: 'n', name: 'E Fulton Street Portfolio — Columbus, OH', notionDealId: 'DEAL-3', estPrice: 4_200_000 })];
     const flags: DataQualityFlag[] = [];
     const out = mergeDeals(seed, live, flags);
 
     expect(out).toHaveLength(1);
     expect(out[0]!.id).toBe('seed-fulton');
-    expect(out[0]!.name).toBe('REDACTED-260'); // seed identity preserved
+    expect(out[0]!.name).toBe('Pipeline Deal 02'); // seed identity preserved
     expect(out[0]!.estPrice).toBe(4_200_000); // live economics merged
     expect(flags).toHaveLength(0);
   });
@@ -64,8 +64,8 @@ describe('mergeDeals — the id is the whole join', () => {
   it('does NOT join two rows with IDENTICAL names when the ids differ', () => {
     // The CRITICAL cross-side wrong merge, stated as an invariant. Under the name key this merged
     // one deal's economics into the other's identity and published it under the seed's public flag.
-    const seed = [deal({ id: 'seed-a', name: 'REDACTED-401', notionDealId: 'DEAL-1', confidential: false })];
-    const live = [deal({ id: 'n', name: 'REDACTED-401', notionDealId: 'DEAL-99', estPrice: 9_000_000 })];
+    const seed = [deal({ id: 'seed-a', name: '100 Example Blvd', notionDealId: 'DEAL-1', confidential: false })];
+    const live = [deal({ id: 'n', name: '100 Example Blvd', notionDealId: 'DEAL-99', estPrice: 9_000_000 })];
     const flags: DataQualityFlag[] = [];
     const out = mergeDeals(seed, live, flags);
 
@@ -157,8 +157,8 @@ describe('mergeDeals — a missing or duplicate id REFUSES; it never falls back 
 
 describe('mergeDeals — the migration tripwire: names are evidence for DETECTION, never for merging', () => {
   it('warns when an unjoined seed and an unjoined live row look like one deal', () => {
-    const seed = [deal({ id: 'seed-pendleton', name: 'REDACTED-340', notionDealId: null })];
-    const live = [deal({ id: 'n', name: 'REDACTED-340 — Pendleton, IN', notionDealId: 'DEAL-8' })];
+    const seed = [deal({ id: 'seed-pendleton', name: 'Pipeline Deal 06', notionDealId: null })];
+    const live = [deal({ id: 'n', name: 'Pipeline Deal 06 — Pendleton, IN', notionDealId: 'DEAL-8' })];
     const flags: DataQualityFlag[] = [];
     const out = mergeDeals(seed, live, flags);
 
@@ -223,10 +223,10 @@ describe('mergeDeals — REFUTE: a re-created Notion row must not publish twice 
     // enriching from the ABANDONED one — stale price/stage published as live, gate green. This is
     // the 2026-08-04 Pendleton/2146 incident class, and the tripwire could not see it because a
     // JOINED seed never enters unjoinedSeeds.
-    const seed = [deal({ id: 'seed-p', name: 'REDACTED-340', notionDealId: 'DEAL-8' })];
+    const seed = [deal({ id: 'seed-p', name: 'Pipeline Deal 06', notionDealId: 'DEAL-8' })];
     const live = [
-      deal({ id: 'n-old', name: 'REDACTED-340', notionDealId: 'DEAL-8', estPrice: 1 }),
-      deal({ id: 'n-new', name: 'REDACTED-340', notionDealId: 'DEAL-31', estPrice: 2 }),
+      deal({ id: 'n-old', name: 'Pipeline Deal 06', notionDealId: 'DEAL-8', estPrice: 1 }),
+      deal({ id: 'n-new', name: 'Pipeline Deal 06', notionDealId: 'DEAL-31', estPrice: 2 }),
     ];
     const flags: DataQualityFlag[] = [];
     const out = mergeDeals(seed, live, flags);
@@ -249,8 +249,8 @@ describe('mergeDeals — REFUTE: a re-created Notion row must not publish twice 
     // The documented steady state, and the reason the old detector needed an acceptance hatch.
     // Exact-key matching plus the locality tail handles it with no config at all.
     const live = [
-      deal({ id: 'n1', name: 'REDACTED-185', notionDealId: 'DEAL-50' }),
-      deal({ id: 'n2', name: 'REDACTED-401 — Louisville, KY', notionDealId: 'DEAL-51' }),
+      deal({ id: 'n1', name: '100 Example Blvd — Columbus, OH', notionDealId: 'DEAL-50' }),
+      deal({ id: 'n2', name: '100 Example Blvd — Louisville, KY', notionDealId: 'DEAL-51' }),
     ];
     const flags: DataQualityFlag[] = [];
     mergeDeals([], live, flags);
@@ -260,8 +260,8 @@ describe('mergeDeals — REFUTE: a re-created Notion row must not publish twice 
   it('does NOT suppress when only one side carries a locality tail', () => {
     // A missing tail cannot establish distinctness, so it must not buy silence.
     const live = [
-      deal({ id: 'n1', name: 'REDACTED-401', notionDealId: 'DEAL-50' }),
-      deal({ id: 'n2', name: 'REDACTED-401 — Louisville, KY', notionDealId: 'DEAL-51' }),
+      deal({ id: 'n1', name: '100 Example Blvd', notionDealId: 'DEAL-50' }),
+      deal({ id: 'n2', name: '100 Example Blvd — Louisville, KY', notionDealId: 'DEAL-51' }),
     ];
     const flags: DataQualityFlag[] = [];
     mergeDeals([], live, flags);

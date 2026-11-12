@@ -33,7 +33,7 @@ describe('diffCriticalAlerts', () => {
 // `[...currentCriticalIds]`, so the persisted set was OVERWRITTEN with the current set every
 // run. Any condition that transiently vanished from the snapshot was forgotten and re-alerted
 // on reappearance. Proof it was flapping rather than a wiped state file: on 2026-07-24 the
-// 14:00 run re-sent ONLY REDACTED-562 while CJ's/REDACTED-677/REDACTED-639 stayed quiet — REDACTED-562
+// 14:00 run re-sent ONLY Fixture Countertops while Example Tint/Example Hood/Tenant 035 LLC stayed quiet — Fixture Countertops
 // dropped out of the 13:01 run and came back. The upstream snapshot is known-unstable
 // (parseleases phantom-lease and Notion seed-fallback regressions).
 // Ruling (Gabriel, 2026-08-11): sticky state + confirm-clear — a condition must be absent for
@@ -41,45 +41,45 @@ describe('diffCriticalAlerts', () => {
 describe('diffCriticalAlerts — confirm-clear before forgetting a condition', () => {
   // NOTE ON FIXTURES: every case below keeps a co-present 'anchor' condition in the current
   // set. That is not incidental — it models the incident accurately. At 13:01 on 07-24 the run
-  // DID produce criticals (REDACTED-663 alerted); REDACTED-562 alone dropped out. A fixture passing
+  // DID produce criticals (Tenant Kappa alerted); Fixture Countertops alone dropped out. A fixture passing
   // an EMPTY current set would instead exercise the total-outage guard further down, which
   // holds everything and would make these assertions meaningless.
   const withAnchor = (ids: string[]): AlertState => ({ ...emptyState, alertedCriticalIds: ['anchor', ...ids] });
   const step = (current: string[], prev: { nextAlerted: string[]; nextClearStreaks: Record<string, number> }) =>
     diffCriticalAlerts(current, { ...emptyState, alertedCriticalIds: prev.nextAlerted, clearStreaks: prev.nextClearStreaks });
 
-  it('a single-run dropout does NOT forget the condition (the 07-24 REDACTED-562 case)', () => {
-    const r = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    expect(r.nextAlerted).toContain('granite');
-    expect(r.nextClearStreaks['granite']).toBe(1);
+  it('a single-run dropout does NOT forget the condition (the 07-24 Fixture Countertops case)', () => {
+    const r = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    expect(r.nextAlerted).toContain('counters');
+    expect(r.nextClearStreaks['counters']).toBe(1);
   });
 
   it('the condition reappearing after a one-run dropout does NOT re-alert', () => {
-    const afterDropout = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    const onReturn = step(['anchor', 'granite'], afterDropout);
+    const afterDropout = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    const onReturn = step(['anchor', 'counters'], afterDropout);
     expect(onReturn.toAlert).toEqual([]); // this is the whole defect
   });
 
   it('absent for K consecutive runs → genuinely forgotten', () => {
-    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
+    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
     const run2 = step(['anchor'], run1);
-    expect(run2.nextAlerted).not.toContain('granite');
-    expect(run2.nextClearStreaks['granite']).toBeUndefined();
+    expect(run2.nextAlerted).not.toContain('counters');
+    expect(run2.nextClearStreaks['counters']).toBeUndefined();
   });
 
   it('a genuinely-resolved condition re-alerts if it later recurs', () => {
-    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
+    const run1 = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
     const run2 = step(['anchor'], run1);
-    const recurrence = step(['anchor', 'granite'], run2);
-    expect(recurrence.toAlert).toEqual(['granite']);
+    const recurrence = step(['anchor', 'counters'], run2);
+    expect(recurrence.toAlert).toEqual(['counters']);
   });
 
   it('a reappearance RESETS the clear streak (no slow leak to forgotten)', () => {
-    const dropout = diffCriticalAlerts(['anchor'], withAnchor(['granite']));
-    const back = step(['anchor', 'granite'], dropout);
-    expect(back.nextClearStreaks['granite']).toBeUndefined();
+    const dropout = diffCriticalAlerts(['anchor'], withAnchor(['counters']));
+    const back = step(['anchor', 'counters'], dropout);
+    expect(back.nextClearStreaks['counters']).toBeUndefined();
     const dropAgain = step(['anchor'], back);
-    expect(dropAgain.nextAlerted).toContain('granite'); // streak restarted at 1, not 2
+    expect(dropAgain.nextAlerted).toContain('counters'); // streak restarted at 1, not 2
   });
 
   it('tracks several conditions independently', () => {

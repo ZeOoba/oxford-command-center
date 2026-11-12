@@ -158,15 +158,15 @@ describe('LeaseForecastModule — leases outside the four buckets', () => {
     renderModule('/leasing', {
       forecast: {
         signals: [
-          sig('a', 'expired', true, REDACTED-AMT),
-          sig('b', 'expired', true, REDACTED-AMT),
+          sig('a', 'expired', true, 7_215.4),
+          sig('b', 'expired', true, 3_960),
           sig('c', 'expired', false, 0),
           sig('d', 'unknown', false, 600),
         ] as unknown as LeaseForecastResponse['signals'],
       },
     });
     expect(
-      screen.getByText('4 leases not in a bucket: 2 month-to-month past end date ($13K/yr), 1 expired ($0/yr), 1 with no end date ($600/yr).'),
+      screen.getByText('4 leases not in a bucket: 2 month-to-month past end date ($11K/yr), 1 expired ($0/yr), 1 with no end date ($600/yr).'),
     ).toBeTruthy();
   });
 

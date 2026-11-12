@@ -133,7 +133,7 @@ A refresh without the conversion step reports every `.xls` as UNREADABLE and exi
 5. Rows sharing `(entity, period, line_type, category, source_account)` are summed to cents into one row (the same account label can sit under two statement groups and the CSV has no group column).
 6. Zero-amount rows are kept (the cash-flow layouts print the full account grid monthly; the committed CSV carries 7,342 of them).
 7. Sort: monthly-kind entities first, then annual-kind; within a block by `entity, period, line_type, category, source_account` in code-point order; ties keep input order.
-8. Render: header `entity,period,line_type,category,source_account,amount_usd`, CRLF, RFC 4180 quoting, amounts in Python float repr (`141.0`, `1508.25`).
+8. Render: header `entity,period,line_type,category,source_account,amount_usd`, CRLF, RFC 4180 quoting, amounts in Python float repr (`123.0`, `1234.25`).
 
 Rounding everywhere uses Python semantics (`pyfloat.ts`: round-half-to-even on the exact binary value), because the committed files were produced in Python and the tests require a byte-level / deep-equal reproduction.
 
@@ -180,9 +180,9 @@ Livingston / FVC ones are labelled Jan–Dec yet hold Jan–Jun data) and are in
 The single-month recap for 2025-09 prints every label in column C, including the section headers. The reference
 parser read sections from column A only, saw none, and the v1 rules `A12-NOSECTION-*` map the 11 rows as revenue
 (T9a finding 1). The T9b parser finds the label column per row and reads `INCOME` / `EXPENSE` / `N/O EXPENSE`,
-so for 2025-09: revenue −$REDACTED-AMT (CAM − Grounds / Utilities / Trash, REPAIRS & MAINTENANCE, MANAGEMENT FEE
-EXPENSE, Legal Fees, Bank Fees, Vacant Utilities become opex), opex +$REDACTED-AMT, NOI −$13,075.22 versus the
-reference's figures. Promoted on 2026-10-05: the rebuild differed from the previous committed files only under
+so for 2025-09 those lines move out of revenue (CAM − Grounds / Utilities / Trash, REPAIRS & MAINTENANCE, MANAGEMENT FEE
+EXPENSE, Legal Fees, Bank Fees, Vacant Utilities become opex): revenue falls and opex rises by the same amount, and
+NOI falls by twice that amount versus the reference's figures. Promoted on 2026-10-05: the rebuild differed from the previous committed files only under
 `9620 State 350` (FY2025 / YTD25 / TTM25, yoy, monthly, movers, history; TTM26 unchanged); 9620 is
 lease-up-excluded so no portfolio view moved. The recap's MANAGEMENT FEE EXPENSE line sits under the carried
 `5500 CAM EXPENSES` group, so mapping v2 gained `A12-EXP-MGMT-ANY-GROUP` to file it as Management fees like
@@ -194,8 +194,8 @@ differences); before/after figures are in `data/property-financials/data-diction
 Before v3 the AppFolio `Unallocated Prepays` line was excluded (`AF-INC-UNALLOCATED-PREPAYS`) while the Yardi
 cash-flow `RENTAL REVENUE › Prepaid Rental Income` line was revenue under "Vacancy / waivers / bad debt"
 (`CF-RENTAL-REVENUE-CONTRA`). v3 excludes the Yardi line too. It exists only for 1900 Broadway and 9050 Red Branch
-(133 rows each, 2015-09..2026-09; net +$REDACTED-AMT and +$REDACTED-AMT over the whole history, but swinging up to $27.8K in a
-month). 29000 Info Lane carries its prepaid rent only as `ADJUSTMENTS › Prepaid Rent`, already excluded by
+(133 rows each, 2015-09..2026-09; a small net amount over the whole history, but swinging by tens of thousands of
+dollars in a month). 29000 Info Lane carries its prepaid rent only as `ADJUSTMENTS › Prepaid Rent`, already excluded by
 `CF-ADJ-BALANCE-SHEET`, so it does not move. The rebuild removed exactly those 266 CSV rows (15,493 → 15,227) and
 differed from the committed dataset only under Broadway, Red Branch and the four same-store / PM-only portfolio
 views (revenue and NOI only; base rent, reimbursements, opex and capex unchanged). The FY2024 / FY2025 Yardi annual

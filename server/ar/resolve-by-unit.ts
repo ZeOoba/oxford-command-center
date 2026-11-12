@@ -158,7 +158,7 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
  *
  * "Dead" widened from Expired-only to the shared isDeadLease predicate on 2026-09-14 (weekly
  * financial-code sweep, Fix A): a 'Vacant' record and an Active lease with annualRent 0 (real row:
- * Evans Gymnastics, 2207 Northwood A15, $REDACTED-AMT AR -- a placeholder that bills nothing) were
+ * Example Gymnastics, 2207 Northwood A15, with a live AR balance -- a placeholder that bills nothing) were
  * still counted as LIVE here and took a clean 'exact' hit with no review. Both the single-hit
  * refusal and the dead-sibling downgrade now apply to every dead status, and the same predicate
  * gates the name-matcher's roster (scripts/ar-import-headless.ts loadLeasesFromSnapshot) so the two
@@ -192,7 +192,7 @@ export function resolveByUnit(
  * -- the raw hit set resolveByUnit filters for liveness. Exported (2026-09-14 sweep, Fix B) so the
  * headless importer can name who the roster puts at a unit when a Format B row lands in the review
  * queue: the row carries no tenant name, so without this a durable name-keyed SKIP ruling in the
- * mapping cache (e.g. "REDACTED-486": "SKIP") is invisible to a human reading the queue. It is a
+ * mapping cache (e.g. "tenant 059 llc": "SKIP") is invisible to a human reading the queue. It is a
  * DISPLAY aid only -- never a matching input; Format B resolution stays unit-only and set-exact.
  * Returns [] for an unresolved property or an annotation-only label, mirroring resolveByUnit.
  */

@@ -6,7 +6,7 @@ import { isTombstonedLoanRow } from '../../server/workbook/parse';
  * in place rather than deleting, so the workbook keeps its own audit trail. Live example
  * (Loan Index r24, 2026-08-05):
  *
- *   idx 13 | "⚠ DUPLICATE OF ROW 22 — DO NOT USE" | REDACTED-493 (EGFLLC) | 0
+ *   idx 13 | "⚠ DUPLICATE OF ROW 22 — DO NOT USE" | Firm 08 (EGFLLC) | 0
  *
  * The parser ingested that as a real loan, giving it a snapshot id
  * (`internal-duplicate-of-row-22-do-not-use`) and therefore a key in `debt_positions`,
@@ -37,13 +37,13 @@ describe('isTombstonedLoanRow', () => {
       '29000 Information Lane',
       'Banwick / Morrison',
       '3883 from Oxford',
-      'REDACTED-378',
-      'REDACTED-306',
-      'REDACTED-415',
-      'REDACTED-337',
-      'REDACTED-438',
-      'REDACTED-409',
-      'REDACTED-372',
+      'Note Party 01',
+      'Note Party 02',
+      'Note Party 03',
+      'Note Party 04',
+      'NOTE PARTY 05',
+      'NOTE PARTY 06',
+      'Note Party 07',
       '2203-2207 Northwood',
     ]) {
       expect(isTombstonedLoanRow(name), `${name} must NOT be treated as a tombstone`).toBe(false);

@@ -30,7 +30,7 @@ export function portfolioLtvSentence(k: PortfolioKpis): string {
 /**
  * checkDebtBasis (server/reconcile-runtime.ts) emits per-row flags (`debt.basis.property.<id>`,
  * `debt.basis.loan.<id>`) and aggregate ones (`debt.basis`, `debt.basis.affiliate`). On live data the
- * only flag is the affiliate aggregate ($1.10M property rows vs $385K loan schedule) — calling that
+ * only flag is the affiliate aggregate (the property-row balance vs the smaller loan-schedule balance) — calling that
  * "1 row" would misstate it, so rows and aggregate totals are counted separately.
  */
 export function debtBasisNote(flags: readonly DataQualityFlag[]): string | null {

@@ -4,17 +4,17 @@
 // everything here works on the document list and on rows the worker already returned, so it is cheap to test
 // and cannot touch the index.
 //
-// WHY (measured 2026-10-14, live index of 150,656 chunks): a pure vector search ranked the REDACTED-659 renewal
-// clause 55th-127th for every phrasing of "what is the renewal option in the REDACTED-659 lease", because ~450
+// WHY (measured 2026-10-14, live index of 150,656 chunks): a pure vector search ranked the Dibita renewal
+// clause 55th-127th for every phrasing of "what is the renewal option in the Dibita lease", because ~450
 // chunks in ~370 documents carry near-identical "option to renew" boilerplate (scores are flat, 0.51-0.63) and
 // identical copies of one file (Master Lease Database) fill result slots. The agent only ever saw the top 5.
 //
 // The fix has four parts, all here:
 //  1. ENTITY DETECTION FROM THE CORPUS: a word in the question counts as a name only if it actually occurs in
 //     document PATHS (a vocabulary built from the index's own document list) and is distinctive (few documents).
-//     Capitalized / ALL-CAPS / numeric words win over lowercase ones, so "…for REDACTED-659" beats "…expense…".
+//     Capitalized / ALL-CAPS / numeric words win over lowercase ones, so "…for Dibita" beats "…expense…".
 //     This replaced a stop-word heuristic that dropped real names behind generic words and could never see
-//     short ("IMH") or non-ASCII ("Café") names.
+//     short ("QRT") or non-ASCII ("Café") names.
 //  2. SCOPE BY EXACT DOCUMENTS: the entity words pick a bounded set of document names; the worker fetches
 //     exactly those documents' chunks (no substring guessing, size known in advance).
 //  3. RE-RANK: one path-match boost (not per word, so generic path words cannot out-vote the name), a text-match
@@ -28,7 +28,7 @@ import type { KnnRow } from './doc-index-protocol';
 export const PATH_TERM_BOOST = 0.12;
 /** Added for each ADDITIONAL entity word in the path (max 2 extra) — a small tie-breaker, never a vote. */
 export const PATH_EXTRA_BOOST = 0.02;
-/** Added when the question names SEVERAL entities and the path contains ALL of them ("REDACTED-437": the
+/** Added when the question names SEVERAL entities and the path contains ALL of them ("Example Grill": the
  *  Grill extension beats the 20 other Westminster-only tenant leases). Never applies to a single entity word, and a
  *  document matching only some words never gets it, so generic words still cannot out-vote the name. */
 export const ALL_TERMS_BOOST = 0.08;
@@ -38,13 +38,13 @@ export const TEXT_TERM_BOOST = 0.03;
 export const DRAFT_PENALTY = 0.06;
 /** Most entity words we act on. 6, not 4: the scope is an INTERSECTION of the words' documents, so extra words
  *  narrow it rather than widen it, and a low cap let incidental one-document words ("Avenue") crowd out a real
- *  name ("IMH") when picking the rarest. */
+ *  name ("QRT") when picking the rarest. */
 export const MAX_ENTITY_TERMS = 6;
 /** A word in more than this many documents is too common to be a name. */
 export const MAX_TERM_DOCS = 120;
 /** Most documents an entity lookup may scope to. */
 export const MAX_SCOPED_DOCS = 200;
-/** Shortest word that may be a name ("IMH", "UPS"). */
+/** Shortest word that may be a name ("QRT", "UPS"). */
 export const MIN_TERM_LENGTH = 3;
 
 /** Generic lease/question words that never identify a document. */

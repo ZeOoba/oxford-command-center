@@ -60,11 +60,11 @@ describe('warehouse contracts', () => {
       period: '2025',
       rawAccount: 'Rent',
       glCode: '5064',
-      amount: REDACTED-AMT,
+      amount: 111111.11,
       normalizedCategory: 'Rental Revenue',
       classification: 'revenue',
     });
-    expect(e.amount).toBeCloseTo(REDACTED-AMT);
+    expect(e.amount).toBeCloseTo(111111.11);
     expect(ImportStatus.parse('pending-review')).toBe('pending-review');
   });
 
@@ -89,9 +89,9 @@ describe('warehouse contracts', () => {
       grain: 'year',
       basis: 'cash',
       sourceSystem: 'quickbooks',
-      accounts: [{ code: '5064', name: 'Rent', section: 'INCOME', parent: 'RENTAL INCOME', total: REDACTED-AMT }],
-      totalIncome: REDACTED-AMT,
-      totalExpense: REDACTED-AMT,
+      accounts: [{ code: '5064', name: 'Rent', section: 'INCOME', parent: 'RENTAL INCOME', total: 111111.11 }],
+      totalIncome: 113333.33,
+      totalExpense: 25444.44,
     });
     expect(s.accounts).toHaveLength(1);
   });

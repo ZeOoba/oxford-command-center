@@ -29,7 +29,9 @@ export function loadDataset(): PfDataset {
 // monthly-long.csv — LOCAL-ONLY audit layer (Gabriel ruling 2026-10-06)
 // -------------------------------------------------------------------------------------------------
 // The GL-level CSV is gitignored and was purged from branch history (the pre-push confidential scan
-// blocks CSVs under data/). dataset.json and data-dictionary.md stay committed. On a checkout without
+// blocks CSVs under data/). dataset.json and data-dictionary.md are local-only too since 2026-11-10 (real
+// firm data is never tracked); a checkout without them runs on the synthetic stand-ins seeded from
+// fixtures/synthetic/ by scripts/ensure-local-data.ts. On a checkout without
 // the CSV (hosted CI, a fresh clone) every test that needs it SKIPS — never fails, never passes on
 // empty data — and auditCsvSkipMarker() puts a visible skipped entry carrying the reason in the report.
 

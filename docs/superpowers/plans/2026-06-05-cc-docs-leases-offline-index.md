@@ -57,8 +57,8 @@ describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/di
     expect(isLikelyNonLease('Sepich Portfolio/Leases/2012 Zettler Agency Disclosure.pdf')).toBe(true);
   });
   it('keeps real leases and legitimate lease components', () => {
-    expect(isLikelyNonLease('1100 Rarig/Leases/REDACTED-659 Lease.pdf')).toBe(false);
-    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A REDACTED-699 Lease 01-2025.pdf')).toBe(false);
+    expect(isLikelyNonLease('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf')).toBe(false);
+    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A Example Sports Lease 01-2025.pdf')).toBe(false);
     expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
   });
   it('matches via separator normalization (Windows backslash paths)', () => {
@@ -73,7 +73,7 @@ And extend the existing `matchesIndexFilters` describe with a non-lease case:
   it('drops non-lease docs even under a Leases folder', () => {
     expect(matchesIndexFilters('Sepich Portfolio/Leases/2019 Sepich I- P&L.pdf', LEASES_RE)).toBe(false);
     expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
-    expect(matchesIndexFilters('1100 Rarig/Leases/REDACTED-659 Lease.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('1100 Rarig/Leases/Tenant 155 LLC Lease.pdf', LEASES_RE)).toBe(true);
   });
 ```
 
@@ -347,12 +347,12 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
 
       const { index, docs, builtAt } = loadDiskIndex(dbPath);
       expect(index.chunks.length).toBe(3);
-      expect(docs.length).toBe(3); // REDACTED-659, Roof, Rent
+      expect(docs.length).toBe(3); // Tenant 155 LLC, Roof, Rent
       expect(builtAt).toMatch(/\d{4}-\d{2}-\d{2}T/); // ISO timestamp persisted
 
       const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
-      expect(hits[0]!.doc).toBe('REDACTED-659 Lease.pdf');
-      expect(hits[0]!.docId).toBe('REDACTED-659');
+      expect(hits[0]!.doc).toBe('Tenant 155 LLC Lease.pdf');
+      expect(hits[0]!.docId).toBe('tenant 155 llc');
       expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
       index.close();
     } finally {

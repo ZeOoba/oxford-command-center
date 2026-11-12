@@ -83,7 +83,7 @@ PR-A must merge first. B–E are logically independent but all edit `routing.ts`
 ## 3. Pre-flight failure modes (assume each will happen)
 
 1. **Capital's early returns block Debt/Cash/Close** (`CapitalModule.tsx:239-251` returns a skeleton/"warehouse offline" card *before* the tab strip). Left as-is, the static mirror shows a dead Capital page and Debt/Cash/Close are unreachable. → Task 4 moves the gates inside the two warehouse-backed panels; test asserts Debt renders with the capital queries failing. **Same trap in Brain** (`CommandBrainModule.tsx:112-130`) → Task 13; and Leasing forecast → Task 10.
-2. **Entity drawer breaks on absorption.** `MODULE_PRIMARY_TYPE` is `moduleId → one EntityType`; Capital hosts `loan` *and* `cashEntity`. `/debt/REDACTED-702` → alias → `/capital/REDACTED-702?tab=debt` must open the loan drawer *on first render* (before the AppShell replace-redirect lands). → Task 1 (tab-aware `parseRoute` that also honors the alias's tab on first render).
+2. **Entity drawer breaks on absorption.** `MODULE_PRIMARY_TYPE` is `moduleId → one EntityType`; Capital hosts `loan` *and* `cashEntity`. `/debt/borrower-np02` → alias → `/capital/borrower-np02?tab=debt` must open the loan drawer *on first render* (before the AppShell replace-redirect lands). → Task 1 (tab-aware `parseRoute` that also honors the alias's tab on first render).
 3. **`?tab=` / `?view=` collisions.** `openEntity` currently appends the *current* `search`, so a stale `?tab=` from another module rides along (`/leases/x?tab=calendar`); once destinations share tab ids (`pipeline` exists in Capital and Acquisitions) a stale value becomes *valid-but-wrong*. → Task 1 `entityHref` clears `tab`/`view` on a cross-module jump and never yanks the tab on a same-module jump (Tenants → lease drawer must not flip the user to Rent roll behind the drawer).
 4. **e2e hard-codes the rail label.** `tests/e2e/smoke.spec.ts:33` and `a11y.spec.ts:14` click `button { name: 'Leases' }` and expect "Rent Roll". After PR-D that button is "Leasing" and the default tab is Rollover. → Task 12.
 5. **Deleted tab key = broken deep link.** `command-brain?tab=versions` becomes `memory` + `view=versions`; `LEGACY_TAB_ALIASES` currently can't set `view`. → Task 13.
@@ -386,7 +386,7 @@ Open PR-A; merge before starting PR-B.
     expect(byId('capital')!.tabs!.map((t) => t.id)).toEqual(['allocation', 'pipeline', 'debt', 'cash', 'close']);
     for (const id of ['debt', 'cash', 'close']) expect(IDS).not.toContain(id);
     expect(resolveLegacyRoute('/debt', '?tab=scorecard')).toBe('/capital?tab=debt&view=scorecard');
-    expect(resolveLegacyRoute('/debt/REDACTED-702', '')).toBe('/capital/REDACTED-702?tab=debt');
+    expect(resolveLegacyRoute('/debt/borrower-np02', '')).toBe('/capital/borrower-np02?tab=debt');
     expect(resolveLegacyRoute('/cash/acct-1', '?scenario=Downside')).toBe('/capital/acct-1?scenario=Downside&tab=cash');
     expect(resolveLegacyRoute('/close', '')).toBe('/capital?tab=close');
   });
@@ -707,7 +707,7 @@ export const LEASING_FORECAST_TABS: ReadonlySet<LeasingTab> = new Set<LeasingTab
 `src/modules/overview/widgets.tsx:39-40` uses `goTo('leases')` — resolves through the alias today, but repoint to `goTo('leasing')` (and `goTo('debt')`→`goTo('capital')`, `goTo('cash')`→`goTo('capital')` in PR-B's rebase) so a click is one navigation, not navigate + redirect. Test: extend an existing overview test if present; otherwise assert via `resolveLegacyRoute` that no `goTo` target is a legacy id (add a tiny unit that greps `widgets.tsx` for `goTo('<legacy id>')` using the `LEGACY_ALIASES` keys — cheap regression guard).
 
 ### Task 12: e2e + close-out
-- [ ] `tests/e2e/smoke.spec.ts:31-37`: rename to "leasing shows the rent roll": click `button { name: 'Leasing' }`, click `tab { name: 'Rent roll' }`, then the existing `Rent Roll`/`REDACTED-659` assertions. `tests/e2e/a11y.spec.ts:14-18`: same two clicks before the `th[aria-sort]` assertion.
+- [ ] `tests/e2e/smoke.spec.ts:31-37`: rename to "leasing shows the rent roll": click `button { name: 'Leasing' }`, click `tab { name: 'Rent roll' }`, then the existing `Rent Roll`/`Tenant 155 LLC` assertions. `tests/e2e/a11y.spec.ts:14-18`: same two clicks before the `th[aria-sort]` assertion.
 - [ ] Legacy-URL case: `/leases?tab=rollover&still=1` → URL matches `/leasing\?.*tab=rent-roll.*view=rollover/`.
 - [ ] `npm run test:e2e` (needs `npx playwright install chromium` once), gate, bundle, PR.
 

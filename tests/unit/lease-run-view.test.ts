@@ -1,7 +1,8 @@
 // tests/unit/lease-run-view.test.ts
 //
 // Pure presentation helpers backing LeaseRunView (the view is browser-verified, not jsdom-rendered).
-// Drives them off the REAL seed projections so the UI logic stays reconciled to the engine.
+// Drives them off the synthetic seed projections (tests/unit/lease-run-fixtures.ts) so the UI logic
+// stays reconciled to the engine.
 import { describe, expect, it } from 'vitest';
 import {
   assumptionRows,
@@ -12,11 +13,11 @@ import {
   statusLabel,
 } from '../../src/modules/intel/lease-run-view';
 import { projectLeaseRun, DEFAULT_LEASE_RUN_ASSUMPTIONS, computeMarkToMarket } from '../../server/warehouse/lease-run';
-import { SUNBURST_SEED, FISHEL_SEED } from '../../server/warehouse/lease-terms';
+import { SUNBURST_LIKE, FISHEL_LIKE } from './lease-run-fixtures';
 import type { LeaseRunProjectionEnvelope } from '../../src/contracts/lease-run';
 
-const sunburst = projectLeaseRun(SUNBURST_SEED, DEFAULT_LEASE_RUN_ASSUMPTIONS);
-const fishel = projectLeaseRun(FISHEL_SEED, DEFAULT_LEASE_RUN_ASSUMPTIONS);
+const sunburst = projectLeaseRun(SUNBURST_LIKE, DEFAULT_LEASE_RUN_ASSUMPTIONS);
+const fishel = projectLeaseRun(FISHEL_LIKE, DEFAULT_LEASE_RUN_ASSUMPTIONS);
 
 describe('rolloverLabels', () => {
   it('marks each status boundary (Sunburst: contractual→option_assumed at LY\'34)', () => {
@@ -35,7 +36,7 @@ describe('noiChartPoints', () => {
   it('one point per period, NOI values, assumption + rollover flags', () => {
     const pts = noiChartPoints(sunburst.periods);
     expect(pts).toHaveLength(sunburst.periods.length);
-    expect(pts[0]!.value).toBeCloseTo(73872.0, 2);
+    expect(pts[0]!.value).toBeCloseTo(67130.5, 2);
     const ly34 = pts.find((p) => p.label === "LY '34")!;
     expect(ly34.isAssumption).toBe(true);
     expect(ly34.isRollover).toBe(true);
