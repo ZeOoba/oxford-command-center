@@ -72,7 +72,7 @@
       "occ": 0.8545,
       "tenants": 38,
       "source": "Master Excel Template Company Wide -- Oxford.xlsx: Property NOI (SF) and Master Tenant Rent Roll as of 2026-10-02 (leased SF = Active tenants)",
-      "note": "Mapped to the Sepich portfolio (Banwick 24,000 + Morrison 31,200 + Zettler 47,056 + 4595 E 5th 4,140 + 4601 E 5th 3,261 = 109,657 SF; 41 tenants). Inferred by reconciliation: rent roll annualized rent $118,867 vs FVC TTM Sep-26 base rent $5,212 (+6%). Confirm. Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
+      "note": "Mapped to the Sepich portfolio (Banwick 24,000 + Morrison 31,200 + Zettler 47,056 + 4595 E 5th 4,140 + 4601 E 5th 3,261 = 109,657 SF; 41 tenants). Inferred by reconciliation: rent roll annualized rent $61,509 vs FVC TTM Sep-26 base rent $7,742 (+6%). Confirm. Leased SF = rent-roll rows classed \"Occupied\" (excludes vacant, notice-given and expired)."
     },
     "55 New Plant (EGFLLC)": {
       "sf": 34534,

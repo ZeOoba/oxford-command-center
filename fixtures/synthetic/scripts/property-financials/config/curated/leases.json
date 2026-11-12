@@ -10,36 +10,36 @@
         [
           "2025-04-01",
           "2026-03-31",
-          11799.57
+          11663.36
         ],
         [
           "2026-04-01",
           "2027-03-31",
-          17144.78
+          16946.86
         ],
         [
           "2027-04-01",
           "2028-03-31",
-          17744.85
+          17540
         ],
         [
           "2028-04-01",
           "2029-03-31",
-          18348.17
+          18136.36
         ],
         [
           "2029-04-01",
           "2030-03-31",
-          18990.36
+          18771.13
         ],
         [
           "2030-04-01",
           "2030-09-30",
-          19655.02
+          19428.12
         ]
       ],
-      "security_deposit": 13759.22,
-      "nnn_estimate_monthly": 2639.03,
+      "security_deposit": 9281.92,
+      "nnn_estimate_monthly": 2608.22,
       "source": "Lease -- 3034 Westerville Tenant 088 LLC.pdf",
       "confidence": "text layer"
     },
@@ -52,31 +52,31 @@
         [
           "Y1",
           null,
-          4949.42
+          4762.19
         ],
         [
           "Y2",
           null,
-          5097.9
+          4905.06
         ],
         [
           "Y3",
           null,
-          5250.84
+          5052.21
         ],
         [
           "Y4",
           null,
-          5408.37
+          5203.78
         ],
         [
           "Y5",
           null,
-          5570.62
+          5359.89
         ]
       ],
-      "security_deposit": 11382.43,
-      "nnn_estimate_monthly": 1448.79,
+      "security_deposit": 9413.88,
+      "nnn_estimate_monthly": 1591.16,
       "renewal": "one 5-year option; renewal rent at prevailing rate, 3.0% step language present",
       "source": "Lease -- 3875-3883 Livingston tenant 091 llc.pdf",
       "confidence": "text layer"
@@ -90,35 +90,35 @@
         [
           "2021-10-01",
           "2026-09-30",
-          13609.46
+          12765.88
         ],
         [
           "2026-10-01",
           "2027-09-30",
-          13881.65
+          13021.2
         ],
         [
           "2027-10-01",
           "2028-09-30",
-          14159.28
+          13281.62
         ],
         [
           "2028-10-01",
           "2029-09-30",
-          14442.47
+          13547.25
         ],
         [
           "2029-10-01",
           "2030-09-30",
-          14731.32
+          13818.2
         ],
         [
           "2030-10-01",
           "2031-09-30",
-          15025.95
+          14094.56
         ]
       ],
-      "second_renewal": "5 years: $51,683.47 rising to $85,694.88",
+      "second_renewal": "5 years: $9,491.91 rising to $13,701.03",
       "source": "Lease -- 7658 Fishel (no P&L in folder) Tenant 153 LLC.pdf",
       "confidence": "text layer"
     },
@@ -131,52 +131,52 @@
         [
           "LY1",
           null,
-          31532.97
+          22270.53
         ],
         [
           "LY2",
           null,
-          32321.29
+          22827.29
         ],
         [
           "LY3",
           null,
-          33129.32
+          23397.97
         ],
         [
           "LY4",
           null,
-          33957.55
+          23982.92
         ],
         [
           "LY5",
           null,
-          34806.49
+          24582.49
         ],
         [
           "LY6",
           null,
-          35676.65
+          25197.05
         ],
         [
           "LY7",
           null,
-          36568.57
+          25826.98
         ],
         [
           "LY8",
           null,
-          37482.78
+          26472.65
         ],
         [
           "LY9",
           null,
-          38419.85
+          27134.47
         ],
         [
           "LY10",
           null,
-          39380.35
+          27812.83
         ]
       ],
       "escalator": "2.5% annual",
@@ -193,27 +193,27 @@
         [
           "2023",
           null,
-          17486.07
+          22632.57
         ],
         [
           "2024",
           null,
-          18010.65
+          23311.55
         ],
         [
           "2025",
           null,
-          18550.97
+          24010.9
         ],
         [
           "2026",
           null,
-          19107.5
+          24731.23
         ],
         [
           "2027",
           null,
-          19680.73
+          25473.17
         ]
       ],
       "escalator": "3.0% annual",
@@ -227,9 +227,9 @@
       "sf": null,
       "term": "5-year initial term from ~2019-12; two 5-year renewals",
       "rent_annual": {
-        "initial": 4547.71,
-        "renewal1_min": 90621.83,
-        "renewal2_min": 5715.22
+        "initial": 7745.63,
+        "renewal1_min": 3244.27,
+        "renewal2_min": 4181.92
       },
       "renewal": "greater of fair rental value or the stated minimum",
       "source": "Lease -- 401 Sunburst Highway (no P&L in folder) Tenant 092 LLC.pdf",

@@ -6,7 +6,8 @@
 // entity's P&L (refute runs 2026-11-11). Synthetic money is now a seeded random draw keyed by
 // structure (scripts/fixtures/synthetic-money.ts); no synthetic amount is a function of a real one.
 //
-//   1. the draw mechanism: deterministic, banded, sign / zero only, redraws off the avoid list;
+//   1. the draw mechanism: deterministic, banded, sign / zero only, always draw #0 (no redraw: a
+//      per-value redraw off a real-amount list revealed which draws were real, refute round 4 F3);
 //   2. CI-safe independence: the generator run on two inputs with the same structure but different
 //      amounts gives byte-identical output;
 //   3. CI-safe lattice: no single k de-scales the committed money onto cents-free round lattices;
@@ -80,15 +81,10 @@ describe('seeded draw mechanism', () => {
     }
   });
 
-  it('a draw on the avoid list (a real-amount fingerprint) is redrawn with a counter', () => {
-    const first = makeMoneyDrawer().draw('collide', 1, 1000, 9000);
-    const avoiding = makeMoneyDrawer(new Set([String(first)]));
-    const again = avoiding.draw('collide', 1, 1000, 9000);
-    expect(again).not.toBe(first);
-    expect(avoiding.redraws).toBe(1);
-    // a degenerate band (a no-jitter model value) steps by one cent instead of looping
-    const flat = makeMoneyDrawer(new Set(['1234.5'])).draw('flat', 1, 1234.5, 1234.5);
-    expect(flat).toBe(1234.51);
+  it('there is no redraw: the drawer takes no real-amount input, and a degenerate band is the value itself', () => {
+    expect(makeMoneyDrawer.length).toBe(0);
+    expect(makeMoneyDrawer().draw('collide', 1, 1000, 9000)).toBe(makeMoneyDrawer().draw('collide', 1, 1000, 9000));
+    expect(makeMoneyDrawer().draw('flat', 1, 1234.5, 1234.5)).toBe(1234.5);
   });
 
   it('bands are per field; per-SF bands scale with the record SF', () => {
@@ -136,10 +132,8 @@ describe('generator output is independent of the real amounts (CI-safe)', () => 
   };
 
   it('x2 and x3 inputs give byte-identical synthetic files', async () => {
-    // The fingerprint redraw (a draw equal to a real amount is redrawn) is the one deliberate contact
-    // with the real amounts and can only move a value away from one; it is off for this comparison.
-    const a = await build(prepare(2), false, { avoidRealAmounts: false });
-    const b = await build(prepare(3), false, { avoidRealAmounts: false });
+    const a = await build(prepare(2), false);
+    const b = await build(prepare(3), false);
     expect([...a.contents.keys()].sort()).toEqual([...b.contents.keys()].sort());
     expect(a.contents.size).toBeGreaterThanOrEqual(FILES.length);
     for (const [rel, content] of a.contents) expect(content === b.contents.get(rel), rel).toBe(true);
@@ -149,6 +143,28 @@ describe('generator output is independent of the real amounts (CI-safe)', () => 
     expect(inA.some(([, x], i) => x !== 0 && x !== inB[i]![1])).toBe(true);
     const out = moneyLeaves('dataset', JSON.parse(a.contents.get(FILES[1]![0])!));
     expect(out.filter(([, x], i) => x !== 0 && inA[i] && x === inA[i]![1]).length).toBeLessThan(out.length / 100);
+  }, 120_000);
+});
+
+describe('every committed money leaf is its public draw #0 (CI-safe; refute round 4 F3)', () => {
+  // Rebuilding the committed fixtures from themselves must reproduce them exactly: the generator draws
+  // every amount from (public seed, structural key) and the input only supplies structure, signs and
+  // zeros. A value that is anything other than its own draw #0 (a redraw, a value nudged off a real
+  // amount) would differ here, and such a difference is exactly what would reveal a real amount.
+  it('the snapshot, dataset and cost-seg fixtures rebuild to themselves', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'synthetic-money-draw0-'));
+    for (const [rel] of FILES) {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      writeFileSync(join(root, rel), readFileSync(join(FIXTURES, rel), 'utf8'));
+    }
+    const out = await build(root, false);
+    for (const [rel, kind] of FILES) {
+      const committed = moneyLeaves(kind, readJson(FIXTURES, rel) as never);
+      const rebuilt = moneyLeaves(kind, JSON.parse(out.contents.get(rel)!) as never);
+      expect(rebuilt.length, rel).toBe(committed.length);
+      const differing = committed.filter(([p, x], i) => rebuilt[i]![0] !== p || rebuilt[i]![1] !== x);
+      expect(differing.map(([p]) => p).slice(0, 5), rel).toEqual([]);
+    }
   }, 120_000);
 });
 
