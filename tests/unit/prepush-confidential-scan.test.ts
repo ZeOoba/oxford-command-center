@@ -683,6 +683,14 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     }
   });
 
+  it('neverTrack paths (no synthetic stand-in) are blocked like manifest paths', () => {
+    const m = loadRealDataManifest();
+    for (const p of ['data/property-financials/monthly-long.csv', 'public/snapshot.json', 'public/warehouse.json', 'data/overlay.json', 'data/warehouse/finance.sqlite', 'data/lease-market/raw.csv', 'PUBLIC/Snapshot.json']) {
+      expect(isRealDataPath(p, m), p).toBe(true);
+    }
+    expect(isRealDataPath('public/index.html', m)).toBe(false);
+  });
+
   it('matches exact files and directory prefixes, either slash style, but never fixtures/synthetic/', () => {
     expect(isRealDataPath('data/snapshots/portfolio.json', manifest)).toBe(true);
     expect(isRealDataPath('data\\calibration\\observations.json', manifest)).toBe(true);

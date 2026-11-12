@@ -465,9 +465,18 @@ export function checkRealDataUntracked(root: string, tracked?: readonly string[]
   const errors: string[] = [];
   let manifest: { files: string[]; dirs: string[] };
   try {
-    const parsed = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf-8')) as { files?: unknown; dirs?: unknown };
+    const parsed = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'real-data-manifest.json'), 'utf-8')) as {
+      files?: unknown;
+      dirs?: unknown;
+      neverTrack?: { files?: unknown; dirs?: unknown };
+    };
     const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : []);
-    manifest = { files: strings(parsed.files), dirs: strings(parsed.dirs) };
+    // `neverTrack`: real-data paths with no synthetic stand-in (baked outputs, overlay, warehouse,
+    // raw exports). Not seeded; checked here exactly like the manifest paths.
+    manifest = {
+      files: [...strings(parsed.files), ...strings(parsed.neverTrack?.files)],
+      dirs: [...strings(parsed.dirs), ...strings(parsed.neverTrack?.dirs)],
+    };
     if (manifest.files.length === 0 && manifest.dirs.length === 0) throw new Error('lists no paths');
   } catch (e) {
     errors.push(`REAL_DATA: scripts/fixtures/real-data-manifest.json is unreadable (${(e as Error).message}); cannot verify real data is untracked`);
