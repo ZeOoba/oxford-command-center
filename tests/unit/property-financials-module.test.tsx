@@ -115,6 +115,13 @@ describe('Overview (real dataset)', () => {
     expect(screen.queryByTestId('pf-partial-note')).toBeNull();
   });
 
+  /** One KPI tile, found by its label (tiles can show the same percentage text; never query across them). */
+  const tile = (label: RegExp): HTMLElement => {
+    const t = within(screen.getByTestId('pf-kpis')).getByText(label).closest('.pf-kpi');
+    expect(t, String(label)).not.toBeNull();
+    return t as HTMLElement;
+  };
+
   it('F1: a partial same-store member -> KPI changes n/m, lede prints no %, chart note names the member', () => {
     const m = structuredClone(D);
     (m.properties['1100 Rarig'].periods as Record<string, { n_months: number }>).YTD26!.n_months = 8;
@@ -122,9 +129,8 @@ describe('Overview (real dataset)', () => {
     const lede = screen.getByTestId('pf-lede').textContent!;
     expect(lede).toBe(overviewLede(m));
     expect(lede).not.toMatch(/\d+\.\d%/);
-    const kpis = screen.getByTestId('pf-kpis');
-    expect(within(kpis).queryByText(pfGolden().sameStoreYtd.baseRent)).toBeNull();
-    expect(within(kpis).queryByText(pfGolden().sameStoreYtd.opexExTax)).toBeNull();
+    expect(within(tile(/^Base rent,/)).queryByText(pfGolden().sameStoreYtd.baseRent)).toBeNull();
+    expect(within(tile(/^Opex excl\. RE tax,/)).queryByText(pfGolden().sameStoreYtd.opexExTax)).toBeNull();
     expect(screen.getByTestId('pf-partial-note').textContent).toBe(
       'Percent changes are n/m: 1100 Rarig: partial period: 8 of 9 months. The dollar bars compare unequal month counts; read them as indicative only.',
     );
@@ -132,16 +138,19 @@ describe('Overview (real dataset)', () => {
 
   it('KPI tiles equal the calc-lib outputs and the value lock (base rent, opex excl. RE tax)', () => {
     renderModule();
-    const kpis = screen.getByTestId('pf-kpis');
-    expect(within(kpis).getByText(usd(k.baseRent.current))).toBeTruthy();
-    expect(within(kpis).getByText(pfGolden().sameStoreYtd.baseRent)).toBeTruthy();
+    const rent = tile(/^Base rent,/);
+    expect(within(rent).getByText(usd(k.baseRent.current))).toBeTruthy();
+    expect(within(rent).getByText(pfGolden().sameStoreYtd.baseRent)).toBeTruthy();
     expect(pct(k.baseRent.change.value)).toBe(pfGolden().sameStoreYtd.baseRent);
-    expect(within(kpis).getByText(usd(k.opexExTax.current))).toBeTruthy();
-    expect(within(kpis).getByText(pfGolden().sameStoreYtd.opexExTax)).toBeTruthy();
-    expect(within(kpis).getByText(usd(k.noiFy.current))).toBeTruthy();
-    expect(within(kpis).getByText(pct(k.noiFy.change.value))).toBeTruthy();
-    expect(within(kpis).getByText(String(k.high.count))).toBeTruthy();
-    expect(within(kpis).getByText(new RegExp(`${usd(k.high.grossSwing, 'k').replace('$', '\\$')} gross annual swing`))).toBeTruthy();
+    const opex = tile(/^Opex excl\. RE tax,/);
+    expect(within(opex).getByText(usd(k.opexExTax.current))).toBeTruthy();
+    expect(within(opex).getByText(pfGolden().sameStoreYtd.opexExTax)).toBeTruthy();
+    const noi = tile(/^NOI FY2025$/);
+    expect(within(noi).getByText(usd(k.noiFy.current))).toBeTruthy();
+    expect(within(noi).getByText(pct(k.noiFy.change.value))).toBeTruthy();
+    const high = tile(/^High-severity items$/);
+    expect(within(high).getByText(String(k.high.count))).toBeTruthy();
+    expect(within(high).getByText(new RegExp(`${usd(k.high.grossSwing, 'k').replace('$', '\\$')} gross annual swing`))).toBeTruthy();
   });
 
   it('both charts render with a legend, a keyboard crosshair tooltip and a data table', () => {
