@@ -45,7 +45,7 @@
       "finding": "Synthetic finding 003.",
       "action": "Synthetic action 003. [confirm]",
       "annual_impact_usd": -8168,
-      "impact_basis": "Prior $1,691/mo vs new $19,323.38/mo base rent x 12 [ESTIMATE; depends on whether prior rent was gross]",
+      "impact_basis": "Prior $587/mo vs new $1,023.87/mo base rent x 12 [ESTIMATE; depends on whether prior rent was gross]",
       "tags": [
         "lease",
         "rolldown",
