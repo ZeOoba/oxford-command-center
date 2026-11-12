@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -41,6 +41,7 @@ import {
   scanAddedLinesForRealAmounts,
   FINGERPRINT_BLOCK_MIN,
   FINGERPRINT_BLOCK_MIN_SYNTHETIC,
+  readPushStdin,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -633,7 +634,9 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
     const local = commitOnFeature('a.txt', 'zephyr corp\n');
     const result = collectRefScan(`refs/heads/feat ${local} refs/heads/feat ${MISSING}\n`, repo);
     expect(result.diffErrors).toEqual([]);
-    expect(result.addedByRef.flat().map((a) => a.text)).toEqual(['zephyr corp']);
+    // Commit-message lines ride along as "(commit message <sha>)" entries since 2026-11-12; this
+    // test is about the file content, so only a.txt's lines are compared.
+    expect(result.addedByRef.flat().filter((a) => a.file === 'a.txt').map((a) => a.text)).toEqual(['zephyr corp']);
   });
 
   it('the hook EXITS NON-ZERO when it cannot compute the diff for a pushed ref', () => {
@@ -1016,6 +1019,246 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
       expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
       const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
       expect(r.status).toBe(0);
+    });
+  });
+});
+
+// Per-commit scanning (2026-11-12). The scan used to diff only the two ENDPOINT trees of a pushed
+// range, so a term added in one commit and removed in a later one was never seen even though the
+// first commit's blob still reaches the remote. Every commit (and its message) is scanned now, and
+// every git call that prints diff text is pinned against user config (colour, external diff,
+// textconv, prefixes) that would otherwise hide the '+' lines from the parser.
+describe('prepush-confidential-scan / per-commit scan and pinned git output', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
+  const ZERO = '0000000000000000000000000000000000000000';
+  // SYNTHETIC term, never a real deal name.
+  const TERM = 'ZEPHYR-SYNTH-PARCEL-77';
+  const script = join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs');
+  let repo: string;
+  let home: string;
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'prepush-percommit-'));
+    home = mkdtempSync(join(tmpdir(), 'prepush-percommit-home-'));
+    mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude', 'hooks', 'confidential-terms.json'),
+      JSON.stringify({ _meta: {}, synthetic_deal: { label: 'synthetic', active: true, always: [TERM] } }),
+    );
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), 'base\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'base');
+    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    git(repo, 'checkout', '-q', '-b', 'feat');
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const env = (extra: Record<string, string> = {}) => {
+    const e: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+    delete e['PREPUSH_ALLOW_DIFF_ERROR'];
+    delete e['PREPUSH_ALLOW_NO_ROSTER'];
+    return Object.assign(e, extra);
+  };
+  const runHook = (stdin: string, extra: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env: env(extra) });
+  const commit = (file: string, content: string | Buffer | null, msg = 'change') => {
+    const abs = join(repo, file);
+    if (content === null) git(repo, 'rm', '-q', file);
+    else {
+      mkdirSync(join(abs, '..'), { recursive: true });
+      writeFileSync(abs, content);
+      git(repo, 'add', '-A');
+    }
+    git(repo, 'commit', '-qm', msg);
+    return git(repo, 'rev-parse', 'HEAD');
+  };
+  const addThenRemove = () => {
+    commit('notes.txt', `term ${TERM} here\n`, 'add');
+    return commit('notes.txt', 'clean\n', 'remove');
+  };
+
+  it('BLOCKS a term added in one commit and removed in a later one (new branch)', () => {
+    const local = addThenRemove();
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('confidential terms found');
+    expect(r.stderr).toContain('notes.txt');
+  });
+
+  it('BLOCKS the same add-then-remove when the remote sha is known (update push)', () => {
+    const remote = git(repo, 'rev-parse', 'HEAD');
+    const local = addThenRemove();
+    const result = collectRefScan(`refs/heads/feat ${local} refs/heads/feat ${remote}\n`, repo);
+    expect(result.diffErrors).toEqual([]);
+    expect(scanDiffForConfidential(result.addedByRef.flat(), [TERM]).length).toBeGreaterThan(0);
+  });
+
+  it('BLOCKS a binary under data/ added in one commit and removed in a later one', () => {
+    commit('data/export.bin', Buffer.from([0, 1, 2, 3, 4]), 'add binary');
+    const local = commit('data/export.bin', null, 'remove binary');
+    expect(binaryPathsFor(ZERO, local, repo)).toEqual(['data/export.bin']);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('data/export.bin');
+  });
+
+  it('BLOCKS a real-data manifest path added in one commit and removed in a later one', () => {
+    commit('data/snapshots/portfolio.json', '{"leases":[]}\n', 'add snapshot');
+    const local = commit('data/snapshots/portfolio.json', null, 'remove snapshot');
+    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual(['data/snapshots/portfolio.json']);
+  });
+
+  it('BLOCKS a term that appears only in a commit message', () => {
+    const local = commit('ok.txt', 'clean\n', `subject\n\nbody mentions ${TERM}`);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('confidential terms found');
+  });
+
+  it('still BLOCKS with color.diff=always, color.ui=always and diff.noprefix=true in the repo config', () => {
+    git(repo, 'config', 'color.diff', 'always');
+    git(repo, 'config', 'color.ui', 'always');
+    git(repo, 'config', 'diff.noprefix', 'true');
+    const local = commit('notes.txt', `term ${TERM} here\n`);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('confidential terms found');
+    expect(r.stderr).toContain('notes.txt:1');
+  });
+
+  it('still BLOCKS with diff.external and a textconv driver that print nothing', () => {
+    git(repo, 'config', 'diff.external', 'true');
+    git(repo, 'config', 'diff.hide.textconv', 'true');
+    writeFileSync(join(repo, '.gitattributes'), '*.txt diff=hide\n');
+    const local = commit('notes.txt', `term ${TERM} here\n`);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('confidential terms found');
+  });
+
+  it('a textconv driver cannot make a binary under data/ look like text', () => {
+    git(repo, 'config', 'diff.astext.textconv', 'cat');
+    writeFileSync(join(repo, '.gitattributes'), '*.bin diff=astext\n');
+    const local = commit('data/export.bin', Buffer.from([0, 1, 2, 3, 4]));
+    expect(binaryPathsFor(ZERO, local, repo)).toEqual(['data/export.bin']);
+  });
+
+  it('BLOCKS content an evil merge introduces itself (combined diff)', () => {
+    commit('side.txt', 'side\n');
+    git(repo, 'checkout', '-q', 'main');
+    commit('main.txt', 'main\n');
+    git(repo, 'merge', '-q', '--no-ff', '--no-commit', 'feat');
+    writeFileSync(join(repo, 'evil.txt'), `${TERM}\n`);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'merge');
+    const local = git(repo, 'rev-parse', 'HEAD');
+    const r = runHook(`refs/heads/main ${local} refs/heads/main ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('evil.txt');
+  });
+
+  it('BLOCKS a binary under data/ that an evil merge introduces itself', () => {
+    commit('side.txt', 'side\n');
+    git(repo, 'checkout', '-q', 'main');
+    commit('main.txt', 'main\n');
+    git(repo, 'merge', '-q', '--no-ff', '--no-commit', 'feat');
+    mkdirSync(join(repo, 'data'), { recursive: true });
+    writeFileSync(join(repo, 'data', 'evil.bin'), Buffer.from([0, 9, 8, 7]));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'merge');
+    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/evil.bin']);
+  });
+
+  it('does not false-block a branch that merges origin/main, whose own history touched a real-data path', () => {
+    // main tracked and later untracked a manifest path; those commits are already on the remote.
+    git(repo, 'checkout', '-q', 'main');
+    commit('data/snapshots/portfolio.json', '{"leases":[]}\n', 'old tracked snapshot');
+    commit('data/snapshots/portfolio.json', null, 'untrack');
+    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    git(repo, 'checkout', '-q', 'feat');
+    commit('feature.txt', 'feature\n');
+    git(repo, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main');
+    const local = git(repo, 'rev-parse', 'HEAD');
+    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(0);
+  });
+
+  it('a clean multi-commit push still exits 0', () => {
+    commit('a.txt', 'one\n');
+    const local = commit('a.txt', 'two\n');
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(0);
+  });
+
+  it('an added line whose content starts with "++ " is scanned, not mistaken for a file header', () => {
+    const local = commit('notes.txt', `++ ${TERM}\n`);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('notes.txt:1');
+  });
+
+  it('parseAddedLines reads combined (merge) hunks: any "+" column is an added line', () => {
+    const diff = [
+      'diff --cc evil.txt',
+      '--- a/evil.txt',
+      '+++ b/evil.txt',
+      '@@@ -1,1 -1,1 +1,3 @@@',
+      '  shared',
+      '++new in merge',
+      ' +from second parent',
+      '- removed vs first',
+    ].join('\n');
+    expect(parseAddedLines(diff)).toEqual([
+      { file: 'evil.txt', lineNo: 2, text: 'new in merge' },
+      { file: 'evil.txt', lineNo: 3, text: 'from second parent' },
+    ]);
+  });
+
+  describe('pre-push stdin', () => {
+    it('readPushStdin returns the text, treats EOF as empty, and reports any other read error', () => {
+      expect(readPushStdin(() => 'refs/heads/x a refs/heads/x b\n')).toEqual({ text: 'refs/heads/x a refs/heads/x b\n', error: null });
+      const eof = readPushStdin(() => {
+        throw Object.assign(new Error('EOF: end of file'), { code: 'EOF' });
+      });
+      expect(eof).toEqual({ text: '', error: null });
+      const bad = readPushStdin(() => {
+        throw Object.assign(new Error('EBADF: bad file descriptor, read'), { code: 'EBADF' });
+      });
+      expect(bad.text).toBe('');
+      expect(bad.error).toContain('EBADF');
+    });
+
+    it('BLOCKS when stdin cannot be read (fail closed), naming PREPUSH_ALLOW_DIFF_ERROR as the only opt-out', () => {
+      const wo = join(home, 'write-only.txt');
+      writeFileSync(wo, '');
+      const fd = openSync(wo, 'w');
+      try {
+        const r = spawnSync(process.execPath, [script], { cwd: repo, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: env() });
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain('PUSH BLOCKED');
+        expect(r.stderr).toContain('stdin');
+        expect(r.stderr).toContain('PREPUSH_ALLOW_DIFF_ERROR');
+        const allowed = spawnSync(process.execPath, [script], {
+          cwd: repo,
+          stdio: [fd, 'pipe', 'pipe'],
+          encoding: 'utf8',
+          env: env({ PREPUSH_ALLOW_DIFF_ERROR: '1' }),
+        });
+        expect(allowed.status).toBe(0);
+        expect(allowed.stderr).toMatch(/PREPUSH_ALLOW_DIFF_ERROR=1[^\n]*UNSCANNED/);
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it('an empty stdin (up-to-date push) still exits 0', () => {
+      expect(runHook('').status).toBe(0);
     });
   });
 });

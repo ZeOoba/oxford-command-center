@@ -39,6 +39,36 @@ const EXCLUDE_PATHS = new Set([
 
 const MIN_TERM_LENGTH = 3;
 
+// ── pinned git output (2026-11-12) ───────────────────────────────────────────────────────────────
+// Every git call whose output this scanner parses is pinned against user/repo config that changes
+// what git prints. Unpinned, `color.diff=always` wraps each '+' line in an escape sequence (no line
+// starts with '+', nothing is scanned), `diff.external` or a textconv driver replaces the diff
+// text outright, `diff.noprefix` / `diff.mnemonicPrefix` / `diff.srcPrefix` change the '+++ b/'
+// header, and `diff.relative` narrows the diff to a subdirectory. Mirrors GIT_BASE in the Python
+// twin (ora-skills tools/prepush_confidential_scan.py).
+const GIT_CONFIG_PIN = [
+  '-c', 'core.quotepath=off',
+  '-c', 'color.ui=never',
+  '-c', 'color.diff=never',
+  '-c', 'diff.noprefix=false',
+  '-c', 'diff.mnemonicPrefix=false',
+  '-c', 'diff.relative=false',
+  '-c', 'diff.suppressBlankEmpty=false',
+  '-c', 'i18n.logOutputEncoding=UTF-8',
+  '-c', 'log.showSignature=false',
+];
+const DIFF_OPTION_PIN = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '--src-prefix=a/', '--dst-prefix=b/'];
+
+/** Run a pinned git command and return stdout (throws on a non-zero exit; callers fail closed). */
+function gitOut(args, cwd) {
+  return execFileSync('git', [...GIT_CONFIG_PIN, ...args], {
+    encoding: 'utf8',
+    maxBuffer: Infinity,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd,
+  });
+}
+
 /**
  * Extract this roster's per-deal terms, honoring the roster's OWN documented contract
  * (confidential-terms.json's `_meta.matching` / `_meta.policy`):
@@ -339,27 +369,26 @@ export function parseRealDataPaths(nameStatusText, manifest) {
   const out = [];
   for (const line of String(nameStatusText ?? '').split('\n')) {
     // "A\tpath", "M\tpath", "T\tpath"; a rename/copy row ("R100\told\tnew") carries the new path last.
-    const m = /^([AMTCR])\d*\t(?:[^\t]+\t)?(.+)$/.exec(line.trimEnd());
+    // A merge's combined (--cc) row carries one letter per parent ("AA\tpath", "MM\tpath"); any
+    // A/M/T/C/R letter means the path exists in the result. Pure deletions ("D", "DD") never match.
+    const m = /^([A-Z]*[AMTCR][A-Z]*)\d*\t(?:[^\t]+\t)?(.+)$/.exec(line.trimEnd());
     if (!m || !m[2]) continue;
     if (isRealDataPath(m[2], manifest)) out.push(m[2].replace(/\\/g, '/'));
   }
   return out;
 }
 
-/** @param {string} remoteSha
+/** Every added/modified real-data path in ANY commit of the pushed range (per commit, not the
+ * endpoint trees: a manifest file added and then removed still reaches the remote in history).
+ * @param {string} remoteSha
  * @param {string} localSha
  * @param {{files: string[], dirs: string[]}} manifest
  * @param {string} [cwd] - test seam; defaults to the process cwd.
  * @returns {string[]} */
 export function realDataPathsFor(remoteSha, localSha, manifest, cwd) {
-  const base = resolveDiffBase(remoteSha, localSha, cwd);
-  const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--name-status', '--no-renames', '--diff-filter=AMT', `${base}..${localSha}`], {
-    encoding: 'utf8',
-    maxBuffer: Infinity,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    cwd,
-  });
-  return parseRealDataPaths(text, manifest);
+  const revs = rangeRevsFor(remoteSha, localSha, cwd);
+  const text = gitOut(['log', '--name-status', '--cc', '--root', '--no-renames', '--format=', ...DIFF_OPTION_PIN, ...revs, '--'], cwd);
+  return [...new Set(parseRealDataPaths(text, manifest))];
 }
 
 const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
@@ -552,10 +581,22 @@ export function scanDiffForContextTerms(addedLines, contextGroups) {
   return hits;
 }
 
-// Parses a unified `git diff` into ADDED content lines only ('+' lines, excluding the '+++' file
-// header), tracking the current file (from '+++ b/<path>') and new-side line numbers (from the
-// unified-diff hunk-header markers). Note: those markers are not spelled out literally inside the
-// JSDoc block below because two adjacent '@' characters there parse as an (invalid) JSDoc tag.
+/** Pseudo-file name that commit-message lines carry in parseAddedLines output. */
+export const COMMIT_MESSAGE_FILE_PREFIX = '(commit message ';
+
+// Parses unified `git diff` / `git log -p --cc` text into ADDED content lines only, tracking the
+// current file (from '+++ b/<path>') and new-side line numbers (from the hunk-header markers).
+// Note: those markers are not spelled out literally inside the JSDoc block below because two
+// adjacent '@' characters there parse as an (invalid) JSDoc tag.
+//
+// State machine (2026-11-12): '+++ ' / '--- ' are file headers ONLY outside a hunk. Inside a hunk
+// every line is content, classified by its prefix columns, so an added line whose own text starts
+// with "++ " (raw "+++ ...") is scanned instead of being mistaken for a header (it used to be
+// skipped AND re-point the current file). A merge's combined hunk (N+1 '@' characters for N
+// parents) carries N prefix columns; any '+' column means the line is in the result and absent
+// from at least one parent, so it is treated as added. 'commit <sha>' lines (from diffFor's log
+// format) end the hunk and open that commit's message block, whose 4-space-indented lines are
+// returned as added lines of the pseudo-file "(commit message <sha12>)".
 /**
  * @param {string} diffText
  * @returns {{file: string, lineNo: number, text: string}[]}
@@ -566,31 +607,63 @@ export function parseAddedLines(diffText) {
 
   let currentFile = '';
   let newLineNo = 0;
-  const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  let inHunk = false;
+  let columns = 1;
+  /** @type {string | null} */
+  let messageFile = null;
+  let messageLineNo = 0;
+  const hunkHeader = /^(@{2,}) (?:-\d+(?:,\d+)? )+\+(\d+)(?:,\d+)? @{2,}/;
+  const commitLine = /^commit ([0-9a-f]{40,64})$/;
 
-  for (const raw of diffText.split('\n')) {
-    if (raw.startsWith('+++ ')) {
-      // '+++ b/path/to/file' (or '+++ /dev/null'); strip the a/ or b/ prefix.
-      const path = raw.slice(4).trim();
-      currentFile = path.replace(/^[ab]\//, '');
+  for (const rawLine of diffText.split('\n')) {
+    const raw = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    const commit = commitLine.exec(raw);
+    if (commit) {
+      inHunk = false;
+      currentFile = '';
+      messageFile = `${COMMIT_MESSAGE_FILE_PREFIX}${commit[1]?.slice(0, 12)})`;
+      messageLineNo = 0;
       continue;
     }
-    if (raw.startsWith('--- ')) continue;
+    if (raw.startsWith('diff ')) {
+      inHunk = false;
+      messageFile = null;
+      continue;
+    }
+    if (messageFile !== null) {
+      // Message block: every line until the first 'diff ' header (or the next commit) belongs to
+      // the commit message. diffFor indents each message line by 4 spaces.
+      messageLineNo += 1;
+      if (raw.trim()) added.push({ file: messageFile, lineNo: messageLineNo, text: raw.replace(/^ {4}/, '') });
+      continue;
+    }
     const m = hunkHeader.exec(raw);
     if (m) {
-      newLineNo = Number.parseInt(m[1], 10);
+      inHunk = true;
+      columns = (m[1]?.length ?? 2) - 1;
+      newLineNo = Number.parseInt(m[2] ?? '0', 10);
       continue;
     }
-    if (raw.startsWith('+')) {
-      added.push({ file: currentFile, lineNo: newLineNo, text: raw.slice(1) });
+    if (!inHunk) {
+      if (raw.startsWith('+++ ')) {
+        // '+++ b/path/to/file' (or '+++ /dev/null'); strip the a/ or b/ prefix.
+        currentFile = raw.slice(4).trim().replace(/^[ab]\//, '');
+        continue;
+      }
+      if (raw.startsWith('--- ')) continue;
+      // Any other '+' line outside a hunk is unexpected; scan it rather than drop it.
+      if (raw.startsWith('+')) added.push({ file: currentFile, lineNo: newLineNo, text: raw.slice(1) });
+      continue;
+    }
+    if (raw.startsWith('\\')) continue; // "\ No newline at end of file"
+    const prefix = raw.slice(0, columns);
+    if (prefix.includes('+')) {
+      added.push({ file: currentFile, lineNo: newLineNo, text: raw.slice(columns) });
       newLineNo += 1;
       continue;
     }
-    if (raw.startsWith('-')) {
-      // removed line — does not advance the new-side counter
-      continue;
-    }
-    // context line (starts with ' ' or is empty) advances the new-side counter
+    if (prefix.includes('-')) continue; // removed line — does not advance the new-side counter
+    // context line (prefix of spaces, or an empty line) advances the new-side counter
     newLineNo += 1;
   }
   return added;
@@ -648,6 +721,43 @@ export function resolveDiffBase(remoteSha, localSha, cwd) {
   }
 }
 
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * The revision arguments naming every commit a push of `localSha` sends: reachable from localSha,
+ * minus the resolved base (resolveDiffBase) and minus origin/main when it exists. Commits reachable
+ * from origin/main are already on the remote, so a branch that merges main is not re-scanned (and
+ * not false-blocked) on main's own history, e.g. the commits that tracked a real-data path before
+ * its untrack. With no usable base (empty tree: no origin/main) the whole history of localSha is
+ * scanned, root commit included.
+ *
+ * @param {string} remoteSha
+ * @param {string} localSha
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @returns {string[]}
+ */
+export function rangeRevsFor(remoteSha, localSha, cwd) {
+  const base = resolveDiffBase(remoteSha, localSha, cwd);
+  const revs = [localSha];
+  if (base !== EMPTY_TREE) revs.push(`^${base}`);
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main^{commit}'], { stdio: 'pipe', cwd });
+    if (base !== 'origin/main') revs.push('^origin/main');
+  } catch {
+    // no origin/main: the base alone bounds the range
+  }
+  return revs;
+}
+
+// Per-commit (2026-11-12): `git log -p --cc --root` over the pushed range, NOT `git diff base..local`.
+// An endpoint diff compares two trees only, so a term added in commit A and removed in commit B was
+// never scanned, yet A's blob still reaches the remote. --cc shows what a merge resolution itself
+// introduced (an evil merge); --root includes the root commit's full content; --no-renames shows a
+// renamed file's whole content under its new path (a pure rename used to show no lines at all, which
+// let an EXCLUDE_PATHS file be renamed out of the exclusion unscanned). Each commit is preceded by a
+// 'commit <sha>' line and its 4-space-indented message, which parseAddedLines returns as added lines
+// so commit messages are term-scanned too.
+//
 // No fixed maxBuffer cap: the old 64 MB cap threw ENOBUFS on exactly the largest, most
 // data-heavy pushes, and the caller then skipped them. Every scanner needs the ref's whole added
 // corpus in memory anyway (context terms gate on the full range), so streaming would not lower
@@ -656,13 +766,11 @@ export function resolveDiffBase(remoteSha, localSha, cwd) {
  * @param {string} localSha
  * @param {string} [cwd] */
 function diffFor(remoteSha, localSha, cwd) {
-  const base = resolveDiffBase(remoteSha, localSha, cwd);
-  return execFileSync('git', ['diff', `${base}..${localSha}`], {
-    encoding: 'utf8',
-    maxBuffer: Infinity,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const revs = rangeRevsFor(remoteSha, localSha, cwd);
+  return gitOut(
+    ['log', '-p', '--cc', '--root', '--no-renames', '--format=commit %H%n%w(0,4,4)%B', ...DIFF_OPTION_PIN, ...revs, '--'],
     cwd,
-  });
+  );
 }
 
 /**
@@ -680,11 +788,21 @@ export function shouldBlockOnDiffError(diffErrors, env) {
   return env['PREPUSH_ALLOW_DIFF_ERROR'] !== '1';
 }
 
-function readStdin() {
+/**
+ * Read git's pre-push stdin. A read ERROR used to be swallowed into '' -- no refs, nothing scanned,
+ * exit 0 -- so it now comes back as `error` and the caller fails closed (2026-11-12). A genuinely
+ * empty stdin (git sends none on an up-to-date push) is still `{text: '', error: null}`, and so is
+ * an EOF error, which some platforms raise for a closed, empty pipe.
+ *
+ * @param {() => string} [read] - test seam; defaults to a synchronous read of fd 0.
+ * @returns {{text: string, error: string | null}}
+ */
+export function readPushStdin(read) {
   try {
-    return readFileSync(0, 'utf8');
-  } catch {
-    return '';
+    return { text: (read ?? (() => readFileSync(0, 'utf8')))(), error: null };
+  } catch (err) {
+    if (/** @type {{code?: string}} */ (err)?.code === 'EOF') return { text: '', error: null };
+    return { text: '', error: `stdin read: ${errorLine(err)}` };
   }
 }
 
@@ -701,17 +819,53 @@ function blockOnHits(hits, header, formatHit, trailer) {
  * @param {string} [cwd] - test seam; defaults to the process cwd.
  * @returns {string[]} */
 export function binaryPathsFor(remoteSha, localSha, cwd) {
-  const base = resolveDiffBase(remoteSha, localSha, cwd);
-  // quotepath=off: a non-ASCII filename (en dash in an Excel export name) is otherwise emitted
-  // as a quoted "\342\200\223" string that fails the data/ prefix test. --no-renames: a binary
-  // moved into data/ with edits is otherwise status R and dropped by --diff-filter=AM.
-  const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--numstat', '--no-renames', '--diff-filter=AM', `${base}..${localSha}`], {
-    encoding: 'utf8',
-    maxBuffer: Infinity,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const revs = rangeRevsFor(remoteSha, localSha, cwd);
+  // Per commit (2026-11-12): a binary added in one commit and removed in a later one never shows in
+  // an endpoint numstat, yet its blob reaches the remote. quotepath=off (GIT_CONFIG_PIN): a
+  // non-ASCII filename (en dash in an Excel export name) is otherwise emitted as a quoted
+  // "\342\200\223" string that fails the data/ prefix test. --no-renames: a binary moved into data/
+  // with edits is otherwise status R and dropped by --diff-filter=AM. --no-textconv: a textconv
+  // driver would otherwise make a binary count as text. Merges are excluded here because a merge's
+  // numstat is its first-parent diff (it would re-list everything the merged branch added); what a
+  // merge resolution itself introduces is covered by mergeIntroducedBinaryPaths.
+  const text = gitOut(
+    ['log', '--numstat', '--no-merges', '--root', '--no-renames', '--diff-filter=AM', '--format=', ...DIFF_OPTION_PIN, ...revs, '--'],
     cwd,
-  });
-  return parseBinaryPathsUnderData(text);
+  );
+  const hits = [...parseBinaryPathsUnderData(text), ...mergeIntroducedBinaryPaths(revs, cwd)];
+  return [...new Set(hits)];
+}
+
+/**
+ * Binary/export paths under data/ that a MERGE commit in the range introduced itself (an evil merge:
+ * content that matches neither parent). `git log --cc --raw` lists exactly those paths; each one under
+ * data/ is checked for binary content against the merge's first parent.
+ * @param {string[]} revs
+ * @param {string} [cwd]
+ * @returns {string[]}
+ */
+function mergeIntroducedBinaryPaths(revs, cwd) {
+  const text = gitOut(['log', '--merges', '--cc', '--raw', '--no-abbrev', '--no-renames', '--format=commit %H', ...DIFF_OPTION_PIN, ...revs, '--'], cwd);
+  const out = [];
+  let merge = '';
+  for (const line of text.split('\n')) {
+    const c = /^commit ([0-9a-f]{40,64})$/.exec(line);
+    if (c) {
+      merge = c[1] ?? '';
+      continue;
+    }
+    // "::<modes> <shas> <status>\t<path>" -- one colon per parent; the result's sha comes last.
+    const m = /^(:+)([^\t]+)\t(.+)$/.exec(line.trimEnd());
+    if (!m || !merge) continue;
+    const parents = m[1]?.length ?? 1;
+    const parts = (m[2] ?? '').trim().split(/\s+/);
+    const newSha = parts[2 * parents + 1] ?? '';
+    const path = (m[3] ?? '').replace(/\\/g, '/');
+    if (!newSha || ZERO_SHA.test(newSha) || !path.startsWith('data/')) continue;
+    const numstat = gitOut(['diff', '--numstat', '--no-renames', ...DIFF_OPTION_PIN, `${merge}^1`, merge, '--', path], cwd);
+    out.push(...parseBinaryPathsUnderData(numstat));
+  }
+  return out;
 }
 
 /** First line of an error's code or message, for a one-line diffErrors entry. @param {unknown} err */
@@ -785,9 +939,9 @@ export function collectRefScan(stdinText, cwd, deps) {
  */
 function stagedMain() {
   const manifest = loadRealDataManifest();
-  const names = execFileSync('git', ['diff', '--cached', '--name-status', '--no-renames', '--diff-filter=AMT'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const names = gitOut(['diff', '--cached', '--name-status', '--no-renames', '--diff-filter=AMT', ...DIFF_OPTION_PIN]);
   const pathHits = parseRealDataPaths(names, manifest);
-  const added = parseAddedLines(execFileSync('git', ['diff', '--cached', '-U0', '--no-color'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
+  const added = parseAddedLines(gitOut(['diff', '--cached', '-U0', '--no-renames', ...DIFF_OPTION_PIN]));
   const fps = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
   const amountHits = fps ? scanAddedLinesForRealAmounts(added, fps) : [];
   if (!fps) console.log('[prepush-confidential-scan --staged] content fingerprint check skipped: no real data on this machine.');
@@ -823,14 +977,19 @@ function main() {
     );
     process.exit(1);
   }
-  const stdin = readStdin();
-  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin, undefined, { manifest });
+  // A stdin read ERROR means the pushed refs are unknown, so nothing would be scanned: it is recorded
+  // as a diff error and fails closed through the same PREPUSH_ALLOW_DIFF_ERROR gate (2026-11-12). An
+  // empty stdin (up-to-date push) is not an error.
+  const stdin = readPushStdin();
+  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin.text, undefined, { manifest });
+  if (stdin.error) diffErrors.unshift({ localSha: '(pre-push stdin)', message: stdin.error });
   const allHits = [];
   const flagHits = [];
   for (const added of addedByRef) {
     allHits.push(...scanDiffForConfidential(added, alwaysTerms));
     allHits.push(...scanDiffForContextTerms(added, contextGroups));
-    flagHits.push(...scanDiffForConfidentialFlag(added));
+    // The confidential:true check is payload-shaped: a commit message describing the flag is not a payload.
+    flagHits.push(...scanDiffForConfidentialFlag(added.filter((a) => !a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX))));
   }
 
   // Fail CLOSED on a ref that could not be diffed (prepush-scan-skips-on-diff-error, 2026-11-08).
@@ -842,7 +1001,7 @@ function main() {
     if (shouldBlockOnDiffError(diffErrors, process.env)) {
       blockOnHits(
         diffErrors,
-        'the confidential scan could not compute the diff for pushed ref(s), so they were NOT scanned',
+        'the confidential scan could not read the pushed refs (stdin) or compute their diff, so they were NOT scanned',
         (e) => `${e.localSha}  ->  ${e.message}`,
         'Invariant 3, fail closed. Fix the git error (for a missing remote sha, `git fetch origin`) ' +
           'and push again, or set PREPUSH_ALLOW_DIFF_ERROR=1 for this one push if you have verified ' +
