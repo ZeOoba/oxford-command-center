@@ -32,7 +32,7 @@ import type { PcaPropertySummary, PcaReportBrief, PropertyConditionReport } from
 
 function brief(over: Partial<PcaReportBrief>): PcaReportBrief {
   return {
-    reportId: 'R00', reportDate: '2026-04-07', consultant: 'Intertek', usabilityClass: 'current', usabilityRaw: 'CURRENT',
+    reportId: 'R00', reportDate: '2026-02-16', consultant: 'Intertek', usabilityClass: 'current', usabilityRaw: 'CURRENT',
     sf: null, immediateUsd: null, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: null,
     termYears: 12, psfYrStated: null, notes: null, ...over,
   };
@@ -53,20 +53,20 @@ const RAY_SET = PCA_OVERLAY.corrections.find((c) => c.propertyKey === 'raytown')
 const INFO_YR1 = INFO_LANE_DETAIL.reserveScheduleUninfl.yr1;
 const INFO_YR2 = INFO_LANE_DETAIL.reserveScheduleUninfl.yr2;
 /** Immediate + Short-term of the seven register rows the overlay does not touch (synthetic figures below). */
-const OTHER_NEAR_TERM = 1000 + 2000 + (25000 + 475000) + (10000 + 55000) + 6000 + 2400 + 2000;
-const FULTON_NEAR_TERM = 25000 + 475000;
+const OTHER_NEAR_TERM = 1300 + 2600 + (31000 + 392000) + (8200 + 43000) + 4700 + 3100 + 1700;
+const FULTON_NEAR_TERM = 31000 + 392000;
 
 /** The eight current reports as the REGISTER prints them (29000 Info Ln wrong). Synthetic figures. */
 function registerProperties(): PcaPropertySummary[] {
   return [
-    prop('banwick', '2800-2826 Banwick', brief({ reportId: 'R01', sf: 24000, immediateUsd: 1000, reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, psfYrStated: 0.77 })),
-    prop('old-morrison', '384-420 Old Morrison', brief({ reportId: 'R02', sf: 31200, immediateUsd: 2000, reservesUninflUsd: 216000, reservesInflUsd: 229000, psfYrStated: 0.58 })),
-    prop('e-fulton', '3520 E Fulton', brief({ reportId: 'R03', reportDate: '2025-04-28', consultant: 'CBRE', usabilityClass: 'limited', sf: 198576, immediateUsd: 25000, shortTermUsd: 475000, reservesUninflUsd: 780000, reservesInflUsd: 836000, psfYrStated: 0.33 })),
-    prop('e-livingston', '3875-3883 E Livingston', brief({ reportId: 'R04', reportDate: '2025-04-10', consultant: 'AEI', usabilityClass: 'draft', sf: 10950, immediateUsd: 10000, shortTermUsd: 55000, reservesUninflUsd: 98550, reservesInflUsd: 110000 })),
-    prop('northwood', '2203-2207 Northwood', brief({ reportId: 'R05', reportDate: '2024-09-16', consultant: 'PCI', sf: 53700, immediateUsd: 6000, reservesUninflUsd: null, reservesInflUsd: 33000, termYears: 10, psfYrStated: 0.06 })),
-    prop('raytown', '9620 SR 350 Raytown', brief({ reportId: 'R06', reportDate: '2024-10-07', consultant: 'EWI', sf: 34560, immediateUsd: 2400, reservesUninflUsd: 210000, reservesInflUsd: 300000, psfYrStated: 21.25 })),
-    prop('sunburst', '401 Sunburst', brief({ reportId: 'R07', reportDate: '2025-11-25', consultant: 'PCI letter', usabilityClass: 'limited', immediateUsd: 2000, termYears: null })),
-    prop('info-lane', '29000 Information Ln', brief({ reportId: 'R08', reportDate: '2025-11', usabilityClass: 'draft', sf: 48000, immediateUsd: INFO_YR1, shortTermUsd: INFO_YR2, reservesUninflUsd: INFO_LANE_DETAIL.reservesUninflUsd, reservesInflUsd: INFO_LANE_DETAIL.reservesInflUsd, psfYrStated: 0.25 })),
+    prop('banwick', '2800-2826 Banwick', brief({ reportId: 'R01', sf: 26400, immediateUsd: 1300, reservesUninflUsd: 253440, reservesInflUsd: 268900, termYears: 15, psfYrStated: 0.64 })),
+    prop('old-morrison', '384-420 Old Morrison', brief({ reportId: 'R02', sf: 28800, immediateUsd: 2600, reservesUninflUsd: 241000, reservesInflUsd: 255500, psfYrStated: 0.71 })),
+    prop('e-fulton', '3520 E Fulton', brief({ reportId: 'R03', reportDate: '2025-02-11', consultant: 'CBRE', usabilityClass: 'limited', sf: 176000, immediateUsd: 31000, shortTermUsd: 392000, reservesUninflUsd: 655000, reservesInflUsd: 701000, psfYrStated: 0.31 })),
+    prop('e-livingston', '3875-3883 E Livingston', brief({ reportId: 'R04', reportDate: '2025-01-22', consultant: 'AEI', usabilityClass: 'draft', sf: 12600, immediateUsd: 8200, shortTermUsd: 43000, reservesUninflUsd: 136080, reservesInflUsd: 151000 })),
+    prop('northwood', '2203-2207 Northwood', brief({ reportId: 'R05', reportDate: '2024-08-05', consultant: 'PCI', sf: 47400, immediateUsd: 4700, reservesUninflUsd: null, reservesInflUsd: 41500, termYears: 10, psfYrStated: 0.09 })),
+    prop('raytown', '9620 SR 350 Raytown', brief({ reportId: 'R06', reportDate: '2024-10-21', consultant: 'EWI', sf: 41200, immediateUsd: 3100, reservesUninflUsd: 187000, reservesInflUsd: 262000, psfYrStated: 17.4 })),
+    prop('sunburst', '401 Sunburst', brief({ reportId: 'R07', reportDate: '2025-10-14', consultant: 'PCI letter', usabilityClass: 'limited', immediateUsd: 1700, termYears: null })),
+    prop('info-lane', '29000 Information Ln', brief({ reportId: 'R08', reportDate: '2025-11', usabilityClass: 'draft', sf: 51800, immediateUsd: INFO_YR1, shortTermUsd: INFO_YR2, reservesUninflUsd: INFO_LANE_DETAIL.reservesUninflUsd, reservesInflUsd: INFO_LANE_DETAIL.reservesInflUsd, psfYrStated: 0.29 })),
   ];
 }
 
@@ -80,20 +80,20 @@ function reportOf(properties: PcaPropertySummary[]): PropertyConditionReport {
 
 describe('reservePsfYr', () => {
   it('derives reserves ÷ SF ÷ term when no stated value exists and marks it derived (Livingston)', () => {
-    const r = reservePsfYr({ reservesUninflUsd: 98550, sf: 10950, termYears: 12, psfYrStated: null });
+    const r = reservePsfYr({ reservesUninflUsd: 136080, sf: 12600, termYears: 12, psfYrStated: null });
     expect(r.origin).toBe('derived');
-    expect(r.value).toBeCloseTo(0.75, 3);
+    expect(r.value).toBeCloseTo(0.9, 3);
   });
 
-  it('keeps the stated label only when the stated figure reconciles to the computation (Banwick 0.77)', () => {
-    const r = reservePsfYr({ reservesUninflUsd: REDACTED-AMT, sf: 24000, termYears: 12, psfYrStated: 0.77 });
+  it('keeps the stated label only when the stated figure reconciles to the computation (Banwick 0.64)', () => {
+    const r = reservePsfYr({ reservesUninflUsd: 253440, sf: 26400, termYears: 15, psfYrStated: 0.64 });
     expect(r.origin).toBe('stated');
-    expect(r.value).toBeCloseTo(0.77, 2);
+    expect(r.value).toBeCloseTo(0.64, 2);
   });
 
   it('returns n/a — never imputes — when the uninflated reserve is absent (Northwood: only an inflated reserve exists)', () => {
-    const r = reservePsfYr({ reservesUninflUsd: null, sf: 53700, termYears: 10, psfYrStated: 0.06 });
-    expect(r).toEqual({ value: null, origin: 'n/a', stated: 0.06 });
+    const r = reservePsfYr({ reservesUninflUsd: null, sf: 47400, termYears: 10, psfYrStated: 0.09 });
+    expect(r).toEqual({ value: null, origin: 'n/a', stated: 0.09 });
   });
 
   it('returns n/a when SF or term is missing (Sunburst)', () => {
@@ -101,17 +101,17 @@ describe('reservePsfYr', () => {
     expect(reservePsfYr({ reservesUninflUsd: 1000, sf: 100, termYears: null, psfYrStated: null }).origin).toBe('n/a');
   });
 
-  it('recomputes Raytown from the corrected reserve and treats the unreproducible stated $21.25 as derived', () => {
-    const r = reservePsfYr({ reservesUninflUsd: RAY_SET.reservesUninflUsd, sf: 34560, termYears: 12, psfYrStated: 21.25 });
+  it('recomputes Raytown from the corrected reserve and treats the unreproducible stated $17.40 as derived', () => {
+    const r = reservePsfYr({ reservesUninflUsd: RAY_SET.reservesUninflUsd, sf: 41200, termYears: 12, psfYrStated: 17.4 });
     expect(r.origin).toBe('derived');
-    expect(r.value).toBeCloseTo(RAY_SET.reservesUninflUsd / 34560 / 12, 3);
+    expect(r.value).toBeCloseTo(RAY_SET.reservesUninflUsd / 41200 / 12, 3);
   });
 });
 
 describe('one STALE rule for PCA register and building specs', () => {
   const cases: Array<{ date: string; draft: boolean; stale: boolean }> = [
-    { date: '2025-04-28', draft: false, stale: false },
-    { date: '2025-04-28', draft: true, stale: false },
+    { date: '2025-02-11', draft: false, stale: false },
+    { date: '2025-02-11', draft: true, stale: false },
     { date: '2023-12-31', draft: false, stale: false },
     { date: '2023-12-31', draft: true, stale: false },
     { date: '2026-04', draft: false, stale: true },
@@ -136,7 +136,7 @@ describe('reportStatus undated', () => {
     expect(reportStatus({ usabilityClass: 'current', reportDate: null })).toBe('STALE');
     expect(reportStatus({ usabilityClass: 'unknown', reportDate: null })).toBe('STALE');
     expect(reportStatus({ usabilityClass: 'draft', reportDate: null })).toBe('STALE'); // undated beats draft: its dollars must not count
-    expect(reportStatus({ usabilityClass: 'draft', reportDate: '2025-04-10' })).toBe('DRAFT');
+    expect(reportStatus({ usabilityClass: 'draft', reportDate: '2025-01-22' })).toBe('DRAFT');
   });
 });
 
@@ -156,8 +156,8 @@ describe('reportStatus', () => {
 
 describe('monthsSince', () => {
   it('counts whole calendar months from a partial date to the as-of date, at runtime', () => {
-    expect(monthsSince('2024-09-16', '2026-10-13')).toBe(25);
-    expect(monthsSince('2024-10-07', '2026-10-13')).toBe(24);
+    expect(monthsSince('2024-09-02', '2026-10-13')).toBe(25);
+    expect(monthsSince('2024-10-28', '2026-10-13')).toBe(24);
     expect(monthsSince('2024', '2026-10-13')).toBe(22); // bare year → December (age never overstated)
     expect(monthsSince('2026', '2026-10-13')).toBe(0); // same-year bare year floors at 0, never negative
     expect(monthsSince('2027', '2026-10-13')).toBeNull(); // a future year is not an age of 0 (#474)
@@ -210,7 +210,7 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
   });
 
   it('keeps STALE (pre-2024) reports out of the dollar totals but still counts the property', () => {
-    const stale = prop('red-branch', '9050 Red Branch', brief({ reportId: 'R12', reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: 70000, shortTermUsd: 5, reservesUninflUsd: 500000 }));
+    const stale = prop('red-branch', '9050 Red Branch', brief({ reportId: 'R12', reportDate: '2015-06-03', usabilityClass: 'stale', immediateUsd: 58000, shortTermUsd: 5, reservesUninflUsd: 410000 }));
     const withStale = applyPcaOverlay(reportOf([...registerProperties(), stale]), PCA_OVERLAY);
     expect(withStale.totals.immediateUsd).toBe(adjusted.totals.immediateUsd);
     expect(withStale.totals.reservesUninflUsd).toBe(adjusted.totals.reservesUninflUsd);
@@ -231,7 +231,7 @@ describe('applyPcaOverlay — 29000 Information Ln Immediate / Short-Term correc
   it('derives Raytown reserves to the corrected figure, not the stated one', () => {
     const ray = adjusted.properties.find((p) => p.propertyKey === 'raytown')!;
     expect(ray.current.reservesUninflUsd).toBe(RAY_SET.reservesUninflUsd);
-    expect(ray.current.reservesUninflUsd).not.toBe(210000);
+    expect(ray.current.reservesUninflUsd).not.toBe(187000);
     expect(ray.psf.origin).toBe('derived');
   });
 });
@@ -264,7 +264,7 @@ describe('nearTermRollup', () => {
   });
 
   it('excludes STALE reports from the rollup', () => {
-    const stale = prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-08-12', usabilityClass: 'stale', immediateUsd: 70000 }));
+    const stale = prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-06-03', usabilityClass: 'stale', immediateUsd: 58000 }));
     const withStale = nearTermRollup([...adjusted.properties, { ...stale, flags: [], psf: reservePsfYr({ reservesUninflUsd: null, sf: null, termYears: null, psfYrStated: null }), status: 'STALE' }]);
     expect(withStale.totalUsd).toBe(total);
     expect(withStale.excludedStale).toBe(1);
@@ -288,8 +288,8 @@ describe('currencyAlerts', () => {
 
   it('collapses STALE reports into one info line instead of one alert each', () => {
     const stale = [
-      prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-08-12', usabilityClass: 'stale' })),
-      prop('muirkirk', 'Muirkirk', brief({ reportDate: '2014-10-23', usabilityClass: 'stale' })),
+      prop('red-branch', '9050 Red Branch', brief({ reportDate: '2015-06-03', usabilityClass: 'stale' })),
+      prop('muirkirk', 'Muirkirk', brief({ reportDate: '2014-05-19', usabilityClass: 'stale' })),
     ];
     const a = currencyAlerts([...adjusted.properties, ...stale], '2026-10-13', PCA_OVERLAY).filter((x) => x.propertyKey === '_stale');
     expect(a).toHaveLength(1);
@@ -298,7 +298,7 @@ describe('currencyAlerts', () => {
   });
 
   it('names a RECENT report the register classed stale (excluded from totals, so it must be surfaced)', () => {
-    const recent = prop('banwick-x', 'Recent But Stale', brief({ reportDate: '2026-04-07', usabilityClass: 'stale' }));
+    const recent = prop('banwick-x', 'Recent But Stale', brief({ reportDate: '2026-02-16', usabilityClass: 'stale' }));
     const a = currencyAlerts([...adjusted.properties, recent], '2026-10-13', PCA_OVERLAY).filter((x) => x.propertyKey === '_stale');
     expect(a).toHaveLength(1);
     expect(a[0]!.message).toContain('Recent But Stale');
@@ -319,11 +319,11 @@ describe('currencyAlerts', () => {
 describe('warrantyClock', () => {
   it('computes years remaining from the as-of year at runtime', () => {
     const rows = warrantyClock(
-      [{ propertyLabel: '55 New Plant', component: 'Roof EPDM', installYear: 2017, eul: null, rul: null, rulAsOfYear: null, warrantyEndYear: 2037 }],
+      [{ propertyLabel: '55 New Plant', component: 'Roof EPDM', installYear: 2016, eul: null, rul: null, rulAsOfYear: null, warrantyEndYear: 2036 }],
       '2026-10-13',
     );
-    expect(rows[0]!.warrantyYearsRemaining).toBe(11);
-    expect(warrantyClock(rows.map((r) => ({ ...r })), '2030-01-01')[0]!.warrantyYearsRemaining).toBe(7);
+    expect(rows[0]!.warrantyYearsRemaining).toBe(10);
+    expect(warrantyClock(rows.map((r) => ({ ...r })), '2030-01-01')[0]!.warrantyYearsRemaining).toBe(6);
   });
 
   it('derives life remaining from install + EUL (29000 metal roofs, EUL 40)', () => {

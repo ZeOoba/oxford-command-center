@@ -21,8 +21,8 @@ function report(over: Partial<PcaReport>): PcaReport {
   return {
     reportId: 'R01', propertyKey: 'banwick', propertyMasterId: null, propertyLabel: 'Banwick', location: null,
     consultant: 'Intertek', client: null, oraCommissioned: true, purpose: null, inspectionDate: null,
-    reportDate: '2026-04-07', sf: 24000, buildings: 1, yearBuilt: '1981', immediateUsd: 1000, shortTermUsd: null,
-    reservesUninflUsd: REDACTED-AMT, reservesInflUsd: REDACTED-AMT, termYears: 12, psfYrStated: 0.77,
+    reportDate: '2026-02-16', sf: 26400, buildings: 1, yearBuilt: '1981', immediateUsd: 1300, shortTermUsd: null,
+    reservesUninflUsd: 253440, reservesInflUsd: 268900, termYears: 15, psfYrStated: 0.64,
     usabilityRaw: 'CURRENT', usabilityClass: 'current', sourceFiles: null, notes: null, ...over,
   };
 }
@@ -55,9 +55,9 @@ describe('buildPropertyConditionReport — properties', () => {
     try {
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'R09', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2016-12-07', usabilityClass: 'stale', immediateUsd: 13000, reservesUninflUsd: 190000 }),
-          report({ reportId: 'R08', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2025-11', usabilityClass: 'draft', immediateUsd: 40000, reservesUninflUsd: 120000 }),
-          report({ reportId: 'R16', propertyKey: 'sheriff-rd', propertyLabel: 'Sheriff', reportDate: '2007-07-19', usabilityClass: 'stale', immediateUsd: 11000, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: 60000, sf: null }),
+          report({ reportId: 'R09', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2016-11-14', usabilityClass: 'stale', immediateUsd: 14600, reservesUninflUsd: 173000 }),
+          report({ reportId: 'R08', propertyKey: 'info-lane', propertyLabel: 'Info Ln', reportDate: '2025-11', usabilityClass: 'draft', immediateUsd: 36500, reservesUninflUsd: 112000 }),
+          report({ reportId: 'R16', propertyKey: 'sheriff-rd', propertyLabel: 'Sheriff', reportDate: '2007-03-08', usabilityClass: 'stale', immediateUsd: 9400, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: 60000, sf: null }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
@@ -84,7 +84,7 @@ describe('buildPropertyConditionReport — properties', () => {
           report({ reportId: 'A1', propertyKey: 'a', propertyLabel: 'A', reportDate: '2015-01-01', immediateUsd: 1000, shortTermUsd: 500, reservesUninflUsd: 9000 }),
           report({ reportId: 'A2', propertyKey: 'a', propertyLabel: 'A', reportDate: '2025-01-01', immediateUsd: 100, shortTermUsd: null, reservesUninflUsd: 900 }),
           report({ reportId: 'B1', propertyKey: 'b', propertyLabel: 'B', reportDate: '2024-01-01', immediateUsd: 10, shortTermUsd: 5, reservesUninflUsd: null }),
-          report({ reportId: 'N1', propertyKey: 'n', propertyLabel: 'N narrative', reportDate: '2020-12-24', immediateUsd: null, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: null, sf: null, termYears: null, psfYrStated: null, usabilityClass: 'limited' }),
+          report({ reportId: 'N1', propertyKey: 'n', propertyLabel: 'N narrative', reportDate: '2020-10-30', immediateUsd: null, shortTermUsd: null, reservesUninflUsd: null, reservesInflUsd: null, sf: null, termYears: null, psfYrStated: null, usabilityClass: 'limited' }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
@@ -136,13 +136,13 @@ describe('buildPropertyConditionReport — properties', () => {
     try {
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'F', propertyKey: 'e-fulton', propertyLabel: 'E Fulton', sf: 198576, immediateUsd: 25000, shortTermUsd: 475000, reservesUninflUsd: 780000, termYears: 12 }),
+          report({ reportId: 'F', propertyKey: 'e-fulton', propertyLabel: 'E Fulton', sf: 176000, immediateUsd: 31000, shortTermUsd: 392000, reservesUninflUsd: 655000, termYears: 12 }),
           report({ reportId: 'S', propertyKey: 'small', propertyLabel: 'Small', immediateUsd: 10, shortTermUsd: null }),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       expect(r.properties[0]?.propertyKey).toBe('e-fulton');
-      expect(r.properties[0]?.reservesPsfYr).toBeCloseTo(780000 / 198576 / 12, 3);
+      expect(r.properties[0]?.reservesPsfYr).toBeCloseTo(655000 / 176000 / 12, 3);
     } finally {
       db.close();
     }
@@ -158,10 +158,10 @@ describe('buildPropertyConditionReport — schedule, lifecycle, price book', () 
       });
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'OLDCUR', propertyKey: 'old', propertyLabel: 'Old', reportDate: '2015-08-12', usabilityClass: 'stale' }),
+          report({ reportId: 'OLDCUR', propertyKey: 'old', propertyLabel: 'Old', reportDate: '2015-06-03', usabilityClass: 'stale' }),
           report({ reportId: 'FLAGGED', propertyKey: 'flg', propertyLabel: 'Flagged', reportDate: '2025-03-01', usabilityClass: 'stale' }),
           report({ reportId: 'UNDATED', propertyKey: 'und', propertyLabel: 'Undated', reportDate: null }),
-          report({ reportId: 'LIVE', propertyKey: 'live', propertyLabel: 'Live', reportDate: '2026-04-07' }),
+          report({ reportId: 'LIVE', propertyKey: 'live', propertyLabel: 'Live', reportDate: '2026-02-16' }),
         ],
         components: [comp('OLDCUR', 'old roof'), comp('FLAGGED', 'flagged roof'), comp('UNDATED', 'undated roof'), comp('LIVE', 'live roof')],
       }));
@@ -179,7 +179,7 @@ describe('buildPropertyConditionReport — schedule, lifecycle, price book', () 
     expect(warrantyStatus(2025, 2026)).toBe('expired');
     expect(warrantyStatus(2026, 2026)).toBe('ends-this-year');
     expect(warrantyStatus(2028, 2026)).toBe('expiring');
-    expect(warrantyStatus(2037, 2026)).toBe('active');
+    expect(warrantyStatus(2036, 2026)).toBe('active');
   });
 
   it('sorts warranty problems first and computes install age', () => {
@@ -187,14 +187,14 @@ describe('buildPropertyConditionReport — schedule, lifecycle, price book', () 
     try {
       writeRegister(db, parsed({
         assets: [
-          { propertyKey: 'new-plant', propertyMasterId: null, propertyLabel: 'New Plant', component: 'Roof EPDM', installFact: null, installYear: 2017, warranty: '20-yr to 2037', warrantyEndYear: 2037, source: null, flag: null, rowSeq: 1 },
+          { propertyKey: 'new-plant', propertyMasterId: null, propertyLabel: 'New Plant', component: 'Roof EPDM', installFact: null, installYear: 2016, warranty: '20-yr to 2036', warrantyEndYear: 2036, source: null, flag: null, rowSeq: 1 },
           { propertyKey: 'northwood', propertyMasterId: null, propertyLabel: 'Northwood', component: 'Roof', installFact: null, installYear: 2020, warranty: 'to 2025', warrantyEndYear: 2025, source: null, flag: null, rowSeq: 1 },
           { propertyKey: 'x', propertyMasterId: null, propertyLabel: 'X', component: 'HVAC', installFact: null, installYear: null, warranty: null, warrantyEndYear: null, source: null, flag: null, rowSeq: 1 },
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       expect(r.schedule.map((s) => s.warrantyStatus)).toEqual(['expired', 'active', 'unknown']);
-      expect(r.schedule.find((s) => s.propertyKey === 'new-plant')?.ageYears).toBe(9);
+      expect(r.schedule.find((s) => s.propertyKey === 'new-plant')?.ageYears).toBe(10);
       expect(r.schedule.find((s) => s.propertyKey === 'x')?.ageYears).toBeNull();
     } finally {
       db.close();
@@ -209,18 +209,18 @@ describe('buildPropertyConditionReport — schedule, lifecycle, price book', () 
       });
       writeRegister(db, parsed({
         reports: [
-          report({ reportId: 'OLD', propertyKey: 'p', propertyLabel: 'P', reportDate: '2016-10' }),
-          report({ reportId: 'NEW', propertyKey: 'p', propertyLabel: 'P', reportDate: '2026-04-07' }),
+          report({ reportId: 'OLD', propertyKey: 'p', propertyLabel: 'P', reportDate: '2016-06' }),
+          report({ reportId: 'NEW', propertyKey: 'p', propertyLabel: 'P', reportDate: '2026-02-16' }),
         ],
         components: [
           comp('OLD', 1, 'Old roof', 3, '3', 100),
-          comp('NEW', 1, 'EPDM roof', 3, '3', 144000),
-          comp('NEW', 2, 'TPO re-roof', null, '1-2', 200000),
+          comp('NEW', 1, 'EPDM roof', 2, '2', 158000),
+          comp('NEW', 2, 'TPO re-roof', null, '1-2', 171000),
         ],
       }));
       const r = buildPropertyConditionReport(db, AS_OF);
       expect(r.lifecycle.map((l) => l.system)).toEqual(['EPDM roof', 'TPO re-roof']);
-      expect(r.lifecycle[0]?.dueYear).toBe(2029);
+      expect(r.lifecycle[0]?.dueYear).toBe(2028);
       expect(r.lifecycle[1]).toMatchObject({ dueYear: null, rulRaw: '1-2' });
     } finally {
       db.close();
@@ -284,10 +284,10 @@ describe('buildPropertyConditionReport — calibration and quotes', () => {
       });
       writeRegister(db, parsed({
         quotes: [
-          q('exec', { recordType: 'Contract', status: 'Awarded', quotedUsd: 240300, qty: 26700, uom: 'SF' }),
-          q('budget', { recordType: 'Estimate', status: 'Quoted', quotedUsd: 650000, qty: 52500, uom: 'SF' }),
-          q('super', { status: 'Superseded', quotedUsd: 24000, qty: 2376, uom: 'SF' }),
-          q('live', { quotedUsd: 30000, qty: 2376, uom: 'SF' }),
+          q('exec', { recordType: 'Contract', status: 'Awarded', quotedUsd: 189420, qty: 23100, uom: 'SF' }),
+          q('budget', { recordType: 'Estimate', status: 'Quoted', quotedUsd: 259200, qty: 38400, uom: 'SF' }),
+          q('super', { status: 'Superseded', quotedUsd: 17800, qty: 3040, uom: 'SF' }),
+          q('live', { quotedUsd: 21650, qty: 3040, uom: 'SF' }),
           q('ls', { quotedUsd: 8000 }),
           q('sy', { quotedUsd: 1000, qty: 10, uom: 'SY' }),
         ],
@@ -295,7 +295,7 @@ describe('buildPropertyConditionReport — calibration and quotes', () => {
       const r = buildPropertyConditionReport(db, AS_OF);
       const by = (k: string) => r.quotes.find((x) => x.quoteKey === k);
       expect(by('exec')).toMatchObject({ evidenceClass: 'executed' });
-      expect(by('exec')?.unitPriceUsdPsf).toBeCloseTo(9.0, 2);
+      expect(by('exec')?.unitPriceUsdPsf).toBeCloseTo(8.2, 2);
       expect(by('budget')?.evidenceClass).toBe('budget');
       expect(by('super')?.evidenceClass).toBe('superseded');
       expect(by('live')?.evidenceClass).toBe('quoted');

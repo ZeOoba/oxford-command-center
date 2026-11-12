@@ -62,10 +62,10 @@ const withId = (n: number, over: Partial<CalibrationObservation> = {}) => obs({ 
 
 describe('ratio and variance — derived from $/unit, never stored', () => {
   it('ratio = contractor ÷ PCA, variance = ratio − 1', () => {
-    const o = obs({ pca_unit_cost: 7, contractor_unit_cost: 2.8526 });
-    expect(ratio(o)).toBeCloseTo(0.4075, 3);
-    expect(variancePct(o)).toBeCloseTo(-0.5925, 3);
-    expect(variancePct(obs({ pca_unit_cost: 4, contractor_unit_cost: 12.5 }))).toBeCloseTo(2.125, 6);
+    const o = obs({ pca_unit_cost: 8, contractor_unit_cost: 3.1 });
+    expect(ratio(o)).toBeCloseTo(0.3875, 3);
+    expect(variancePct(o)).toBeCloseTo(-0.6125, 3);
+    expect(variancePct(obs({ pca_unit_cost: 5, contractor_unit_cost: 13.25 }))).toBeCloseTo(1.65, 6);
   });
 
   it('is null when either unit cost is missing or the PCA cost is zero', () => {
@@ -248,9 +248,9 @@ describe('promotion: pending → observation', () => {
 
   it('a $0 Actual Total does not mask the real Quoted Total', () => {
     const rt = (v: string) => ({ type: 'rich_text', rich_text: [{ plain_text: v }] });
-    const props = { 'Record (title)': rt('EPDM roof replacement'), Property: rt('2800-2826 Banwick'), UOM: rt('SF'), 'Doc Date': rt('2026-04-01'), Qty: { type: 'number', number: 24000 }, 'Actual Total': { type: 'number', number: 0 }, 'Quoted Total': { type: 'number', number: 252000 }, Vendor: rt('Acme'), 'Record Type': rt('Quote'), Status: rt('Open') } as never;
+    const props = { 'Record (title)': rt('EPDM roof replacement'), Property: rt('2800-2826 Banwick'), UOM: rt('SF'), 'Doc Date': rt('2026-04-01'), Qty: { type: 'number', number: 31500 }, 'Actual Total': { type: 'number', number: 0 }, 'Quoted Total': { type: 'number', number: 258300 }, Vendor: rt('Acme'), 'Record Type': rt('Quote'), Status: rt('Open') } as never;
     const q = notionQuote(props, 'wb')!;
-    expect(q.totalUsd).toBe(252000);
+    expect(q.totalUsd).toBe(258300);
     expect(q.isActual).toBe(false);
   });
 
@@ -262,8 +262,8 @@ describe('promotion: pending → observation', () => {
     expect(ok.promoted.supersedes).toEqual(['banwick:placeholder']);
     expect(aggregateByComponent(ok.ledger).find((g) => g.component === 'roof_epdm')!.n).toBe(1);
     expect(() => promoteProposal([placeholder, other], [prop], 'banwick:real', '2026-10-14', ['elsewhere:x'])).toThrow(/different property/);
-    const pcaLine: PcaLine = { propertyKey: 'banwick', component: 'roof_epdm', unit: 'SF', unitCost: 6, qty: 24000, consultant: 'Example Consultants', reportDate: '2026-04-07', reportId: 'R01', status: 'CURRENT', sourceFile: 'f' };
-    const q: QuoteLine = { propertyKey: 'banwick', propertyLabel: '2800-2826 Banwick', component: 'roof_epdm', unit: 'SF', qty: 24000, totalUsd: 252000, isActual: false, vendor: 'Acme', docDate: '2026-05-12', status: 'BID', superseded: false, title: 't', sourceFile: 's' };
+    const pcaLine: PcaLine = { propertyKey: 'banwick', component: 'roof_epdm', unit: 'SF', unitCost: 3.5, qty: 31500, consultant: 'Example Consultants', reportDate: '2026-02-16', reportId: 'R01', status: 'CURRENT', sourceFile: 'f' };
+    const q: QuoteLine = { propertyKey: 'banwick', propertyLabel: '2800-2826 Banwick', component: 'roof_epdm', unit: 'SF', qty: 31500, totalUsd: 258300, isActual: false, vendor: 'Acme', docDate: '2026-03-30', status: 'BID', superseded: false, title: 't', sourceFile: 's' };
     const [p] = proposePairs([pcaLine], [q], { ledger: [placeholder], pending: [] }, '2026-10-14', 't');
     expect(p!.scope_note).toMatch(/--supersedes banwick:placeholder|--supersedes <obs_id>/);
     expect(p!.scope_note).toContain('banwick:placeholder');
@@ -368,10 +368,10 @@ describe('promotion: pending → observation', () => {
 
 describe('proposal matcher (read-only)', () => {
   const pca: PcaLine[] = [{
-    propertyKey: 'e-livingston', component: 'roof_other', unit: 'SF', unitCost: 12, qty: 2400, consultant: 'AEI', reportDate: '2025-04-10', reportId: 'R04', status: 'DRAFT', sourceFile: 'wb > Components',
+    propertyKey: 'e-livingston', component: 'roof_other', unit: 'SF', unitCost: 7.5, qty: 3150, consultant: 'AEI', reportDate: '2025-01-22', reportId: 'R04', status: 'DRAFT', sourceFile: 'wb > Components',
   }];
   const quote = (over: Partial<QuoteLine> = {}): QuoteLine => ({
-    propertyKey: 'e-livingston', propertyLabel: '3875-3883 E Livingston', component: 'roof_other', unit: 'SF', qty: 2376, totalUsd: REDACTED-AMT, isActual: false, vendor: 'Yarrow', docDate: '2025-03-26',
+    propertyKey: 'e-livingston', propertyLabel: '3875-3883 E Livingston', component: 'roof_other', unit: 'SF', qty: 3040, totalUsd: 19456, isActual: false, vendor: 'Yarrow', docDate: '2024-12-09',
     status: 'BID', superseded: false, title: 'back bldg re-roof (Yarrow)', sourceFile: 'wb > Quotes_Actuals', ...over,
   });
 
@@ -478,8 +478,8 @@ describe('proposal matcher (read-only)', () => {
 
   it('pairs on property + component and normalizes the contractor total to $/unit', () => {
     const [p] = proposePairs(pca, [quote()], { ledger: [], pending: [] }, '2026-10-13', 'workbook:t');
-    expect(p!.contractor_unit_cost).toBeCloseTo(12.58, 2);
-    expect(p!.pca_unit_cost).toBe(12);
+    expect(p!.contractor_unit_cost).toBeCloseTo(6.4, 2);
+    expect(p!.pca_unit_cost).toBe(7.5);
     expect(p!.pca_source.status).toBe('DRAFT');
     expect(p!.contractor_source.status).toBe('BID');
     expect(p!.include_in_stats).toBe(true);
@@ -493,7 +493,7 @@ describe('proposal matcher (read-only)', () => {
   it('skips a quote already in the ledger or pending — no duplicates', () => {
     const first = proposePairs(pca, [quote()], { ledger: [], pending: [] }, '2026-10-13', 't');
     expect(proposePairs(pca, [quote()], { ledger: [], pending: first }, '2026-10-13', 't')).toHaveLength(0);
-    const asLedger = [obs({ property: '3875-3883 E Livingston', contractor_unit_cost: REDACTED-AMT / 2376, contractor_source: { vendor: 'Yarrow', doc_date: '2025-03-26', status: 'BID', source_file: 'q', source_date: '2025-03-26', price_basis: 'CONTRACTOR_QUOTE' } })];
+    const asLedger = [obs({ property: '3875-3883 E Livingston', contractor_unit_cost: 19456 / 3040, contractor_source: { vendor: 'Yarrow', doc_date: '2024-12-09', status: 'BID', source_file: 'q', source_date: '2024-12-09', price_basis: 'CONTRACTOR_QUOTE' } })];
     expect(proposePairs(pca, [quote()], { ledger: asLedger, pending: [] }, '2026-10-13', 't')).toHaveLength(0);
   });
 
@@ -525,10 +525,10 @@ describe('proposal matcher (read-only)', () => {
 
   it('linesFromRegister keeps only per-unit SF/SY/LF lines and drops lump sums', () => {
     const parsed = {
-      reports: [{ reportId: 'R04', propertyKey: 'e-livingston', consultant: 'AEI', reportDate: '2025-04-10', usabilityClass: 'draft' }],
+      reports: [{ reportId: 'R04', propertyKey: 'e-livingston', consultant: 'AEI', reportDate: '2025-01-22', usabilityClass: 'draft' }],
       components: [
-        { reportId: 'R04', system: '3883 mod-bit roof replacement', uom: 'SF', unitCost: 12, qty: 2400 },
-        { reportId: 'R04', system: 'Roof repair allowance', uom: 'LS', unitCost: 2000, qty: 1 },
+        { reportId: 'R04', system: '3883 mod-bit roof replacement', uom: 'SF', unitCost: 7.5, qty: 3150 },
+        { reportId: 'R04', system: 'Roof repair allowance', uom: 'LS', unitCost: 1500, qty: 1 },
       ],
       quotes: [],
     } as unknown as ParsedRegister;
@@ -548,7 +548,7 @@ describe('Notion source — read-only, degrades without a token', () => {
 
   it('only issues POST queries to /data_sources/<id>/query — never a write', async () => {
     const calls: Array<{ url: string; method?: string }> = [];
-    const page = { properties: { 'Record (title)': { title: [{ plain_text: 'Test re-roof EPDM (Acme)' }] }, Property: { rich_text: [{ plain_text: '3520 E Fulton St' }] }, UOM: { select: { name: 'SF' } }, 'Doc Date': { date: { start: '2026-05-07' } }, Qty: { number: 52500 }, 'Quoted Total': { number: REDACTED-AMT }, Vendor: { rich_text: [{ plain_text: 'Acme' }] }, 'Record Type': { select: { name: 'Estimate' } }, Status: { select: { name: 'Quoted' } } } };
+    const page = { properties: { 'Record (title)': { title: [{ plain_text: 'Test re-roof EPDM (Acme)' }] }, Property: { rich_text: [{ plain_text: '3520 E Fulton St' }] }, UOM: { select: { name: 'SF' } }, 'Doc Date': { date: { start: '2026-03-19' } }, Qty: { number: 38400 }, 'Quoted Total': { number: 259200 }, Vendor: { rich_text: [{ plain_text: 'Acme' }] }, 'Record Type': { select: { name: 'Estimate' } }, Status: { select: { name: 'Quoted' } } } };
     const fakeFetch = async (url: string, init?: { method?: string }) => {
       calls.push({ url, method: init?.method });
       return { ok: true, status: 200, json: async () => ({ results: [page], has_more: false }), text: async () => '' };
@@ -556,7 +556,7 @@ describe('Notion source — read-only, degrades without a token', () => {
     const r = await fetchNotionLines({ token: 't', quotesDs: 'q1', componentsDs: 'c1' }, fakeFetch);
     expect(calls.every((c) => c.method === 'POST' && /\/data_sources\/(q1|c1)\/query$/.test(c.url))).toBe(true);
     expect(r.quotes).toHaveLength(1);
-    expect(r.quotes[0]).toMatchObject({ propertyKey: 'e-fulton', component: 'roof_epdm', qty: 52500, vendor: 'Acme', status: 'BID' });
+    expect(r.quotes[0]).toMatchObject({ propertyKey: 'e-fulton', component: 'roof_epdm', qty: 38400, vendor: 'Acme', status: 'BID' });
   });
 
   it('notionQuote rejects rows without a unit, date or property', () => {
@@ -626,13 +626,13 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
   // the rest of the committed ledger (incl. the Banwick placeholder pair) is used as-is.
   const QR = { status: 'BID', source_file: 'q', price_basis: 'CONTRACTOR_QUOTE' } as const;
   const fultonRow = obs({
-    obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-05', property: '3520 E Fulton St', qty: 52500, pca_unit_cost: 4, contractor_unit_cost: 12.5,
-    contractor_source: { ...QR, vendor: 'Zenith Roofing', doc_date: '2026-05', source_date: '2026-05' },
+    obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-03', property: '3520 E Fulton St', qty: 38400, pca_unit_cost: 9, contractor_unit_cost: 6.75,
+    contractor_source: { ...QR, vendor: 'Zenith Roofing', doc_date: '2026-03', source_date: '2026-03' },
   });
   const newPlantRow = obs({
-    obs_id: 'new-plant:roof_epdm:qr-example:2017-02', property: '55 New Plant Ct', qty: 28700, pca_unit_cost: 7, contractor_unit_cost: 3,
-    pca_source: { consultant: 'c', report_date: '2016-10', source_file: 'f', source_date: '2016-10', price_basis: 'PCA_CONSULTANT_ESTIMATE', status: 'STALE' },
-    contractor_source: { ...QR, status: 'EXECUTED', vendor: 'Q.R. Example Inc', doc_date: '2017-02-03', source_date: '2017-02-03' },
+    obs_id: 'new-plant:roof_epdm:qr-example:2016-11', property: '55 New Plant Ct', qty: 19800, pca_unit_cost: 5, contractor_unit_cost: 2.35,
+    pca_source: { consultant: 'c', report_date: '2016-06', source_file: 'f', source_date: '2016-06', price_basis: 'PCA_CONSULTANT_ESTIMATE', status: 'STALE' },
+    contractor_source: { ...QR, status: 'EXECUTED', vendor: 'Q.R. Example Inc', doc_date: '2016-11-08', source_date: '2016-11-08' },
   });
   const ledger = [
     ...parseLedger(read('observations.json')).filter((o) => o.property !== '3520 E Fulton St' && o.property !== '55 New Plant Ct'),
@@ -640,10 +640,10 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     newPlantRow,
   ];
   const KEPT = fultonRow.obs_id; // hand-written row: obs_id date truncated to YYYY-MM
-  const pcaLine: PcaLine = { propertyKey: 'e-fulton', component: 'roof_epdm', unit: 'SF', unitCost: 4, qty: null, consultant: 'c', reportDate: '2025-04-28', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
+  const pcaLine: PcaLine = { propertyKey: 'e-fulton', component: 'roof_epdm', unit: 'SF', unitCost: 9, qty: null, consultant: 'c', reportDate: '2025-02-11', reportId: 'R1', status: 'CURRENT', sourceFile: 'a' };
   const fulton = (over: Partial<QuoteLine> = {}): QuoteLine => ({
-    propertyKey: 'e-fulton', propertyLabel: '3520 E Fulton St', component: 'roof_epdm', unit: 'SF', qty: 52500, totalUsd: REDACTED-AMT, isActual: false,
-    vendor: 'Zenith Roofing', docDate: '2026-05-07', status: 'BID', superseded: false, title: 't', sourceFile: 's', ...over,
+    propertyKey: 'e-fulton', propertyLabel: '3520 E Fulton St', component: 'roof_epdm', unit: 'SF', qty: 38400, totalUsd: 259200, isActual: false,
+    vendor: 'Zenith Roofing', docDate: '2026-03-19', status: 'BID', superseded: false, title: 't', sourceFile: 's', ...over,
   });
   const keyOf = (label: string) => resolveProperty(label, new Set()).key;
 
@@ -662,17 +662,17 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     const skipped: unknown[] = [];
     proposePairs([pcaLine], [fulton({ vendor: 'Zenith Roofing, Inc.' })], { ledger, pending: [] }, '2026-10-15', 't', (d) => skipped.push(d));
     expect(skipped[0]).toMatchObject({
-      obsId: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-05-07', keptObsId: KEPT,
+      obsId: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-03-19', keptObsId: KEPT,
       vendor: 'Zenith Roofing, Inc.', keptVendor: 'Zenith Roofing', property: '3520 E Fulton St', keptProperty: '3520 E Fulton St',
-      contractorUnitCost: 12.5, keptContractorUnitCost: 12.5,
+      contractorUnitCost: 6.75, keptContractorUnitCost: 6.75,
     });
   });
 
   it('a ledger row dated only YYYY-MM still matches a quote dated inside that month', () => {
-    const monthOnly = obs({ obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-05', property: '3520 E Fulton St', contractor_source: { vendor: 'Zenith Roofing', doc_date: '2026-05', status: 'BID', source_file: 'q', source_date: '2026-05', price_basis: 'CONTRACTOR_QUOTE' } });
+    const monthOnly = obs({ obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-03', property: '3520 E Fulton St', contractor_source: { vendor: 'Zenith Roofing', doc_date: '2026-03', status: 'BID', source_file: 'q', source_date: '2026-03', price_basis: 'CONTRACTOR_QUOTE' } });
     expect(proposePairs([pcaLine], [fulton()], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(0);
     // ...but a different month from the same vendor is a different document.
-    expect(proposePairs([pcaLine], [fulton({ docDate: '2026-06-02' })], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(1);
+    expect(proposePairs([pcaLine], [fulton({ docDate: '2026-04-02' })], { ledger: [monthOnly], pending: [] }, '2026-10-15', 't')).toHaveLength(1);
   });
 
   it.each([
@@ -692,12 +692,12 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
 
   it('the spaced-initials variant of the committed New Plant row is caught by propose and promote', () => {
     const np: PcaLine = { ...pcaLine, propertyKey: 'new-plant' };
-    const q = fulton({ propertyKey: 'new-plant', propertyLabel: '55 New Plant Ct.', vendor: 'Q. R. Example, Inc.', docDate: '2017-02-03' });
+    const q = fulton({ propertyKey: 'new-plant', propertyLabel: '55 New Plant Ct.', vendor: 'Q. R. Example, Inc.', docDate: '2016-11-08' });
     const skipped: Array<{ keptObsId: string }> = [];
     expect(proposePairs([np], [q], { ledger, pending: [] }, '2026-10-15', 't', (d) => skipped.push(d))).toHaveLength(0);
-    expect(skipped[0]!.keptObsId).toBe('new-plant:roof_epdm:qr-example:2017-02');
-    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === 'new-plant:roof_epdm:qr-example:2017-02')!;
-    const dup: CalibrationProposal = { ...base, obs_id: 'new-plant:roof_epdm:q-r-example-inc:2017-02-03', property: '55 New Plant Ct.', contractor_source: { ...base.contractor_source, vendor: 'Q. R. Example, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(skipped[0]!.keptObsId).toBe('new-plant:roof_epdm:qr-example:2016-11');
+    const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === 'new-plant:roof_epdm:qr-example:2016-11')!;
+    const dup: CalibrationProposal = { ...base, obs_id: 'new-plant:roof_epdm:q-r-example-inc:2016-11-08', property: '55 New Plant Ct.', contractor_source: { ...base.contractor_source, vendor: 'Q. R. Example, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
     expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document/);
   });
 
@@ -707,8 +707,8 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
     const withRevision = [...ledger, revision];
     expect(supersededMap(withRevision).get(KEPT)).toBe(revision.obs_id);
     const { added_at: _a, ...base } = kept;
-    const again: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-05-07', property: '3520 E. Fulton St', contractor_source: { ...base.contractor_source, vendor: 'Zenith Roofing, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
-    expect(() => promoteProposal(withRevision, [again], again.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*2026-05/);
+    const again: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-03-19', property: '3520 E. Fulton St', contractor_source: { ...base.contractor_source, vendor: 'Zenith Roofing, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't' };
+    expect(() => promoteProposal(withRevision, [again], again.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*2026-03/);
   });
 
   it('the committed ledger + pending hold no two rows for one quote document (alias- and precision-aware) unless one supersedes the other', () => {
@@ -886,11 +886,11 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
 
     it('round 3: the guard is symmetric — a counted placeholder cannot be promoted beside a counted real quote either', () => {
       const without = ledger.filter((o) => o.obs_id !== LOW && o.obs_id !== HIGH);
-      const able = real('Zenith Roofing', '2026-05-07', 'banwick:roof_epdm:zenith:2026-05-07');
+      const able = real('Zenith Roofing', '2026-03-19', 'banwick:roof_epdm:zenith:2026-03-19');
       const afterReal = promote(without, able).ledger;
       const { added_at: _a, ...lowBase } = ledger.find((o) => o.obs_id === LOW)!;
       const lowP: CalibrationProposal = { ...lowBase, proposed_at: '2026-10-15', proposed_from: 't' };
-      expect(() => promote(afterReal, lowP)).toThrow(/real quote.*banwick:roof_epdm:zenith:2026-05-07/);
+      expect(() => promote(afterReal, lowP)).toThrow(/real quote.*banwick:roof_epdm:zenith:2026-03-19/);
       expect(() => promote(afterReal, lowP, undefined, true)).not.toThrow();
     });
 
@@ -919,10 +919,10 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
   it('promoteProposal refuses a row that is the same quote document as a live ledger row, unless overridden', () => {
     const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === KEPT)!;
     const dup: CalibrationProposal = {
-      ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-05-07', property: '3520 E. Fulton St',
+      ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing-inc:2026-03-19', property: '3520 E. Fulton St',
       contractor_source: { ...base.contractor_source, vendor: 'Zenith Roofing, Inc.' }, proposed_at: '2026-10-15', proposed_from: 't',
     };
-    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*e-fulton:roof_epdm:zenith-roofing:2026-05/);
+    expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf })).toThrow(/same quote document.*e-fulton:roof_epdm:zenith-roofing:2026-03/);
     // Default normalization (no resolver) still catches the punctuation-only label variant.
     expect(() => promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15')).toThrow(/same quote document/);
     const r = promoteProposal(ledger, [dup], dup.obs_id, '2026-10-15', undefined, { propertyKeyOf: keyOf, allowDuplicateDocument: true });
@@ -937,7 +937,7 @@ describe('quote-document dedupe against the committed ledger (issue #474)', () =
 
   it('promoteProposal: a row that supersedes the matching ledger row is a replacement, not a duplicate', () => {
     const { added_at: _a, ...base } = ledger.find((o) => o.obs_id === KEPT)!;
-    const repl: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-05-07', proposed_at: '2026-10-15', proposed_from: 't' };
+    const repl: CalibrationProposal = { ...base, obs_id: 'e-fulton:roof_epdm:zenith-roofing:2026-03-19', proposed_at: '2026-10-15', proposed_from: 't' };
     expect(() => promoteProposal(ledger, [repl], repl.obs_id, '2026-10-15', [KEPT], { propertyKeyOf: keyOf })).not.toThrow();
   });
 });
