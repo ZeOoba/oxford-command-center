@@ -1,5 +1,5 @@
 {
-  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them. 'optional' files may be absent on a checkout that holds real data (they are seeded only on an all-synthetic checkout and are never deploy inputs): the value locks, ratified with `npm run golden:ratify`, and local operator tables. 'neverTrack' lists real-data paths with NO synthetic stand-in (the P&L audit CSV, the baked public snapshot and warehouse outputs, the overlay, the warehouse and the raw lease-market exports): they are never seeded and are read only by the push-time scan and the governance check, which block them exactly like the paths above.",
+  "_note": "Real firm data that is NEVER tracked (ruling 2026-11-10). Every path here is gitignored and local-only. A committed synthetic stand-in lives at fixtures/synthetic/<same path>; scripts/ensure-local-data.ts copies it into place only when the runtime file is absent. Read by scripts/ensure-local-data.ts, scripts/fixtures/build-synthetic-data.ts, scripts/prepush-confidential-scan.mjs and scripts/governance-check.ts. 'files' are exact repo-relative paths; 'dirs' match every file beneath them. 'optional' files may be absent on a checkout that holds real data (they are seeded only on an all-synthetic checkout and are never deploy inputs): the value locks, ratified with `npm run golden:ratify`, and local operator tables. 'neverTrack' lists real-data paths with NO synthetic stand-in and every byte-copy or derived output of real data (the P&L audit CSV and its _out/ build copies, dist/ and the baked public snapshot, macro and warehouse outputs, the overlay, alert state and inbox, the outbox, backups, AR working dirs, the document index, the warehouse, raw lease-market exports, and every local operator file under config/local/): they are never seeded and are read only by the push-time scan and the governance check, which block them exactly like the paths above.",
   "ruling": "2026-11-10",
   "files": [
     "data/snapshots/portfolio.json",
@@ -40,11 +40,34 @@
       "data/property-financials/monthly-long.csv",
       "public/snapshot.json",
       "public/warehouse.json",
-      "data/overlay.json"
+      "public/macro.json",
+      "data/overlay.json",
+      "data/alert-inbox.json",
+      "data/alert-state.json",
+      "data/__test-alert-inbox.json",
+      "data/brief-health.json",
+      "data/property-financials-status.json",
+      "data/doc-index.sqlite",
+      "data/doc-index.sqlite-shm",
+      "data/doc-index.sqlite-wal",
+      "data/.synthetic-seeded.json"
     ],
     "dirs": [
       "data/warehouse/",
-      "data/lease-market/"
+      "data/lease-market/",
+      "dist/",
+      "dist-server/",
+      "scripts/property-financials/_out/",
+      "data/outbox/",
+      "data/_backup/",
+      "data/backups/",
+      "data/ar/inbox/",
+      "data/ar/processed/",
+      "data/ar/failed/",
+      "data/ar-dryrun/",
+      "data/alert-state/",
+      "data/_state/",
+      "config/local/"
     ]
   }
 }

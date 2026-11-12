@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -681,6 +681,23 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('every firm-data .gitignore rule is covered by the push-time path block (refute round 4 F7)', () => {
+    // A path protected only by .gitignore can still be pushed with `git add -f`; every ignore rule for
+    // firm data (or a byte-copy / derived output of it) must also be a manifest or neverTrack path.
+    const m = loadRealDataManifest();
+    const rules = [
+      ...readFileSync(join(process.cwd(), '.gitignore'), 'utf8').split(/\r?\n/),
+      ...readFileSync(join(process.cwd(), 'scripts/property-financials/.gitignore'), 'utf8').split(/\r?\n/).map((l) => (l.trim() && !l.startsWith('#') ? `scripts/property-financials/${l.trim()}` : l)),
+    ]
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith('!') && !l.includes('*'))
+      .filter((l) => /^(data\/|public\/|dist$|dist-server$|config\/local|src\/data\/|scripts\/property-financials\/|scripts\/data\/|docs\/superpowers\/specs\/.*seed|tests\/fixtures\/property-financials\/)/.test(l))
+      .filter((l) => !/\.log$/.test(l));
+    expect(rules.length).toBeGreaterThan(30);
+    const uncovered = rules.filter((l) => !isRealDataPath(l.endsWith('/') || /^(dist|dist-server)$/.test(l) ? `${l.replace(/\/$/, '')}/x.json` : l, m));
+    expect(uncovered).toEqual([]);
   });
 
   it('neverTrack paths (no synthetic stand-in) are blocked like manifest paths', () => {
