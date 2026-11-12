@@ -25,7 +25,7 @@ Nothing in `src/modules/` models building condition, reserves, asset age, or cap
 | Flags_Open_Items | 16 | Data-quality worklist (7 items are decisions for Gabriel, not data) | — |
 | File_Index | 57 | Document provenance | — |
 
-Source-data issues that must be resolved or carried as flags before ingest (from the summary): E Fulton CBRE reserve likely understated (no roof access, collapse uncosted) — treat its reserve total as a floor; Banwick/Morrison summary docx has errors vs Intertek (fix before it goes to Firm 03); Raytown reserve understated vs its own columns (the `*` row); Northwood PCI "good" vs King/Pegnato "Poor, 2–4 yrs"; Fairground Village DECA is 2013.
+Source-data issues that must be resolved or carried as flags before ingest (from the summary): E Fulton CBRE reserve likely understated (no roof access, collapse uncosted) — treat its reserve total as a floor; Banwick/Morrison summary docx has errors vs Intertek (fix before it goes to Firm 03); Raytown reserve understated vs its own columns (the `*` row); Northwood PCI "good" vs a later roof inspection "Poor, 2–4 yrs"; Fairground Village DECA is 2013.
 
 ## 3. Where it lands (digestible sections)
 
