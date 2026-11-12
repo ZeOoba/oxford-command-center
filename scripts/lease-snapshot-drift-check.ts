@@ -334,7 +334,7 @@ export function evaluateAnomalyFloor(
  * lease incident, PR #250). The floor above is COUNT-based (0-lease / >25%-removed); it does
  * nothing when a bad parse only ADDS rows, which is exactly what happened when the rent roll's
  * derived "VACANCY & UPCOMING AVAILABILITY" block got ingested as 10 real leases -- nothing was
- * removed, so the floor saw no anomaly at all while annual rent was overstated by $241,880.
+ * removed, so the floor saw no anomaly at all while annual rent carried a six-figure overstatement.
  *
  * `server/reconcile-runtime.ts`'s checkSnapshot() already ties parsed lease annualRent (and NOI,
  * property value, cash, and structural invariants) to the workbook's own declared totals -- it is
@@ -502,7 +502,7 @@ export function formatDriftReport(
 
   if (rentChanged.length) {
     // First, above the date changes: a rent zero-out on a retained lease is the shape no other
-    // guard sees (see rentChangeKind), and the 2026-09-07 refresh dropped $REDACTED-AMT of annualized
+    // guard sees (see rentChangeKind), and the 2026-09-07 refresh dropped a six-figure amount of annualized
     // rent this way with no line anywhere. Each row carries the lease's status and its term context
     // (leaseEnd + monthsToExpiry -- the Lease contract has no notice field) next to the prior and
     // current rent, so a reader can tell "Expired, vacated, $0 is right" from "Active with four

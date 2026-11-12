@@ -55,7 +55,7 @@
 
 ### 2c. Design (10-31 review): what was still open
 
-- #6: the NOI and cap-rate tiles had no landlord-cost marker. Six of 13 properties, about 41% of workbook NOI, carry $0 expenses.
+- #6: the NOI and cap-rate tiles had no landlord-cost marker. Six of 13 properties, a large share of workbook NOI, carry $0 expenses.
 - #7: two timestamps with no labels.
 - #8: NOI basis unlabelled on Ownership, Property, Portfolio and the filter bar.
 - #12: the empty Leasing Velocity panel.

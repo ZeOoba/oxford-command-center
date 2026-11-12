@@ -283,7 +283,7 @@ Also update the existing `'expiring < 60d is critical'` test body to:
 ```ts
   // Dedup (2026-09-23 review): inside the 0–90d no-renewal window the legacy `expiring-<id>` insight
   // and L-1 `lease-expiry-<id>` fire on the same lease with the same annualRent impact, so
-  // totalsBySpine() summed that rent twice (Example Trucking's $38K counted as $76K). L-1 carries the
+  // totalsBySpine() summed that rent twice (Example Trucking's rent counted at double its amount). L-1 carries the
   // stronger "no renewal signal" message and is always critical there — keep it, drop the legacy twin.
   {
     const l1Leases = new Set(out.filter((i) => i.id.startsWith('lease-expiry-')).map((i) => i.entityId));

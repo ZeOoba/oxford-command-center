@@ -1108,7 +1108,7 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
   // to the right of the roster's -- so its col 6 is SF where the roster's col 6 is monthlyRent.
   // parseLeases' `if (!propertyKey || !tenantName) continue` guard read col 1 via str(), which
   // STRINGIFIES a Date rather than rejecting it, so every row of that derived block was ingested as
-  // a real lease: 10 phantom leases and +$241,880 of fabricated annual rent (each phantom's "rent"
+  // a real lease: 10 phantom leases and a six-figure amount of fabricated annual rent (each phantom's "rent"
   // was literally the unit's square footage x 12). Nothing raised a data-quality flag.
   it('ignores the trailing VACANCY & UPCOMING AVAILABILITY block instead of ingesting it as leases', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));

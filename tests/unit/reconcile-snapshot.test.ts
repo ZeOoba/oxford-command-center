@@ -55,10 +55,10 @@ describe('evaluateFlags', () => {
 });
 
 describe('reconcile-snapshot — regression: the 2026-08-03 phantom-vacancy-lease incident', () => {
-  // Replays the real incident numbers (memory/reference_parseleases_vacancy_block_phantom_leases_2026-08-03.md,
+  // Replays the incident shape (memory/reference_parseleases_vacancy_block_phantom_leases_2026-08-03.md,
   // PR #250): parseLeases ingested 10 rows of a derived "VACANCY & UPCOMING AVAILABILITY" block as
-  // real leases. Annualized rent came out $241,880 high (148 leases, $4,460,787.36) against the
-  // workbook's own declared total ($4,218,907.36). This shipped under "Data-quality flags: 0"
+  // real leases. Annualized rent came out high by a six-figure amount (148 leases) against the
+  // workbook's own declared total. The fixture amounts below are illustrative, not the real amounts. This shipped under "Data-quality flags: 0"
   // because nothing on the write path called checkSnapshot -- this is the fixture that proves
   // wiring checkSnapshot into a CI-safe gate would have caught it.
   it('would have failed the gate: Σ annual rent vs workbookTotals.rent mismatch surfaces as an error flag', () => {
