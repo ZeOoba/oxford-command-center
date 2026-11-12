@@ -50,7 +50,7 @@ All of `H6:I9`, `H15:I15`, `H16` use `EOMONTH(Assumptions!$B$30,12)`. `B33` repo
 
 ## OPEN 1 — OI-096, 100 Note Party St duplicate-date over-count  [ruled; needs the edit]
 
-Rows 45 and 46 both carry `2028-09-26`:
+Rows 45 and 46 both carry `2028-09-26` (amounts below are illustrative, not the real amounts):
 
 ```
 r45  2028-09-26   D=1,250      E=1,250   F=200,000   <- final regular payment

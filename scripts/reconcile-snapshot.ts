@@ -5,7 +5,7 @@
 // which is exactly why it cannot run on GitHub-hosted CI (.github/workflows/ci.yml says so
 // explicitly) and previously ran only via full-gate-selfhosted.yml, which is workflow_dispatch
 // ONLY (never automatic). That gap is how the 2026-08-03 phantom-vacancy-lease corruption
-// (server/workbook/parse.ts:476, fixed in PR #250; +10 leases, +$241,880 annualized rent) shipped
+// (server/workbook/parse.ts:476, fixed in PR #250; +10 leases, a six-figure annualized-rent overstatement) shipped
 // to the committed snapshot under "Data-quality flags: 0" with nothing blocking it.
 //
 // This script closes that gap WITHOUT touching the workbook: it runs checkSnapshot()
