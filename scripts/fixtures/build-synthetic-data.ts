@@ -201,6 +201,9 @@ function firmSuffix(real: string): string {
   return parts.join('');
 }
 
+/** Alias for a vendor short form that two real vendors share (it names neither). */
+const AMBIGUOUS_VENDOR = 'Vendor (unspecified)';
+
 class Aliases {
   private counters = new Map<Category, number>();
   private byReal = new Map<string, string>(); // `${cat}|${real}` -> fake
@@ -262,6 +265,14 @@ class Aliases {
   variant(real: string, fake: string): void {
     const r = real.trim();
     if (r.length < 3 || r.toLowerCase() === fake.toLowerCase()) return;
+    const prior = this.phrases.get(r.toLowerCase());
+    if (prior !== undefined && prior !== fake) {
+      // Two vendors share this short form: attribute it to neither (refute round 5 F2).
+      this.phrases.set(r.toLowerCase(), AMBIGUOUS_VENDOR);
+      this.registry.set(r, ['vendor', AMBIGUOUS_VENDOR]);
+      this.phraseRe = null;
+      return;
+    }
     if (!this.registry.has(r)) this.registry.set(r, ['vendor', fake]);
     this.addPhrase(r, fake, false);
   }
@@ -400,12 +411,24 @@ class Ctx {
     // A dollar figure inside kept text: a generic draw keyed by its running position (text order is
     // structure), formatted as plain dollars. A K/M suffix is dropped: it would carry the real
     // amount's order of magnitude.
-    return s.replace(DOLLAR_RE, (_m, intPart: string, dec: string | undefined, suffix: string | undefined) => {
+    let drewDollars = false;
+    const out = s.replace(DOLLAR_RE, (_m, intPart: string, dec: string | undefined, suffix: string | undefined) => {
       const v = Number(intPart.replace(/,/g, '') + (dec ?? ''));
       this.textDollars += 1;
+      drewDollars = true;
       const decimals = dec && !suffix ? Math.min(dec.length - 1, 2) : 0;
       const drawn = this.moneyIn(v === 0 ? 0 : 1, `text$|${this.textDollars}`, { lo: 500, hi: 250_000, decimals });
       return `$${drawn.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+    });
+    // A percentage in the same text as a drawn dollar figure is usually a ratio of those real amounts
+    // (a study-vs-proposal delta): it is drawn too, keyed the same way (refute round 5 F1). Only its
+    // sign survives. Percentages in text with no dollar figure are rates and are kept.
+    if (!drewDollars) return out;
+    return out.replace(/([+-]?)(\d+(?:\.\d+)?)%/g, (_m, sign: string, num: string) => {
+      this.textDollars += 1;
+      const decimals = num.includes('.') ? Math.min(num.split('.')[1]!.length, 2) : 0;
+      const drawn = this.moneyIn(1, `text%|${this.textDollars}`, { lo: 0.5, hi: 60, decimals });
+      return `${sign}${drawn.toFixed(decimals)}%`;
     });
   }
 
@@ -1008,12 +1031,16 @@ function transformSnapshot(ctx: Ctx, ids: Ids, s: Obj): Obj {
   // Deal comps: keyed by the pipeline deal; comp addresses and source links are replaced.
   let comp = 0;
   const dealComps: Obj = {};
-  Object.entries((s['dealComps'] as Obj | undefined) ?? {}).forEach(([k, v], di) => {
+  const dcEntries = Object.entries((s['dealComps'] as Obj | undefined) ?? {});
+  // Draw keys use the ordinal of the deal's synthetic key in sorted order: name-free, independent of
+  // how the snapshot producer ordered the deals (refute round 5 F4), and stable when the generator is
+  // re-run on its own output (the draw-#0 test).
+  const sortedSk = dcEntries.map(([k]) => ctx.t(k)!).sort();
+  dcEntries.forEach(([k, v]) => {
     const c = v as Obj;
     const sk = ctx.t(k)!;
+    const di = sortedSk.indexOf(sk);
     ids.comp.set(k, sk);
-    // Draw keys use the deal's POSITION, not its (aliased) key: structural, name-free, and stable when
-    // the generator is re-run on its own output (the draw-#0 test).
     const fixComp = (kind: string) => (x: Json, j: number): Json => {
       const o = W(x, 'comp', `snap/dealComps#${di}/${kind}[${j}]`) as Obj;
       comp += 1;
@@ -1917,11 +1944,9 @@ function transformDataset(ctx: Ctx, d: Obj): Obj {
   for (const { id, f } of DERIVED_IMPACTS) {
     const ri = ((d['insights'] as Obj[] | undefined) ?? []).find((x) => x['id'] === id);
     const si = (out['insights'] as Obj[]).find((x) => x['id'] === id);
-    const rv = f(d);
-    // "Held in real" within $2: the shipped impact is the lever rounded to whole dollars, so an exact
-    // test would depend on the real amount's rounding residual (and flip under a rescale).
-    const shipped = num(ri?.['annual_impact_usd']);
-    if (!ri || !si || rv === null || shipped === null || Math.abs(shipped - rv) > 2) continue;
+    // Decided by insight id, never by comparing real values (refute round 5 F7): every curated lever
+    // impact in this list is the recomputed synthetic lever.
+    if (!ri || !si || typeof ri['annual_impact_usd'] !== 'number') continue;
     const sv = f(out);
     if (sv !== null) si['annual_impact_usd'] = Math.round(sv);
   }
@@ -2384,6 +2409,7 @@ export async function build(
 ): Promise<{ ctx: Ctx; outputs: string[]; contents: Map<string, string> }> {
   const manifest = loadManifest(ROOT);
   // A drawn amount must never equal a distinctive real amount (it would trip the fingerprint check).
+  VENDOR_SHORT_FORMS.clear(); // module-level state: one build's short forms never leak into the next
   const ctx = new Ctx();
   const ids = newIds();
   const have = (rel: string): boolean => existsSync(join(root, rel));
@@ -2620,11 +2646,6 @@ export async function build(
     words.delete('vendor');
     const wordRe = words.size ? new RegExp(`(?<![A-Za-z])(?:${[...words].map(escapeRe).join('|')})(?![A-Za-z])`, 'gi') : null;
     const survivors = wordRe ? [...contents.values()].reduce((a, c) => a + (c.match(wordRe)?.length ?? 0), 0) : 0;
-    if (survivors && process.env['SYNTH_DEBUG_WORDS'] === '1') {
-      const by = new Map<string, number>();
-      for (const c of contents.values()) for (const m of c.match(wordRe!) ?? []) by.set(m.toLowerCase(), (by.get(m.toLowerCase()) ?? 0) + 1);
-      console.error([...by].sort((x, y) => y[1] - x[1]).slice(0, 40));
-    }
     if (survivors) throw new Error(`synthetic output still carries ${survivors} word(s) of real vendor / consultant names; register the missing short forms`);
     // Fail closed BEFORE writing when any output carries a real-amount fingerprint: the outputs are
     // staged in a temp dir and scanned there. The cure is a global seed bump, never a per-value redraw.

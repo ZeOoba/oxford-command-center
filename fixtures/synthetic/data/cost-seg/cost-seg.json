@@ -408,7 +408,7 @@
       "source_page": null,
       "ocr": false,
       "confidence": "STATED",
-      "note": "Roof coverings priced at $182,957.60/SF; roof membrane type not stated in text reviewed"
+      "note": "Roof coverings priced at $16,242.89/SF; roof membrane type not stated in text reviewed"
     },
     {
       "property": "1100 Rarig Ave",
@@ -2606,7 +2606,7 @@
       "source_page": null,
       "ocr": true,
       "confidence": "DERIVED",
-      "note": "Back-solved from $16,515 at $34,825.90/SF with 0.84 and 0.92 multipliers; total modeled 54,000 SF vs Vendor 28 52,233 SF"
+      "note": "Back-solved from $4,748 at $42,833.48/SF with 0.84 and 0.92 multipliers; total modeled 54,000 SF vs Vendor 28 52,233 SF"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -2628,7 +2628,7 @@
       "source_page": null,
       "ocr": true,
       "confidence": "DERIVED",
-      "note": "Back-solved from cost / $20,423 unit price / 0.7728 multipliers"
+      "note": "Back-solved from cost / $7,935 unit price / 0.7728 multipliers"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -2682,7 +2682,7 @@
       "source_page": 9,
       "ocr": true,
       "confidence": "STATED",
-      "note": "[SPECULATIVE] likely unsprinklered; UoP fire basis ~$247,997.3-9.1K per building looks alarm-only"
+      "note": "[SPECULATIVE] likely unsprinklered; UoP fire basis ~$249,428.7-9.1K per building looks alarm-only"
     },
     {
       "property": "2203 Marvel Rd & 2205-2207 Northwood Dr",
@@ -4235,13 +4235,13 @@
     {
       "id": "D2",
       "property": "3875-3883 E Livingston",
-      "issue": "Roof is three surfaces: 3883 aluminum panel 6,078 SF + asphalt shingle 2,962 SF; 3875 EPDM 2,240 SF. PCA $930 and Vendor 22 signed $538 have no stated scope/qty.",
+      "issue": "Roof is three surfaces: 3883 aluminum panel 6,078 SF + asphalt shingle 2,962 SF; 3875 EPDM 2,240 SF. PCA $5,290 and Vendor 22 signed $9,425 have no stated scope/qty.",
       "action": "Get Vendor 22 scope by roof section; only then create a calibration row"
     },
     {
       "id": "D3",
       "property": "3875-3883 E Livingston",
-      "issue": "Study basis $1,182 vs proposal estimate $29,491 (-$145,754, -4.4%).",
+      "issue": "Study basis $3,097 vs proposal estimate $18,329 (-$184,602, -0.6%).",
       "action": "Informational; use study figure"
     },
     {
@@ -4277,19 +4277,19 @@
     {
       "id": "D9",
       "property": "1100 Rarig",
-      "issue": "Tax register Sch. L depreciable assets $153,010-$1,536 equals the full settlement total, while the study depreciable allocation is $77,484 (pre-study estimate had $8,247 land). Land split in the books needs checking.",
+      "issue": "Tax register Sch. L depreciable assets $754-$10,730 equals the full settlement total, while the study depreciable allocation is $974 (pre-study estimate had $1,608 land). Land split in the books needs checking.",
       "action": "Tax/basis item for Controller/CPA; no change to PCA data"
     },
     {
       "id": "D10",
       "property": "7658 Fishel",
-      "issue": "PIS 01/01/2026 (SYN017) vs ~01/29/2026 (tax register). Lease ran to 09/30/2026 (renewal status unknown). SYN017 allocates $17,049 to an emergency generator and $58,361 to dock equipment, and $3,070 to HVAC; building notes mention no generator and only two unit heaters.",
+      "issue": "PIS 01/01/2026 (SYN017) vs ~01/29/2026 (tax register). Lease ran to 09/30/2026 (renewal status unknown). SYN017 allocates $1,478 to an emergency generator and $1,257 to dock equipment, and $12,165 to HVAC; building notes mention no generator and only two unit heaters.",
       "action": "Confirm PIS date, lease status, and whether a generator exists"
     },
     {
       "id": "D11",
       "property": "1900 N Broadway",
-      "issue": "Only source for a hydraulic 2-stop elevator (modeled basis $774), full basement, and wet-pipe sprinklers (55,342 SF). SYN007 PCA body is missing.",
+      "issue": "Only source for a hydraulic 2-stop elevator (modeled basis $13,106), full basement, and wet-pipe sprinklers (55,342 SF). SYN007 PCA body is missing.",
       "action": "Add elevator to asset register; get inspection certificate and maintenance contract"
     },
     {

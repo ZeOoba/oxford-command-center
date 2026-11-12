@@ -6795,8 +6795,8 @@
           "address": "Comp 001",
           "market": "West Syn418 / North Cincinnati industrial",
           "sf": 183178,
-          "price": 22617956,
-          "pricePerSf": 123.48,
+          "price": 10807520,
+          "pricePerSf": 59,
           "capRate": null,
           "date": "2025-05",
           "source": "https://example.com/comp-source/001"
@@ -6805,8 +6805,8 @@
           "address": "Comp 002",
           "market": "Cincinnati small-bay industrial",
           "sf": 240578,
-          "price": 17131220,
-          "pricePerSf": 71.21,
+          "price": 14143795,
+          "pricePerSf": 58.79,
           "capRate": 0.07,
           "date": "2025-03",
           "source": "https://example.com/comp-source/002"
@@ -6815,8 +6815,8 @@
           "address": "Comp 003",
           "market": "Cincinnati industrial",
           "sf": 263000,
-          "price": 17089173,
-          "pricePerSf": 64.98,
+          "price": 23145568,
+          "pricePerSf": 88.01,
           "capRate": 0.067,
           "date": "2025-03",
           "source": "https://example.com/comp-source/003"
@@ -6825,8 +6825,8 @@
           "address": "Comp 004",
           "market": "West Syn418, OH",
           "sf": 16800,
-          "price": 915445,
-          "pricePerSf": 54.49,
+          "price": 1285762,
+          "pricePerSf": 76.53,
           "capRate": null,
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/004"
@@ -6835,8 +6835,8 @@
           "address": "Comp 005",
           "market": "West Syn418, OH",
           "sf": 8580,
-          "price": 483602,
-          "pricePerSf": 56.36,
+          "price": 626665,
+          "pricePerSf": 73.04,
           "capRate": null,
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/005"
@@ -6845,8 +6845,8 @@
           "address": "Comp 006",
           "market": "West Syn418 / Cincinnati",
           "sf": 58580,
-          "price": 2985850,
-          "pricePerSf": 50.97,
+          "price": 4113452,
+          "pricePerSf": 70.22,
           "capRate": null,
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/006"
@@ -6856,7 +6856,7 @@
         {
           "address": "Comp 007",
           "sf": 42625,
-          "rentPerSf": 6.19,
+          "rentPerSf": 7.25,
           "leaseType": "NNN (asking)",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/007"
@@ -6864,7 +6864,7 @@
         {
           "address": "Comp 008",
           "sf": null,
-          "rentPerSf": 9.52,
+          "rentPerSf": 5.15,
           "leaseType": "NNN (asking)",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/008"
@@ -6872,7 +6872,7 @@
         {
           "address": "Comp 009",
           "sf": 9798,
-          "rentPerSf": 7.54,
+          "rentPerSf": 10.12,
           "leaseType": "asking (likely NNN; new construction)",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/009"
@@ -6880,7 +6880,7 @@
         {
           "address": "Comp 010",
           "sf": 6624,
-          "rentPerSf": 8.19,
+          "rentPerSf": 10.1,
           "leaseType": "asking",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/010"
@@ -6888,15 +6888,15 @@
         {
           "address": "Comp 011",
           "sf": 6800,
-          "rentPerSf": 9.36,
-          "leaseType": "asking ($90,685-$8,898/SF range)",
+          "rentPerSf": 8.4,
+          "leaseType": "asking ($600-$12,153/SF range)",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/011"
         },
         {
           "address": "Comp 012",
           "sf": null,
-          "rentPerSf": 5.1,
+          "rentPerSf": 6.23,
           "leaseType": "asking (market average)",
           "date": "2026",
           "source": "https://example.com/comp-source/012"
@@ -6904,7 +6904,7 @@
         {
           "address": "Comp 013",
           "sf": null,
-          "rentPerSf": 7.7,
+          "rentPerSf": 5.17,
           "leaseType": "asking (market average)",
           "date": "2026",
           "source": "https://example.com/comp-source/013"
@@ -6938,12 +6938,12 @@
         },
         {
           "label": "West Syn418 industrial average asking rent",
-          "value": "$51,439.22/SF (CommercialCafe); ~$28,123.13/SF (alt. listing data)",
+          "value": "$173,328.69/SF (CommercialCafe); ~$955.39/SF (alt. listing data)",
           "source": "https://www.commercialcafe.com/commercial-real-estate/us/oh/west-syn418/"
         },
         {
           "label": "Cincinnati metro flex space average asking rent",
-          "value": "~$1,321/SF",
+          "value": "~$15,894/SF",
           "source": "https://www.loopnet.com/search/flex-space/cincinnati-oh/for-lease/"
         },
         {
@@ -6972,8 +6972,8 @@
           "address": "Comp 014",
           "market": "East/Whitehall (43213)",
           "sf": 12000,
-          "price": 708001,
-          "pricePerSf": 69.31,
+          "price": 1481703,
+          "pricePerSf": 66.35,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/014"
@@ -6982,8 +6982,8 @@
           "address": "Comp 015",
           "market": "East/Whitehall (43227)",
           "sf": 10950,
-          "price": 643760,
-          "pricePerSf": 113.72,
+          "price": 779734,
+          "pricePerSf": 60.04,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/015"
@@ -6992,8 +6992,8 @@
           "address": "Comp 016",
           "market": "Near East / 43219",
           "sf": 8184,
-          "price": 720241,
-          "pricePerSf": 88.01,
+          "price": 531779,
+          "pricePerSf": 64.98,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/016"
@@ -7002,8 +7002,8 @@
           "address": "Comp 017",
           "market": "South (43207)",
           "sf": 6528,
-          "price": 499610,
-          "pricePerSf": 125.9,
+          "price": 355716,
+          "pricePerSf": 76.91,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/017"
@@ -7012,8 +7012,8 @@
           "address": "Comp 018",
           "market": "East/Bexley (43209)",
           "sf": 12316,
-          "price": 899534,
-          "pricePerSf": 105.45,
+          "price": 694178,
+          "pricePerSf": 52.29,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/018"
@@ -7022,8 +7022,8 @@
           "address": "Comp 019",
           "market": "East/Whitehall (43227)",
           "sf": 24680,
-          "price": 1733015,
-          "pricePerSf": 62.98,
+          "price": 1257951,
+          "pricePerSf": 55.17,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/019"
@@ -7032,8 +7032,8 @@
           "address": "Comp 020",
           "market": "South (43207)",
           "sf": 5220,
-          "price": 407155,
-          "pricePerSf": 58.76,
+          "price": 263584,
+          "pricePerSf": 104.36,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/020"
@@ -7042,8 +7042,8 @@
           "address": "Comp 021",
           "market": "North (43224)",
           "sf": 5300,
-          "price": 630910,
-          "pricePerSf": 70.89,
+          "price": 550855,
+          "pricePerSf": 58.88,
           "capRate": null,
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/021"
@@ -7052,7 +7052,7 @@
           "address": "Comp 022",
           "market": "Rickenbacker (institutional, not directly comparable)",
           "sf": null,
-          "price": 1511108,
+          "price": 2469733,
           "pricePerSf": null,
           "capRate": 0.055,
           "date": "2025",
@@ -7063,15 +7063,15 @@
         {
           "address": "Comp 023",
           "sf": 10000,
-          "rentPerSf": 7.25,
-          "leaseType": "NNN (Op Exp $86,360.92/SF)",
+          "rentPerSf": 6.19,
+          "leaseType": "NNN (Op Exp $178,331.67/SF)",
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/023"
         },
         {
           "address": "Comp 024",
           "sf": null,
-          "rentPerSf": 5.15,
+          "rentPerSf": 9.52,
           "leaseType": "NNN (as-is)",
           "date": "2025 (active listing)",
           "source": "https://example.com/comp-source/024"
@@ -7079,7 +7079,7 @@
         {
           "address": "Comp 025",
           "sf": null,
-          "rentPerSf": 10.12,
+          "rentPerSf": 7.54,
           "leaseType": "NNN",
           "date": "Q2 2025",
           "source": "https://example.com/comp-source/025"
@@ -7087,15 +7087,15 @@
         {
           "address": "Comp 026",
           "sf": null,
-          "rentPerSf": 10.1,
-          "leaseType": "NNN (secondary locations $151,992.22-$4,121.60; prime $10,672.78-$47,581.40)",
+          "rentPerSf": 8.19,
+          "leaseType": "NNN (secondary locations $123,879.25-$97,728.02; prime $61,508.67-$7,741.93)",
           "date": "2025",
           "source": "https://example.com/comp-source/026"
         },
         {
           "address": "Comp 027",
           "sf": null,
-          "rentPerSf": 8.4,
+          "rentPerSf": 9.36,
           "leaseType": "NNN",
           "date": "Q4 2025",
           "source": "https://example.com/comp-source/027"
@@ -7109,12 +7109,12 @@
         },
         {
           "label": "Average asking rent (Colliers, Q4 2025)",
-          "value": "$21,725.73/SF NNN (down $23,762.95 QoQ; market rents held above $1,735.81 for 4 yrs)",
+          "value": "$50,105.24/SF NNN (down $22,859.00 QoQ; market rents held above $86,360.92 for 4 yrs)",
           "source": "https://www.colliers.com/en/research/columbus/2025-q4-industrial-trends-colliers-columbus"
         },
         {
           "label": "Average asking rent (Colliers, Q3 2025)",
-          "value": "$102,026.88/SF; North submarket highest at $73,048.91/SF (flex/mini-bulk concentration)",
+          "value": "$151,992.22/SF; North submarket highest at $4,121.60/SF (flex/mini-bulk concentration)",
           "source": "https://www.colliers.com/en/research/columbus/2025-q3-industrial-trends-colliers-columbus"
         },
         {
@@ -7129,22 +7129,22 @@
         },
         {
           "label": "Average sale price/SF (Colliers, Q3 2025)",
-          "value": "$173,328.69/SF; total sales volume $955",
+          "value": "$10,672.78/SF; total sales volume $47,581",
           "source": "https://www.colliers.com/en/research/columbus/2025-q3-industrial-trends-colliers-columbus"
         },
         {
           "label": "Warehouse avg sale price/SF (LoopNet, 2026)",
-          "value": "~$15,894/SF (Columbus warehouse average)",
+          "value": "~$190,715/SF (Columbus warehouse average)",
           "source": "https://www.loopnet.com/search/warehouses/columbus-oh/for-sale/"
         },
         {
           "label": "Industrial avg sale price/SF (CityFeet listings)",
-          "value": "~$600/SF (larger 59K-289K SF listings skew higher)",
+          "value": "~$5,544/SF (larger 59K-289K SF listings skew higher)",
           "source": "https://www.cityfeet.com/cont/columbus-oh/industrial-properties-for-sale"
         },
         {
           "label": "Investment sales volume",
-          "value": "$12,153 Q3 2025 (+22% YoY); $50,105.2B through 9 mo 2025, highest since 2022; activity concentrated in assets under $22,859",
+          "value": "$49,900 Q3 2025 (+9% YoY); $515.7B through 9 mo 2025, highest since 2022; activity concentrated in assets under $13,530",
           "source": "https://www.matthews.com/market_insights/columbus-oh-industrial-market-report-q3-2025"
         },
         {

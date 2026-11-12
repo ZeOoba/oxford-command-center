@@ -197,7 +197,7 @@
       "normalized_category": "Capital Expenditures",
       "classification": "capex",
       "confidence": "high",
-      "note": "RULED 2026-06-12 (general CRE standards): project-tied design fees capitalize; observed instance is $16,188 (immaterial)."
+      "note": "RULED 2026-06-12 (general CRE standards): project-tied design fees capitalize; observed instance is $1,273 (immaterial)."
     },
     {
       "code": "6830",
@@ -205,7 +205,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: assume expense per the $1,021 rule when no detail; single items >$4,251 or lease-tied buildouts reclassify to capex/ti on review."
+      "note": "RULED 2026-06-12: assume expense per the $2,421 rule when no detail; single items >$1,979 or lease-tied buildouts reclassify to capex/ti on review."
     },
     {
       "code": "6605",
@@ -837,7 +837,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: $11,750 single-item rule — assume opex without line detail (flag); any single ticket >$245,309 reclassifies to capex when detail exists."
+      "note": "RULED 2026-06-12: $5,707 single-item rule — assume opex without line detail (flag); any single ticket >$6,644 reclassifies to capex when detail exists."
     },
     {
       "code": null,
@@ -1741,7 +1741,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: $534 single-item rule — assume opex without line detail (flag); any single ticket >$583 reclassifies to capex when detail exists."
+      "note": "RULED 2026-06-12: $178,200 single-item rule — assume opex without line detail (flag); any single ticket >$625 reclassifies to capex when detail exists."
     },
     {
       "code": null,
@@ -1981,7 +1981,7 @@
       "normalized_category": "Repairs & Maintenance",
       "classification": "opex",
       "confidence": "high",
-      "note": "RULED 2026-06-12: assume expense for now per the $47,556 rule; flag for detail."
+      "note": "RULED 2026-06-12: assume expense for now per the $9,413 rule; flag for detail."
     },
     {
       "code": "6700",
@@ -2759,7 +2759,7 @@
       "property_id": "sepich-portfolio-columbus-oh-8-props",
       "period": "2025",
       "confidence": "high",
-      "note": "H4 (2026-06-22): FVC 2025 ~$11,792 perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
+      "note": "H4 (2026-06-22): FVC 2025 ~$46,358 perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
     }
   ],
   "needs_syn068_ruling": [],
@@ -2783,13 +2783,13 @@
     "by": "Contact 02 (session ruling, verbatim in memory/pfi-build-canon.md)",
     "rules": [
       "Owner transfers NEVER in NOI; general CRE accounting standards govern NOI/cash-flow/debt-service.",
-      "R&M single item > $17,554 = capex; <= $100,994 = opex; assume opex and flag when line detail unavailable.",
+      "R&M single item > $516 = capex; <= $7,787 = opex; assume opex and flag when line detail unavailable.",
       "Asset Management Fees below NOI (excluded).",
       "PM-software exports authoritative over internal QuickBooks.",
       "Coverage starts 2025 for late-2024 acquisitions (Westerville, 9620 State 350, Northwood).",
       "Basis: ingest as-is, tag basis, within-basis comparisons only.",
       "Ownership overlay: 100% figures with Oxford share (50% Red Branch/Broadway, 25% 1851 Solar).",
-      "FVC 2025 contains $53,907 one-time cell-tower perpetual easement sale (was Zettler Rd) — exclude from run-rate NOI.",
+      "FVC 2025 contains $32,269 one-time cell-tower perpetual easement sale (was Zettler Rd) — exclude from run-rate NOI.",
       "401 Sunburst + 7658 Fishel run lease-based with estimated capex (no P&L).",
       "FVC is the official entity-level unit (Sepich subsets never additive)."
     ]

@@ -1711,7 +1711,7 @@
       "estimate_usd": 89504,
       "qty": 2230,
       "unit": "SY",
-      "timing": "Yr 1 $1,838; Yr 3 $956",
+      "timing": "Yr 1 $4,991; Yr 3 $69,138",
       "scope": null,
       "source_page": 5
     },
@@ -1733,7 +1733,7 @@
       "estimate_usd": 384060,
       "qty": 2230,
       "unit": "SY",
-      "timing": "Yr 1 $856; Yr 5 $2,060; Yr 10 $10,272",
+      "timing": "Yr 1 $9,343; Yr 5 $3,164; Yr 10 $3,513",
       "scope": null,
       "source_page": 5
     },
@@ -1755,7 +1755,7 @@
       "estimate_usd": 36105,
       "qty": 1,
       "unit": "LS",
-      "timing": "Yr 1 $1,166; Yr 2 $4,816",
+      "timing": "Yr 1 $24,577; Yr 2 $15,805",
       "scope": null,
       "source_page": 5
     },

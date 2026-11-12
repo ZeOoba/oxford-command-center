@@ -9,7 +9,7 @@
     "pca_source": {
       "consultant": "Vendor 04",
       "report_date": "2016-10",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R13 TPO re-roof 28,900 SF @ $174,208.67 = $23,831)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R13 TPO re-roof 28,900 SF @ $95,936.32 = $1,046)",
       "source_date": "2016-10",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "STALE"
@@ -19,7 +19,7 @@
       "vendor": "Vendor 18",
       "doc_date": "2017-02-03",
       "status": "EXECUTED",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 18 base bid $233,478 / 28,700 SF; completed 2017-12-05)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 18 base bid $9,024 / 28,700 SF; completed 2017-12-05)",
       "source_date": "2017-02-03",
       "price_basis": "CONTRACTOR_QUOTE"
     },
@@ -38,7 +38,7 @@
     "pca_source": {
       "consultant": "Vendor 19",
       "report_date": "2021-10",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (SYN013 roof replacement budget $689 / 36,000 SF)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (SYN013 roof replacement budget $184,888 / 36,000 SF)",
       "source_date": "2021-10",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "STALE"
@@ -48,7 +48,7 @@
       "vendor": "Vendor 20",
       "doc_date": "2022-04-14",
       "status": "EXECUTED",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (executed contract $22,366.95 / 26,700 SF)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (executed contract $28,559.60 / 26,700 SF)",
       "source_date": "2022-04-14",
       "price_basis": "CONTRACTOR_QUOTE"
     },
@@ -67,7 +67,7 @@
     "pca_source": {
       "consultant": "Vendor 21",
       "report_date": "2025-04",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R04 3883 mod-bit roof replacement 2,400 SF @ $1,878 = $25,353)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R04 3883 mod-bit roof replacement 2,400 SF @ $13,759 = $19,936)",
       "source_date": "2025-04",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "DRAFT"
@@ -77,7 +77,7 @@
       "vendor": "Vendor 22",
       "doc_date": "2026-08-05",
       "status": "SIGNED",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 22 signed $202,554.68 / 2,376 SF)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 22 signed $7,744.90 / 2,376 SF)",
       "source_date": "2026-08-05",
       "price_basis": "CONTRACTOR_QUOTE"
     },
@@ -96,7 +96,7 @@
     "pca_source": {
       "consultant": "Vendor 02",
       "report_date": "2025-04",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R03 EPDM re-roof 150,000 SF @ $2,229.26)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R03 EPDM re-roof 150,000 SF @ $21,436.88)",
       "source_date": "2025-04-28",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "CURRENT"
@@ -106,7 +106,7 @@
       "vendor": "Vendor 22",
       "doc_date": "2026-05-07",
       "status": "BID",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 22 budget proposal, $2,562/sq, 525 sq + $5,253 repairs)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Quotes_Actuals (Vendor 22 budget proposal, $249,165/sq, 525 sq + $594 repairs)",
       "source_date": "2026-05-07",
       "price_basis": "CONTRACTOR_QUOTE"
     },
@@ -125,7 +125,7 @@
     "pca_source": {
       "consultant": "Vendor 01",
       "report_date": "2026-04",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $55,822.29 = $12,262, Yr3)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $87,595.92 = $3,633, Yr3)",
       "source_date": "2026-04-07",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "CURRENT"
@@ -135,7 +135,7 @@
       "vendor": "Unidentified roofer (low end of quote range)",
       "doc_date": "2026",
       "status": "BID",
-      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $724.9-12.5/SF; quote documents not in the register)",
+      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $10,205.9-12.5/SF; quote documents not in the register)",
       "source_date": "2026-10-13",
       "price_basis": "CONTRACTOR_QUOTE"
     },
@@ -154,7 +154,7 @@
     "pca_source": {
       "consultant": "Vendor 01",
       "report_date": "2026-04",
-      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $106,110.98 = $45,314, Yr3)",
+      "source_file": "2026-10-06_PCA-Extraction_Register_v01_2.xlsx > Components (R01 EPDM roof replacement 24,000 SF @ $17,743.67 = $14,305, Yr3)",
       "source_date": "2026-04-07",
       "price_basis": "PCA_CONSULTANT_ESTIMATE",
       "status": "CURRENT"
@@ -164,7 +164,7 @@
       "vendor": "Unidentified roofer (high end of quote range)",
       "doc_date": "2026",
       "status": "BID",
-      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $3,807.7-12.5/SF; quote documents not in the register)",
+      "source_file": "2026-10-13_PCA_Command_Center_Report_v01.md section 5 (quotes $19,208.3-12.5/SF; quote documents not in the register)",
       "source_date": "2026-10-13",
       "price_basis": "CONTRACTOR_QUOTE"
     },
