@@ -390,7 +390,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // and RCT's lender balloon not. That ruling was ITSELF superseded same-day ("Turn 149"): the
   // real root cause was that I14/I15/I16 computed principal on three inconsistent bases, not one
   // deliberate design choice. All three were fixed to a single consistent forward-looking basis,
-  // and Note Party 02's balloon is now included (I15 -$490,000.125, confirmed live). The tracker records
+  // and Note Party 02's balloon is now included (in I15, confirmed live). The tracker records
   // this explicitly as a detector constraint: "must NOT be built to treat balloon-excluded lender
   // principal as correct." A prior version of this check carried an `isLender` exemption built
   // against the first, superseded ruling — removed; it would have silently exempted a real

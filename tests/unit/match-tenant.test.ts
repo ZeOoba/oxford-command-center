@@ -29,7 +29,7 @@ describe('normalizeTokens', () => {
   // a dotted initialism like 'Q.R.T' tokenized to THREE single-letter tokens ['i','m','h'] instead of
   // one ['qrt'], because the generic punctuation strip turns every period into a space regardless of
   // context. The AR export's own spelling ('QRT LLC', no dots) tokenized to ['qrt'] -- zero overlap
-  // between the two, so a real $32,291.95 balance with an EXACT lease match sitting in the company
+  // between the two, so a real AR balance with an EXACT lease match sitting in the company
   // field ('Q.R.T LLC') was reported as 'no match', reading as an orphan balance with no lease at all.
   it('collapses a dotted initialism (2+ single-letter dots) into one token', () => {
     expect(normalizeTokens('Q.R.T LLC')).toEqual(['qrt']);
@@ -103,7 +103,7 @@ describe('matchTenantToLease', () => {
 
   it('matches a dotted-initialism company field against an undotted AR spelling — real case', () => {
     // The company field ('Q.R.T LLC') carries the dots; the PM export's own name ('QRT LLC') doesn't.
-    // Real balance: $32,291.95, previously reported as an orphan with no lease at all.
+    // A real balance, previously reported as an orphan with no lease at all.
     const m = matchTenantToLease('QRT LLC', leases);
     expect(m.leaseId).toBe('l-qrt');
     expect(m.confidence).toBe('exact');

@@ -64,7 +64,7 @@ const ESTIMATE_MIN_ROUND = 3;
  *    because the clobber is what made them equal. The two missing rows (08-10, 09-10) are a
  *    workbook problem for a human; nothing here backfills them.
  *  - two entities carried a percent whose sign contradicted its own dollar figure (deltaDollar
- *    -1,698 beside deltaPct +4.1%; growth12Dollar +2,064 beside growth12Pct -1186%), because the
+ *    a negative deltaDollar beside a positive deltaPct; a positive growth12Dollar beside a large negative growth12Pct), because the
  *    workbook's percent cell divides by a NEGATIVE prior/12-month balance. parse.ts now recomputes
  *    both and emits null over a wrong-signed number; this is the backstop over whatever actually
  *    sits on the snapshot (a legacy bake, a hand-edit, a future parser regression).

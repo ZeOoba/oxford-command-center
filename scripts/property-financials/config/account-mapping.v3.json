@@ -1032,7 +1032,7 @@
         "line_type": "rev",
         "category": "Recoveries (CAM/tax/ins)"
       },
-      "note": "REFERENCE-PARITY: 'CAM - Grounds/Trash/Utilities' under group '5500 CAM EXPENSES' total to the statement's own EXPENSE line ($4,547.93) yet the reference mapped them as recoveries. Reproduced here so the committed CSV rebuilds exactly; flagged as a probable misclassification in scripts/property-financials/README.md (fix = a v2 of this file, no code)."
+      "note": "REFERENCE-PARITY: 'CAM - Grounds/Trash/Utilities' under group '5500 CAM EXPENSES' total to the statement's own EXPENSE line yet the reference mapped them as recoveries. Reproduced here so the committed CSV rebuilds exactly; flagged as a probable misclassification in scripts/property-financials/README.md (fix = a v2 of this file, no code)."
     },
     {
       "id": "A12-NOSECTION-OTHER",

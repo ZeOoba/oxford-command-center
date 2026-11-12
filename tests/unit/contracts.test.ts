@@ -37,7 +37,7 @@ describe('contracts accept real workbook records', () => {
       capRate: 0.07,
       dscr: 2.2657,
       lender: 'Firm 03',
-      loanBalance: 2773925.08,
+      loanBalance: 1846210.37,
       ltv: 0.3797,
       valuePerSf: 152.2,
       rentPerSf: 13.99,
