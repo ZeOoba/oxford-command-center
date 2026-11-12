@@ -36,9 +36,11 @@ export const WRAPPER = `#!/bin/sh
 #    (or lacks it for any other reason) must still push cleanly, hence the -f guard and '|| true'.
 # 3) Refute-trailer gate (stricter than CI's refute-required job) — fail-closed on an unattested-
 #    commits verdict only, fail-open on any tooling gap (see scripts/prepush-refute-check.mjs). Git's pre-push stdin is
-#    buffered once so the scanner and this stage each read the full ref list.
+#    buffered once so the scanner and this stage each read the full ref list. A failed read
+#    blocks the push: an empty ref list would otherwise let every stage pass with nothing scanned.
+#    (POSIX: a bare assignment's status is its command substitution's, so '||' sees cat's failure.)
 root="$(git rev-parse --show-toplevel)"
-refs="$(cat)"
+refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
 printf '%s\\n' "$refs" | node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
   printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1

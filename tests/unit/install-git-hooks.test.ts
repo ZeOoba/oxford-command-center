@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -28,6 +28,12 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
 
   it('still fails closed on the confidentiality scanner', () => {
     expect(WRAPPER).toMatch(/prepush-confidential-scan\.mjs" \|\| exit 1/);
+  });
+
+  it('fails closed when buffering the pre-push stdin fails, before any stage runs', () => {
+    expect(WRAPPER).toMatch(/^refs="\$\(cat\)" \|\| \{ echo "pre-push: could not read push refs from stdin" >&2; exit 1; \}$/m);
+    expect(WRAPPER).not.toMatch(/^refs="\$\(cat\)"\s*$/m);
+    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('prepush-confidential-scan.mjs'));
   });
 });
 
@@ -91,6 +97,47 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
       writeFileSync(join(scriptsDir, 'prepush-noi-crosscheck.mjs'), 'console.warn("simulated drift WARN"); process.exit(1);\n');
       expect(runHook(hookPath)).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Residual gap 1 of the per-commit scan fix (2026-11-12): the wrapper buffers stdin with
+  // `refs="$(cat)"` before node runs. When that read failed, the scanner received an empty ref
+  // list, scanned nothing and allowed the push. The buffering step must now fail closed itself.
+  it('hook exits non-zero, before running the scanner, when buffering stdin fails', () => {
+    const hookPath = setupFixtureRepo();
+    const wo = join(dir, 'write-only.txt');
+    writeFileSync(wo, '');
+    const fd = openSync(wo, 'w'); // reading a write-only fd fails (EBADF), so `cat` exits non-zero
+    try {
+      // The scanner PASSES and leaves a marker: if it runs at all, the hook did not stop at stdin.
+      writeFileSync(
+        join(scriptsDir, 'prepush-confidential-scan.mjs'),
+        `(await import('node:fs')).writeFileSync(${JSON.stringify(join(dir, 'scanner-ran'))}, 'x'); process.exit(0);\n`,
+      );
+      writeFileSync(join(scriptsDir, 'prepush-noi-crosscheck.mjs'), 'process.exit(0);\n');
+      const r = spawnSync('sh', [hookPath], { cwd: dir, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8' });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('could not read push refs from stdin');
+      expect(existsSync(join(dir, 'scanner-ran'))).toBe(false);
+    } finally {
+      closeSync(fd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('hook still exits 0 and runs the scanner on an empty stdin (up-to-date push)', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(
+        join(scriptsDir, 'prepush-confidential-scan.mjs'),
+        `(await import('node:fs')).writeFileSync(${JSON.stringify(join(dir, 'scanner-ran'))}, 'x'); process.exit(0);\n`,
+      );
+      writeFileSync(join(scriptsDir, 'prepush-noi-crosscheck.mjs'), 'process.exit(0);\n');
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(r.status).toBe(0);
+      expect(existsSync(join(dir, 'scanner-ran'))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
