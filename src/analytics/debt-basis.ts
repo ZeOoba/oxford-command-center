@@ -4,7 +4,7 @@
 // the residence rule). Ratified 2026-09-24 (Gabriel): Oxford-to-Oxford ("affiliate") notes are
 // EXCLUDED from investment Overview Total Debt, aggregate LTV, per-property LTV and Capital › Debt
 // External Debt, and shown separately ("+$X affiliate notes"). Live cases: the 1100 Rarig property
-// row (lender "Oxford Capital") and the borrower loan "3883 from Oxford (50%)"
+// row (lender "Oxford Capital") and the borrower loan "3883 from Oxford (50%)".
 // With both excluded, the Overview-vs-Capital debt-basis flag reconciles to the cent.
 //
 // Identification: the workbook carries no "affiliate" field, so this is an explicit whole-phrase

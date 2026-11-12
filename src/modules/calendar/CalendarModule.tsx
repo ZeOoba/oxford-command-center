@@ -57,13 +57,11 @@ type WindowFilter = '90d' | '12mo' | '36mo';
 // fetch horizon restated. Keep them derived from FETCH_HORIZON_MONTHS so they cannot drift apart;
 // if a future band is ever narrower than the fetch, it becomes load-bearing and needs its own case.
 //
-// 36 months rather than 12: measured against data/snapshots/portfolio.json at a 2026-09-18
-// run-date basis (the basis this component actually uses — NOT the snapshot's precomputed
-// monthsToExpiry field, which sits ~2 weeks forward and yields flattering numbers), over the 132
-// leases carrying rent and an end date. A 12-month horizon shows 48 of them and REDACTED-AMT of annual
-// rent; 84 tenants and REDACTED-AMT (REDACTED-AMT) fall outside it, including the single largest tenant by
-// rent, 469 days out. A 36-month band shows 110 tenants and REDACTED-AMT of rent. Beyond roughly three
-// years the list stops being an operating calendar and becomes a planning document.
+// 36 months rather than 12: measured against the live rent roll at the run-date basis this component
+// uses (NOT the snapshot's precomputed monthsToExpiry field, which sits ~2 weeks forward and flatters
+// the result), a 12-month band hid most of the rent roll and the largest tenant by rent, while a
+// 36-month band covers most of both. Beyond roughly three years the list stops being an operating
+// calendar and becomes a planning document.
 const FETCH_HORIZON_MONTHS = 36;
 // critical-dates.ts converts months at 30.4375 d/mo; mirror its 12-month cut exactly.
 const TWELVE_MONTH_DAYS = Math.round(12 * 30.4375);
