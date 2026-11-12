@@ -6,13 +6,26 @@
 // figures are real firm data, so they are not committed again; instead golden:ratify reads them from
 // git history at run time (the pre-untrack test file) and refuses to write a leaseRun lock that
 // disagrees, so a ratify can never bless a lease-run regression introduced after the untrack.
+//
+// The planned history purge removes that commit (or scrubs its figures), so before it runs the pinned
+// figures are copied once into the gitignored local file config/local/leaserun-baseline.local.json
+// (`npx tsx scripts/golden/leaserun-baseline.ts --write-local`, create-only). golden:ratify reads the
+// local file first and history second, and FAILS CLOSED when neither is available or the baseline is
+// incomplete (refute round 4 F1/F4/F5); ORA_ACCEPT_LEASERUN_CHANGE=1 overrides for a reviewed change.
 import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { PfGolden } from './compute-golden';
 
 /** The commit whose tests/unit/lease-run.test.ts still pins the Excel-model figures (origin/main
  *  before the real-data untrack). Override with ORA_LEASERUN_BASELINE_REF. */
 export const DEFAULT_BASELINE_REF = '7009bd26';
 const BASELINE_PATH = 'tests/unit/lease-run.test.ts';
+/** Local, gitignored copy of the pinned figures (survives the history purge). */
+export const LOCAL_BASELINE_REL = 'config/local/leaserun-baseline.local.json';
+/** Figures the pre-untrack test pins: per lease, its lease-year NOIs plus stabilized NOI and value. A
+ *  baseline with fewer is incomplete (a redacted or reshaped source) and never counts as agreement. */
+export const EXPECTED_PINNED_FIGURES = 12;
 
 /** The describe-block title that opens each pinned lease, mapped to its property id. */
 const BLOCKS: Array<[string, string]> = [
@@ -49,6 +62,12 @@ export function parsePinnedLeaseRun(source: string): Record<string, PinnedLeaseR
 export function compareToPinned(leaseRun: PfGolden['leaseRun'], pinned: Record<string, PinnedLeaseRun>): string[] {
   const bad: string[] = [];
   const near = (a: number | null | undefined, b: number | null): boolean => a != null && b != null && Math.abs(a - b) < 0.005;
+  // Completeness first: every pinned lease, each with lease-year NOIs, a stabilized NOI and a value.
+  for (const [, id] of BLOCKS) {
+    const p = pinned[id];
+    if (!p || Object.keys(p.noiByYear).length === 0 || p.stabilizedNoi === null || p.indicativeValue === null) bad.push(`${id}: baseline incomplete`);
+  }
+  if (pinnedFigureCount(pinned) < EXPECTED_PINNED_FIGURES) bad.push(`baseline has ${pinnedFigureCount(pinned)} of ${EXPECTED_PINNED_FIGURES} figures`);
   for (const [id, p] of Object.entries(pinned)) {
     const g = leaseRun[id];
     if (!g) {
@@ -62,6 +81,30 @@ export function compareToPinned(leaseRun: PfGolden['leaseRun'], pinned: Record<s
   return bad;
 }
 
+export function pinnedFigureCount(pinned: Record<string, PinnedLeaseRun>): number {
+  return Object.values(pinned).reduce((a, p) => a + Object.keys(p.noiByYear).length + (p.stabilizedNoi !== null ? 1 : 0) + (p.indicativeValue !== null ? 1 : 0), 0);
+}
+
+/** The baseline: the local file when present, else git history. null when neither is available. */
+export function loadPinned(root: string): { pinned: Record<string, PinnedLeaseRun>; source: 'local file' | 'git history' } | null {
+  const local = join(root, LOCAL_BASELINE_REL);
+  if (existsSync(local)) return { pinned: JSON.parse(readFileSync(local, 'utf8')) as Record<string, PinnedLeaseRun>, source: 'local file' };
+  const h = loadPinnedFromHistory(root);
+  return h ? { pinned: h, source: 'git history' } : null;
+}
+
+/** Copy the pinned figures from history into the local file. Create-only; refuses an incomplete set. */
+export function writeLocalBaseline(root: string): string {
+  const target = join(root, LOCAL_BASELINE_REL);
+  if (existsSync(target)) return `${LOCAL_BASELINE_REL} already exists -- left untouched`;
+  const pinned = loadPinnedFromHistory(root);
+  if (!pinned) throw new Error('leaserun-baseline: the pre-untrack lease-run test is not reachable in this clone; nothing written');
+  if (pinnedFigureCount(pinned) < EXPECTED_PINNED_FIGURES) throw new Error('leaserun-baseline: the history copy is incomplete; nothing written');
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, JSON.stringify(pinned, null, 2) + '\n');
+  return `wrote ${LOCAL_BASELINE_REL} (${pinnedFigureCount(pinned)} figures)`;
+}
+
 /** Read the pinned figures from history. null when the baseline ref is not in this clone (logged). */
 export function loadPinnedFromHistory(root: string, ref = process.env['ORA_LEASERUN_BASELINE_REF'] ?? DEFAULT_BASELINE_REF): Record<string, PinnedLeaseRun> | null {
   try {
@@ -69,5 +112,14 @@ export function loadPinnedFromHistory(root: string, ref = process.env['ORA_LEASE
     return parsePinnedLeaseRun(src);
   } catch {
     return null;
+  }
+}
+
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/golden/leaserun-baseline.ts') && process.argv.includes('--write-local')) {
+  try {
+    console.log(`[leaserun-baseline] ${writeLocalBaseline(process.cwd())}`);
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(1);
   }
 }
