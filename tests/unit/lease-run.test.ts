@@ -6,9 +6,10 @@
 // Runs on the committed SYNTHETIC lease-term roster (tests/unit/lease-run-fixtures.ts): the real lease
 // abstracts are local-only operator data (ruling 2026-11-10). Every expected figure below is computed
 // by hand from the synthetic rents and the default assumptions (fee 3%, reserve $0.15/SF, vacancy 0,
-// option growth 3%, cap 8%) — independently of the engine. The engine's reconciliation to the v1.0
-// Excel models on the REAL roster is locked by the ratified golden (`leaseRun` in
-// data/property-financials/golden.local.json), asserted in tests/unit/property-financials-golden.test.ts.
+// option growth 3%, cap 8%) — independently of the engine. On the REAL roster the engine output is
+// locked by the ratified golden (`leaseRun` in data/property-financials/golden.local.json, asserted in
+// tests/unit/property-financials-golden.test.ts): a snapshot of engine output, which golden:ratify
+// refuses to write if it disagrees with the pre-untrack Excel-model figures read from git history.
 import { describe, expect, it } from 'vitest';
 import {
   projectLeaseRun,

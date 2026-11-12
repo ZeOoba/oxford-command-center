@@ -39,8 +39,8 @@ export interface PfGolden {
    *  (circular). Money at full precision, counts exact. */
   locks: PfLocks;
   /** Lease-run engine output per property of the operator lease-term roster at default assumptions
-   *  (config/local/lease-term-seeds.json): locks the engine's reconciliation to the v1.0 Excel models
-   *  on the real roster, cents. */
+   *  (config/local/lease-term-seeds.json), cents. A snapshot of engine output: golden:ratify checks it
+   *  against the pre-untrack Excel-model figures read from git history (./leaserun-baseline.ts). */
   leaseRun: Record<string, { stabilizedNoi: number | null; indicativeValue: number | null; noiByYear: Record<string, number> }>;
 }
 
@@ -68,7 +68,8 @@ export interface PfLocks {
 export interface CostGolden {
   note: string;
   studies: Record<string, { total: number; alloc: Record<string, number> }>;
-  calibration: Record<string, { variancePct: number | null; ratio: number | null }>;
+  /** Every calibration ledger row, keyed by obs_id. */
+  calibration: Record<string, { property: string; variancePct: number | null; ratio: number | null }>;
 }
 
 const NOTE = 'Value lock: written only by `npm run golden:ratify` from the data in place. Never edit by hand.';
@@ -95,7 +96,9 @@ export function computePfGolden(dataset: Obj, leaseSeeds: readonly LeaseTerm[]):
   const latestNoi: PfGolden['latestNoi'] = {};
   for (const [id, p] of Object.entries(props)) {
     const per = (p['periods'] ?? {}) as Record<string, Obj>;
-    const key = Object.keys(per).find((k) => k === 'YTD26' || k.startsWith('YTD26_partial'));
+    const keys = Object.keys(per).filter((k) => k === 'YTD26' || k.startsWith('YTD26_partial'));
+    if (keys.length > 1) throw new Error(`golden: ${id} has ${keys.length} periods matching the latest-period rule (${keys.join(', ')})`);
+    const key = keys[0];
     const v = key ? per[key]?.['noi'] : undefined;
     if (key && typeof v === 'number') latestNoi[id] = { period: key, noi: Math.round(v) };
   }
@@ -172,10 +175,13 @@ export function computeCostGolden(costSeg: Obj, observations: unknown): CostGold
   for (const [id, s] of Object.entries((costSeg['studies'] ?? {}) as Record<string, Obj>)) {
     studies[id] = { total: Number(s['total']), alloc: { ...((s['alloc'] ?? {}) as Record<string, number>) } };
   }
+  // Every ledger row is locked, keyed by obs_id (refute round 3 F4: keying by property locked only the
+  // first observation of each property).
   const calibration: CostGolden['calibration'] = {};
   for (const o of (Array.isArray(observations) ? observations : []) as Array<Obj & { pca_unit_cost: number | null; contractor_unit_cost: number | null }>) {
-    const key = String(o['property']);
-    if (!(key in calibration)) calibration[key] = { variancePct: variancePct(o), ratio: ratio(o) };
+    const key = String(o['obs_id']);
+    if (key in calibration) throw new Error(`golden: duplicate calibration obs_id ${key}`);
+    calibration[key] = { property: String(o['property']), variancePct: variancePct(o), ratio: ratio(o) };
   }
   return { note: NOTE, studies, calibration };
 }

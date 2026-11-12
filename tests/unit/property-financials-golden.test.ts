@@ -97,6 +97,11 @@ describe('golden normalized NOI (USD, rounded)', () => {
 
   it('latest-period NOI (YTD26 / partial 2026) of every entity equals the value lock', () => {
     expect(Object.keys(G.latestNoi).sort()).toEqual([...PF_ENTITY_IDS].sort());
+    // exactly one period of each entity matches the latest-period rule (no first-match pick)
+    for (const id of PF_ENTITY_IDS) {
+      const keys = Object.keys(D.properties[id].periods).filter((k) => k === 'YTD26' || k.startsWith('YTD26_partial'));
+      expect(keys, id).toHaveLength(1);
+    }
     for (const id of PF_ENTITY_IDS) {
       const lock = G.latestNoi[id]!;
       const per = D.properties[id].periods as Record<string, { noi: number } | undefined>;
@@ -220,8 +225,8 @@ describe('period rules', () => {
   });
 
   /**
-   * Known dataset deviation from the rule: 9620 State 350 TTM26 vs TTM25 NOI is -3.28 in the file
-   * (NOI went from -$52,492 to +$119,703). A percent on a negative base is meaningless; the module
+   * Known dataset deviation from the rule: 9620 State 350 TTM26 vs TTM25 NOI carries a percent in the
+   * file although TTM25 NOI is negative. A percent on a negative base is meaningless; the module
    * shows n/m there. Pinned so a refreshed dataset that drops the figure makes this list shrink
    * visibly rather than silently.
    */
@@ -641,7 +646,8 @@ describe('formatters (reference artifact usd / pc / pl)', () => {
 
 describe('value lock — lease-run engine on the operator lease-term roster', () => {
   // The roster is config/local/lease-term-seeds.json: synthetic in CI, the real abstracts on the live
-  // machine. The lock (pfGolden().leaseRun) is the engine output ratified against the v1.0 Excel models.
+  // machine. The lock (pfGolden().leaseRun) is a snapshot of engine output; golden:ratify refuses
+  // to write one that disagrees with the pre-untrack Excel-model figures (scripts/golden/leaserun-baseline.ts).
   const seeds = loadLeaseTermSeeds();
   const G = pfGolden();
 

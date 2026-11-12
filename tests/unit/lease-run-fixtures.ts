@@ -5,7 +5,8 @@
 // (config/local/lease-term-seeds.json, ruling 2026-11-10). The synthetic rows keep the real structure
 // (SF, statuses, dates, a flat-then-step contractual schedule with option_assumed tail and stale floors;
 // a 2%/yr fixed schedule with exercised renewal and option_contractual tail); every rent is invented.
-// Engine reconciliation to the v1.0 Excel models on the REAL roster is locked by the ratified golden.
+// On the REAL roster the engine output is locked by the ratified golden (a snapshot of engine output,
+// checked at ratify time against the pre-untrack Excel-model figures from git history).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LeaseTerm } from '../../src/contracts/lease-run';

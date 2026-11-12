@@ -7,9 +7,10 @@
 // real firm data, so they live in the gitignored operator table config/local/lease-term-seeds.json
 // (ruling 2026-11-10: real firm data is never tracked; a real-data manifest path with a synthetic
 // stand-in under fixtures/synthetic/). On the operator machine the real roster is rebuilt from the
-// pre-untrack commit by scripts/extract-local-tables.ts. The engine's reconciliation to the v1.0
-// Excel models is locked on real data by the ratified golden (data/property-financials/
-// golden.local.json, `leaseRun`), and its math by tests/unit/lease-run.test.ts on synthetic seeds.
+// pre-untrack commit by scripts/extract-local-tables.ts. On real data the engine output is locked by
+// the ratified golden (data/property-financials/golden.local.json, `leaseRun`: a snapshot of engine
+// output that golden:ratify checks against the pre-untrack Excel-model figures from git history), and
+// its math by tests/unit/lease-run.test.ts on synthetic seeds.
 //
 // These are OWNED ORA assets (ratified in property-master.ts). No confidential active-deal terms.
 //
