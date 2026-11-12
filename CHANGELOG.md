@@ -487,7 +487,7 @@ The intel module becomes an operating layer over the analytics engine — not an
   of the filtered set (`lib/export.downloadCsv`), with a live "_n_ of 137" count and filtered-rent total.
 - **Fix — rollover horizon no longer drops long-dated rent.** `rolloverSchedule` bucketed only
   `baseYear … baseYear+4` and silently discarded anything later; beyond-horizon expirations now roll
-  into a `YYYY+` catch-all (e.g. the 2033 leases that were invisible now appear as `2030+`, $934K).
+  into a `YYYY+` catch-all (e.g. the 2033 leases that were invisible now appear as `2030+`, [amount redacted]).
 - Tests: `criticalDates` (sort/horizon/overdue-holdover/past-escalation-drop) + rollover catch-all
   (90 total). Verified live against the baked 137-lease snapshot (filter, export, drill-through).
 

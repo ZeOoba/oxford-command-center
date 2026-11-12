@@ -81,11 +81,11 @@ export function parseQuickbooksCsv(text: string, properties: Property[], now: st
     // fa27d4c/ead629d/1c7d17b fixed elsewhere this week (2026-08-24 integrity sweep, Finding 3).
     //
     // CORRECTED 2026-08-24 (PR #302 review, initially a false-positive fix): routing through
-    // resolvePropertyId alone did NOT recover the ~$794K Sepich/FVC NOI this comment originally
+    // resolvePropertyId alone did NOT recover the Sepich/FVC NOI this comment originally
     // claimed -- the alias table had no entry matching the QB export's actual class-key string, and
     // the token/number-gate path independently fails on this key (see RENT_ROLL_PROPERTY_ALIASES'
     // own comment in parse.ts). The FVC/Sepich key is now explicitly aliased and verified against
-    // the live QUICKBOOKS_CSV export to resolve correctly. The '1851 S Club Solar' ~$631K NOI
+    // the live QUICKBOOKS_CSV export to resolve correctly. The '1851 S Club Solar' NOI
     // remains propertyId:null -- verified DELIBERATE, not a residual bug: no property_master row
     // exists for that entity (see the alias table's comment). This routing change is still correct
     // and load-bearing (the alias table is now the actual source of truth for these two QB class

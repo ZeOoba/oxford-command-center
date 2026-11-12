@@ -6,7 +6,7 @@
  * the count was 12. Independent review and an adversarial REFUTE pass both found it could not
  * detect the defect it was built for: reverting `External Loans Summary!H9` to the buggy
  * `SUMPRODUCT((dates>=TODAY())*(dates<TODAY()+366)*amount)` left its output byte-identical —
- * all clean — while annual debt service re-inflated to $250,000.00. It asserted a property of
+ * all clean — while annual debt service re-inflated to the overstated figure. It asserted a property of
  * the schedule DATA; the bug lived in the FORMULA, which it never read.
  *
  * So this is a CROSS-CHECK of two independent computations:
@@ -146,7 +146,7 @@ export interface ScheduleColumns {
  *
  * Deliberately strict about "Interest Paid" vs "Payment Amount": a prototype of this check
  * guessed 29000 Information Lane's interest column as B ("Payment Amount") and over-reported
- * that loan by $54,895.55 — a false positive that would have read as a real workbook defect.
+ * that loan by a five-figure amount — a false positive that would have read as a real workbook defect.
  */
 export function resolveScheduleColumns(header: Record<string, string>): ScheduleColumns {
   const out: ScheduleColumns = {};
@@ -216,7 +216,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
 
   // ── 2. declared range vs the schedule's true extent (OI-094) ─────────────────────────────
   // Structural: fires even when today's delta is zero, because the excluded rows are simply
-  // outside the current window. Banwick's excluded row 71 carries a $3.35M balloon that only
+  // outside the current window. Banwick's excluded row 71 carries a seven-figure balloon that only
   // starts to matter around mid-2030 — by which point nothing would be watching.
   if (declaredRangeEnd !== null) {
     // rows is scan-ordered ascending (scanSchedule walks r upward), so the last element is the
@@ -381,7 +381,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // The one check that can see a balloon parked outside the principal column. Note Party 02's
   // balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
   // missed it and the workbook and a naive recomputation agreed while both understated Oxford's
-  // returning capital by $972,551. Only the balance column exposes that shape.
+  // returning capital by a six-figure amount. Only the balance column exposes that shape.
   //
   // Applies uniformly to every loan, lender rows included — this was NOT always the design.
   // Gabriel's first-pass ruling on RCT's exclusion (2026-08-05, ~17:00) held it as intentional:
@@ -410,8 +410,8 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     // indistinguishable here. The previous positional reads (findIndex, the physical predecessor,
     // and reverse().find for the closing balance) flipped the verdict in BOTH directions on the
     // documented RCT r35/r36 same-date pair: a payoff row placed above its same-dated final regular
-    // payment MASKED a real $995K balloon-outside-principal defect, and on a correct workbook the
-    // reverse arrangement fired a false $995K accusation. These sheets are hand-maintained and
+    // payment MASKED a real balloon-outside-principal defect, and on a correct workbook the
+    // reverse arrangement fired a false accusation. These sheets are hand-maintained and
     // multi-section (gapTolerance exists because of interior banners), so nothing guarantees
     // chronological row order. (2026-08-11 integrity sweep, M3.)
     //

@@ -63,7 +63,7 @@ export interface MarkToMarketChip {
   show: boolean;
   tone: ChipTone;
   label: string;
-  /** A concise rollover-upside line, e.g. "in-place $4.27/SF vs $5.91/SF cohort — +38% rollover upside". */
+  /** A concise rollover-upside line, e.g. "in-place $5.10/SF vs $6.40/SF cohort — +25% rollover upside". */
   detail: string | null;
 }
 

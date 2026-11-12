@@ -27,7 +27,7 @@ import {
  *  no section ever crashes or prints `NaN`/`null` (Behavior contract #4). `unit` documents the
  *  dimension ($, $/SF, %) so the renderer never has to re-derive a label. */
 export const Figure = z.object({
-  display: z.string(), // e.g. '$1,234,567', '$4.27 /SF', '58.2%', '—'
+  display: z.string(), // e.g. '$1,234,567', '$6.35 /SF', '58.2%', '—'
   value: z.number().nullable(), // the raw analytic value (null when not available)
   unit: z.enum(['usd', 'usd_per_sf', 'pct', 'count', 'none']),
 });

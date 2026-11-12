@@ -10,7 +10,7 @@
 
 The architecture of attention is right: exception-first Overview, pinned safety items, a materiality floor and basis labelling are ahead of anything the commercial RE platforms document publicly. The roadmap (Waves A–C) and the 12 open UI PRs (#522–#536) already address the largest structural gaps: per-card as-of, a canonical property page, one chart kit and chart accessibility.
 
-What remains is a layer the roadmap does not cover: **signal integrity on the Overview itself** (what gets into the 7 rows and what the header dollars add up to), **one count for "needs attention"**, **IA naming and duplication**, and **design-system hygiene** that is now causing visible defects (invisible progress tracks, a hard-coded theme-blind alert badge, the same NOI rendered as $4.2M and $4.19M).
+What remains is a layer the roadmap does not cover: **signal integrity on the Overview itself** (what gets into the 7 rows and what the header dollars add up to), **one count for "needs attention"**, **IA naming and duplication**, and **design-system hygiene** that is now causing visible defects (invisible progress tracks, a hard-coded theme-blind alert badge, the same NOI rendered at two different precisions).
 
 ---
 
@@ -21,12 +21,12 @@ Ranked by decision impact. Tag: **[V]** verified live and in code; **[R]** survi
 ### P1 — Signal integrity on Overview
 
 **1. Valuation observations take action slots and inflate the risk total.** [V][R]
-The "Premium valuation" insight (family `CF`, `server/insights/generators/cf-hurdle-drag.ts:65-105`) carries `confidence: 0.7 // seed benchmark — not live market data` and has no verb. It still ranks #5 of 7, above the holdover row (#6, $8.5K). Its $52K "NOI gap to market-median yield" is added into "Workbook basis: $557K". `totalsBySpine` (`src/modules/insights/insights.logic.ts:245-256`) sums every spine-A row with a dollar figure: 151,240 + 268,930 + 7,215 + 44,880 = 472,265. That sums annual rent at risk with a valuation spread, which are different measures. It is also computed on a property whose expenses are $0 (gross rent as NOI), so the cap rate it criticises is itself overstated.
+The "Premium valuation" insight (family `CF`, `server/insights/generators/cf-hurdle-drag.ts:65-105`) carries `confidence: 0.7 // seed benchmark — not live market data` and has no verb. It still ranks #5 of 7, above the holdover row (#6, [amount redacted]). Its "NOI gap to market-median yield" ([amount redacted]) is added into "Workbook basis". `totalsBySpine` (`src/modules/insights/insights.logic.ts:245-256`) sums every spine-A row with a dollar figure, four rows in this case. That sums annual rent at risk with a valuation spread, which are different measures. It is also computed on a property whose expenses are $0 (gross rent as NOI), so the cap rate it criticises is itself overstated.
 Note: filtering on `advisoryOnly` will not work, because every spine-A insight is hard-set `advisoryOnly: true` (`insights.logic.ts:224`).
 *Fix:* exclude valuation/CF-family rows in `buildPriorityActionsTier` (`widgets.tsx:234-296`) and in `totalsBySpine`. Route them to Brain › Insights. The header should sum one measure only ("annual rent at risk"). This is the alarm-rationalization rule: no defined action, no alarm slot (AAMI 2017; Joint Commission NPSG.06.01.01). Touching the ranker is engine-adjacent, so run the `refute-financial-change` workflow before merging.
 
 **2. The header total and the "Results" widget repeat the same numbers.** [V]
-"Workbook basis $557K / Ledger & combined $317K" appears in the Priority Actions header and again in the Results widget (Risk impact / Monitor impact / 47 open). Two widgets give one fact, and both rest on the mixed sum in #1.
+"Workbook basis [amount redacted] / Ledger & combined [amount redacted]" appears in the Priority Actions header and again in the Results widget (Risk impact / Monitor impact / 47 open). Two widgets give one fact, and both rest on the mixed sum in #1.
 *Fix:* keep the header line and retire the Results widget, or turn it into the "held back" summary (11 items, $X) that explains what the 7-row cap is hiding.
 
 **3. Alert-group labels misstate their band.** [V]
@@ -49,7 +49,7 @@ These are different populations: unread notifications, alert tasks, ranked insig
 ### P2 — Truthfulness of headline figures
 
 **6. The NOI and cap-rate KPI tiles carry no data-quality marker.** [V]
-Six of the 13 investment properties have `expenses = 0` in the live snapshot, so the Overview "Net Operating Income $3.87M · 6.9% wtd cap" includes gross rent as NOI for those assets. PR #522 (1.3) adds a `landlordCosts` flag to the Portfolio NOI *cell*, Health and the AI tools, but not to the Overview KPI tile or the cap rate under it.
+Six of the 13 investment properties have `expenses = 0` in the live snapshot, so the Overview "Net Operating Income [amount redacted] · [rate redacted] wtd cap" includes gross rent as NOI for those assets. PR #522 (1.3) adds a `landlordCosts` flag to the Portfolio NOI *cell*, Health and the AI tools, but not to the Overview KPI tile or the cap rate under it.
 *Fix:* add a small "6 of 13 props: opex not sourced" caveat chip on the NOI tile and on any cap-rate figure, with the same wording as 1.3. This labels without restating, consistent with the 10-30 ruling.
 
 **7. Two time stamps sit side by side with no label to tell them apart.** [V]
@@ -101,7 +101,7 @@ Leasing › Rollover shows an empty "Leasing Velocity" panel (`lease_events` unp
 **14. Seven or more currency and percent formatters.** [V — code audit]
 - Six separate `fmtPct` implementations exist.
 - `principal-kpis.ts:15` expects 0–100, not a fraction, which is a latent unit bug.
-- The same NOI reads "$4.2M" in the TopBar slice and "$4.19M" in the KPI tile.
+- The same NOI reads to one decimal in the TopBar slice and to two decimals in the KPI tile.
 - Minus signs mix ASCII and U+2212.
 
 *Fix:* one `src/lib/format.ts` (compact-USD, PSF, pct, bps, date, month). Add a lint rule banning `toFixed` and `toLocaleString` in `src/modules/**`. Show the exact value on hover for compact figures.
@@ -152,7 +152,7 @@ Leasing › Rollover shows an empty "Leasing Velocity" panel (`lease_events` unp
 
 ### 5a. Refute results
 
-Of 10 claims, 9 survived and 1 was partly refuted. The reviewer re-ran the real ranking code (`buildAnalytics`, `mergeInsightSources`, `buildPriorityActionsTier`) against the live `/api/snapshot` and `/api/warehouse/insights` and reproduced $556,917 and the 47 count.
+Of 10 claims, 9 survived and 1 was partly refuted. The reviewer re-ran the real ranking code (`buildAnalytics`, `mergeInsightSources`, `buildPriorityActionsTier`) against the live `/api/snapshot` and `/api/warehouse/insights` and reproduced the header total ([amount redacted]) and the 47 count.
 
 Corrections applied above:
 - Finding 1: the `advisoryOnly` filter would be a no-op (every spine-A insight is advisory). Filter by family instead.

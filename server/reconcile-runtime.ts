@@ -182,7 +182,7 @@ const DEBT_BASIS_TOLERANCE = 1000;
  * Overview "Total Debt" (property loan balances, Property NOI sheet) vs Capital › Debt "External
  * Debt" (third-party borrower loans, loan schedule), compared ROW BY ROW (item 14, 2026-09-24) so
  * the Data Quality card names the property or loan that disagrees instead of one unexplained net
- * gap (round 1 showed "$710,364" with no row to fix).
+ * gap (round 1 showed a single net dollar gap with no row to fix).
  *
  * Same basis as both surfaces, by construction:
  *  - investment rows only (the residence is other holdings — isInvestmentProperty);
@@ -430,7 +430,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // Capital Allocation's leasing-risk component — with propertyId:null reading identically to
   // "no data" rather than "unresolved data". A single stray row is a curiosity; a MATERIAL
   // share of total rent going unresolved means a whole property's leasing input is silently
-  // empty (reproduced: 41/138 leases, $1.14M — the largest-NOI property resolved zero leases).
+  // empty (reproduced: 41/138 leases — the largest-NOI property resolved zero leases).
   // 1% catches that class while tolerating the handful of legitimately-unmapped rows a live
   // workbook can carry without false-flagging every routine snapshot.
   if (wt?.rent != null && wt.rent > 0) {

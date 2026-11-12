@@ -77,17 +77,17 @@ Enumerated at `cb461e5` with `git grep`. Each task's "Reader check" step re-runs
 
 | Item | Before | After |
 |---|---|---|
-| Overview Total Debt | live total incl. the Rarig affiliate note | **live total less that note** (equals External Debt below), sublabel `+$X affiliate notes · property loan balances · 18.8% LTV` |
-| Aggregate LTV (live investment value) | 20.77% | **18.76%** |
+| Overview Total Debt | live total incl. the Rarig affiliate note | **live total less that note** (equals External Debt below), sublabel `+$X affiliate notes · property loan balances · N% LTV` |
+| Aggregate LTV (live investment value) | [rate redacted] | **lower: [rate redacted]** |
 | Capital › Debt External Debt | live total (5 borrower loans) | **same figure as Overview Total Debt**, sublabel `+$Y affiliate notes · loan schedule · 4 third-party borrower loans` |
-| Annual Debt Service / Wtd Avg Rate | live ADS / 5.52% | ADS less the 3883 note's service / 5.50% |
+| Annual Debt Service / Wtd Avg Rate | live ADS / [rate redacted] | ADS less the 3883 note's service / [rate redacted] |
 | `checkDebtBasis` | 1 flag, one net affiliate gap | **0 flags.** All 4 third-party loans tie to their property rows to the cent |
-| 1100 Rarig `ltv-governor-1100-rarig-ave-columbus-oh` (46.1%) | info insight | **gone** (affiliate note) |
+| 1100 Rarig `ltv-governor-1100-rarig-ave-columbus-oh` ([rate redacted]) | info insight | **gone** (affiliate note) |
 | Equity Invested | live investment equity (no sublabel) | unchanged, sublabel `+$<residence equity> other holdings` |
 | Capital allocation entries / Notion sync writes | 14 / 14 pages | **13 / 13**. The Persimmon Tree Notion row is not written |
 | Filter bar (unfiltered) | no readout | `13 investment · 1 other holding` |
 | L-1 (ref 2026-09-24) | 5 critical | **2 critical** (Example Trucking, EXAMPLE FREIGHT at 37d) + **3 warning** (Example Auto Salon, Example Ventures, Example Supply at 67d). Risk $ unchanged (warnings still count as risk) |
-| L-5 | 0-6m bucket 13.3%, 6-12m 11.8% (<15%). Does not fire | no live change. Prevents a future double count of the bucket rent |
+| L-5 | 0-6m and 6-12m buckets both under 15%. Does not fire | no live change. Prevents a future double count of the bucket rent |
 | reconcile-fail | snapshot has 0 dataQuality flags | no live change |
 | AR feed | oldest record 2026-07-15 → "71d old (max 35d)", stale | newest 2026-08-21 → `7 leases with stale AR · 34d old`, amber (goes stale 2026-09-26 without a new import) |
 
@@ -239,7 +239,7 @@ describe('isAffiliateBorrowerLoan — borrower direction only', () => {
 
 describe('investment-basis helpers', () => {
   const rarig = { lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444444 };
-  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.389966526984127 };
+  const easton = { lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.4172618 };
   it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
     expect(investmentLoanBalance(rarig)).toBe(0);
     expect(investmentLoanBalance(easton)).toBe(2_456_789.12);
@@ -247,11 +247,11 @@ describe('investment-basis helpers', () => {
   });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();
-    expect(investmentLtv(easton)).toBe(0.389966526984127);
+    expect(investmentLtv(easton)).toBe(0.4172618);
   });
   it('propertyLtvLabel names the exclusion instead of printing a number', () => {
     expect(propertyLtvLabel(rarig)).toBe('affiliate note');
-    expect(propertyLtvLabel(easton)).toBe('39.0%');
+    expect(propertyLtvLabel(easton)).toBe('41.7%');
     expect(propertyLtvLabel({ lender: null, loanBalance: 0, ltv: null })).toBe('—');
   });
   it('affiliateNotesClause formats a disclosure clause, or nothing', () => {
@@ -576,7 +576,7 @@ const d = debtSummary(s.loans);
 console.log(JSON.stringify({ totalDebt: k.totalDebt.value, affiliateDebt: k.affiliateDebt.value, ltv: k.ltv.value, externalDebt: d.externalDebt, loanAffiliateDebt: d.affiliateDebt, ads: d.annualDebtService, war: d.weightedAvgRate }));
 ```
 
-Run: `npx tsx .superpowers/live-check-debt.ts`. Expected (asOf 2026-09-13 snapshot): `totalDebt` equal to `externalDebt` (both on the third-party basis), `affiliateDebt` = the 1100 Rarig property-row balance, `ltv ≈ 0.18757`, `loanAffiliateDebt` = the "3883 from Oxford (50%)" balance, `ads` = the prior annual debt service less that note's service, `war ≈ 0.055023`. Paste the output into the PR A body, then `rm .superpowers/live-check-debt.ts`.
+Run: `npx tsx .superpowers/live-check-debt.ts`. Expected (asOf 2026-09-13 snapshot): `totalDebt` equal to `externalDebt` (both on the third-party basis), `affiliateDebt` = the 1100 Rarig property-row balance, `ltv` ≈ the aggregate investment LTV ([rate redacted]), `loanAffiliateDebt` = the "3883 from Oxford (50%)" balance, `ads` = the prior annual debt service less that note's service, `war` ≈ the third-party weighted average rate ([rate redacted]). Paste the output into the PR A body, then `rm .superpowers/live-check-debt.ts`.
 - [ ] **Step 8: Refute.** Invoke `refute-financial-change` on `engine.ts` + `types.ts` with these lenses:
   1. Aggregate-LTV governor input moves down, which is less conservative. Confirm it moves by exactly the affiliate note and no more, and that the governor constants are unchanged.
   2. Every reader in the Pre-flight table reads the new basis consistently.
@@ -615,7 +615,7 @@ const k = (ltv: number, affiliate: number) => ({ ltv: cell(ltv), affiliateDebt: 
 
 describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', () => {
   it('live shape: affiliate clause leads', () => {
-    expect(overviewTotalDebtSublabel(k(0.1875677418875123, 1_111_111))).toBe('+$1.11M affiliate notes · property loan balances · 18.8% LTV');
+    expect(overviewTotalDebtSublabel(k(0.2317429, 1_111_111))).toBe('+$1.11M affiliate notes · property loan balances · 23.2% LTV');
   });
   it('no affiliate notes → basis leads', () => {
     expect(overviewTotalDebtSublabel(k(0.2, 0))).toBe('property loan balances · 20.0% LTV');
@@ -780,7 +780,7 @@ function aiSnap(over: Record<string, unknown> = {}): PortfolioSnapshot {
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-09-13' },
     properties: [
       prop({ id: 'rarig', name: '1100 Rarig Ave, Columbus OH', lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444, oxfordValue: 2_500_000 }),
-      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.39, oxfordValue: 6_300_000 }),
+      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.42, oxfordValue: 5_850_000 }),
     ],
     leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
     renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
@@ -796,7 +796,7 @@ describe('get_property — per-property LTV on the investment basis', () => {
   });
   it('a third-party-debt property reports its LTV', () => {
     const rows = runTool('get_property', aiSnap(), { query: 'easton' }).data as Array<{ ltv: string; affiliateNote: boolean }>;
-    expect(rows[0]).toMatchObject({ ltv: '39.0%', affiliateNote: false });
+    expect(rows[0]).toMatchObject({ ltv: '42.0%', affiliateNote: false });
   });
 });
 ```
@@ -3624,5 +3624,5 @@ git commit -m "docs(ops): R1-R8 tracked runbook until Data Feeds is all green" -
 - **Known trade-offs and blocking questions for Gabriel.**
   - **Q1 (blocks the PR A merge).** No affiliate field exists in the workbook or snapshot. Identification is an explicit whole-phrase lender list, `['Oxford Capital']`, applied to the property `lender` and the borrower-loan lender/counterparty. Confirm the list is complete. Specifically: is any of "NOTE PARTY 08"/"NOTEPARTY08", "Firm 08", "EG(Oxford)" or "Muirkirk Properties" an Oxford affiliate that could appear as the *lender* on a borrower note? Today those names appear only on internal-direction rows, or on third-party loans as the borrower entity. The robust long-term fix is an "Affiliate" column on the Loan Index and Property NOI sheets.
   - **Q2 (non-blocking).** 1100 Rarig's DSCR (2.53x) is still computed on its affiliate debt service. The ruling covers Total Debt and LTV only, so this plan leaves DSCR unchanged.
-  - **Q3 (non-blocking).** External Debt's weighted rate and annual debt service move to the third-party basis (5.50%). The maturity ladder keeps the affiliate note, and Capital Deployed keeps the Note Party 01 lender position.
+  - **Q3 (non-blocking).** External Debt's weighted rate and annual debt service move to the third-party basis ([rate redacted]). The maturity ladder keeps the affiliate note, and Capital Deployed keeps the Note Party 01 lender position.
   - **Architect ack (blocks Tasks 0, 2, 8 and 15).** These tasks touch `architecture/status.json`, `src/analytics/engine.ts` and `server/index.ts`.

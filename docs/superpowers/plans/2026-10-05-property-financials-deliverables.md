@@ -28,10 +28,10 @@ Unmatched: none today (an unmatched entity gets `canonicalId: null` plus a flag)
 | 1 | Placement | Static single page | Standalone "Property Financials" destination (Assets), in-module sticky strip on `?view=` | Gabriel ruling 2026-10-05; 6 views exceed the 5-tab registry cap |
 | 2 | Tab 7 | Static "Command center data" | Live data-health panel in Data → Quality → Property Financials, plus summary card on the module | Spec |
 | 3 | Theme | Own `prefers-color-scheme` block | Repo `data-theme` tokens; fixed 8-colour chart palette kept (dark under `command`) | Repo design system wins |
-| 4 | Overview lede | Hardcoded sentence | Computed from data (2.6% / 6.6%; top themes by dollars) | No hardcoded firm numbers |
+| 4 | Overview lede | Hardcoded sentence | Computed from data (computed rates; top themes by dollars) | No hardcoded firm numbers |
 | 5 | NOI KPI label | "nine PM-reported assets" | "6 PM-reported assets with full-year history" (the figure moved slightly upward with the v03.2 prepaid-rent ruling) | The dataset view has 6 members; adding the other 3 would put partial FY2024 into a YoY |
 | 6 | Rounded ratios | Reads dataset 2-dp ratios | Computes margin / opex / fee / growth from raw figures everywhere | Scorecard and Evaluation must agree; independent review finding C2 |
-| 7 | Evaluation RAG | From rounded ratios | Exact math flips three cells: 3540 E 5th run-rate amber→red (-0.10%); Livingston mgmt fee green→amber (4.47%); 9620 mgmt fee amber→red (5.01%) | Consequence of 6; pinned in tests |
+| 7 | Evaluation RAG | From rounded ratios | Exact math flips three cells: 3540 E 5th run-rate amber→red (just below 0); Livingston mgmt fee green→amber; 9620 mgmt fee amber→red (just above 5.0%) | Consequence of 6; pinned in tests |
 | 8 | Partial periods | YoY computed on Livingston YTD (3 vs 9 months) | n/m with reason (Evaluation growth tests, Explorer "why", drivers) | Spec rule: partial never produces YoY; review findings C1, I1 |
 | 9 | Negative base | Percent on 3540 E 5th negative 2023 NOI | n/m | Spec rule |
 | 10 | Diverging bars | Fixed zero at 30%, per-side scale | One shared scale | Equal dollars draw equal bars |
