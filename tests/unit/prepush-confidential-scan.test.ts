@@ -683,21 +683,54 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     }
   });
 
-  it('every firm-data .gitignore rule is covered by the push-time path block (refute round 4 F7)', () => {
+  it('every firm-data .gitignore rule, wildcards included, is covered by the push-time path block (refute rounds 4-5 F7/F5/F9)', () => {
     // A path protected only by .gitignore can still be pushed with `git add -f`; every ignore rule for
-    // firm data (or a byte-copy / derived output of it) must also be a manifest or neverTrack path.
+    // firm data (or a byte-copy / derived output of it) must also be blocked. Wildcard rules are
+    // expanded into a sample path instead of being skipped.
     const m = loadRealDataManifest();
+    const sample = (rule: string): string => {
+      const r = rule.replace(/^\//, '').replace(/\*\*\//g, 'x/').replace(/\*/g, 'x');
+      return r.endsWith('/') || /^(dist|dist-server)$/.test(r) ? `${r.replace(/\/$/, '')}/x.json` : r;
+    };
     const rules = [
       ...readFileSync(join(process.cwd(), '.gitignore'), 'utf8').split(/\r?\n/),
       ...readFileSync(join(process.cwd(), 'scripts/property-financials/.gitignore'), 'utf8').split(/\r?\n/).map((l) => (l.trim() && !l.startsWith('#') ? `scripts/property-financials/${l.trim()}` : l)),
     ]
       .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('#') && !l.startsWith('!') && !l.includes('*'))
-      .filter((l) => /^(data\/|public\/|dist$|dist-server$|config\/local|src\/data\/|scripts\/property-financials\/|scripts\/data\/|docs\/superpowers\/specs\/.*seed|tests\/fixtures\/property-financials\/)/.test(l))
+      .filter((l) => l && !l.startsWith('#') && !l.startsWith('!'))
+      .filter((l) => /^\/?(data\/|data$|public\/|dist$|dist-server$|config\/local|src\/data\/|scripts\/property-financials\/|scripts\/data\/|docs\/superpowers\/specs\/.*seed|tests\/fixtures\/property-financials\/)/.test(l))
       .filter((l) => !/\.log$/.test(l));
     expect(rules.length).toBeGreaterThan(30);
-    const uncovered = rules.filter((l) => !isRealDataPath(l.endsWith('/') || /^(dist|dist-server)$/.test(l) ? `${l.replace(/\/$/, '')}/x.json` : l, m));
+    expect(rules.some((r) => r.includes('*'))).toBe(true); // wildcard rules are checked, not dropped
+    const uncovered = rules.filter((l) => !isRealDataPath(sample(l), m));
     expect(uncovered).toEqual([]);
+  });
+
+  it('quarantine, temp and backup copies of every listed file are both gitignored and push-blocked', () => {
+    const m = loadRealDataManifest();
+    const explicit = [
+      'data/ar/review-queue.corrupt-1700000000000.json', // ar-import-headless backupCorruptQueue
+      'data/alert-inbox.json.corrupt-2026-11-12T00-00-00-000Z', // alerts/store.ts
+      'data/alert-state.json.corrupt-2026-11-12T00-00-00-000Z', // brief/state.ts
+      'data/snapshots/portfolio.json.tmp-123-456', // atomic-write temp left by a crash
+      'data/ar/review-queue.json.tmp-123',
+      'data/overlay.json.tmp-1-2-3',
+      'data/property-financials-status.json.123.abc.tmp',
+    ];
+    const generated = m.files
+      .filter((f) => !f.startsWith('fixtures/'))
+      .flatMap((f) => {
+        const dot = f.lastIndexOf('.');
+        const stem = dot > f.lastIndexOf('/') ? f.slice(0, dot) : f;
+        const ext = dot > f.lastIndexOf('/') ? f.slice(dot) : '';
+        return [`${f}.corrupt-1700000000000`, `${stem}.corrupt-1700000000000${ext}`, `${f}.tmp-1-2`, `${f}.bak`, `${f}.quarantine`];
+      });
+    const paths = [...explicit, ...generated];
+    expect(paths.filter((p) => !isRealDataPath(p, m))).toEqual([]);
+    const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin'], { input: paths.join('\n'), encoding: 'utf8' }).stdout.split(/\r?\n/).filter(Boolean);
+    expect(paths.filter((p) => !ignored.includes(p))).toEqual([]);
+    // a legitimate sibling that is not a copy stays allowed
+    expect(isRealDataPath('src/data/seed-deals.test.ts', m)).toBe(false);
   });
 
   it('neverTrack paths (no synthetic stand-in) are blocked like manifest paths', () => {

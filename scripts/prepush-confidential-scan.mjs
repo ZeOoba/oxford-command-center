@@ -154,8 +154,21 @@ export function isRealDataPath(path, manifest) {
   const norm = (x) => String(x).replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
   const p = norm(path);
   if (p.startsWith(SYNTHETIC_PREFIX)) return false;
-  return manifest.files.some((f) => norm(f) === p) || manifest.dirs.some((d) => p.startsWith(norm(d)));
+  if (manifest.dirs.some((d) => p.startsWith(norm(d)))) return true;
+  // A listed file, or a copy of one (refute round 5 F5/F9): the full name plus any suffix, or the same
+  // directory and stem carrying a quarantine / temp / backup marker.
+  return manifest.files.some((f) => {
+    const nf = norm(f);
+    if (p === nf || p.startsWith(`${nf}.`) || p.startsWith(`${nf}-`) || p.startsWith(`${nf}~`)) return true;
+    const slash = nf.lastIndexOf('/');
+    const dot = nf.lastIndexOf('.');
+    const stem = dot > slash ? nf.slice(0, dot) : nf;
+    return p.startsWith(`${stem}.`) && p.lastIndexOf('/') === slash && COPY_MARKER.test(p.slice(stem.length));
+  });
 }
+
+/** A quarantine / temp / backup copy marker in a file name. */
+const COPY_MARKER = /(corrupt|tmp|temp|bak|backup|orig|old|quarantine|copy)/i;
 
 /**
  * Parse `git diff --name-status --no-renames --diff-filter=AMT` output and return every added or
