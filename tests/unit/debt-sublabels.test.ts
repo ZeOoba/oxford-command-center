@@ -7,7 +7,7 @@ const k = (ltv: number, affiliate: number) => ({ ltv: cell(ltv), affiliateDebt: 
 
 describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', () => {
   it('live shape: affiliate clause leads', () => {
-    expect(overviewTotalDebtSublabel(k(REDACTED-AMT, 1_111_111))).toBe('+$1.11M affiliate notes · property loan balances · 18.8% LTV');
+    expect(overviewTotalDebtSublabel(k(0.2317429, 1_111_111))).toBe('+$1.11M affiliate notes · property loan balances · 23.2% LTV');
   });
   it('no affiliate notes → basis leads', () => {
     expect(overviewTotalDebtSublabel(k(0.2, 0))).toBe('property loan balances · 20.0% LTV');

@@ -218,7 +218,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
 
   it('FIRES on a truncated declared range even when the delta is currently zero (OI-094)', () => {
     // Banwick: schedule runs to r71 (the 2031-06-05 balloon) but the formula sums B11:B70.
-    // Immaterial today, $3.35M understatement from ~mid-2030. Must be caught structurally.
+    // Immaterial today, a seven-figure understatement from ~mid-2030. Must be caught structurally.
     const rows = schedule(2026, 9, 5, 60, 15000, 7900);
     const flags = crossCheckSchedule({
       id: 'banwick-morrison',
@@ -409,7 +409,7 @@ describe('resolveScheduleColumns — header-derived, not hardcoded', () => {
   });
 
   it('does not confuse "Payment Amount" with "Interest Paid"', () => {
-    // The prototype did exactly this on 29000 and over-reported by $REDACTED-AMT.
+    // The prototype did exactly this on 29000 and over-reported by a five-figure amount.
     const got = resolveScheduleColumns({ A: 'Payment Date', B: 'Payment Amount', D: 'Interest Paid' });
     expect(got.interest).toBe('D');
   });
@@ -731,7 +731,7 @@ describe('crossCheckSchedule — F-1: opening balance is read independently, not
 describe('crossCheckSchedule — M3: check 4 must be invariant under same-date row permutation', () => {
   /** Prior-period row, then a final regular payment and a payoff row sharing one date. */
   function sameDatePair(payoffPrincipal: number | null, closingBalance: number) {
-    const prior: ScheduleRow = { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: 1_000_000 };
+    const prior: ScheduleRow = { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: 1_250_000 };
     const payoff: ScheduleRow = { row: 35, date: d(2027, 3, 1), interest: null, principal: payoffPrincipal, balance: 0 };
     const regular: ScheduleRow = { row: 36, date: d(2027, 3, 1), interest: 4000, principal: 5000, balance: closingBalance };
     return { prior, payoff, regular };
@@ -750,9 +750,9 @@ describe('crossCheckSchedule — M3: check 4 must be invariant under same-date r
   }
 
   it('FIRES on a real balloon-outside-principal defect regardless of which row is physically last', () => {
-    // Balloon parked outside the principal column: $995,000 retired per the balance column,
+    // Balloon parked outside the principal column: $1,245,000 retired per the balance column,
     // only $5,000 in the principal column. This is the defect check 4 exists to catch.
-    const { prior, payoff, regular } = sameDatePair(null, 995_000);
+    const { prior, payoff, regular } = sameDatePair(null, 1_245_000);
 
     const payoffLast = run([prior, regular, payoff], 5000);
     const payoffFirst = run([prior, payoff, regular], 5000);
@@ -763,11 +763,11 @@ describe('crossCheckSchedule — M3: check 4 must be invariant under same-date r
   });
 
   it('stays SILENT on a correct workbook regardless of physical order (no false accusation)', () => {
-    // Balloon correctly recorded IN the principal column: 5,000 + 995,000 = 1,000,000 retired.
-    const { prior, payoff, regular } = sameDatePair(995_000, 995_000);
+    // Balloon correctly recorded IN the principal column: 5,000 + 1,245,000 = 1,250,000 retired.
+    const { prior, payoff, regular } = sameDatePair(1_245_000, 1_245_000);
 
-    expect(run([prior, regular, payoff], 1_000_000)).toHaveLength(0);
-    expect(run([prior, payoff, regular], 1_000_000)).toHaveLength(0);
+    expect(run([prior, regular, payoff], 1_250_000)).toHaveLength(0);
+    expect(run([prior, payoff, regular], 1_250_000)).toHaveLength(0);
   });
 
   it('reports a schedule whose dates run backwards in row order rather than trusting position', () => {

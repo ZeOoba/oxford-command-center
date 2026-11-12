@@ -10,7 +10,7 @@ describe('renderBrief', () => {
     insights: [insight({ id: 'a', severity: 'critical', title: 'Balloon due — X', detail: '$1M' })],
     criticalDates: [{ date: '2026-06-20', label: 'Expiration: Tenant 155 LLC', days: 16 }],
     dealCounts: [{ stage: 'LOI/PSA', count: 2 }],
-    kpis: { noi: '$3.9M', value: '$59.6M', occupancy: '94%', cash: '$7.8M', dscrSummary: 'min 1.10x' },
+    kpis: { noi: '$2.6M', value: '$41.3M', occupancy: '91%', cash: '$5.2M', dscrSummary: 'min 1.10x' },
     tasks: [{ label: 'Send estoppel', status: 'overdue' }],
     dashboardUrl: 'https://ora-command-center.pages.dev',
   });
@@ -18,7 +18,7 @@ describe('renderBrief', () => {
   it('body header still shows the workbook asOf', () => expect(out.html).toContain('As of 2026-06-04'));
   it('renders the action-items section with the alert title', () => expect(out.html).toContain('Balloon due — X'));
   it('renders the critical-dates section', () => { expect(out.html).toContain('Critical dates'); expect(out.html).toContain('Expiration: Tenant 155 LLC'); });
-  it('renders the portfolio at-a-glance figures', () => { expect(out.html).toContain('$3.9M'); expect(out.html).toContain('94%'); });
+  it('renders the portfolio at-a-glance figures', () => { expect(out.html).toContain('$2.6M'); expect(out.html).toContain('91%'); });
   it('links to the live dashboard', () => expect(out.html).toContain('https://ora-command-center.pages.dev'));
 });
 
@@ -41,7 +41,7 @@ describe('renderBrief — top-exposure line', () => {
       ],
       criticalDates: [],
       dealCounts: [],
-      kpis: { noi: '$3.9M', value: '$59.6M', occupancy: '94%', cash: '$7.8M', dscrSummary: 'min 1.10x' },
+      kpis: { noi: '$2.6M', value: '$41.3M', occupancy: '91%', cash: '$5.2M', dscrSummary: 'min 1.10x' },
       tasks: [],
       dashboardUrl: 'https://ora-command-center.pages.dev',
     });
@@ -66,7 +66,7 @@ describe('renderBrief — top-exposure line', () => {
       ],
       criticalDates: [],
       dealCounts: [],
-      kpis: { noi: '$3.9M', value: '$59.6M', occupancy: '94%', cash: '$7.8M', dscrSummary: 'min 1.10x' },
+      kpis: { noi: '$2.6M', value: '$41.3M', occupancy: '91%', cash: '$5.2M', dscrSummary: 'min 1.10x' },
       tasks: [],
       dashboardUrl: 'https://ora-command-center.pages.dev',
     });
@@ -79,7 +79,7 @@ describe('renderBrief — top-exposure line', () => {
       insights: [],
       criticalDates: [],
       dealCounts: [],
-      kpis: { noi: '$3.9M', value: '$59.6M', occupancy: '94%', cash: '$7.8M', dscrSummary: 'min 1.10x' },
+      kpis: { noi: '$2.6M', value: '$41.3M', occupancy: '91%', cash: '$5.2M', dscrSummary: 'min 1.10x' },
       tasks: [],
       dashboardUrl: 'https://ora-command-center.pages.dev',
     });

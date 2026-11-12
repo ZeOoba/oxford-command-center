@@ -162,12 +162,12 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
     const b = seedProperty(db, 'prop-b');
     // Third-party: $2.0M @ 0.35 → implied value $5.714M
     seedLoan(db, { propertyId: a, lender: LIVE_THIRD_PARTY_BANK_LENDER, balance: 2_000_000, ltv: 0.35 });
-    // Affiliate: $385K @ 0.90 — would drag the aggregate above the ceiling if counted
+    // Affiliate: $413K @ 0.90 — would drag the aggregate above the ceiling if counted
     seedLoan(db, {
       propertyId: b,
       lender: LIVE_AFFILIATE_LENDER,
       loanName: LIVE_AFFILIATE_LOAN_NAME,
-      balance: 385_000,
+      balance: 412_750,
       ltv: 0.9,
     });
 
@@ -201,7 +201,7 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
 
   it('a book whose ONLY active row is affiliate issues no verdict (not a clearance)', () => {
     const db = freshDb();
-    seedLoan(db, { propertyId: seedProperty(db, 'prop-b'), lender: LIVE_AFFILIATE_LENDER, balance: 385_000, ltv: 0.9 });
+    seedLoan(db, { propertyId: seedProperty(db, 'prop-b'), lender: LIVE_AFFILIATE_LENDER, balance: 412_750, ltv: 0.9 });
     const agg = computePortfolioAggregateLtv(db);
     expect(agg.clearedConservatively).toBeNull();
     expect(agg.aggregateLtv).toBeNull();
@@ -243,7 +243,7 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
       propertyId: b,
       lender: LIVE_AFFILIATE_LENDER,
       loanName: LIVE_AFFILIATE_LOAN_NAME,
-      balance: 385_000,
+      balance: 412_750,
       ltv: 0.9, // would be a governor-block if counted
       monthlyPmt: 3_000,
     });
@@ -341,7 +341,7 @@ describe('position views still list the affiliate position, labeled affiliate', 
       propertyId: b,
       lender: LIVE_AFFILIATE_LENDER,
       loanName: LIVE_AFFILIATE_LOAN_NAME,
-      balance: 385_000,
+      balance: 412_750,
       ltv: 0.9,
     });
     const res = await debtApi(() => db).request('/maturity');

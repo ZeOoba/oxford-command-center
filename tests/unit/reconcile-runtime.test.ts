@@ -297,7 +297,7 @@ describe('checkSnapshot — runtime reconciliation', () => {
   // cc-audit-army finding unresolved-lease-propertyid-silent: a lease that never resolved to a
   // property (parse.ts's rowFlags handles the per-row 'warn') must ALSO fail the snapshot at the
   // aggregate level once the unresolved share is material — mirrors the reproduced incident (41 of
-  // 138 leases, $1.14M, ~30% of rent, on the largest-NOI property).
+  // 138 leases, a large share of rent, on the largest-NOI property).
   describe('unresolved lease propertyId — aggregate backstop', () => {
     it('flags when unresolved-propertyId rent exceeds 1% of the workbook total (error)', () => {
       const flags = checkSnapshot(
@@ -338,15 +338,15 @@ describe('checkSnapshot — runtime reconciliation', () => {
 
     it('reproduces the incident shape: the largest-NOI property resolving zero leases fails the snapshot', () => {
       const leases = [
-        // 41 leases, $1.14M/yr, all unresolved — matches the reproduced incident.
+        // 41 leases, all unresolved — matches the reproduced incident.
         ...Array.from({ length: 41 }, (_, i) => ({
           id: `unresolved-${i}`,
           propertyId: null,
-          annualRent: 1_140_000 / 41,
-          monthlyRent: 1_140_000 / 41 / 12,
+          annualRent: 1_385_000 / 41,
+          monthlyRent: 1_385_000 / 41 / 12,
         })),
         // 97 resolved leases making up the rest of a $5M portfolio.
-        { id: 'resolved-1', propertyId: 'p1', annualRent: 5_000_000 - 1_140_000, monthlyRent: (5_000_000 - 1_140_000) / 12 },
+        { id: 'resolved-1', propertyId: 'p1', annualRent: 5_000_000 - 1_385_000, monthlyRent: (5_000_000 - 1_385_000) / 12 },
       ];
       const flags = checkSnapshot(
         base({ leases, workbookTotals: { noi: null, value: null, rent: 5_000_000 } }),

@@ -244,11 +244,12 @@ describe('scorecardRows', () => {
     const G = pfGolden().mgmtFeeTtm26;
     for (const id of ['9620 State 350', '3883 Livingston', '9050 Red Branch']) expect(fee(id), id).toBeCloseTo(G[id]!, 10);
     expect(['9620 State 350', '3883 Livingston', '9050 Red Branch', '3540 E 5th'].some((id) => fee(id) !== rounded(id))).toBe(true);
-    // Literal real ratios (a fee share and its rounding direction): real file only. The synthetic copy
-    // draws fees and revenue independently, so it does not (and must not) reproduce them.
+    // Real ratios (a fee share and its rounding direction): real file only. The synthetic copy draws
+    // fees and revenue independently, so it does not (and must not) reproduce them. The fee share is
+    // read from the gitignored value lock, never written here as a literal.
     if (!isSynthetic('data/property-financials/dataset.json')) {
       expect(fee('9050 Red Branch')).toBeLessThan(rounded('9050 Red Branch'));
-      expect(fee('3540 E 5th')).toBeCloseTo(REDACTED-AMT, 4);
+      expect(fee('3540 E 5th')).toBeCloseTo(G['3540 E 5th']!, 10);
     }
     // Annual entities: FY2025 raw ratios.
     for (const id of ['55 New Plant (EGFLLC)', '1851 South Club Solar'] as const) {

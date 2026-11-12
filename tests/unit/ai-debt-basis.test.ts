@@ -17,7 +17,7 @@ function aiSnap(over: Record<string, unknown> = {}): PortfolioSnapshot {
     assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: '2026-09-13' },
     properties: [
       prop({ id: 'rarig', name: '1100 Rarig Ave, Columbus OH', lender: 'Oxford Capital', loanBalance: 1_111_111, ltv: 0.4444, oxfordValue: 2_500_000 }),
-      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.39, oxfordValue: 6_300_000 }),
+      prop({ id: 'easton', name: '29000 Information Lane, Easton MD', lender: 'Firm 03', loanBalance: 2_456_789.12, ltv: 0.42, oxfordValue: 5_850_000 }),
     ],
     leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
     renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
@@ -33,7 +33,7 @@ describe('get_property — per-property LTV on the investment basis', () => {
   });
   it('a third-party-debt property reports its LTV', () => {
     const rows = runTool('get_property', aiSnap(), { query: 'easton' }).data as Array<{ ltv: string; affiliateNote: boolean }>;
-    expect(rows[0]).toMatchObject({ ltv: '39.0%', affiliateNote: false });
+    expect(rows[0]).toMatchObject({ ltv: '42.0%', affiliateNote: false });
   });
 });
 
