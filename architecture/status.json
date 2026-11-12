@@ -272,7 +272,7 @@
     },
     "calendar-36mo": {
       "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-18",
-      "phase": "CalendarModule: add a 36-month horizon band. Touches src/modules/calendar/CalendarModule.tsx and adds tests/unit/calendar-module-horizon.test.tsx (the module's first render-level test). src/brain/critical-dates.ts is NOT modified — portfolioCriticalDates already took horizonMonths as a parameter. Motivation: at a 2026-09-18 run-date basis the 12-month horizon showed only 25.8% of annual rent; 84 tenants and $4.06M (74.2%) fell outside it, including the largest tenant by rent at 469 days out.",
+      "phase": "CalendarModule: add a 36-month horizon band. Touches src/modules/calendar/CalendarModule.tsx and adds tests/unit/calendar-module-horizon.test.tsx (the module's first render-level test). src/brain/critical-dates.ts is NOT modified — portfolioCriticalDates already took horizonMonths as a parameter. Motivation: at a 2026-09-18 run-date basis the 12-month horizon showed only about a quarter of annual rent; most tenants and most of the rent fell outside it, including the largest tenant by rent.",
       "status": "in_progress",
       "blocked_by": null,
       "review_needed": false,
