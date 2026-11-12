@@ -6889,7 +6889,7 @@
           "address": "Comp 011",
           "sf": 6800,
           "rentPerSf": 8.4,
-          "leaseType": "asking ($600-$12,153/SF range)",
+          "leaseType": "asking ($600-12,153/SF range)",
           "date": "2026 (listing)",
           "source": "https://example.com/comp-source/011"
         },
@@ -6917,14 +6917,14 @@
           "source": "https://www.cushmanwakefield.com/en/united-states/insights/us-marketbeats/cincinnati-marketbeats"
         },
         {
-          "label": "Cincinnati industrial vacancy (Q3 2025, Vendor 02)",
+          "label": "Cincinnati industrial vacancy (Q3 2025, Vendor 09)",
           "value": "5.8%; Central submarket lowest at 3.7%",
-          "source": "https://www.Vendor 02.com/insights/figures/cincinnati-industrial-figures-q3-2025"
+          "source": "https://www.Vendor 09.com/insights/figures/cincinnati-industrial-figures-q3-2025"
         },
         {
           "label": "Cincinnati industrial net absorption (Q3 2025)",
           "value": "+369,740 SF (positive)",
-          "source": "https://www.Vendor 02.com/insights/figures/cincinnati-industrial-figures-q3-2025"
+          "source": "https://www.Vendor 09.com/insights/figures/cincinnati-industrial-figures-q3-2025"
         },
         {
           "label": "Cincinnati industrial vacancy by class / flex (Q1 2026)",
@@ -6957,9 +6957,9 @@
           "source": "https://www.mmcginvest.com/post/current-state-of-the-u-s-industrial-real-estate-market-q3-2025"
         },
         {
-          "label": "Cincinnati flagged as top occupier-expansion market 2026 (Vendor 02)",
+          "label": "Cincinnati flagged as top occupier-expansion market 2026 (Vendor 09)",
           "value": "Listed among most attractive Syn360 markets; vacancy stabilizing mid-6% range",
-          "source": "https://www.Vendor 02.com/insights/books/us-real-estate-market-outlook-2026/industrial"
+          "source": "https://www.Vendor 09.com/insights/books/us-real-estate-market-outlook-2026/industrial"
         }
       ],
       "summary": null,
@@ -7088,7 +7088,7 @@
           "address": "Comp 026",
           "sf": null,
           "rentPerSf": 8.19,
-          "leaseType": "NNN (secondary locations $123,879.25-$97,728.02; prime $61,508.67-$7,741.93)",
+          "leaseType": "NNN (secondary locations $97,728.02-123,879.25; prime $7,741.93-61,508.67)",
           "date": "2025",
           "source": "https://example.com/comp-source/026"
         },

@@ -211,6 +211,8 @@ class Aliases {
   readonly registry = new Map<string, [string, string]>();
   /** lowercased variant -> replacement (exact, slug and normalized forms). */
   private phrases = new Map<string, string>();
+  /** lowercased phrase -> the category of the alias that added it. */
+  private phraseCat = new Map<string, string>();
   private tokens = new Map<string, string>();
   private tokenCount = 0;
   /** Real strings registered for replacement — the leak term list. */
@@ -249,7 +251,7 @@ class Aliases {
       // Lender, affiliate, loan-party and person names are always hunted as whole phrases (their
       // words may also name a property, so their single tokens are not).
       const propertyWords = this.namesOnlyProperty(r);
-      if (!propertyWords || !['deal', 'dealShort'].includes(cat)) this.addPhrase(r, fake);
+      if (!propertyWords || !['deal', 'dealShort'].includes(cat)) this.addPhrase(r, fake, true, cat);
       if (!propertyWords && TOKEN_SOURCES.has(cat)) for (const t of wordTokens(r)) this.addToken(t);
     }
     return fake;
@@ -261,20 +263,32 @@ class Aliases {
   }
 
   /** Register a short form or co-mention of an already-aliased name (a vendor's first word, the name
-   *  without its entity suffix): free text often names a counterparty that way (refute round 4 F6). */
+   *  without its entity suffix): free text often names a counterparty that way (refute round 4 F6).
+   *  A form already held by a different alias keeps that alias: whether two VENDORS share a form is
+   *  decided up front by finalizeVendors (refute round 7 F3), and a vendor form never relabels a
+   *  tenant, lender or other non-vendor alias. */
   variant(real: string, fake: string): void {
     const r = real.trim();
     if (r.length < 3 || r.toLowerCase() === fake.toLowerCase()) return;
     const prior = this.phrases.get(r.toLowerCase());
-    if (prior !== undefined && prior !== fake) {
-      // Two vendors share this short form: attribute it to neither (refute round 5 F2).
-      this.phrases.set(r.toLowerCase(), AMBIGUOUS_VENDOR);
-      this.registry.set(r, ['vendor', AMBIGUOUS_VENDOR]);
-      this.phraseRe = null;
-      return;
-    }
+    if (prior !== undefined && prior !== fake) return;
     if (!this.registry.has(r)) this.registry.set(r, ['vendor', fake]);
-    this.addPhrase(r, fake, false);
+    this.addPhrase(r, fake, false, 'vendor');
+  }
+
+  /** A form two or more distinct vendors share: free text naming it is attributed to neither (refute
+   *  round 5 F2). Never overwrites a phrase that a non-vendor alias holds. */
+  ambiguousVendorForm(real: string): void {
+    const r = real.trim();
+    const k = r.toLowerCase();
+    if (r.length < 3) return;
+    const cat = this.phraseCat.get(k);
+    if (cat !== undefined && cat !== 'vendor') return;
+    this.phrases.set(k, AMBIGUOUS_VENDOR);
+    this.phraseCat.set(k, 'vendor');
+    this.registry.set(r, ['vendor', AMBIGUOUS_VENDOR]);
+    this.realTerms.add(r);
+    this.phraseRe = null;
   }
 
   /** Register an explicit real -> fake mapping (ids recomputed by the caller). */
@@ -284,10 +298,11 @@ class Aliases {
     this.addPhrase(real, fake, false);
   }
 
-  private addPhrase(real: string, fake: string, variants = true): void {
+  private addPhrase(real: string, fake: string, variants = true, cat = 'id'): void {
     const add = (k: string, v: string): void => {
       if (k.length < 4 || !/[a-z]/i.test(k) || this.phrases.has(k)) return;
       this.phrases.set(k, v);
+      this.phraseCat.set(k, cat);
       this.phraseRe = null;
     };
     add(real.toLowerCase(), fake);
@@ -348,7 +363,9 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PHONE_RE = /(?<!\d)(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?!\d)/g;
 /** County parcel-number shape (NNN-NNNNNN-NN). */
 const PARCEL_RE = /(?<![0-9-])\d{3}-\d{6}-\d{2}(?![0-9-])/g;
-const DOLLAR_RE = /\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?[KkMm](?![A-Za-z]))?/g;
+/** A dollar figure with an optional bare upper bound ("$X-Y/SF", "$X - Y", "$X to Y"): the bare bound
+ *  is the same kind of real amount and is drawn with it (refute round 7 F2). */
+const DOLLAR_RANGE_RE = /\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?[KkMm](?![A-Za-z]))?(?:(\s?[-–—]\s?|\s+to\s+)\$?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?[KkMm](?![A-Za-z]))?(?![\d.,]*\d))?/g;
 /** Keywords the code reads out of free-text fields (cost-seg "unverified", building-specs "ocr",
  *  property-financials sf note "inferred"/"confirm"). Kept when a free-text field is replaced. */
 const KEEP_KEYWORDS = ['OCR', 'UNVERIFIED', 'inferred', 'confirm'];
@@ -412,14 +429,25 @@ class Ctx {
     // structure), formatted as plain dollars. A K/M suffix is dropped: it would carry the real
     // amount's order of magnitude.
     let drewDollars = false;
-    const out = s.replace(DOLLAR_RE, (_m, intPart: string, dec: string | undefined, suffix: string | undefined) => {
+    const draw = (intPart: string, dec: string | undefined, suffix: string | undefined): [number, number] => {
       const v = Number(intPart.replace(/,/g, '') + (dec ?? ''));
       this.textDollars += 1;
-      drewDollars = true;
       const decimals = dec && !suffix ? Math.min(dec.length - 1, 2) : 0;
-      const drawn = this.moneyIn(v === 0 ? 0 : 1, `text$|${this.textDollars}`, { lo: 500, hi: 250_000, decimals });
-      return `$${drawn.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-    });
+      return [this.moneyIn(v === 0 ? 0 : 1, `text$|${this.textDollars}`, { lo: 500, hi: 250_000, decimals }), decimals];
+    };
+    const fmt = ([v, decimals]: [number, number]): string => v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    const out = s.replace(
+      DOLLAR_RANGE_RE,
+      (_m, intPart: string, dec: string | undefined, suffix: string | undefined, sep: string | undefined, hiInt: string | undefined, hiDec: string | undefined, hiSuffix: string | undefined) => {
+        drewDollars = true;
+        const lo = draw(intPart, dec, suffix);
+        if (sep === undefined || hiInt === undefined) return `$${fmt(lo)}`;
+        const hi = draw(hiInt, hiDec, hiSuffix);
+        // Both bounds are their own draws; the smaller is written first so the range still reads as one.
+        const [a, b] = lo[0] <= hi[0] ? [lo, hi] : [hi, lo];
+        return `$${fmt(a)}${sep}${fmt(b)}`;
+      },
+    );
     // A percentage in the same text as a drawn dollar figure is usually a ratio of those real amounts
     // (a study-vs-proposal delta): it is drawn too, keyed the same way (refute round 5 F1). Only its
     // sign survives. Percentages in text with no dollar figure are rates and are kept.
@@ -2112,13 +2140,14 @@ function walkWithUnit(
  *  calibration placeholder guard keys on, so it is kept verbatim. */
 const PLACEHOLDER_VENDOR = /^\s*(unidentified|unknown vendor\s*$)/i;
 
-function registerVendors(ctx: Ctx, v: Json): void {
-  if (Array.isArray(v)) return v.forEach((x) => registerVendors(ctx, x));
+/** Phase 1 only collects vendor names; finalizeVendors aliases them all at once. */
+function registerVendors(v: Json): void {
+  if (Array.isArray(v)) return v.forEach((x) => registerVendors(x));
   if (v && typeof v === 'object') {
     for (const [k, x] of Object.entries(v)) {
       if ((k === 'consultant' || k === 'vendor') && typeof x === 'string') {
-        if (!PLACEHOLDER_VENDOR.test(x)) registerVendorName(ctx, x);
-      } else registerVendors(ctx, x);
+        if (!PLACEHOLDER_VENDOR.test(x)) PENDING_VENDORS.add(x.trim());
+      } else registerVendors(x);
     }
   }
 }
@@ -2138,15 +2167,29 @@ const DOC_WORDS = new Set(
 );
 /** First-word short forms registered for vendor names (hunted by the output self-check). */
 const VENDOR_SHORT_FORMS = new Set<string>();
+/** Vendor names collected in phase 1, aliased together by finalizeVendors. */
+const PENDING_VENDORS = new Set<string>();
+/** Vendor identity (see vendorIdentity) -> its one alias. */
+const VENDOR_FAKES = new Map<string, string>();
 
-/** Alias a vendor / consultant name and its free-text short forms: the name without its entity
- *  suffix ("Acme Roofing" for "Acme Roofing LLC") and its first distinctive word ("Acme"). A name
- *  written "A/B" registers each part too. */
-function registerVendorName(ctx: Ctx, name: string): string {
-  const fake = ctx.a.alias('vendor', name)!;
+const ENTITY_SUFFIX = /[,.]?\s+(inc|llc|co|corp|corporation|company|ltd|lp|pllc|pc)\.?$/i;
+
+/** One vendor however it is written: entity suffixes stripped ("Acme" and "Acme Corp" are one vendor),
+ *  case and punctuation folded. */
+function vendorIdentity(name: string): string {
+  let s = name.trim();
+  while (ENTITY_SUFFIX.test(s)) s = s.replace(ENTITY_SUFFIX, '').trim();
+  return s.toLowerCase().replace(/[^a-z0-9&]+/g, ' ').trim();
+}
+
+/** The free-text forms of a vendor name: the name without its entity suffix ("Acme Roofing" for "Acme
+ *  Roofing LLC") and, for a company-shaped name, its first distinctive word ("Acme"). A name written
+ *  "A/B" yields each part's forms too. */
+function vendorForms(name: string): string[] {
+  const out: string[] = [name];
   for (const part of name.includes('/') ? [name, ...name.split('/')] : [name]) {
-    const bare = part.replace(/[,.]?\s+(inc|llc|co|corp|corporation|company|ltd|lp|pllc|pc)\.?$/i, '').trim();
-    if (bare !== name) ctx.a.variant(bare, fake);
+    const bare = part.replace(ENTITY_SUFFIX, '').trim();
+    if (bare && bare !== name) out.push(bare);
     const words = bare.split(/\s+/).filter((w) => /^[A-Za-z][A-Za-z'&.-]*$/.test(w));
     const first = words[0]?.replace(/[.,]+$/, '') ?? '';
     // The first word alone is a short form only for a company-shaped name (it ends in a trade or entity
@@ -2154,10 +2197,56 @@ function registerVendorName(ctx: Ctx, name: string): string {
     const last = (words[words.length - 1] ?? '').toLowerCase().replace(/[.,]+$/, '');
     const fw = first.toLowerCase();
     if (words.length > 1 && first.length >= 3 && VENDOR_STOP.has(last) && !VENDOR_STOP.has(fw) && !DOC_WORDS.has(fw)) {
-      ctx.a.variant(first, fake);
+      out.push(first);
       VENDOR_SHORT_FORMS.add(fw);
     }
   }
+  return out;
+}
+
+/**
+ * Alias every collected vendor at once, independent of the order rows arrive in (refute round 7 F3):
+ * names that are one vendor (vendorIdentity) share one alias, numbered in sorted identity order; a
+ * free-text form is that vendor's when only one vendor identity has it, and ambiguous (attributed to
+ * neither) when two or more distinct vendors share it.
+ */
+function finalizeVendors(ctx: Ctx): void {
+  const byId = new Map<string, string[]>();
+  for (const n of PENDING_VENDORS) {
+    const id = vendorIdentity(n);
+    if (!id) continue;
+    const list = byId.get(id) ?? [];
+    list.push(n);
+    byId.set(id, list);
+  }
+  const owners = new Map<string, Set<string>>(); // lowercased form -> vendor identities
+  const text = new Map<string, string>(); // lowercased form -> first spelling (sorted)
+  for (const id of [...byId.keys()].sort()) {
+    const names = byId.get(id)!.sort();
+    VENDOR_FAKES.set(id, ctx.a.alias('vendor', names[0])!);
+    for (const n of names)
+      for (const f of vendorForms(n)) {
+        const k = f.toLowerCase();
+        owners.set(k, (owners.get(k) ?? new Set()).add(id));
+        if (!text.has(k)) text.set(k, f);
+      }
+  }
+  for (const k of [...owners.keys()].sort()) {
+    const ids = owners.get(k)!;
+    if (ids.size >= 2) ctx.a.ambiguousVendorForm(text.get(k)!);
+    else ctx.a.variant(text.get(k)!, VENDOR_FAKES.get([...ids][0]!)!);
+  }
+  PENDING_VENDORS.clear();
+}
+
+/** The alias of a vendor / consultant name. A name not collected in phase 1 is aliased on its own. */
+function registerVendorName(ctx: Ctx, name: string): string {
+  const id = vendorIdentity(name);
+  const known = VENDOR_FAKES.get(id);
+  if (known !== undefined) return known;
+  const fake = ctx.a.alias('vendor', name)!;
+  if (id) VENDOR_FAKES.set(id, fake);
+  for (const f of vendorForms(name)) ctx.a.variant(f, fake);
   return fake;
 }
 
@@ -2409,7 +2498,10 @@ export async function build(
 ): Promise<{ ctx: Ctx; outputs: string[]; contents: Map<string, string> }> {
   const manifest = loadManifest(ROOT);
   // A drawn amount must never equal a distinctive real amount (it would trip the fingerprint check).
-  VENDOR_SHORT_FORMS.clear(); // module-level state: one build's short forms never leak into the next
+  // module-level state: one build's vendor names, aliases and short forms never leak into the next
+  VENDOR_SHORT_FORMS.clear();
+  PENDING_VENDORS.clear();
+  VENDOR_FAKES.clear();
   const ctx = new Ctx();
   const ids = newIds();
   const have = (rel: string): boolean => existsSync(join(root, rel));
@@ -2445,12 +2537,13 @@ export async function build(
   for (const f of [...specFiles, ...calFiles, 'data/cost-seg/cost-seg.json'].filter(have)) {
     const d = readJson(root, f);
     if (!f.startsWith('data/cost-seg/')) protectProps(d);
-    registerVendors(ctx, d);
+    registerVendors(d);
   }
   // Counterparties named only in free text (an inspector named in a cost-seg note) are listed in a
   // local, untracked file beside the real data (never committed: it holds real names).
   const EXTRA_NAMES = 'config/local/generator-extra-names.local.json';
-  if (have(EXTRA_NAMES)) for (const n of readJson(root, EXTRA_NAMES) as string[]) registerVendorName(ctx, n);
+  if (have(EXTRA_NAMES)) for (const n of readJson(root, EXTRA_NAMES) as string[]) PENDING_VENDORS.add(n.trim());
+  finalizeVendors(ctx);
   // Tenant names that appear only in report narrative (rent-roll attributes of the PCA extractions,
   // cost-seg tenant lists): registered so they are hunted in kept text and land on the scrub list.
   const registerTenants = (v: Json): void => {
@@ -2788,6 +2881,22 @@ function scanForNumbers(files: string[], nums: Set<string>): LeakHit[] {
       });
   }
   return hits;
+}
+
+/**
+ * Test seam (tests/unit/synthetic-aliases.test.ts): a fresh build context that collects `vendorNames` in
+ * the given order, aliases them as phase 1 does, then returns each name's field alias and each text as
+ * kept free text renders it. Synthetic inputs only.
+ */
+export function aliasProbe(vendorNames: string[], texts: string[], other: Array<[Category, string]> = []): { fields: string[]; texts: string[] } {
+  VENDOR_SHORT_FORMS.clear();
+  PENDING_VENDORS.clear();
+  VENDOR_FAKES.clear();
+  const ctx = new Ctx();
+  for (const [cat, real] of other) ctx.a.alias(cat, real);
+  for (const n of vendorNames) PENDING_VENDORS.add(n.trim());
+  finalizeVendors(ctx);
+  return { fields: vendorNames.map((n) => registerVendorName(ctx, n)), texts: texts.map((t) => ctx.t(t)!) };
 }
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('scripts/fixtures/build-synthetic-data.ts')) {
