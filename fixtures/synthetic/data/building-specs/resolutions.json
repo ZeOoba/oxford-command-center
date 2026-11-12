@@ -1,1 +1,7 @@
-[]
+[
+  {
+    "finding_id": "SYNTHETIC-SENTINEL-NO-SUCH-FINDING",
+    "resolved_since": "2026-01-01",
+    "note": "synthetic stand-in sentinel; matches no finding"
+  }
+]
