@@ -726,14 +726,25 @@ function fixSnapshotIdentities(real: Obj, syn: Obj, ids: Ids): void {
     if (lo.length && held(n(r, 'loanBalance'), sumLo(0, 'currentBalance'), 1)) o['loanBalance'] = roundTo(sumLo(1, 'currentBalance'), 2);
     if (lo.length && held(n(r, 'debtService'), sumLo(0, 'monthlyPmt', 12), 1)) o['debtService'] = roundTo(sumLo(1, 'monthlyPmt', 12), 2);
   }
-  // A task that carries a loan's payment mirrors that loan's drawn payment.
+  // A task that carries a loan's payment mirrors that loan's drawn payment. The task is joined to its
+  // loan by NAME (the loan's name in the task label or notes), never by payment amount (refute round 3
+  // F3: two loans with one payment made a first-match join order-dependent). The mirror applies only
+  // when exactly one loan matches by name and the real task payment equals that loan's real payment;
+  // otherwise it is skipped and logged.
   const allLoans = pairs('loans');
-  for (const [r, o] of pairs('tasks')) {
+  const normName = (s: unknown): string => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  pairs('tasks').forEach(([r, o], i) => {
     const rp = n(r, 'monthlyPmt');
-    if (rp === null || rp === 0) continue;
-    const hit = allLoans.find(([l]) => n(l, 'monthlyPmt') === rp);
-    if (hit && n(hit[1], 'monthlyPmt') !== null) o['monthlyPmt'] = n(hit[1], 'monthlyPmt');
-  }
+    if (rp === null || rp === 0) return;
+    const text = ` ${normName(r['label'])} ${normName(r['notes'])} `;
+    const named = allLoans.filter(([l]) => normName(l['name']) !== '' && text.includes(` ${normName(l['name'])} `));
+    if (named.length !== 1) {
+      console.log(`[synthetic] task #${i + 1}: ${named.length} loans match by name; payment mirror skipped`);
+      return;
+    }
+    const [[rl, sl]] = named as [[Obj, Obj]];
+    if (n(rl, 'monthlyPmt') === rp && n(sl, 'monthlyPmt') !== null) o['monthlyPmt'] = n(sl, 'monthlyPmt');
+  });
   // tenantArrears[leaseId] mirrors that lease's AR balance buckets.
   const rTa = (real['tenantArrears'] as Obj | undefined) ?? {};
   const sTa = (syn['tenantArrears'] as Obj | undefined) ?? {};
@@ -2485,7 +2496,13 @@ export async function build(
     outputs.push(['data/cost-seg/cost-seg.json', () => json(c)]);
   }
   for (const f of specFiles) {
-    const s = transformSpecs(ctx, readJson(root, f), f);
+    let s = transformSpecs(ctx, readJson(root, f), f);
+    // resolutions.json is a hand-edited list that is usually empty ([]). An empty stand-in could be
+    // byte-identical to a real file saved with a trailing newline and so read as synthetic (refute
+    // round 3 F2/F6); the stand-in carries one sentinel row that matches no finding.
+    if (f === 'data/building-specs/resolutions.json' && Array.isArray(s)) {
+      s = [...s, { finding_id: 'SYNTHETIC-SENTINEL-NO-SUCH-FINDING', resolved_since: '2026-01-01', note: 'synthetic stand-in sentinel; matches no finding' }];
+    }
     outputs.push([f, () => json(s)]);
   }
   const obsIds = new Map<string, string>();
