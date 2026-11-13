@@ -20,7 +20,8 @@
 #>
 
 # Top-level JSON files bake-mirror.ts always writes into public/ (and so into dist/), probed even if
-# the dist/ scan misses them. warehouse.json is added when the deploy bakes it (-IncludeWarehouse).
+# the dist/ scan misses them. warehouse.json is added when the deploy bakes it (-IncludeWarehouse), and
+# is probed whenever it is present in dist/ (a daily bake carried forward by an hourly FULL run).
 $script:BakedJsonFloor = @('snapshot.json', 'macro.json')
 
 function Get-BakedJsonProbePaths {

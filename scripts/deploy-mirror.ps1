@@ -62,7 +62,9 @@ param(
   #
   # OFF by default and deliberately NOT on the hourly task: the warehouse bake is RAM/IO-heavy
   # and contends with the live Brain Server's WAL lock, so it runs on its own DAILY schedule
-  # (cadence decoupling -- spec section 2.2). The hourly snapshot bake must stay light.
+  # (cadence decoupling -- spec section 2.2). The hourly snapshot bake must stay light. Hourly runs
+  # carry the daily file forward only while its bakedAt is under 26h old; an older (or unparseable)
+  # one is removed before the bake (bake-mirror.ts isCarryForwardWarehouse, 2026-11-13).
   [switch]$IncludeWarehouse
 )
 
@@ -112,6 +114,9 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # containment live in lib/mirror-deploy.ps1 (shared with mirror-deploy.smoke-test.ps1). See that file
 # for audit wf_9bf74429-aaf findings 1 and 4 (2026-11-12).
 . (Join-Path $PSScriptRoot 'lib\mirror-deploy.ps1')
+# Get-DeployStepLogPath / Start-DeployStepLog / Write-DeployStep: one timestamped line per step in
+# data\_state\mirror-deploy-steps.log, so a run Task Scheduler kills names the step it died in.
+. (Join-Path $PSScriptRoot 'lib\deploy-steplog.ps1')
 
 $beaconPath = Get-DeployBeaconPath -RepoRoot $repo
 $gateLatchPath = Get-MirrorGateLatchPath -RepoRoot $repo
@@ -129,11 +134,15 @@ Remove-Item Env:\MIRROR_ACCESS_PREPROBE      -ErrorAction SilentlyContinue
 # check reads the build root's sha for freshness, not this one.
 $beaconHeadSha = (& git rev-parse --short HEAD 2>$null)
 Write-DeployBeaconStart -BeaconPath $beaconPath -HeadSha $beaconHeadSha
+$stepLogPath = Get-DeployStepLogPath -RepoRoot $repo
+$stepRunId = Start-DeployStepLog -Path $stepLogPath -Detail "checkout $beaconHeadSha"
 
 
 try {
   # 0) An unresolved Access-gate failure blocks every run before anything is baked (finding 4).
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'latch-check'
   Assert-MirrorGateLatchClear -Path $gateLatchPath
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'git-fetch'
 
   # 1) Fetch origin so the build root (step 1b) can resolve origin/main from THIS repo's object
   #    store. Historically this step also fast-forwarded the shared checkout; that merge was
@@ -202,12 +211,16 @@ try {
   # root resolves origin/main from THIS repo's object store.
   $buildRoot = Get-DeployBuildRoot -RepoRoot $repo
   Assert-BuildRootIsolated -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'buildroot-sync'
   $buildHeadSha = Sync-DeployBuildRoot -RepoRoot $repo -BuildRoot $buildRoot -Ref 'origin/main'
   # Real firm data is never tracked (ruling 2026-11-10): `npm ci`'s postinstall must never seed the
   # build root with synthetic stand-ins, and every real-data manifest path is supplied from the
   # canonical checkout below (fails closed, before any bake, if one is missing or synthetic).
   $env:ORA_NO_SYNTHETIC_SEED = '1'
-  Install-DeployBuildRootDeps -BuildRoot $buildRoot | Out-Null
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step "deps-check (build root @ $buildHeadSha)"
+  $depsInstalled = Install-DeployBuildRootDeps -BuildRoot $buildRoot
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step $(if ($depsInstalled) { 'deps-installed (npm ci ran)' } else { 'deps-current (npm ci skipped)' })
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'copy-real-data'
   Copy-RealDataIntoBuildRoot -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
   Write-Host "  Building from $buildRoot (origin/main @ $buildHeadSha), NOT from the shared checkout"
 
@@ -217,6 +230,7 @@ try {
   #     mode: bake-mirror.ts refuses MIRROR_INCLUDE_CONFIDENTIAL=1 without MIRROR_ACCESS_PREPROBE.
   #     Function routes come from the BUILD ROOT only -- that is the tree wrangler deploys (finding 1).
   $functionsDirs = @(Join-Path $buildRoot 'functions')
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'pre-deploy-access-probe'
   Assert-MirrorPreDeployAccessGate -VerifyUrl $VerifyUrl -ProjectName $ProjectName -AccessHost $AccessHost -FunctionsDirs $functionsDirs -StagedDir (Join-Path $buildRoot 'public') -IncludeWarehouse:$IncludeWarehouse | Out-Null
   Write-Host "  Pre-deploy Access probe passed on the live production target"
 
@@ -266,6 +280,7 @@ try {
     # every cwd-relative path inside the bake resolves there, not into the canonical checkout.
     Push-Location $buildRoot
     try {
+      Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'bake-and-build'
       npm run build:mirror
       if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
     } finally {
@@ -302,8 +317,8 @@ try {
       throw "Build root produced no dist/index.html at $distPath -- refusing to deploy (a missing artifact must never fall back to another tree's dist)."
     }
     # Probe paths for the Access-gate check (steps 3 and 4), derived from what is about to be
-    # published: every top-level *.json in dist/ (warehouse.json is also expected when
-    # -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
+    # published: every top-level *.json in dist/ (so warehouse.json whenever it is present, e.g. a daily
+    # bake carried forward; always expected with -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
     # directory, which is now the BUILD ROOT ($functionsDirs, set in step 1c). Until 2026-11-12 it
     # was THIS shared checkout ($repo), so the Functions shipped from an unreviewed, possibly dirty
     # tree (audit finding 1); $repo is deliberately not a functions source any more.
@@ -315,6 +330,7 @@ try {
     # <hash>.<project>.pages.dev URL out of it and probe that alias too (2026-11-08).
     $deployLog = Join-Path ([System.IO.Path]::GetTempPath()) ("ora-mirror-deploy-" + [guid]::NewGuid().ToString('N') + '.log')
     # wrangler runs IN the build root (process cwd and --cwd), so ./functions is origin/main's (finding 1).
+    Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'wrangler-deploy'
     $deploy = Invoke-MirrorWranglerDeploy `
       -WranglerRoot $buildRoot `
       -WorkingDirectory $buildRoot `
@@ -338,6 +354,7 @@ try {
       # which is what actually went wrong and keeps its suppressible class.
       $timeoutTargets = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
       try {
+        Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'deploy-timeout-gate-probe'
         Assert-AccessGateOnAllTargets -Targets $timeoutTargets -AccessHost $AccessHost -StrictPaths $functionRoutes -Context "(detected while investigating a deploy timeout) $timeoutReason" | Out-Null
       } catch {
         if ($_.Exception.Message -match '^GATE CHECK FAILED') { throw }
@@ -366,15 +383,18 @@ try {
   #    and GATE CHECK INCONCLUSIVE on anything else unverified. wrangler reported success, so it
   #    printed the deployment URL: a missing alias is passed as -Unprobed, which fails the check as
   #    INCONCLUSIVE only AFTER the apex targets were probed, so it can never mask an apex exposure.
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'post-deploy-access-gate-check'
   $gateTargets  = Get-AccessGateProbeTargets -VerifyUrl $VerifyUrl -ProjectName $ProjectName -DeployOutput $deployOutput -ProbePaths $probePaths
   $gateUnprobed = Get-MissingAliasRequirement -DeployOutput $deployOutput -ProjectName $ProjectName
   $gateResults  = Assert-AccessGateOnAllTargets -Targets $gateTargets -AccessHost $AccessHost -Unprobed $gateUnprobed -StrictPaths $functionRoutes
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'end success'
   Write-Host "[$stamp] OK - deployed and Access gate verified on all $(@($gateResults).Count) target(s) (302 -> $AccessHost)."
 
   # Clears any suppressed offline-signature streak from prior runs and sends one recovery
   # digest if suppression actually happened -- see lib/deploy-alert.ps1.
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'recovery-digest'
   try {
     Send-DeployRecoveryDigestIfSuppressed
   } catch {
@@ -389,9 +409,11 @@ try {
   } catch {
     Write-Host "Write-DeployBeaconEnd (success) itself failed: $($_.Exception.Message)"
   }
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'exit success'
 }
 catch {
   $original = $_
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step ("end failed: " + $original.Exception.Message)
   # ORDER MATTERS: stamp the beacon BEFORE attempting the alert send, not after.
   #
   # Send-DeployFailureAlert drives Outlook COM and retries once on failure, so it can occupy
@@ -423,6 +445,7 @@ catch {
     # class except a confirmed gate failure -- see Test-SuppressibleReason for the 44-email
     # incident that motivated it. Test-OfflineSignature still exists and is still meaningful,
     # but it now selects alert WORDING, not whether repeats are suppressed at all.
+    Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'failure-alert-send'
     $isSuppressible = Test-SuppressibleReason -Reason $reason
     Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure -Suppressible:$isSuppressible
   } catch {
@@ -431,15 +454,18 @@ catch {
   # Containment AFTER the critical alert has gone out (a human hears first; containment can take
   # minutes), then a second CRITICAL alert with its outcome. Bounded well under the task's PT30M.
   if ($containGate -and $buildRoot) {
+    Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'lockdown-containment'
     $lockdown = Invoke-MirrorLockdownContainment -WranglerRoot $buildRoot -ProjectName $ProjectName -TimeoutSeconds ([Math]::Min($DeployTimeoutSeconds, 300))
     $aliases = @(Get-DeploymentAliasUrls -DeployOutput $deployOutput -ProjectName $ProjectName)
     $aliasNote = if ($aliases.Count) { " The FULL deployment's own alias stays reachable until deleted by hand in the Pages dashboard: $($aliases -join ', ')." } else { ' Delete any FULL deployment alias still listed in the Pages dashboard by hand.' }
     $outcome = if ($lockdown.Deployed) { 'CONTAINED' } else { 'NOT CONTAINED' }
+    Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step "containment $outcome"
     try {
       Send-DeployFailureAlert -Reason "GATE CHECK FAILED -- containment ${outcome}: $($lockdown.Detail).$aliasNote Gate latch open at $gateLatchPath; every run refuses until it is cleared." -Critical -Suppressible:$false
     } catch {
       Write-Host "Send-DeployFailureAlert (containment) itself failed: $($_.Exception.Message)"
     }
   }
+  Write-DeployStep -Path $stepLogPath -RunId $stepRunId -Step 'exit failed'
   throw $original
 }

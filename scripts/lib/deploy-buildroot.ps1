@@ -151,34 +151,100 @@ function Sync-DeployBuildRoot {
   $head
 }
 
+function Get-DeployDepsStampPath {
+  <#
+    .SYNOPSIS Where Install-DeployBuildRootDeps records the deps key (lockfile SHA256 + Node ABI/arch) it last installed for.
+    .DESCRIPTION
+      Inside node_modules/, which .gitignore covers, so Sync-DeployBuildRoot's `git clean -fd` (no -x)
+      keeps it. It used to sit at <buildRoot>\.deploy-deps-stamp -- untracked and NOT ignored -- so that
+      clean deleted it every run and every hourly deploy did a full `npm ci`; overnight runs then hit
+      the task's 30-minute ExecutionTimeLimit before reaching wrangler (2026-11-13). `npm ci` wipes
+      node_modules, and the stamp is written only after it succeeds, so a failed install leaves none.
+  #>
+  param([Parameter(Mandatory)][string]$BuildRoot)
+  Join-Path (Join-Path $BuildRoot 'node_modules') '.deploy-deps-stamp'
+}
+
+function Get-DeployNodeRuntime {
+  <# The running node's native-module ABI and arch ('137-x64'), or '' when node cannot be run. #>
+  try {
+    $out = (& node -p "process.versions.modules + '-' + process.arch" 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $out) { return ([string]$out).Trim() }
+  } catch { }
+  ''
+}
+
+function Get-DeployDepsKey {
+  <#
+    .SYNOPSIS What node_modules was installed FOR: '<lockfile SHA256>|node-<ABI>-<arch>'.
+    .DESCRIPTION
+      The lockfile alone is not enough (refute wf_27705618-22a): native modules (better-sqlite3) are
+      compiled for one Node ABI. Before the stamp survived `git clean -fd`, every run re-ran `npm ci`
+      and so rebuilt them; with the skip working, a Node major upgrade on the deploy host would keep
+      the old binary, and every warehouse read in the bake (governors, the brief's insurance alerts)
+      would fail open with nothing visible. Keying on the ABI and arch forces `npm ci` after such an
+      upgrade. Returns $null when node cannot be run, so the deps are never treated as current.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$BuildRoot,
+    # Test seam: the runtime string to key on instead of asking the node on PATH.
+    [string]$NodeRuntime
+  )
+  $lock = Join-Path $BuildRoot 'package-lock.json'
+  if (-not (Test-Path -LiteralPath $lock)) { return $null }
+  $runtime = if ($PSBoundParameters.ContainsKey('NodeRuntime')) { $NodeRuntime } else { Get-DeployNodeRuntime }
+  if (-not $runtime) { return $null }
+  '{0}|node-{1}' -f (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash, $runtime
+}
+
+function Test-DeployDepsCurrent {
+  <# True only when node_modules exists and its stamp equals Get-DeployDepsKey exactly. #>
+  param(
+    [Parameter(Mandatory)][string]$BuildRoot,
+    [string]$NodeRuntime
+  )
+  $key = if ($PSBoundParameters.ContainsKey('NodeRuntime')) { Get-DeployDepsKey -BuildRoot $BuildRoot -NodeRuntime $NodeRuntime } else { Get-DeployDepsKey -BuildRoot $BuildRoot }
+  if (-not $key) { return $false }
+  $stamp = Get-DeployDepsStampPath -BuildRoot $BuildRoot
+  if (-not (Test-Path -LiteralPath (Join-Path $BuildRoot 'node_modules'))) { return $false }
+  if (-not (Test-Path -LiteralPath $stamp)) { return $false }
+  # An empty or unreadable stamp (a run killed mid-write) is NOT current: npm ci re-runs and rewrites it.
+  # Throwing here instead would fail every run, since the stamp now survives `git clean -fd` (refute wf_9e1d05e9-ca9).
+  $prior = Get-Content -LiteralPath $stamp -Raw -ErrorAction SilentlyContinue
+  if ([string]::IsNullOrWhiteSpace($prior)) { return $false }
+  $prior.Trim() -ceq $key
+}
+
 function Install-DeployBuildRootDeps {
   <#
-    .SYNOPSIS Ensure the build root has node_modules matching its lockfile.
+    .SYNOPSIS Ensure the build root has node_modules matching its lockfile and the running Node runtime.
     .DESCRIPTION
       `git worktree add` creates tracked files only -- no node_modules -- so a first run would fail
       with "vite is not recognized" rather than anything that names the real problem.
 
       Sync-DeployBuildRoot cleans with -fd (not -fdx), so node_modules SURVIVES between runs and
-      this is normally a no-op. `npm ci` is re-run only when the lockfile actually changes, tracked
-      via a stamp file. Deciding on the lockfile hash rather than a timestamp means an unrelated
-      touch does not trigger a multi-minute install inside the hourly budget.
+      this is normally a no-op. `npm ci` is re-run only when the lockfile or the Node runtime changes,
+      tracked via a stamp file (Get-DeployDepsStampPath, Get-DeployDepsKey). Deciding on a content key
+      rather than a timestamp means an unrelated touch does not trigger a multi-minute install inside
+      the hourly budget.
   #>
-  param([Parameter(Mandatory)][string]$BuildRoot)
+  param(
+    [Parameter(Mandatory)][string]$BuildRoot,
+    # Test seam, passed through to Get-DeployDepsKey.
+    [string]$NodeRuntime
+  )
 
   $lock = Join-Path $BuildRoot 'package-lock.json'
-  $modules = Join-Path $BuildRoot 'node_modules'
-  $stamp = Join-Path $BuildRoot '.deploy-deps-stamp'
-
+  $stamp = Get-DeployDepsStampPath -BuildRoot $BuildRoot
   if (-not (Test-Path -LiteralPath $lock)) { throw "No package-lock.json in build root $BuildRoot -- refusing to npm ci." }
-  $lockHash = (Get-FileHash -LiteralPath $lock -Algorithm SHA256).Hash
-  $priorHash = if (Test-Path -LiteralPath $stamp) { (Get-Content -LiteralPath $stamp -Raw).Trim() } else { '' }
 
-  if ((Test-Path -LiteralPath $modules) -and $priorHash -eq $lockHash) {
-    Write-Host "  Build-root deps current (lockfile unchanged)"
+  $current = if ($PSBoundParameters.ContainsKey('NodeRuntime')) { Test-DeployDepsCurrent -BuildRoot $BuildRoot -NodeRuntime $NodeRuntime } else { Test-DeployDepsCurrent -BuildRoot $BuildRoot }
+  if ($current) {
+    Write-Host "  Build-root deps current (lockfile and Node runtime unchanged)"
     return $false
   }
 
-  Write-Host "  Installing build-root deps (npm ci) -- lockfile changed or node_modules absent"
+  Write-Host "  Installing build-root deps (npm ci) -- lockfile or Node runtime changed, or node_modules absent"
   Push-Location $BuildRoot
   try {
     npm ci
@@ -186,7 +252,9 @@ function Install-DeployBuildRootDeps {
   } finally {
     Pop-Location
   }
-  Set-Content -LiteralPath $stamp -Value $lockHash -Encoding ASCII
+  $key = if ($PSBoundParameters.ContainsKey('NodeRuntime')) { Get-DeployDepsKey -BuildRoot $BuildRoot -NodeRuntime $NodeRuntime } else { Get-DeployDepsKey -BuildRoot $BuildRoot }
+  # No key (node not runnable) means no stamp: the next run installs again rather than trusting it.
+  if ($key) { Set-Content -LiteralPath $stamp -Value $key -Encoding ASCII }
   $true
 }
 
