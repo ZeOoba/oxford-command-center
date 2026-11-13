@@ -142,7 +142,7 @@ flowchart LR
 
 ## Mirror deploy and daily brief
 
-The off-fleet Windows task: isolated build root, `build:mirror` (bake, brief + Outlook COM send, typecheck, vite build), bounded wrangler deploy, Access 302 probe, failure alert.
+The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Access probe of the live target, `build:mirror` (bake, brief + Outlook COM send, typecheck, vite build, dist roster scan in REDACTED mode), bounded wrangler deploy from the build root, post-deploy Access 302 probe, failure alert, and lockdown containment on a served exposure (audit wf_9bf74429-aaf findings 1/4/30/31, 2026-11-12).
 
 <details><summary>Evidence</summary>
 
@@ -159,21 +159,26 @@ flowchart TB
 
     subgraph S1["Step 1 - isolated build root"]
         FETCH["git fetch origin (bounded)"] --> ROOT["build root hard-reset to origin/main<br/>lib/deploy-buildroot.ps1"]
-        ROOT --> ENV[".env imported into process env<br/>+ BRIEF_HEALTH_PATH -> primary checkout data/ (:246)"]
+        ROOT --> ENV[".env imported into process env<br/>(never MIRROR_INCLUDE_CONFIDENTIAL / MIRROR_ACCESS_PREPROBE)<br/>+ BRIEF_HEALTH_PATH -> primary checkout data/"]
+        ENV --> PRE["Assert-MirrorPreDeployAccessGate<br/>live production target: root, staged JSON, Function routes<br/>pass -> MIRROR_ACCESS_PREPROBE=passed + MIRROR_INCLUDE_CONFIDENTIAL=1"]
     end
-    DM --> FETCH
+    LATCH{"gate latch open?<br/>data/alert-state/mirror-gate-latch.json"}
+    DM --> LATCH
+    LATCH -- "no" --> FETCH
+    LATCH -- "yes: GATE LATCH OPEN, nothing baked" --> ALERTL["suppressible alert"]
 
     subgraph S2["Step 2 - npm run build:mirror (no change detection: runs every hour)"]
         BAKE["bake-mirror.ts"]
         PW["parseWorkbook()<br/>ExcelJS + loadDeals() Notion + loadM365Tasks() Graph<br/>(network calls INSIDE the parser)"]
         MAC["getMacro() FRED (+ seeded fallback)"]
-        RED["confidential-deal redaction<br/>(MIRROR_INCLUDE_CONFIDENTIAL opt-in)"]
+        RED["confidential-deal redaction<br/>(FULL only with the flag + passed pre-probe, scripts/lib/mirror-mode.ts)<br/>REDACTED removes stale warehouse.json first"]
         BR["runBrief() server/brief/run.ts<br/>daily brief + critical alerts"]
         SEND["send.ts -> _shared/send-via-outlook.ps1<br/>(principal only)"]
         BH[("data/brief-health.json<br/>(primary checkout)")]
         PUB[("public/snapshot.json + macro.json")]
         WHB["bake-warehouse.ts (OFF on hourly; daily, BAKE_WAREHOUSE=1)"] --> PUBW[("public/warehouse.json")]
         TYPES["prebuild: generate confidential-scan types"] --> TSC["tsc --noEmit (full typecheck)"] --> VITE["vite build -> dist/"]
+        VITE --> SCAN["scan-mirror-dist.ts<br/>REDACTED: roster-scan every dist/ text file"]
         BAKE --> PW
         BAKE --> MAC
         PW --> RED --> PUB
@@ -181,17 +186,20 @@ flowchart TB
         BR --> BH
         MAC --> PUB
     end
-    ENV --> BAKE
+    PRE --> BAKE
     PUB --> VITE
     PUBW -.-> VITE
 
     subgraph S3["Step 3-4 - publish + verify"]
-        WR["local wrangler pages deploy dist<br/>bounded timeout (< PT30M task limit)"]
+        WR["build root's wrangler pages deploy dist<br/>cwd + --cwd = build root (its functions/ only)<br/>bounded timeout (< PT30M task limit)"]
         PAGES["Cloudflare Pages ora-command-center<br/>+ functions/api/{ai,whoami,warehouse/acquisition/score}"]
         PROBE["Invoke-AccessGateProbe<br/>expects 302 to Access login, not 200"]
         ALERT["Send-DeployFailureAlert + deploy beacon"]
+        LOCK["served exposure (2xx, or a Function's own 4xx):<br/>latch + lockdown page (no data, no Functions)<br/>+ second CRITICAL alert"]
     end
-    VITE --> WR --> PAGES
+    SCAN --> WR --> PAGES
+    PRE -. "GATE CHECK FAILED" .-> ALERT
+    ALERT -.-> LOCK
     WR --> PROBE
     WR -. timeout .-> PROBE
     PROBE -. fail .-> ALERT

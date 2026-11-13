@@ -58,6 +58,122 @@ function gitSubcommandIndex(tokens, sub) {
 }
 
 /**
+ * True when `t` is a long option git would read as `full`: the full spelling or
+ * any abbreviation of it at least `minLen` characters long. git's parse-options
+ * accepts every unambiguous prefix of a long option (`git commit --no-verif`
+ * skips the hooks exactly like `--no-verify`; verified empirically, audit
+ * wf_9bf74429-aaf finding 13), so an exact-token match is a bypass. A short
+ * prefix that is ambiguous (`--no-ver` also matches `--no-verbose`) makes git
+ * itself refuse the command, so denying it costs nothing. Case-sensitive, as
+ * git's option parsing is.
+ */
+function isLongOptPrefix(t, full, minLen) {
+  return t.length >= minLen && t.length <= full.length && full.startsWith(t);
+}
+
+// `--no-v` is the shortest prefix that can only mean --no-verify or a sibling
+// git rejects as ambiguous (--no-verbose); `--fo` likewise for --force (vs
+// --follow-tags). --force-with-lease / --force-if-includes are longer than
+// `--force`, so they are never prefixes of it and stay allowed.
+const NO_VERIFY_MIN = '--no-v'.length;
+const FORCE_MIN = '--fo'.length;
+// `--m` is the shortest prefix git push reads as --mirror (no other push long
+// option starts with `m`; refute wf_6bae3d4e-aec).
+const MIRROR_MIN = '--m'.length;
+
+// Per subcommand: options whose value may be the NEXT token. That value is data
+// (a message, a file, an identity), never an option, so the option scan skips
+// it. PER SUBCOMMAND on purpose: `-s` is --signoff (no value) for commit but
+// --strategy (takes one) for merge, and skipping a token git reads as an option
+// would hide it. Only options that REQUIRE a value are listed.
+const OPT_WITH_SEPARATE_ARG = {
+  commit: new Set(['-m', '--message', '-F', '--file', '-C', '-c', '--reuse-message', '--reedit-message',
+    '--author', '--date', '--template', '-t', '--trailer', '--fixup', '--squash']),
+  push: new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']),
+  merge: new Set(['-m', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option']),
+  pull: new Set(['-s', '--strategy', '-X', '--strategy-option', '--upload-pack', '--depth', '--shallow-since', '--shallow-exclude', '--deepen', '-j', '--jobs']),
+  am: new Set([]),
+};
+
+/**
+ * Split a command segment into the words the shell would pass as argv, left to
+ * right: whitespace separates words; '...' is literal; "..." keeps its text
+ * (backslash escapes only " \ $ ` and newline); $'...' resolves backslash
+ * escapes; $"..." is "..."; a bare backslash escapes the next character. An
+ * empty quoted pair is an EMPTY word, never dropped, so an option value of ''
+ * cannot shift the next real option into the value slot. One pass with explicit
+ * quote state, so an apostrophe inside "..." or a " inside '...' cannot pair
+ * with a quote elsewhere and swallow the text between (refute wf_bfcf4714-b6d).
+ * Unterminated quotes run to the end of the segment.
+ */
+function shellWords(s) {
+  const words = [];
+  let cur = '';
+  let inWord = false;
+  let i = 0;
+  const ANSI = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v' };
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) {
+      if (inWord) words.push(cur);
+      cur = '';
+      inWord = false;
+      i++;
+      continue;
+    }
+    inWord = true;
+    if (c === '\\') {
+      if (i + 1 < s.length) cur += s[i + 1];
+      i += 2;
+    } else if (c === "'") {
+      const j = s.indexOf("'", i + 1);
+      const end = j === -1 ? s.length : j;
+      cur += s.slice(i + 1, end);
+      i = end + 1;
+    } else if (c === '$' && s[i + 1] === "'") {
+      let j = i + 2;
+      while (j < s.length && s[j] !== "'") {
+        if (s[j] === '\\' && j + 1 < s.length) {
+          cur += ANSI[s[j + 1]] ?? s[j + 1];
+          j += 2;
+        } else cur += s[j++];
+      }
+      i = j + 1;
+    } else if (c === '$' && s[i + 1] === '"') {
+      i++; // locale quoting: the "..." that follows is read as a normal double-quoted string
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < s.length && s[j] !== '"') {
+        if (s[j] === '\\' && j + 1 < s.length && '"\\$`\n'.includes(s[j + 1])) {
+          cur += s[j + 1];
+          j += 2;
+        } else cur += s[j++];
+      }
+      i = j + 1;
+    } else {
+      cur += c;
+      i++;
+    }
+  }
+  if (inWord) words.push(cur);
+  return words;
+}
+
+/**
+ * Bash brace expansion of one word (`{--no-verify,}` -> `--no-verify`, ``),
+ * conservatively: applied even to braces that were quoted, which can only add
+ * a denial, never remove one. Capped so a pathological word cannot blow up.
+ */
+function expandBraces(word, depth = 0) {
+  const m = /^(.*?)\{([^{}]*,[^{}]*)\}(.*)$/s.exec(word);
+  if (!m || depth > 4) return [word];
+  return m[2]
+    .split(',')
+    .slice(0, 32)
+    .flatMap((alt) => expandBraces(`${m[1]}${alt}${m[3]}`, depth + 1));
+}
+
+/**
  * True when a `cp` invocation in `rawTokens` writes INTO a path matching
  * `guardPathRe` (destination argument only - `cp` sourced FROM that path is
  * a pure read/backup and must not trip this). Destination is the argument to
@@ -99,7 +215,8 @@ function shortClusterHas(token, ch) {
   return (
     token.startsWith('-') &&
     !token.startsWith('--') &&
-    /^-[a-zA-Z]+$/.test(token) &&
+    // Digits are short options too (`git am -3n`, `git push -4f`; refute wf_6bae3d4e-aec).
+    /^-[a-zA-Z0-9]+$/.test(token) &&
     token.includes(ch)
   );
 }
@@ -576,12 +693,45 @@ try {
     // tokens, so the git-add scan does NOT need quote-blanking.
     if (gitAddAll(rawTokens)) deny(GIT_ADD_MSG);
 
+    // Two views of each git invocation's arguments, and a check denies if EITHER
+    // matches (refute wf_ec2162a9-34f / wf_bfcf4714-b6d):
+    //  1. `tokens` - the original quote-blanked view, unchanged, so nothing the
+    //     guard denied before can become allowed;
+    //  2. `optTokens` - the argv the SHELL actually builds (shellWords: quotes,
+    //     backslashes, $'..' and brace expansion resolved left to right), so
+    //     `"--force"`, `--no-"verify"`, `\-\-force`, `$'--no-verify'` and
+    //     `{--no-verify,}` are seen as the option git receives. In this view the
+    //     value of a message/file option is skipped (it is data), so a message
+    //     word can never hide or fake an option.
+    const optTokens = shellWords(rawSeg).flatMap(expandBraces);
+    const argViews = (sub) => {
+      const views = [];
+      const bi = gitSubcommandIndex(tokens, sub);
+      if (bi !== -1) views.push(tokens.slice(bi + 1));
+      const oi = gitSubcommandIndex(optTokens, sub);
+      if (oi !== -1) {
+        const out = [];
+        const rest = optTokens.slice(oi + 1);
+        for (let k = 0; k < rest.length; k++) {
+          out.push(rest[k]);
+          // Skip the value of a known value option -- but NEVER a word that starts with
+          // `-` or `+`. git also accepts abbreviated value options (`--rep` = --repo,
+          // `--trail` = --trailer) that this set does not list, which would shift the
+          // skip onto the real option or refspec (refute wf_6bae3d4e-aec); a word that
+          // looks like an option or refspec is therefore always checked. A message
+          // that literally starts with `-` or `+` is denied: harmless and deny-biased.
+          if (OPT_WITH_SEPARATE_ARG[sub].has(rest[k]) && k + 1 < rest.length && !/^[-+]/.test(rest[k + 1])) k++;
+        }
+        views.push(out);
+      }
+      return views;
+    };
+    const anyView = (sub, pred) => argViews(sub).some((v) => v.some(pred));
+
     // (b) git commit --no-verify / -n (token-scoped to the commit invocation;
-    // uses stripped tokens so a commit MESSAGE containing -n cannot false-positive)
-    const ci = gitSubcommandIndex(tokens, 'commit');
-    if (ci !== -1) {
-      const rest = tokens.slice(ci + 1);
-      if (rest.some((t) => t === '--no-verify' || shortClusterHas(t, 'n'))) {
+    // stripped tokens / skipped message values, so a commit MESSAGE containing -n cannot false-positive)
+    {
+      if (anyView('commit', (t) => isLongOptPrefix(t, '--no-verify', NO_VERIFY_MIN) || shortClusterHas(t, 'n'))) {
         deny(
           'git commit --no-verify/-n is blocked: the gate must run on every commit (CLAUDE.md 9). Fix the failing step instead of bypassing it.',
         );
@@ -591,17 +741,38 @@ try {
     // (c) git push --force / -f / --no-verify (--force-with-lease is allowed).
     // NOTE: for `git push`, -n means --dry-run (harmless), so -n is NOT treated
     // as no-verify here; only the long form --no-verify is denied.
-    const pi = gitSubcommandIndex(tokens, 'push');
-    if (pi !== -1) {
-      const rest = tokens.slice(pi + 1);
-      if (rest.some((t) => t === '--force' || shortClusterHas(t, 'f'))) {
+    // A `+<src>:<dst>` refspec and --mirror force-update refs exactly like --force
+    // (refute wf_ec2162a9-34f), so they are denied with it.
+    // The +refspec / --mirror forms (new, not in the base guard) are read from the
+    // shell-argv view only, where push option VALUES are skipped (`-o +x` is data).
+    const shellView = (sub) => {
+      const views = argViews(sub);
+      return gitSubcommandIndex(optTokens, sub) === -1 ? [] : views[views.length - 1];
+    };
+    {
+      if (
+        anyView('push', (t) => isLongOptPrefix(t, '--force', FORCE_MIN) || shortClusterHas(t, 'f')) ||
+        shellView('push').some((t) => isLongOptPrefix(t, '--mirror', MIRROR_MIN) || (t.startsWith('+') && t.length > 1))
+      ) {
         deny(
           'git push --force/-f is blocked (CLAUDE.md 8): never force-push; if a force-push is truly needed, use --force-with-lease on a feature branch or escalate to Gabriel.',
         );
       }
-      if (rest.some((t) => t === '--no-verify')) {
+      if (anyView('push', (t) => isLongOptPrefix(t, '--no-verify', NO_VERIFY_MIN))) {
         deny(
           'git push --no-verify is blocked: the pre-push hook runs a confidential-history scan before every push (CLAUDE.md confidentiality doctrine). Never bypass it - fix what it flags or escalate to Gabriel.',
+        );
+      }
+    }
+
+    // (b2) git merge / pull / am --no-verify skip the commit-msg / pre-merge-commit /
+    // applypatch hooks the same way commit --no-verify does (refute wf_ec2162a9-34f,
+    // wf_bfcf4714-b6d). Long form only: for merge and pull, -n means --no-stat.
+    for (const sub of ['merge', 'pull', 'am']) {
+      // For `git am`, -n IS --no-verify (refute wf_6bae3d4e-aec); for merge/pull it is --no-stat.
+      if (anyView(sub, (t) => isLongOptPrefix(t, '--no-verify', NO_VERIFY_MIN) || (sub === 'am' && shortClusterHas(t, 'n')))) {
+        deny(
+          `git ${sub} --no-verify is blocked: the hooks must run on every commit (CLAUDE.md 9). Fix the failing step instead of bypassing it.`,
         );
       }
     }

@@ -6,7 +6,7 @@
 // name-based redactConfidential cannot see) never reaches the written public/snapshot.json, and that
 // an unreadable roster refuses the bake with nothing written. Synthetic names only.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
@@ -33,7 +33,7 @@ vi.mock('../../server/reconcile-runtime', () => ({ checkSnapshot: vi.fn(() => []
 
 import { main } from '../../scripts/bake-mirror';
 
-const ENV_KEYS = ['CONFIDENTIAL_TERMS_PATH', 'CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER', 'MIRROR_INCLUDE_CONFIDENTIAL', 'BRIEF_ENABLED', 'BAKE_WAREHOUSE', 'WAREHOUSE_DB'] as const;
+const ENV_KEYS = ['CONFIDENTIAL_TERMS_PATH', 'CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER', 'MIRROR_INCLUDE_CONFIDENTIAL', 'MIRROR_ACCESS_PREPROBE', 'BRIEF_ENABLED', 'BAKE_WAREHOUSE', 'WAREHOUSE_DB'] as const;
 const saved: Record<string, string | undefined> = {};
 let dir: string;
 let cwd: string;
@@ -81,5 +81,73 @@ describe('bake-mirror main(): the roster scrub is wired in (redacted mode)', () 
     await expect(main()).rejects.toThrow('exit 1');
     expect(exit).toHaveBeenCalledWith(1);
     expect(snapshotJson()).toBeUndefined();
+  });
+});
+
+// Audit wf_9bf74429-aaf findings 30 and 31.
+describe('bake-mirror main(): bake mode and stale outputs', () => {
+  const exitThrows = () =>
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
+  const pubFile = (name: string) => join(dir, 'public', name);
+
+  it('finding 31: FULL requested without the passed pre-deploy probe refuses, exit 1, nothing written', async () => {
+    process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
+    const exit = exitThrows();
+    await expect(main()).rejects.toThrow('exit 1');
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(snapshotJson()).toBeUndefined();
+  });
+
+  it('finding 31: FULL with MIRROR_ACCESS_PREPROBE=passed bakes FULL (no roster scrub) and keeps warehouse.json', async () => {
+    process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
+    process.env.MIRROR_ACCESS_PREPROBE = 'passed';
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), '{"full":true}');
+    await main();
+    expect((JSON.parse(snapshotJson()!) as PortfolioSnapshot).tasks.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(readFileSync(pubFile('warehouse.json'), 'utf8')).toBe('{"full":true}');
+  });
+
+  it('finding 30: a REDACTED bake removes a stale FULL public/warehouse.json it does not regenerate', async () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), '{"deals":[{"name":"Kestrel Ridge"}]}');
+    await main();
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
+    expect(snapshotJson()).toBeDefined();
+  });
+
+  it('finding 30: copies of baked outputs go too; snapshot.json/macro.json are rewritten, not deleted', async () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    // Refute wf_bfcf4714-b6d: copies in subfolders and `Copy of` names go too.
+    mkdirSync(join(dir, 'public', 'old'), { recursive: true });
+    const copies = ['warehouse (1).json', 'snapshot-old.json', 'macro.json~', 'Copy of warehouse.json', 'old/warehouse.json', 'old/snapshot.json'];
+    for (const n of copies) writeFileSync(pubFile(n), '{}');
+    writeFileSync(pubFile('logo.svg'), '<svg/>');
+    writeFileSync(pubFile('_redirects'), '/* /index.html 200');
+    await main();
+    for (const n of copies) expect(existsSync(pubFile(n)), n).toBe(false);
+    expect(existsSync(pubFile('logo.svg'))).toBe(true);
+    expect(existsSync(pubFile('_redirects'))).toBe(true);
+    expect(existsSync(pubFile('snapshot.json'))).toBe(true);
+    expect(existsSync(pubFile('macro.json'))).toBe(true);
+  });
+
+  it('refute wf_ec2162a9-34f: a REDACTED --warehouse run that refuses still removes the FULL warehouse.json', async () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), '{"full":true}');
+    process.env.BAKE_WAREHOUSE = '1';
+    process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'missing.json');
+    exitThrows();
+    await expect(main()).rejects.toThrow('exit 1');
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
+  });
+
+  it('finding 30: the stale file is removed even when the REDACTED bake then refuses', async () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), '{"full":true}');
+    process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'missing.json');
+    exitThrows();
+    await expect(main()).rejects.toThrow('exit 1');
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
   });
 });
