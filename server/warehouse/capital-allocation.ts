@@ -22,7 +22,9 @@
 // T1/T2 candidate clearing the composite floor whose persisted, governor-surviving score passed
 // the RATIFIED ruleset's basis floor (§3.5; audit 2026-10-13 G1/G2); never on an empty buyable list.
 //
-// advisoryOnly = true until hurdle rate is ratified (Phase 5 default).
+// PortfolioAllocation.advisoryOnly = true until the hurdle rate is ratified (Phase 5 default). A single
+// verdict is ALSO advisoryOnly when it rests on an unratified constant (UNRATIFIED_VERDICT_CONSTANTS:
+// BUY composite floor, capex proxy), even with the hurdle ratified (ruling 2026-11-13, audit #7/#12).
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
 //
 // ── expectedReturnPct (Phase 5 v2, C-4) ──────────────────────────────────────────
@@ -156,6 +158,27 @@ function confidenceTierFrom(c01: number): Confidence {
 // than extend the schema, with an explicit reasons[] note that these fields are
 // not applicable to a pipeline acquisition candidate.
 const BUY_COMPOSITE_FLOOR = 70;
+/**
+ * Ratification state of the constants a verdict can rest on that are NOT in the ratified ruleset,
+ * capital_config or RATIFIED_GOVERNORS (audit 2026-11-12 #7/#12). Gabriel ruling 2026-11-13
+ * (Option 1): a verdict resting on an unratified constant ships advisoryOnly=true, with a reason
+ * naming the constant, until that constant is ratified. Ratifying one is a Gabriel decision. When
+ * it happens, flip its state here (and record who ratified it and when); never change the value
+ * here without that ruling (Invariant 4).
+ */
+export const UNRATIFIED_VERDICT_CONSTANTS = {
+  /** BUY_COMPOSITE_FLOOR (70): spec 2026-06-21-phase-5 proposed default, never ratified. */
+  buyCompositeFloor: 'proposed',
+  /** ASSUMED_CAPEX_PSF ($10/SF) behind the capexIrr proxy that gates 'improve'. */
+  assumedCapexPsf: 'proposed',
+  /** PROJECTION_ASSUMPTIONS (hold/growth/exit cap) behind expectedReturnPct / returnAboveHurdle. */
+  projectionAssumptions: 'proposed',
+} as const satisfies Record<string, 'ratified' | 'proposed'>;
+/** PortfolioAllocation.dataQuality field disclosing that pipeline BUY eligibility rests on the
+ *  unratified composite floor. Read by ic-memo.ts and src/modules/capital/CapitalModule.tsx. */
+export const BUY_FLOOR_ADVISORY_FIELD = 'buyCompositeFloor';
+const isUnratified = (k: keyof typeof UNRATIFIED_VERDICT_CONSTANTS): boolean =>
+  (UNRATIFIED_VERDICT_CONSTANTS[k] as string) !== 'ratified';
 // The basis-discount floor is NOT a constant here (audit 2026-10-13 G2): the former unratified
 // BASIS_DISCOUNT_FLOOR = 0.05 [RATIFY] is removed. The RATIFIED ruleset's vintage-ramped basis floor
 // (floors.basisDiscountMin{Pre,Post}Millennium = 0.65 / 0.60) is what governs; a candidate is only
@@ -206,6 +229,10 @@ function buildBuyVerdict(
     severity: 'warn' as const,
   }));
 
+  // Ruling 2026-11-13: BUY clears only on BUY_COMPOSITE_FLOOR, which is unratified -> advisory.
+  const buyFloorUnratified = isUnratified('buyCompositeFloor');
+  const buyAdvisory = advisoryOnly || buyFloorUnratified;
+
   return {
     propertyId: `pipeline:${candidate.candidateId}`,
     propertyName: candidate.address,
@@ -218,11 +245,15 @@ function buildBuyVerdict(
     horizonPeriods: forecastInputs?.periods ?? 0,
     confidence01,
     confidenceTier: confidenceTierFrom(confidence01),
-    advisoryOnly,
+    advisoryOnly: buyAdvisory,
     reasons: [
       `Portfolio buy signal: pipeline candidate ${candidate.candidateId} (tier ${candidate.tier ?? 'unknown'}, composite ${candidate.composite ?? 'unknown'})`,
       'inputs fields (healthBand/attentionBand/capitalAction/debtSignal/debtScoreBand/dscr/ltv/noiPerSf) are not applicable to a pipeline acquisition candidate — neutral placeholder values, not measured data',
       ...(openItems.length > 0 ? [`BUY with open items: ${openItems.join('; ')}`] : []),
+      ...(advisoryOnly ? ['advisoryOnly: hurdle rate ratification pending'] : []),
+      ...(buyFloorUnratified
+        ? [`advisoryOnly: BUY composite floor ${BUY_COMPOSITE_FLOOR} is unratified (proposed default, not in the ratified ruleset)`]
+        : []),
     ],
     inputs: {
       healthBand: 'good',
@@ -500,6 +531,9 @@ function buildVerdict(
   // specific quantity.
   let timelineMonths = 0;
   const reasons: string[] = [...ps.reasons];
+  // True when the capexIrr proxy (unratified ASSUMED_CAPEX_PSF) decided the action: improve, or the
+  // hold it fell back to because the proxy did not clear the hurdle (refute wf_c69b93c5-c15).
+  let proxyDecided = false;
 
   // C-2: refinance additionally requires a drivable post-refi cash-savings computation
   // (spec §3.2 rule 2 — refiCashSavingsPct(d) !== null). Undrivable savings falls through
@@ -536,6 +570,7 @@ function buildVerdict(
     // capex-cost data source. Gates ONLY the action; expectedReturnPct still reuses the
     // general C-4 unlevered-return figure passed in above (Gabriel's decision, 2026-07-07).
     action = 'improve';
+    proxyDecided = true;
     riskBand = healthBandToRisk(ps.healthBand);
     timelineMonths = 12; // spec TIMELINE table: improve = 12 (mid of 6-18)
     reasons.push(
@@ -545,6 +580,7 @@ function buildVerdict(
     // 3-neg. invest signal present but capexIrr proxy undrivable or doesn't clear hurdle →
     // degrades to hold (matches Phase 5 v1's original fail-safe default).
     action = 'hold';
+    proxyDecided = capexIrr !== null; // an undrivable proxy decided nothing: hold on missing data
     riskBand = combinedRiskBand(healthBandToRisk(ps.healthBand), debtScoreBand);
     timelineMonths = 0;
     reasons.push(
@@ -568,6 +604,12 @@ function buildVerdict(
   }
   if (advisoryOnly) {
     reasons.push('advisoryOnly: hurdle rate ratification pending');
+  }
+  // Ruling 2026-11-13: 'improve' (and the hold it degrades to) is selected by the capexIrr proxy,
+  // which rests on the unratified ASSUMED_CAPEX_PSF -> advisory until that constant is ratified.
+  const improveProxyUnratified = proxyDecided && isUnratified('assumedCapexPsf');
+  if (improveProxyUnratified) {
+    reasons.push(`advisoryOnly: ${action} rests on the capex proxy ($${ASSUMED_CAPEX_PSF}/SF), which is unratified`);
   }
 
   // noiPerSf: not directly available from PropertyScore in this engine layer
@@ -609,6 +651,20 @@ function buildVerdict(
       severity: 'info',
     });
   }
+  if (returnAboveHurdle !== null && isUnratified('projectionAssumptions')) {
+    // Ruling 2026-11-13: returnAboveHurdle compares the ratified hurdle against a projection built
+    // on unratified PROJECTION_ASSUMPTIONS, so it is disclosed as advisory on the field. It selects no
+    // action on its own, so it does not change the verdict's advisoryOnly.
+    dataQuality.push({
+      entity: ps.propertyId,
+      field: 'returnAboveHurdle',
+      issue:
+        'returnAboveHurdle is advisory: expectedReturnPct is projected from PROJECTION_ASSUMPTIONS ' +
+        `(hold ${PROJECTION_ASSUMPTIONS.holdYears}y, NOI growth ${+(PROJECTION_ASSUMPTIONS.noiGrowthPct * 100).toFixed(2)}%/yr, ` +
+        `exit cap ${+(PROJECTION_ASSUMPTIONS.exitCapRate * 100).toFixed(2)}%), which are not ratified.`,
+      severity: 'info',
+    });
+  }
   if (capexIrr !== null) {
     // capexIrr is a PROXY (see capexIrrEstimate() above), not a real capex-cost data source —
     // disclose it structurally whether or not it cleared the hurdle, matching the precedent
@@ -636,7 +692,7 @@ function buildVerdict(
     horizonPeriods,
     confidence01,
     confidenceTier,
-    advisoryOnly,
+    advisoryOnly: advisoryOnly || improveProxyUnratified,
     reasons,
     inputs: {
       healthBand: ps.healthBand,
@@ -1064,6 +1120,19 @@ export async function buildPortfolioAllocation(
   const allocationDataQuality: PortfolioAllocation['dataQuality'] = [];
   if (staleGovernorIds.length > 0) {
     allocationDataQuality.push(staleGovernorFlag('portfolio', staleGovernorIds));
+  }
+  // Ruling 2026-11-13 (refute wf_62322d75-6f9): every pipeline buyEligible label, in either direction,
+  // is decided in part by the unratified BUY_COMPOSITE_FLOOR. Disclose it once at portfolio level;
+  // the IC memo and the Capital Pipeline tab qualify each label from this flag.
+  if (pipeline.length > 0 && isUnratified('buyCompositeFloor')) {
+    allocationDataQuality.push({
+      entity: 'portfolio',
+      field: BUY_FLOOR_ADVISORY_FIELD,
+      issue:
+        `BUY eligibility rests on the composite floor ${BUY_COMPOSITE_FLOOR}, which is unratified ` +
+        '(proposed default, not in the ratified ruleset): every Eligible / Not eligible label is advisory.',
+      severity: 'info',
+    });
   }
   if (buyable.length > 0) {
     // Selection order (refute round 3 V2) — NOT composite alone, which let a capped WATCH with open

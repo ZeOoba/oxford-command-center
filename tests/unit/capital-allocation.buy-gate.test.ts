@@ -394,7 +394,7 @@ describe('BUY gate — governor freshness: value-keyed key match AND version-key
     const after = await buy(db);
     expect(after.buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-unrelated']);
     expect(after.result.buyGate?.staleScores).toBe(0);
-    expect(after.result.dataQuality).toEqual([]);
+    expect(after.result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('a real DSCR floor change makes the score stale, and the allocation says the stale score was excluded', async () => {
@@ -639,7 +639,7 @@ describe('buyGate counting vs #463 dataQuality after a governor change (merge re
     const { result } = await buy(db);
     expect(result.buyGate?.staleScores).toBe(1);
     expect(result.buyGate?.suppressedNote).toMatch(/^1 stale\/unparseable score excluded from the BUY gate/);
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('P2: a T1 PURSUE with an indeterminate (null) basis made stale is counted; not in dataQuality', async () => {
@@ -650,7 +650,7 @@ describe('buyGate counting vs #463 dataQuality after a governor change (merge re
     const { result } = await buy(db);
     expect(result.buyGate?.staleScores).toBe(1);
     expect(result.buyGate?.suppressedNote).not.toBeNull();
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('P3: an advisory_only = 1 T1 PURSUE made stale is counted; not in dataQuality', async () => {
@@ -661,7 +661,7 @@ describe('buyGate counting vs #463 dataQuality after a governor change (merge re
     const { result } = await buy(db);
     expect(result.buyGate?.staleScores).toBe(1);
     expect(result.buyGate?.suppressedNote).not.toBeNull();
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('invariant: every id named in the dataQuality governorRegime flag is counted in buyGate', async () => {
@@ -725,7 +725,7 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
       const after = await buy(db);
       expect(after.buyVerdicts.map((v) => v.propertyId)).toEqual([`pipeline:${id}`]);
       expect(after.result.buyGate?.staleScores).toBe(0);
-      expect(after.result.dataQuality).toEqual([]);
+      expect(after.result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
     });
   }
 
@@ -737,7 +737,7 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
     expect(buyVerdicts).toHaveLength(0);
     expect(result.buyGate?.staleScores).toBe(0);
     expect(result.buyGate?.suppressedNote).toBeNull();
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('a natively-scored PASS (no governor demotion) made stale is not counted or named', async () => {
@@ -749,6 +749,6 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
     insertConfig(db, 2, 1.30, 0.40);
     const { result } = await buy(db);
     expect(result.buyGate?.staleScores).toBe(0);
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 });

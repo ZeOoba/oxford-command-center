@@ -55,6 +55,8 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
   // makes on the server side.
   const distrusted = verdict.action !== 'buy' && bookTrust !== 'trusted';
   const debtBookFlag = verdict.dataQuality.find((f) => f.field === 'debtBook');
+  // Ruling 2026-11-13: the projection behind returnAboveHurdle rests on unratified assumptions.
+  const projectionFlag = verdict.dataQuality.find((f) => f.field === 'returnAboveHurdle');
 
   return (
     <Card>
@@ -107,6 +109,9 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
             {aboveHurdle !== null && (
               <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--text-pos)' : 'var(--text-neg)' }}>
                 {aboveHurdle ? '↑' : '↓'} vs {hurdleStr} hurdle
+                {projectionFlag && (
+                  <span title={projectionFlag.issue} style={{ color: 'var(--text-warn)', fontStyle: 'italic' }}> (projected, advisory)</span>
+                )}
               </span>
             )}
           </span>

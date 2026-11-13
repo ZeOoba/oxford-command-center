@@ -21,8 +21,9 @@
 // construction carries NO deal terms. The route layer runs assertNoEgressRosterMatch as
 // defense-in-depth before streaming; this builder stays pure (no IO) so it remains
 // trivially testable and re-usable.
-import type { PortfolioAllocation, AllocationAction } from '../../src/contracts/capital';
+import type { PortfolioAllocation, AllocationAction, AllocationVerdict } from '../../src/contracts/capital';
 import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
+import { BUY_FLOOR_ADVISORY_FIELD } from './capital-allocation';
 
 // ── ORA Style Guide tokens ──────────────────────────────────────────────────────────────────
 const NAVY = '#1B2A4A';
@@ -132,7 +133,11 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
 
   const parts = ACTION_ORDER
     .filter((a) => (actionCounts[a] ?? 0) > 0)
-    .map((a) => `<strong>${int(actionCounts[a])}</strong> ${actionLabel(a)}`);
+    .map((a) => {
+      // Ruling 2026-11-13: an advisory verdict (unratified constant) is counted but named as such.
+      const adv = advisoryOnly ? 0 : verdicts.filter((v) => v.action === a && v.advisoryOnly).length;
+      return `<strong>${int(actionCounts[a])}</strong> ${actionLabel(a)}${adv > 0 ? ` (${int(adv)} advisory)` : ''}`;
+    });
 
   bullets.push(
     parts.length > 0
@@ -140,11 +145,14 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
       : `No verdicts computed. Refresh the snapshot after the workbook is updated.`,
   );
 
-  const top = verdicts.slice().sort((a, b) => b.confidence01 - a.confidence01)[0];
+  const top = verdicts.slice().sort(byConfidence)[0];
   if (top) {
     bullets.push(
       `Highest-confidence verdict: <strong>${esc(top.propertyName ?? top.propertyId)}</strong> — ` +
-        `<strong>${actionLabel(top.action)}</strong>, confidence ${pct0(top.confidence01 * 100)}` +
+        `<strong>${actionLabel(top.action)}</strong>` +
+        // Ruling 2026-11-13: a verdict resting on an unratified constant is never headlined as final.
+        `${top.advisoryOnly && !advisoryOnly ? ' (advisory — rests on an unratified constant)' : ''}` +
+        `, confidence ${pct0(top.confidence01 * 100)}` +
         `${top.reasons.length > 0 ? `: ${esc(top.reasons[0])}` : ''}.`,
     );
   }
@@ -152,8 +160,10 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
   const above = verdicts.filter((v) => v.returnAboveHurdle === true).length;
   const below = verdicts.filter((v) => v.returnAboveHurdle === false).length;
   if (above + below > 0) {
+    const projected = verdicts.some((v) => v.returnAboveHurdle !== null && projectionAdvisory(v));
     bullets.push(
-      `${int(above)} of ${int(above + below)} scored assets clear the ${pct1(portfolio.hurdleRatePct * 100)} hurdle rate.`,
+      `${int(above)} of ${int(above + below)} scored assets clear the ${pct1(portfolio.hurdleRatePct * 100)} hurdle rate` +
+        `${projected ? ' (projected on unratified assumptions)' : ''}.`,
     );
   }
 
@@ -170,6 +180,23 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
       ${bullets.map((b) => `<li>${b}</li>`).join('\n      ')}
     </ul>
   </section>`;
+}
+
+/** True when the verdict's returnAboveHurdle rests on unratified projection assumptions (the
+ *  capital engine's 'returnAboveHurdle' dataQuality disclosure; refute wf_c69b93c5-c15). */
+const projectionAdvisory = (v: AllocationVerdict): boolean => v.dataQuality.some((f) => f.field === 'returnAboveHurdle');
+
+/** Confidence DESC; ties keep the engine's emission order (Array.prototype.sort is stable). Unchanged
+ *  from main on purpose: a propertyId tie-break would reorder the memo headline, since ties at the
+ *  0.65 cap are the norm (independent review 2026-11-13). */
+const byConfidence = (a: AllocationVerdict, b: AllocationVerdict): number => b.confidence01 - a.confidence01;
+
+/** Per-verdict advisory marker (ruling 2026-11-13, audit #7/#12): a BUY on the unratified composite
+ *  floor or an improve on the unratified capex proxy is advisoryOnly even when the portfolio-level
+ *  hurdle is ratified. Redundant (and omitted) when the whole memo is already in advisory mode. */
+function advisoryCell(v: AllocationVerdict, portfolio: PortfolioAllocation): string {
+  if (!v.advisoryOnly || portfolio.advisoryOnly) return '';
+  return ' <span class="ic-badge" style="color:#8a5a00;border-color:#8a5a00">Advisory</span>';
 }
 
 function renderVerdictTable(
@@ -196,13 +223,14 @@ function renderVerdictTable(
 
   const rows = portfolio.verdicts
     .slice()
-    .sort((a, b) => b.confidence01 - a.confidence01)
+    .sort(byConfidence)
     .map((v) => {
       const name = esc(v.propertyName ?? v.propertyId);
       const reason = v.reasons[0] ? esc(v.reasons[0]) : DASH;
       const retPct = v.expectedReturnPct !== null ? pct1(v.expectedReturnPct * 100) : DASH;
       const hurdle =
-        v.returnAboveHurdle === null ? DASH : v.returnAboveHurdle ? '&#10003;' : '&#10007;';
+        v.returnAboveHurdle === null ? DASH
+          : `${v.returnAboveHurdle ? '&#10003;' : '&#10007;'}${projectionAdvisory(v) ? '*' : ''}`;
       const entry = entries?.find((e) => e.propertyId === v.propertyId);
       const leasingRiskCell = pct0(entry?.leasingRisk);
       const bookCell =
@@ -211,7 +239,7 @@ function renderVerdictTable(
           : `<span class="ic-badge" style="color:#b3261e;border-color:#b3261e">${esc(v.inputs.bookTrust)}</span>`;
       return `        <tr class="ic-row">
           <td class="ic-name">${name}</td>
-          <td><span class="ic-badge" style="color:${actionColor(v.action)};border-color:${actionColor(v.action)}">${actionLabel(v.action)}</span></td>
+          <td><span class="ic-badge" style="color:${actionColor(v.action)};border-color:${actionColor(v.action)}">${actionLabel(v.action)}</span>${advisoryCell(v, portfolio)}</td>
           <td>${esc(v.riskBand)}</td>
           <td class="ic-r">${pct0(v.confidence01 * 100)}</td>
           <td class="ic-r">${retPct}</td>
@@ -241,6 +269,10 @@ ${rows}
     </table>
     <p class="ic-note">Sorted descending by confidence. Em-dash (${DASH}) = value not available
     (never zero-substituted). &#10003; = above hurdle; &#10007; = below hurdle.${
+      portfolio.verdicts.some(projectionAdvisory) ? ' * = projected on unratified assumptions (advisory).' : ''
+    }${
+      !portfolio.advisoryOnly && portfolio.verdicts.some((v) => v.advisoryOnly) ? ' Advisory = rests on an unratified constant (directional, not a final recommendation).' : ''
+    }${
       anyDistrusted
         ? ' Book column shows the debt-book trust level for any property NOT on a fully trusted book — "unknown" (no snapshot loaded), "refused" (last write declined, figures may be stale), or "degraded" (rows lost, DSCR/LTV withheld).'
         : ''
@@ -266,7 +298,7 @@ function renderActionBreakdown(portfolio: PortfolioAllocation): string {
         .join('\n');
       return `
     <div class="ic-action-block">
-      <h3 style="color:${actionColor(action)}">${actionLabel(action)} <span class="ic-count">(${group.length})</span></h3>
+      <h3 style="color:${actionColor(action)}">${actionLabel(action)} <span class="ic-count">(${group.length}${advisoryCountSuffix(group, portfolio)})</span></h3>
       <ul class="ic-action-list">
 ${items}
       </ul>
@@ -282,6 +314,13 @@ ${items}
   </section>`;
 }
 
+/** ", N advisory" for a group of verdicts, omitted when the whole memo is already advisory. */
+function advisoryCountSuffix(group: readonly AllocationVerdict[], portfolio: PortfolioAllocation): string {
+  if (portfolio.advisoryOnly) return '';
+  const n = group.filter((v) => v.advisoryOnly).length;
+  return n > 0 ? `, ${int(n)} advisory` : '';
+}
+
 function renderPipeline(portfolio: PortfolioAllocation): string {
   if (portfolio.pipeline.length === 0) {
     return `
@@ -291,6 +330,9 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
   </section>`;
   }
 
+  // Ruling 2026-11-13: eligibility is decided in part by the unratified composite floor.
+  const floorAdvisory = portfolio.dataQuality.some((f) => f.field === BUY_FLOOR_ADVISORY_FIELD);
+  const floorNote = floorAdvisory ? ' (advisory: composite floor unratified)' : '';
   const rows = portfolio.pipeline
     .map((p) => {
       const addr = p.address ? esc(p.address) : DASH;
@@ -304,11 +346,11 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       const verdict = p.verdict ? esc(p.verdict) : DASH;
       const open = p.openItems ?? [];
       const eligible =
-        p.buyEligible !== true
+        (p.buyEligible !== true
           ? 'Not eligible'
           : open.length > 0
             ? `BUY with open items: ${esc(open.join('; '))}` // refute round 2 T2 — never silent
-            : 'Eligible';
+            : 'Eligible') + floorNote;
       return `        <tr class="ic-row">
           <td class="ic-name">${addr}</td>
           <td>${mkt}</td>
@@ -350,7 +392,10 @@ function renderMethodology(portfolio: PortfolioAllocation): string {
       <strong>Improve</strong> (value-add capex / leasing push), <strong>Hold</strong> (no action),
       <strong>Refinance</strong> (debt restructure), or <strong>Sell</strong> (disposition).
       Verdicts are driven by expected unlevered IRR vs the ${esc(hurdlePct)} hurdle rate
-      (${portfolio.advisoryOnly ? 'advisory only — pending IC ratification' : 'ratified by the Investment Committee'}),
+      (${portfolio.advisoryOnly ? 'advisory only — pending IC ratification' : 'ratified by the Investment Committee'}${
+        // Keyed off the engine's flag, never hard-coded: once the projection is ratified the clause goes.
+        portfolio.verdicts.some(projectionAdvisory) ? '; the IRR projection assumptions are not ratified, so a hurdle mark carrying * is advisory' : ''
+      }),
       alongside debt signal, health band, attention band, and leasing forecast inputs.
     </p>
     <p>
