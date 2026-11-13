@@ -16,7 +16,7 @@ import { AcquisitionInput, ReplacementCostTable } from '@contracts/acquisition';
 import { buildInput, dealToForm, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
 
 const RULESET = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-const RCT = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+const RCT = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')));
 const SP = RULESET.gates.sizePrice;
 const NOW = '2026-11-09T00:00:00Z';
 

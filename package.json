@@ -20,7 +20,7 @@
     "extract": "tsx scripts/extract-workbook.ts",
     "bake": "tsx scripts/bake-mirror.ts",
     "index:docs": "tsx scripts/index-docs.ts",
-    "build:mirror": "npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts",
+    "build:mirror": "npm run check:rct-pin && npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts",
     "deploy:mirror": "tsx scripts/scan-mirror-dist.ts --precheck-redacted-only && npm run build:mirror && wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
     "reconcile:snapshot": "tsx scripts/reconcile-snapshot.ts",
@@ -61,6 +61,7 @@
     "golden:ratify": "tsx scripts/ratify-golden.ts",
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
+    "check:rct-pin": "tsx scripts/check-rct-pin.ts",
     "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:css-tokens && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
     "gate:ci": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:css-tokens && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run build && npm run check:bundle"
   },

@@ -19,9 +19,19 @@ type Json = Record<string, unknown>;
 const ratifiedRulesetObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 ) as Json;
-const rctObj = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
+// The ratified RCT is local-only (docs/ops/rct-runtime-config.md). The bundled import resolves to the committed
+// synthetic stand-in under vitest (vitest.config.ts alias), and the edge refuses that stand-in at module init. These
+// tests therefore bundle a COPY with the synthetic marker removed: invented figures standing in for a ratified table.
+vi.mock('../../config/replacement-cost.v3.json', async () => {
+  const { readFileSync: read } = await import('node:fs');
+  const raw = JSON.parse(read(`${process.cwd()}/fixtures/synthetic/config/replacement-cost.v3.json`, 'utf8')) as Record<string, unknown>;
+  delete raw._synthetic;
+  return { default: raw };
+});
+const syntheticRaw = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8'),
 ) as Json;
+const rctObj: Json = (() => { const j = structuredClone(syntheticRaw); delete j._synthetic; return j; })();
 
 /** Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`). */
 function ruleVariant(mutate: (j: Json) => void): Json {
@@ -60,7 +70,7 @@ function postCtx(body: unknown): { request: Request } {
 const stripScoredAt = (s: Record<string, unknown>): Record<string, unknown> => ({ ...s, scoredAt: undefined });
 
 describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConfig)', () => {
-  it('accepts the real ratified config', () => {
+  it('accepts a ratified, signed, plausible config', () => {
     const cfg = resolveAcquisitionConfig(ratifiedRulesetObj, rctObj);
     expect(cfg.ruleset.ratification).toBe('ratified');
   });
@@ -80,6 +90,14 @@ describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConf
   });
   it('THROWS on a non-ratified RCT', () => {
     expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, { ...rctObj, ratification: 'proposed' })).toThrow(/not 'ratified'/);
+  });
+  it('THROWS on the synthetic test stand-in (a bundle built without the local ratified table never scores)', () => {
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, syntheticRaw)).toThrow(/synthetic/);
+  });
+  it('THROWS on an implausible RCT (a $/SF typed in thousands)', () => {
+    const j = structuredClone(rctObj);
+    (j.psf as Json).low = 0.25;
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/plausible/);
   });
 });
 

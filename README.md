@@ -147,7 +147,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 | [`functions/`](functions/) | Cloudflare Pages Functions: `api/ai.ts`, `api/whoami.ts`, `api/warehouse/acquisition/score.ts`, shared Access JWT verification in `_shared/` |
 | [`scripts/`](scripts/) | Extraction, reconciliation, warehouse backfill/verify/drift/backup, importers, mirror bake and deploy, governance and drift gates, git-hook installers, Windows scheduled-task registration and their PowerShell smoke tests |
 | [`architecture/`](architecture/) | Architecture-lock docs plus `ownership.json` / `status.json`, enforced by `scripts/governance-check.ts` |
-| [`config/`](config/) | Ratified, versioned rule files (acquisition ruleset, replacement cost, liquidity policy, lease-market) |
+| [`config/`](config/) | Ratified, versioned rule files (acquisition ruleset, liquidity policy, lease-market). The replacement-cost table (`replacement-cost.v3.json`) is local-only and gitignored, pinned by keyed HMAC: [docs/ops/rct-runtime-config.md](docs/ops/rct-runtime-config.md) |
 | [`tests/`](tests/) | `unit/` (580+ Vitest test files), `e2e/` (Playwright smoke + axe a11y), `py/`, `fixtures/`, `support/` |
 | [`docs/`](docs/) | `adr/`, `constitution/`, `diagrams/`, `ops/` runbooks, `roadmap/`, `scheduled-tasks/`, `superpowers/` specs and plans, design notes |
 | [`.claude/`](.claude/) | Agent guardrails: PreToolUse hooks (see [`.claude/hooks/README.md`](.claude/hooks/README.md)) and the `refute-financial-change` workflow |
@@ -236,6 +236,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | `check:schema-drift` | Cross-checks migration columns, Zod write schemas and bound INSERT/UPDATE arguments |
 | `check:bundle` | Bundle budget: entry < 250 kB gzip, lazy chunks < 60 kB gzip |
 | `check:refute` | Financial-decision commits must carry a `Refute-Reviewed:` / `Refute-Skip:` trailer (`--strict` in CI) |
+| `check:rct-pin` | The local replacement-cost table is the pinned ratified table (needs `RCT_PIN_KEY`); `-- --print` prints the pin for re-ratification |
 | `generate:confidential-scan-types` | Generates the gitignored `.d.mts` for the pre-push confidentiality scan |
 | `hooks:install` | Installs the `pre-push` and `commit-msg` git hooks (also run by `prepare`) |
 
@@ -278,7 +279,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | Script | Purpose |
 |---|---|
 | `bake` | Bake `public/snapshot.json` + `public/macro.json` (redacted by default) |
-| `build:mirror` | `bake`, `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
+| `build:mirror` | `check:rct-pin`, `bake`, `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
 | `deploy:mirror` | Manual, REDACTED-only `wrangler pages deploy`: refuses if a FULL-mode variable is set; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
 | `worktree -- <add\|remove\|prune>` | Junction-safe worktree management (`scripts/safe-worktree.ts`) |
 

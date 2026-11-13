@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import type * as AcquisitionModule from '../../server/warehouse/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const ACQ_MODULE = '../../server/warehouse/acquisition';
 
@@ -48,7 +49,15 @@ async function loadApp(
   mode: 'real' | 'ratified-missing-no-fallback' | 'ratified-missing-fallback-present',
 ) {
   vi.resetModules();
-  if (mode !== 'real') {
+  if (mode === 'real') {
+    // 'real' = the production loaders, on the committed synthetic RCT (the ratified table is local-only;
+    // tests/support/rct-loader.ts). Re-registered here because afterEach's doUnmock drops the suite-wide mock.
+    vi.doMock(ACQ_MODULE, async () => {
+      const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
+      const { syntheticRctLoader } = await import('../support/rct-loader');
+      return { ...actual, loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct) };
+    });
+  } else {
     vi.doMock(ACQ_MODULE, async () => {
       const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
       const missing = () => { throw new Error('ENOENT: simulated missing ratified config'); };
@@ -61,7 +70,7 @@ async function loadApp(
         loadRuleset: mode === 'ratified-missing-fallback-present'
           ? () => actual.loadRatifiedRuleset()
           : missing,
-        loadReplacementCostTable: () => actual.loadRatifiedRct(),
+        loadReplacementCostTable: () => loadTestRct(),
       };
     });
   }
@@ -220,8 +229,10 @@ describe('POST /acq/score/:candidateId', () => {
     let calls = 0;
     vi.doMock(ACQ_MODULE, async () => {
       const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
+      const { syntheticRctLoader } = await import('../support/rct-loader');
       return {
         ...actual,
+        loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct),
         loadRatifiedRuleset: () => {
           calls += 1;
           if (calls === 1) throw new Error('EBUSY: transient OneDrive lock');

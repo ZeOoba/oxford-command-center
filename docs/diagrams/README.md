@@ -110,7 +110,7 @@ flowchart LR
         MET["metrics / growth / drivers /<br/>anomalies / benchmarks / scores"]
         DEBT["debt-scoring"]
         CAP["capital-allocation<br/>(5-way verdict; hurdle from capital_config)"]
-        ACQE["acq-engine + acquisition scoring<br/>(config/acquisition-ruleset.v1.json, replacement-cost.v3.json)"]
+        ACQE["acq-engine + acquisition scoring<br/>(config/acquisition-ruleset.v1.json, local-only replacement-cost.v3.json)"]
         INS["insurance / tax analysis"]
         LMC["lease-market compute"]
         CAL["calibration"]

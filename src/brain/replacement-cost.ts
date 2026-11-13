@@ -20,13 +20,9 @@ import {
  * Cost Table (RCT v03)". If this table and that one ever disagree, THAT ONE WINS and
  * this is the bug.
  *
- * Built from a primary source; each step is auditable:
- *   POINT = C&W hard cost (small tier) × shallow-bay size premium × soft/profit/fin × escalation
- *     1. C&W 2025 Industrial Construction Cost Guide, small tier (109,200 rsf)  [SOURCED]
- *     2. shallow-bay premium ~+43% at 40K SF, from C&W's OWN size curve         [SOURCED]
- *     3. soft + developer profit + financing  ×1.30                             [EST]
- *     4. escalation ×1.0487 (Turner BCI, lowest of three indices)               [SOURCED]
- *     5. band ±10%  ⇒  LOW = 0.90 × POINT
+ * Built from a primary source, each step auditable: POINT = C&W hard cost (small tier) × shallow-bay size premium ×
+ * soft/profit/financing × escalation, with LOW and HIGH a fixed band around POINT. The factors are part of the ratified
+ * table, which is local-only (docs/ops/rct-runtime-config.md); the derivation is in the skill's RCT section.
  *
  * WHY THE FLAT $125–150 WAS WRONG, not merely imprecise: it had no per-market variation
  * at all, and it sat at roughly HALF true all-in shallow-bay replacement cost. An
@@ -78,7 +74,19 @@ export function rctFromConfig(cfg: unknown): Readonly<Partial<Record<Market, Rct
 
 /** Keyed by the `Market` enum. The enum also carries 'Toledo OH' / 'Cleveland MSA' / 'Other' / 'Unknown', which have no
  *  RCT row and are NOT priced — we do not invent a denominator. See `marketCovered`. */
-export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = rctFromConfig(rctJson);
+/**
+ * The bundled table. The ratified RCT is local-only (gitignored; docs/ops/rct-runtime-config.md), so a bundle built on a
+ * checkout without it carries the committed synthetic stand-in (`_synthetic: true`, invented figures). A PRODUCTION
+ * build refuses that stand-in, so the drawer prices nothing rather than invented numbers; tests and dev keep it. The
+ * mirror build also verifies the keyed-HMAC pin of the real file before bundling (scripts/check-rct-pin.ts).
+ */
+export function bundledRct(raw: unknown, production: boolean): unknown {
+  const synthetic = typeof raw === 'object' && raw !== null && (raw as Record<string, unknown>)['_synthetic'] === true;
+  return production && synthetic ? null : raw;
+}
+const RCT_BUNDLED: unknown = bundledRct(rctJson, (import.meta as { env?: { PROD?: boolean } }).env?.PROD === true);
+
+export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = rctFromConfig(RCT_BUNDLED);
 
 /** The engine's conservative firm-wide fallback band (config `psf`: the cheapest market, the strictest floor), under the
  *  same version/ratified/signed gate; null when the config does not carry a finite, positive band. */
@@ -90,7 +98,7 @@ export function fallbackFromConfig(cfg: unknown): RctEntry | null {
   return { low: p.low, point: p.mid, high: p.high, cwHardPsf: Number.NaN, proxy: false };
 }
 
-export const RCT_FALLBACK: RctEntry | null = fallbackFromConfig(rctJson);
+export const RCT_FALLBACK: RctEntry | null = fallbackFromConfig(RCT_BUNDLED);
 
 export interface RctSchedule { constructionMultipliers: ConstructionSchedule; adders: AdderSchedule }
 
@@ -124,7 +132,7 @@ export function scheduleFromConfig(cfg: unknown): RctSchedule | null {
   };
 }
 
-export const RCT_SCHEDULE: RctSchedule | null = scheduleFromConfig(rctJson);
+export const RCT_SCHEDULE: RctSchedule | null = scheduleFromConfig(RCT_BUNDLED);
 
 /**
  * Basis is ALL-IN: price + 2% closing + CapEx + lease-up carry (SKILL.md STAGE 1). The drawer adds CapEx and carry
@@ -212,7 +220,7 @@ export interface ReplacementCostAnalysis {
   estPrice: number | null;
   /** (price × 1.02 + CapEx + carry) ÷ SF — the all-in basis the floor is tested against (CapEx/carry only when known). */
   basisPsf: number | null;
-  /** Construction-type multiplier applied to POINT (SKILL.md v4.37), and its screen citation ("PEMB ×0.90"). */
+  /** Construction-type multiplier applied to POINT (SKILL.md v4.37), and its screen citation ("PEMB ×<multiplier>"). */
   multiplier: number | null;
   multiplierLabel: string | null;
   /** True when the type was unknown / mixed and the strictest applicable multiplier was assumed. */

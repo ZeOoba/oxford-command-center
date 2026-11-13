@@ -16,17 +16,17 @@ import { describe, expect, it } from 'vitest';
 import { AcquisitionInput } from '@contracts/acquisition';
 import {
   computeInputsVersion,
-  loadRatifiedRct,
   parseRuleset,
   scoreAcquisition,
 } from '../../server/warehouse/acquisition';
 import { governorFingerprint, loadGovernors } from '../../server/warehouse/acq-engine';
 import { openWarehouse } from '../../server/warehouse/db';
+import { loadTestRct } from '../support/rct';
 
 const ratified = parseRuleset(
   JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')),
 );
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 const NOW = '2026-06-13T00:00:00Z';
 
 /** Frozen synthetic deal (same shape as acquisition.test.ts STRONG_BASE). Do NOT edit without re-pinning. */

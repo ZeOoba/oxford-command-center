@@ -6,7 +6,8 @@
 // unavailability semantics (503 / non-JSON mirror → typed AcquisitionEngineUnavailable).
 import type { AcquisitionInput, AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
-import { RCT_V03 } from '../../brain/replacement-cost';
+import { RCT_SCHEDULE, RCT_V03 } from '../../brain/replacement-cost';
+import type { RctAdderId } from '../../lib/rct-adjust';
 import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 export class AcquisitionEngineUnavailable extends Error {
@@ -61,13 +62,22 @@ const CLUSTER_TIERS = [
   { value: 'owned-submarket', label: 'ORA-owned submarket' }, { value: 'established', label: 'Established cluster' },
   { value: 'entry', label: 'Entry cluster' }, { value: 'satellite', label: 'Satellite (≤30 min)' }, { value: 'none', label: 'Outside clusters' },
 ];
-// SKILL.md v4.37 Construction-Type Multiplier Schedule. Unknown prices at the strictest multiplier (PEMB, capped ×0.90).
+// SKILL.md v4.37 Construction-Type Multiplier Schedule. Unknown prices at the strictest multiplier (PEMB, capped). The
+// figures in the labels come from the bundled ratified table (RCT_SCHEDULE), never literals: the table is local-only and
+// this repo is public (docs/ops/rct-runtime-config.md). With no ratified schedule the labels carry no figure.
+const SCHED = RCT_SCHEDULE;
+const times = (v: number | undefined): string => (v === undefined ? '' : ` (×${v.toFixed(2)})`);
+const pembRange = SCHED === null ? '' : ` (×${SCHED.constructionMultipliers.pemb.under20k.toFixed(2)}–${SCHED.constructionMultipliers.pemb.upTo50k.toFixed(2)} by SF)`;
 const CONSTRUCTION = [
-  { value: 'tilt-precast', label: 'Tilt-up / precast (×1.00)' }, { value: 'cmu', label: 'CMU / block (×0.97)' },
-  { value: 'brick', label: 'Brick / brick-on-block (×1.10)' }, { value: 'hybrid', label: 'Hybrid: block + metal on PEMB (×0.93)' },
-  { value: 'pemb', label: 'PEMB / metal panel (×0.88–0.92 by SF)' }, { value: 'mixed', label: 'Mixed façade (strictest)' },
+  { value: 'tilt-precast', label: `Tilt-up / precast${times(SCHED?.constructionMultipliers['tilt-precast'])}` },
+  { value: 'cmu', label: `CMU / block${times(SCHED?.constructionMultipliers.cmu)}` },
+  { value: 'brick', label: `Brick / brick-on-block${times(SCHED?.constructionMultipliers.brick)}` },
+  { value: 'hybrid', label: `Hybrid: block + metal on PEMB${times(SCHED?.constructionMultipliers.hybrid)}` },
+  { value: 'pemb', label: `PEMB / metal panel${pembRange}` }, { value: 'mixed', label: 'Mixed façade (strictest)' },
   { value: 'unknown', label: 'Unknown (strictest)' },
 ];
+const adderLabel = (id: RctAdderId, text: string): string =>
+  `RCT adder: ${text}${SCHED === null ? '' : ` (+$${SCHED.adders[id]})`}`;
 /** Form keys `adder:<id>` assemble into AcquisitionInput.rctAdders (checkboxes; only a ticked adder is applied). */
 const ADDER_PREFIX = 'adder:';
 const CONFIDENCE = ['confirmed', 'estimated', 'derived'].map((v) => ({ value: v, label: v }));
@@ -95,12 +105,12 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     { key: 'driveInCount', label: 'Drive-in count', kind: 'num' },
     { key: 'truckCourtFt', label: 'Truck court (ft)', kind: 'num' },
     { key: 'constructionType', label: 'Construction', kind: 'select', options: CONSTRUCTION, hint: 'sets the RCT multiplier' },
-    { key: 'adder:heavy-office', label: 'RCT adder: office > 30% (+$15)', kind: 'ddbool' },
-    { key: 'adder:climate-controlled', label: 'RCT adder: climate-controlled (+$12)', kind: 'ddbool' },
-    { key: 'adder:cranes', label: 'RCT adder: cranes (+$18)', kind: 'ddbool' },
-    { key: 'adder:esfr', label: 'RCT adder: ESFR (+$4)', kind: 'ddbool' },
-    { key: 'adder:excess-site-work', label: 'RCT adder: excess site work (+$8)', kind: 'ddbool' },
-    { key: 'adder:paving-lighting', label: 'RCT adder: paving/lot lighting (+$8)', kind: 'ddbool', hint: 'not with site work for the same paving' },
+    { key: 'adder:heavy-office', label: adderLabel('heavy-office', 'office > 30%'), kind: 'ddbool' },
+    { key: 'adder:climate-controlled', label: adderLabel('climate-controlled', 'climate-controlled'), kind: 'ddbool' },
+    { key: 'adder:cranes', label: adderLabel('cranes', 'cranes'), kind: 'ddbool' },
+    { key: 'adder:esfr', label: adderLabel('esfr', 'ESFR'), kind: 'ddbool' },
+    { key: 'adder:excess-site-work', label: adderLabel('excess-site-work', 'excess site work'), kind: 'ddbool' },
+    { key: 'adder:paving-lighting', label: adderLabel('paving-lighting', 'paving/lot lighting'), kind: 'ddbool', hint: 'not with site work for the same paving' },
     { key: 'yearBuilt', label: 'Year built', kind: 'num' },
     { key: 'sfhaOnPad', label: 'SFHA flood on pad', kind: 'tribool' },
   ] },

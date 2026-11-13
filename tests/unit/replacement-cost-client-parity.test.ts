@@ -13,7 +13,7 @@ import { RCT_V03 } from '../../src/brain/replacement-cost';
  */
 describe('RCT client/server parity (OI-354)', () => {
   const serverConfig = JSON.parse(
-    readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
+    readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8'),
   ) as { markets: Record<string, { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean }> };
 
   it('client RCT_V03 has no market absent from the server config', () => {

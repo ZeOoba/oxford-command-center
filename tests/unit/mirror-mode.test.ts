@@ -115,7 +115,8 @@ describe('the manual deploy path and the template', () => {
 
   it('deploy:mirror prechecks REDACTED-only before it builds, and build:mirror scans dist/ after the build', () => {
     expect(pkg.scripts['deploy:mirror']).toMatch(/^tsx scripts\/scan-mirror-dist\.ts --precheck-redacted-only && npm run build:mirror && /);
-    expect(pkg.scripts['build:mirror']).toBe('npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts');
+    // check:rct-pin first: the bundled RCT must be the pinned ratified table before anything is built (docs/ops/rct-runtime-config.md).
+    expect(pkg.scripts['build:mirror']).toBe('npm run check:rct-pin && npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts');
   });
 
   it('env.example no longer offers MIRROR_INCLUDE_CONFIDENTIAL as a .env setting', () => {
