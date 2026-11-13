@@ -55,7 +55,8 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     expect(WRAPPER).not.toMatch(/command -v/);
     expect(WRAPPER).toContain('safe_exe "$c" | while IFS= read -r cand; do');
     expect(WRAPPER).toContain('node_bin="$(safe_exe node | head -n 1)"');
-    expect(WRAPPER).toMatch(/case "\$_d" in \/\*\) ;; \*\) continue ;; esac/);
+    expect(WRAPPER).toContain('d !~ /^\\// { next }');
+    expect(WRAPPER).toContain('index(l, r) == 1 || index(l, c) == 1 { next }');
     const code = WRAPPER.split('\n').filter((l) => !l.startsWith('#')).join('\n');
     expect(code).not.toMatch(/(^|[|;&]\s*)node /m);
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeGreaterThan(-1);

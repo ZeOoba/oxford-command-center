@@ -59,30 +59,35 @@ export NoDefaultCurrentDirectoryInExePath
 root="$(git rev-parse --show-toplevel)"
 refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
 scan_js="$root/scripts/prepush-confidential-scan.mjs"
-# safe_exe NAME: every absolute PATH hit for NAME (or NAME.exe), one per line. Like the scanner's
-# resolveOnPath: empty, '.' and relative entries are skipped, and so is any directory inside the
-# worktree or the current directory (compared physically, case-insensitively), so an untracked
-# python.exe / node.exe in the worktree root can never stand in for the real interpreter.
-lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
-root_p="$(lc "$(cd -P -- "$root" 2>/dev/null && pwd -P)")"
-cwd_p="$(lc "$(pwd -P)")"
+# safe_dirs: the PATH entries an interpreter may come from, one per line, computed ONCE by a single
+# awk (a fork per entry made every push take ~30 s on Windows). Like the scanner's resolveOnPath:
+# kept are absolute entries with no '.' or '..' segment that are not the worktree root, the current
+# directory or inside either (case-insensitive); empty, '.', relative and non-canonical entries are
+# dropped. So an untracked python.exe / node.exe in the worktree root can never stand in for the real
+# interpreter (refute run wf_954ebd83-729).
+root_p="$(cd -P -- "$root" 2>/dev/null && pwd -P)"
+safe_dirs="$(printf '%s' "$PATH" | awk -v r="$root_p" -v c="$(pwd -P)" 'BEGIN { RS = ":"; r = tolower(r) "/"; c = tolower(c) "/" }
+  { d = $0; sub(/\\n$/, "", d) }
+  d !~ /^\\// { next }
+  ("/" d "/") ~ /\\/\\.\\.?\\// { next }
+  { l = tolower(d); sub(/\\/+$/, "", l); l = l "/" }
+  index(l, r) == 1 || index(l, c) == 1 { next }
+  { print d }')"
+# safe_exe NAME: every hit for NAME (or NAME.exe) in safe_dirs, one per line (shell built-ins only).
 safe_exe() {
-  set -f
   _ifs=$IFS
-  IFS=:
-  for _d in $PATH; do
-    case "$_d" in /*) ;; *) continue ;; esac
-    _dp="$(cd -P -- "$_d" 2>/dev/null && pwd -P)" || continue
-    _dl="$(lc "$_dp")"
-    case "$_dl/" in "$root_p/"*|"$cwd_p/"*) continue ;; esac
-    for _f in "$_dp/$1" "$_dp/$1.exe"; do
+  IFS='
+'
+  set -f
+  for _d in $safe_dirs; do
+    for _f in "$_d/$1" "$_d/$1.exe"; do
       if { [ -f "$_f" ] || [ -L "$_f" ]; } && [ ! -d "$_f" ]; then
         printf '%s\\n' "$_f"
       fi
     done
   done
-  IFS=$_ifs
   set +f
+  IFS=$_ifs
 }
 node_bin="$(safe_exe node | head -n 1)"
 if [ -z "$node_bin" ]; then
