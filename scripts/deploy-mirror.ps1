@@ -68,6 +68,23 @@ param(
   [switch]$IncludeWarehouse
 )
 
+# PRIORITY RAISE -- first statement, before anything slow. Task Scheduler's default Priority 7 runs
+# this process below-normal (CPU) with very-low I/O and memory priority; under sustained
+# normal-priority load on 2026-11-13 the 11:00 and 12:00 runs took 9 and 15 minutes just to reach
+# their beacon and were killed at the 30-minute limit. register-mirror-task.ps1 now registers
+# Priority 5, but a task registered by an older script, or a manual launch from a low-priority
+# shell, would still start starved: raise the CPU class to Normal here so every later step and every
+# child (git, npm ci, node, vite, wrangler -- they inherit it) runs at Normal. Only ever RAISES
+# (Idle/BelowNormal -> Normal), never lowers a higher class, and never fails the run.
+& {
+  try {
+    $selfProc = Get-Process -Id $PID -ErrorAction Stop
+    if ($selfProc.PriorityClass -in @([System.Diagnostics.ProcessPriorityClass]::Idle, [System.Diagnostics.ProcessPriorityClass]::BelowNormal)) {
+      $selfProc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Normal
+    }
+  } catch { }
+}
+
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
