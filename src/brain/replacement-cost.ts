@@ -48,7 +48,9 @@ export interface RctEntry {
  * denominator: RCT v03. If you find a second, it is a bug"). It used to be a hand-maintained copy of that file
  * (OI-354 caught it covering 4 of 9 markets; the 2026-11-08 audit caught the copy as a drift risk), so it is now read
  * from the config instead of re-typed. Mirrors the server's rule: an RCT that is not ratified AND signed prices nothing.
- * `tests/unit/replacement-cost-ruleset-source.test.ts` pins the values to the pre-change table (no value moved).
+ * `tests/unit/replacement-cost-ruleset-source.test.ts` proves the drawer reads the config verbatim (on the synthetic
+ * stand-in). The values themselves are guarded by the keyed-HMAC pin (server/warehouse/rct-pin.ts;
+ * docs/ops/rct-runtime-config.md), because the ratified table is local-only.
  */
 export function rctFromConfig(cfg: unknown): Readonly<Partial<Record<Market, RctEntry>>> {
   const out: Partial<Record<Market, RctEntry>> = {};
