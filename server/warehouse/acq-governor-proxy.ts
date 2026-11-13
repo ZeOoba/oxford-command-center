@@ -16,9 +16,9 @@
 //   DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) ≥ dscrFloor.
 //               Null when stabilizedYoc is absent (indeterminate ⇒ no demotion).
 //               LIVE STATUS: currently inert under the ratified ruleset (v1). The engine's own
-//               stabilizedYocFloorPct (8%) hard-kills any deal below 8% YOC, while the proxy
-//               threshold is 4.25% (1.25 × 0.40 × 0.085). The proxy-fail zone [0, 4.25%) ⊂ the
-//               engine-kill zone [0, 8%), so DSCR demotion cannot change a non-KILLED verdict
+//               stabilizedYocFloorPct (8%) hard-kills any deal at or below 8% YOC (strict since ruleset
+//               2.0.0), while the proxy threshold is 4.25% (1.25 × 0.40 × 0.085). The proxy-fail zone
+//               [0, 4.25%) ⊂ the engine-kill zone [0, 8%], so DSCR demotion cannot change a non-KILLED verdict
 //               under the current ruleset. This module is the FORWARD SLOT: if the YoC floor is
 //               relaxed or dscrFloor is raised (≥ 2.0 activates the proxy), it will work correctly
 //               without code changes. Tests pin this module's contract in isolation.

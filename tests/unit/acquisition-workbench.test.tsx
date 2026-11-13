@@ -13,7 +13,7 @@ import { AcquisitionWorkbench } from '../../src/modules/acquisitions/Acquisition
 import { AcquisitionEngineUnavailable } from '../../src/modules/acquisitions/acquisition-score';
 
 const mockScore: AcquisitionScore = {
-  schemaVersion: '1.0.0', inputsVersion: 'abc1234567890def', rulesetVersion: '1.1.0', ratification: 'ratified',
+  schemaVersion: '1.0.0', inputsVersion: 'abc1234567890def', rulesetVersion: '2.0.0', ratification: 'ratified',
   scoredAt: '2026-06-14T00:00:00Z', dealId: 'workbench', isVacant: false,
   gates: [
     { id: 'product', passed: true, detail: 'shallow-bay-multi OK' },

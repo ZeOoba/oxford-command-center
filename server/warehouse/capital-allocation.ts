@@ -829,13 +829,14 @@ function loadPipelineCandidates(db: WarehouseDb): {
 
     // score_json is the authoritative AcquisitionScore (007 migration). Parse it with the contract
     // schema (audit 2026-10-13 G2) — never by poking at keys the type does not have. The basis
-    // discount and levered IRR are the `actual` of its floors[] entries ('basis' / 'irr').
+    // discount and the 10-yr unlevered IRR are the `actual` of its floors[] entries ('basis' / 'irr').
+    // Ruleset 2.0.0: the 'irr' floor is UNLEVERED (SKILL.md v4.45); levered IRR is reported only and never gates BUY.
     const score = parseAcquisitionScore(scoreRow?.score_json ?? null);
     const basisFloor = score?.floors.find((f) => f.id === 'basis') ?? null;
     const irrFloor = score?.floors.find((f) => f.id === 'irr') ?? null;
     const yieldFloor = score?.floors.find((f) => f.id === 'yield') ?? null;
     const basisDiscountPct = finiteOrNull(basisFloor?.actual);
-    const leveredIrr = finiteOrNull(irrFloor?.actual);
+    const unleveredIrr10yr = finiteOrNull(irrFloor?.actual);
 
     // #463 governor-regime stamp — kept as its OWN BUY condition (Option A, strictest wins): a
     // latest score whose score_json.governorRegime is missing, malformed or differs from the CURRENT
@@ -903,10 +904,10 @@ function loadPipelineCandidates(db: WarehouseDb): {
       // WATCH in the engine but must never reach BUY.
       yieldFloor?.passed !== true ||
       finiteOrNull(yieldFloor.actual) === null ||
-      // Same rule for the levered-IRR floor (refute round 2 T1): an unknown IRR caps at WATCH in
-      // the engine while a known failing IRR is KILLED, so null must not reach BUY.
+      // Same rule for the IRR floor (refute round 2 T1; 10-yr unlevered since ruleset 2.0.0): an
+      // unknown IRR caps at WATCH in the engine while a known failing IRR is KILLED, so null must not reach BUY.
       irrFloor?.passed !== true ||
-      leveredIrr === null
+      unleveredIrr10yr === null
     ) {
       buyIneligible.add(c.id);
     }
@@ -922,7 +923,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
           : null,
       composite: scoreRow?.composite ?? null,
       tier,
-      leveredIrr,
+      unleveredIrr10yr,
       basisDiscountPct,
       verdict: verdictOf(scoreRow?.verdict ?? null),
       openItems: capReasonsOf(score),

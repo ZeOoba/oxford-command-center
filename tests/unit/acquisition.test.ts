@@ -55,7 +55,7 @@ const STRONG_BASE: Record<string, unknown> = {
   // no automotive / child-related use. Unknown values now cap at T2, so a "fully-known" deal must carry them.
   groundLeased: false, envRemediationPctOfPrice: 0,
   use: { automotive: false, childRelated: false, childSafetyReviewed: false },
-  allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5,
+  allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket',
   sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5,

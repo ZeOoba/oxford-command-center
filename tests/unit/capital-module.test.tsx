@@ -464,7 +464,7 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
       portfolio: {
         ...base.portfolio,
         pipeline: [
-          { candidateId: 'cand-1', address: '500 Commerce Dr', market: null, composite: 81.4, tier: 'T1', leveredIrr: 0.153, basisDiscountPct: 0.12 },
+          { candidateId: 'cand-1', address: '500 Commerce Dr', market: null, composite: 81.4, tier: 'T1', unleveredIrr10yr: 0.153, basisDiscountPct: 0.12 },
         ],
       },
     });
@@ -509,7 +509,7 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
       portfolio: {
         ...base.portfolio,
         pipeline: [
-          { candidateId: 'cand-legacy', address: '9 Legacy Rd', market: null, composite: 92, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.7, verdict: 'PASS', buyEligible: false },
+          { candidateId: 'cand-legacy', address: '9 Legacy Rd', market: null, composite: 92, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'PASS', buyEligible: false },
         ],
         buyGate: { staleScores: 1, unparseableScores: 0, regimeUnavailable: false, suppressedNote: 'BUY suppressed: 1 stale score excluded' },
       },
@@ -529,7 +529,7 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
       portfolio: {
         ...base.portfolio,
         pipeline: [
-          { candidateId: 'cand-open', address: '7 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', buyEligible: true, openItems: ['Stage-0 gate input unconfirmed — confirm before LOI'] },
+          { candidateId: 'cand-open', address: '7 Open Ln', market: null, composite: 80.6, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', buyEligible: true, openItems: ['Stage-0 gate input unconfirmed — confirm before LOI'] },
         ],
       },
     });

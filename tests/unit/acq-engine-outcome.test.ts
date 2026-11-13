@@ -46,7 +46,7 @@ const STRONG_RAW: Record<string, unknown> = {
   constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
   allInBasis: 3_600_000,
   stabilizedYoc: 0.12,     // DSCR proxy: 0.12 / (0.40 × 0.085) = 3.53 ≥ 1.25 → clears; LTV indeterminate
-  leveredIrr: 0.18, underwriteHorizonYrs: 5,
+  leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },

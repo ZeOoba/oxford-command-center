@@ -40,7 +40,7 @@ const BASE: Record<string, unknown> = {
   multiStory: false, truckCourtFt: 120,
   constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
   allInBasis: 3_600_000,
-  leveredIrr: null, underwriteHorizonYrs: 5,
+  leveredIrr: null, unleveredIrr10yr: null, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },

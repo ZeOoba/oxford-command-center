@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
-export const RULESET_VERSION = '1.1.0' as const;
+export const RULESET_VERSION = '2.0.0' as const;
 
 /** Ratification provenance (mirrors intel-config / CAPITAL_CONFIG ratified-vs-proposed). */
 export const Ratification = z.enum(['ratified', 'proposed']);
@@ -123,7 +123,7 @@ export const AcquisitionRuleset = z.object({
   rulesetVersion: z.literal(RULESET_VERSION),
   ratification: Ratification,            // 'ratified' only after Gabriel signs the §7 decision list
   calibratedWith: z.string(),            // "Gabriel Goldberg 2026-06-09"
-  skillVersion: z.string(),              // "acquisition-underwriting v3.0"
+  skillVersion: z.string(),              // "acquisition-underwriting v4.45"
   sourceOfRecord: z.string(),            // SKILL.md path/citation
   ratifiedBy: z.string().nullable().default(null),   // who signed the ratification (Invariant 4 provenance)
   ratifiedDate: z.string().nullable().default(null), // ISO date of sign-off
@@ -161,9 +161,15 @@ export const AcquisitionRuleset = z.object({
     basisDiscountMinPreMillennium: z.number().min(0).max(1),  // floor at/below ramp start (stricter)
     basisVintageRampStartYear: z.number().int().default(1995),
     basisVintageCutoffYear: z.number().int(),
-    stabilizedYocFloorPct: z.number().min(0).max(1),
-    leveredIrrFloor5yr: z.number().min(0).max(1),
-    leveredIrrFloor10yr: z.number().min(0).max(1),
+    stabilizedYocFloorPct: z.number().min(0).max(1), // stabilized YoC must be STRICTLY above this (SKILL.md "YoC >8%")
+    // IRR floor (ruleset 2.0.0, Gabriel in-turn 2026-11-12; SKILL.md v4.45 STAGE 1, v4.33 + v4.40): 10-yr UNLEVERED
+    // IRR >= MAX(unleveredIrrFloorMin, UST + unleveredIrrUstSpread), + majorityVacantIrrPremium when MORE than
+    // majorityVacantSfShare of the SF is vacant at close. Replaces the retired levered 5-yr/10-yr floor — levered IRR
+    // is reported only. Deliberately above the 8% portfolio hurdle; never reconcile the two.
+    unleveredIrrFloorMin: z.number().gt(0).max(1),
+    unleveredIrrUstSpread: z.number().min(0).max(1),
+    majorityVacantIrrPremium: z.number().min(0).max(1),
+    majorityVacantSfShare: z.number().min(0).max(1),
   }),
 
   // STAGE 2 — 100-pt scorecard (SKILL.md:40–50). Base points MUST total 100.
@@ -299,6 +305,15 @@ export const AcquisitionInput = z.object({
    */
   market: z.string().nullable().default(null),
   stabilizedYoc: z.number().nullable().default(null),
+  // IRR floor inputs (ruleset 2.0.0). unleveredIrr10yr: all-cash 10-yr IRR, exit at the market exit cap; null =>
+  // the IRR floor is indeterminate (caps at T2). ust10yr: FRED DGS10 trailing 30-day average as a decimal (0.043 =
+  // 4.30%), with its as-of date; null => the floor is tested at unleveredIrrFloorMin and flagged [UST UNVERIFIED].
+  // vacantSfShareAtClose: share of SF vacant at close (0..1); null on a not-fully-vacant deal => no premium, flagged.
+  unleveredIrr10yr: z.number().nullable().default(null),
+  ust10yr: z.number().min(0).max(0.2).nullable().default(null),
+  ustAsOf: z.string().nullable().default(null),
+  vacantSfShareAtClose: z.number().min(0).max(1).nullable().default(null),
+  // REPORTED ONLY since ruleset 2.0.0 — the levered IRR floor is retired (SKILL.md v4.33). No floor reads these.
   leveredIrr: z.number().nullable().default(null),
   underwriteHorizonYrs: z.union([z.literal(5), z.literal(10)]).nullable().default(null),
 

@@ -113,7 +113,7 @@ describe('AcquisitionsModule — Phase 3 tab split', () => {
       latestScore: null, governorDscrCleared: null, governorLtvCleared: null, calibrationHitRate: null, scoredAt: null,
     }],
     calibrationSummary: { totalVerdicts: 0, resolvedVerdicts: 0, overallHitRate: null, wilsonLow: null, wilsonHigh: null },
-    advisoryOnly: false, rulesetVersion: '1.1.0', asOf: '2026-06-14T00:00:00Z',
+    advisoryOnly: false, rulesetVersion: '2.0.0', asOf: '2026-06-14T00:00:00Z',
   };
   function stubServingCandidate() {
     vi.stubGlobal('fetch', vi.fn(async (u: unknown) => {

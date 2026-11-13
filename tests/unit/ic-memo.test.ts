@@ -400,8 +400,8 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
   it('renders verdict and eligibility columns; a T1 row with verdict PASS reads Not eligible', () => {
     const html = buildIcMemoHtml(portfolio({
       pipeline: [
-        { candidateId: 'c-ok', address: '1 Good Way', market: null, composite: 80.6, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'PURSUE', buyEligible: true },
-        { candidateId: 'c-legacy', address: '2 Legacy Rd', market: null, composite: 92, tier: 'T1', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false },
+        { candidateId: 'c-ok', address: '1 Good Way', market: null, composite: 80.6, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PURSUE', buyEligible: true },
+        { candidateId: 'c-legacy', address: '2 Legacy Rd', market: null, composite: 92, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false },
       ],
     }));
     expect(html).toContain('<th class="ic-r">Verdict</th>');
@@ -418,7 +418,7 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
   it('an eligible row with open items reads "BUY with open items: ..." (refute round 2 T2)', () => {
     const html = buildIcMemoHtml(portfolio({
       pipeline: [
-        { candidateId: 'c-open', address: '3 Open Ln', market: null, composite: 80.6, tier: 'T2', leveredIrr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: true, openItems: ['DD-critical unresolved: roof'] },
+        { candidateId: 'c-open', address: '3 Open Ln', market: null, composite: 80.6, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: true, openItems: ['DD-critical unresolved: roof'] },
       ],
     }));
     const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
