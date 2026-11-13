@@ -55,8 +55,9 @@ export const WRAPPER = `#!/bin/sh
 # PATH is rebuilt FIRST, with shell built-ins only, before this hook runs any external command
 # (refute runs wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a). Kept: absolute entries with no
 # '.' or '..' segment that are neither the current directory (git runs this hook in the worktree
-# root) nor inside it; test -ef compares the directories themselves, so case variants and links
-# count. Dropped: empty, '.' and relative entries. So nothing untracked in the worktree (a planted
+# root) nor inside it. Each entry is resolved to its physical path (cd -P) before its parents are
+# compared with test -ef, so case variants, a link to the worktree and a link INTO one of its
+# subdirectories all count as inside. Dropped: empty, '.', relative and missing entries. So nothing untracked in the worktree (a planted
 # cat, head, grep, node, python, git) can stand in for a tool this hook or its children run.
 # Windows: children (node, python, git) must not search the current directory either.
 NoDefaultCurrentDirectoryInExePath=1
@@ -69,7 +70,12 @@ set -f
 for _d in $PATH; do
   case "$_d" in /*) ;; *) continue ;; esac
   case "$_d/" in */./*|*/../*) continue ;; esac
-  _p=$_d
+  # Walk the entry's PHYSICAL path: a junction or symlink outside the worktree that points INTO a
+  # subdirectory of it has no string prefix equal to the worktree (refute run wf_39e200e8-462).
+  # cd is a built-in, so no fork; an entry that cannot be entered is dropped.
+  cd -P -- "$_d" 2>/dev/null || continue
+  _p=$PWD
+  cd -P -- "$here" || exit 1
   _in=
   while [ -n "$_p" ]; do
     if [ "$_p" -ef "$here" ]; then _in=1; break; fi

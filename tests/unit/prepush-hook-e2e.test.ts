@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -381,6 +381,30 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
       expect(sb.remoteHas(leak)).toBe(false);
     });
   }
+
+  // wf_39e200e8-462 (medium, reproduced): a PATH entry OUTSIDE the worktree that is a junction /
+  // symlink to a worktree SUBDIRECTORY survived the string-prefix walk, so a node planted there ran
+  // as the scanner. Entries are now resolved physically (cd -P) before the walk.
+  it('a PATH link outside the worktree pointing into a worktree subdirectory cannot supply node', () => {
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    const bin = join(sb.work, 'bin');
+    mkdirSync(bin);
+    if (process.platform === 'win32') {
+      if (!trueExe) return;
+      copyFileSync(trueExe, join(bin, 'node.exe'));
+    } else {
+      writeFileSync(join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+    writeFileSync(join(sb.work, '.git', 'info', 'exclude'), 'scripts/\nbin/\n');
+    const link = join(sb.root, 'linkbin');
+    symlinkSync(bin, link, process.platform === 'win32' ? 'junction' : 'dir');
+    delete sb.env['NoDefaultCurrentDirectoryInExePath'];
+    const key = Object.keys(sb.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+    sb.env[key] = `${link}${process.platform === 'win32' ? ';' : ':'}${sb.env[key] ?? ''}`;
+    const r = sb.push('origin', 'main');
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
 
   it('a planted node in the worktree root with "." on PATH cannot stand in for the scanner', () => {
     if (!plantInRoot(sb, 'node')) return;
