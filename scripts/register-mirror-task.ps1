@@ -47,7 +47,12 @@ $action   = New-ScheduledTaskAction -Execute $pwsh -Argument (Get-MirrorTaskArgu
 # the machine on one and silently not on the other. Do not assume; read the live values with:
 #   powercfg /query SCHEME_CURRENT SUB_SLEEP BD3B718A-0680-4D9D-8AB2-E1D2B4AC806D
 # (0x0 = Disable, 0x1 = Enable, 0x2 = Important Wake Timers Only.)
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+# -Priority 5 (normal CPU, I/O and memory priority): the Task Scheduler default is 7 (below-normal
+# CPU, very-low I/O and memory priority), which starved this task whenever normal-priority work
+# saturated the laptop. On 2026-11-13 the 11:00 and 12:00 runs took 9 and 15 minutes just to reach
+# their first script line (PowerShellCore engine events: every phase ~100x slower; the same work
+# took 4 s at Normal vs 13-90 s at BelowNormal under 100% CPU) and were killed at the 30-minute limit.
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -Priority 5
 
 # Hourly all day + a guaranteed 06:45 brief trigger. The lastBriefDate gate makes the brief fire once/day.
 $hourly  = New-ScheduledTaskTrigger -Once -At 12:00am -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
