@@ -3,8 +3,12 @@
 // Audit 2026-11-08 client-basis-floor-engine-hardcodes-ruleset (Wave 1, batch A-1). The deal-drawer basis-floor engine
 // (src/brain/replacement-cost.ts) hardcoded the vintage ramp (65% at <=1995, 60% at >=2005) and a hand-copied RCT v03
 // table, so a ratified ruleset or RCT change would move the server engine's verdict and leave the drawer badge on the old
-// numbers. It now reads both from the ratified config files. MECHANISM ONLY: every value must stay identical, which the
-// frozen snapshot below (the literals the module carried before this change) proves.
+// numbers. It now reads both from the ratified config files. MECHANISM ONLY. The vintage ramp is still checked against
+// the prior hardcoded literals below. The RCT is local-only (docs/ops/rct-runtime-config.md), so these tests run on
+// the synthetic stand-in and prove only that the drawer reads the bundled config verbatim. They cannot detect a moved
+// RCT value. That guarantee is the keyed-HMAC pin (server/warehouse/rct-pin.ts). The Brain Server checks it on every
+// load; build:mirror (check:rct-pin) checks the file bundled into this drawer and the edge Function, which carry no key at
+// runtime; and tests/unit/rct-public-leak.test.ts checks it locally when the real table and key are present.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +23,8 @@ const rctJson = JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthet
 // The ratified RCT is local-only (docs/ops/rct-runtime-config.md). The bundled import resolves to the committed synthetic
 // stand-in under test, so the expected rows are read from that same file: the mechanism under test is that the drawer
 // reads the config verbatim (every market, every field, no hand copy). That the LOCAL ratified table is unchanged is
-// proven by the keyed-HMAC pin (server/warehouse/rct-pin.ts) and tests/unit/rct-runtime-config.test.ts.
+// proven by the keyed-HMAC pin (server/warehouse/rct-pin.ts; local check: tests/unit/rct-public-leak.test.ts). The pin
+// mechanism itself is tested with a test key in tests/unit/rct-runtime-config.test.ts.
 type Row = { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean };
 const PRIOR_RCT = Object.fromEntries(
   Object.entries(rctJson.markets as Record<string, Row>).map(([m, r]) => [m, { low: r.low, point: r.point, high: r.high, cwHardPsf: r.cwHardPsf, proxy: r.proxy }]),
@@ -32,7 +37,7 @@ const priorVintageFloor = (y: number | null | undefined): number => {
   return 0.65 - (c - 1995) * 0.005;
 };
 
-describe('client basis-floor engine reads the ratified config (values unchanged)', () => {
+describe('client basis-floor engine reads the bundled config verbatim (RCT values pinned by the keyed HMAC, not here)', () => {
   it('RCT_V03 is exactly the config table (same markets, bit-identical values)', () => {
     expect(Object.keys(PRIOR_RCT).length).toBeGreaterThanOrEqual(10);
     expect(RCT_V03).toEqual(PRIOR_RCT);
@@ -72,7 +77,7 @@ describe('client basis-floor engine reads the ratified config (values unchanged)
     expect(odd).toEqual(PRIOR_RCT);
   });
 
-  it('replacementCostAnalysis output is unchanged across the vintage ramp and the uncovered-market branch', () => {
+  it('replacementCostAnalysis follows the config rows and the prior vintage ramp, including the uncovered-market branch', () => {
     for (const market of [...Object.keys(PRIOR_RCT), 'Toledo OH', null] as const) {
       for (const yearBuilt of [null, 1960, 1995, 1998, 2000, 2003, 2005, 2010]) {
         const r = replacementCostAnalysis({ sf: 40_000, estPrice: 3_500_000, market: market as never, yearBuilt, ...BASELINE });

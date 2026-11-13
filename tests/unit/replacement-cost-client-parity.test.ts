@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { RCT_V03 } from '../../src/brain/replacement-cost';
 
 /**
- * Pins the client-side deal-drawer table (src/brain/replacement-cost.ts) to the server
- * engine's ratified config (config/replacement-cost.v3.json). Both cite the
- * acquisition-underwriting skill's RCT v03 table as the true source of record — this test
- * only proves the two CODE copies agree with each other, not that either is correct against
- * the skill. Added 2026-09-28 (OI-354): the client previously covered only 4 of 9 markets,
+ * Checks that the client-side deal-drawer table (src/brain/replacement-cost.ts) covers the same markets and rows as the
+ * config it is built from. The ratified RCT is local-only (docs/ops/rct-runtime-config.md), so under test both sides
+ * read the committed synthetic stand-in. This test proves only that the drawer's rows match that config (to the cent). In
+ * production the server reads the same file from disk at runtime and the drawer bundles it at build time. build:mirror
+ * pin-checks the bundled file, and the server pin-checks it on load, so both price from one pinned table. Added 2026-09-28 (OI-354): the client previously covered only 4 of 9 markets,
  * silently showing "basis cannot be scored" for markets the server could already score.
  */
 describe('RCT client/server parity (OI-354)', () => {
