@@ -45,9 +45,9 @@ function snapshot(properties: Property[], oxfordCash: number | null, totalCash: 
   } as unknown as PortfolioSnapshot;
 }
 
-function renderStrip(s: PortfolioSnapshot) {
-  const def = OVERVIEW_WIDGETS.find((w) => w.id === 'kpis');
-  if (!def) throw new Error('widget not registered: kpis');
+function renderStrip(s: PortfolioSnapshot, widgetId = 'kpis') {
+  const def = OVERVIEW_WIDGETS.find((w) => w.id === widgetId);
+  if (!def) throw new Error(`widget not registered: ${widgetId}`);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
   qc.setQueryData(SNAPSHOT_KEY, { snapshot: s, state: { status: 'fresh', source: 'workbook', lastUpdated: ASOF, lastError: null, workbookPath: 'test.xlsx', flagCount: 0 } });
   const Component = def.Component;
@@ -166,6 +166,23 @@ describe('Overview KpiStripWidget — governor bullet tiles', () => {
     const unknownDs = { ...levered, id: 'p3', index: 3, name: 'Charlie Flex', debtService: 0, dscr: null, flags: [blank, ll] } as Property;
     renderStrip(snapshot([levered, unknownDs], 2_000_000));
     expect(screen.getByText(/LL costs not sourced on 1 of 2 levered/)).toBeTruthy();
+  });
+
+  it('marks the headline NOI tile incomplete (no wtd cap figure) when a row has a blank NOI (NOI-reader sweep)', () => {
+    const blank = { entity: 'p2', field: 'governorInputBlank', issue: 'blank', rawValue: 'noi', severity: 'warn' as const };
+    renderStrip(snapshot([levered, { ...thin, noi: 0, noiScenarioAdj: 0, dscr: null, flags: [blank] } as Property], 2_000_000));
+    expect(screen.getByText('Oxford share · workbook · incomplete — blank NOI on Bravo Flex')).toBeTruthy();
+    expect(screen.queryByText(/wtd cap$/)).toBeNull();
+  });
+
+  it('NOI by Market keeps a market whose only row has a blank NOI, labelled incomplete, with a footnote (refute wf_325f62d5-344)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'noi', severity: 'warn' as const };
+    // BarChart measures its container; jsdom has no ResizeObserver (unstubbed in afterEach).
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    const madison = { ...thin, id: 'p3', index: 3, name: 'Charlie Flex', market: 'Madison WI', noi: 0, noiScenarioAdj: 0, dscr: null, flags: [blank] } as Property;
+    renderStrip(snapshot([levered, madison], 2_000_000), 'noi-market');
+    expect(screen.getByText('Incomplete: blank NOI on Charlie Flex (left out of its market).')).toBeTruthy();
+    expect(screen.getByText('2 markets')).toBeTruthy();
   });
 
   it('treats an empty Cash Balances feed as unknown: never a breach, never OK', () => {

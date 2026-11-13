@@ -230,7 +230,16 @@ const EXECUTORS: Record<ToolName, Exec> = {
         totalCash: fmtUsdCompact(k.totalCash.value),
         waltYears: k.walt.value,
         valueByMarket: marketAllocation(investment, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
-        noiByMarket: marketAllocation(investment, 'noi').map((m) => ({ market: m.market, noi: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
+        noiByMarket: marketAllocation(investment, 'noi').map((m) => ({
+          market: m.market,
+          noi: fmtUsdCompact(m.value),
+          pct: fmtPct(m.pct),
+          ...(m.incomplete ? { incomplete: m.incomplete } : {}),
+        })),
+        // Every market's pct shares the incomplete total, not only the market holding the blank row.
+        ...(noiIncompleteNames(k).length > 0
+          ? { noiByMarketNote: `incomplete: blank NOI on ${noiIncompleteNames(k).join(', ')} is summed as $0, so every market's NOI share is incomplete` }
+          : {}),
         ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
         note:
           'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.' +
