@@ -31,7 +31,8 @@ vi.mock('../../server/workbook/parse', () => ({
 vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn(async () => ({})) }));
 vi.mock('../../server/reconcile-runtime', () => ({ checkSnapshot: vi.fn(() => []), hasReconciliationError: vi.fn(() => false) }));
 
-import { main } from '../../scripts/bake-mirror';
+import { main, isCarryForwardWarehouse, removeStaleBakeOutputs, WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS } from '../../scripts/bake-mirror';
+import { WAREHOUSE_MIRROR_SCHEMA_VERSION } from '../../src/lib/warehouse-mirror';
 
 const ENV_KEYS = ['CONFIDENTIAL_TERMS_PATH', 'CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER', 'MIRROR_INCLUDE_CONFIDENTIAL', 'MIRROR_ACCESS_PREPROBE', 'BRIEF_ENABLED', 'BAKE_WAREHOUSE', 'WAREHOUSE_DB'] as const;
 const saved: Record<string, string | undefined> = {};
@@ -98,14 +99,85 @@ describe('bake-mirror main(): bake mode and stale outputs', () => {
     expect(snapshotJson()).toBeUndefined();
   });
 
-  it('finding 31: FULL with MIRROR_ACCESS_PREPROBE=passed bakes FULL (no roster scrub) and keeps warehouse.json', async () => {
+  it('finding 31: FULL with MIRROR_ACCESS_PREPROBE=passed bakes FULL (no roster scrub)', async () => {
+    process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
+    process.env.MIRROR_ACCESS_PREPROBE = 'passed';
+    await main();
+    expect((JSON.parse(snapshotJson()!) as PortfolioSnapshot).tasks.map((t) => t.id)).toEqual(['t1', 't2']);
+  });
+
+  // 2026-11-13: the hourly FULL deploy (no -IncludeWarehouse) shipped a public/warehouse.json last
+  // baked 2026-08-18 -- gitignored, so the build root's `git clean -fd` kept it, and vite copied it
+  // into dist/. A FULL bake must not ship an output it did not regenerate either.
+  it('FULL without BAKE_WAREHOUSE removes a stale public/warehouse.json and its copies', async () => {
+    process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
+    process.env.MIRROR_ACCESS_PREPROBE = 'passed';
+    mkdirSync(join(dir, 'public', 'old'), { recursive: true });
+    const stale = ['warehouse.json', 'warehouse (1).json', 'old/snapshot.json'];
+    for (const n of stale) writeFileSync(pubFile(n), '{"stale":true}');
+    writeFileSync(pubFile('logo.svg'), '<svg/>');
+    await main();
+    for (const n of stale) expect(existsSync(pubFile(n)), n).toBe(false);
+    expect(existsSync(pubFile('logo.svg'))).toBe(true);
+    expect(existsSync(pubFile('snapshot.json'))).toBe(true);
+  });
+
+  // Refute wf_fc335a58-0a1: the documented cadence is a daily -IncludeWarehouse bake that the hourly
+  // FULL runs carry forward, so a RECENT current-schema warehouse.json must survive an hourly run.
+  const envelope = (bakedAt: string) =>
+    JSON.stringify({ schemaVersion: WAREHOUSE_MIRROR_SCHEMA_VERSION, bakedAt, warehouseSource: 'live-server', endpoints: {} });
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+  it('FULL without BAKE_WAREHOUSE keeps a recent current-schema warehouse.json (daily bake carried forward)', async () => {
     process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
     process.env.MIRROR_ACCESS_PREPROBE = 'passed';
     mkdirSync(join(dir, 'public'), { recursive: true });
-    writeFileSync(pubFile('warehouse.json'), '{"full":true}');
+    const fresh = envelope(hoursAgo(3));
+    writeFileSync(pubFile('warehouse.json'), fresh);
     await main();
-    expect((JSON.parse(snapshotJson()!) as PortfolioSnapshot).tasks.map((t) => t.id)).toEqual(['t1', 't2']);
-    expect(readFileSync(pubFile('warehouse.json'), 'utf8')).toBe('{"full":true}');
+    expect(readFileSync(pubFile('warehouse.json'), 'utf8')).toBe(fresh);
+  });
+
+  it('FULL without BAKE_WAREHOUSE removes one older than the carry-forward window, or with the wrong schema', async () => {
+    process.env.MIRROR_INCLUDE_CONFIDENTIAL = '1';
+    process.env.MIRROR_ACCESS_PREPROBE = 'passed';
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), envelope(hoursAgo(27)));
+    await main();
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
+    writeFileSync(pubFile('warehouse.json'), JSON.stringify({ ...JSON.parse(envelope(hoursAgo(1))), schemaVersion: 'wh-v0' }));
+    await main();
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
+  });
+
+  it('REDACTED removes even a recent warehouse.json (it may be a FULL bake)', async () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), envelope(hoursAgo(1)));
+    await main();
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
+  });
+
+  it('isCarryForwardWarehouse: window edges, future stamps and unreadable files', () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    const f = pubFile('warehouse.json');
+    const now = Date.parse('2026-11-13T12:00:00Z');
+    const at = (iso: string) => { writeFileSync(f, envelope(iso)); return isCarryForwardWarehouse(f, now); };
+    expect(at(new Date(now - WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS).toISOString())).toBe(true);
+    expect(at(new Date(now - WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS - 1000).toISOString())).toBe(false);
+    expect(at(new Date(now + 60 * 60 * 1000).toISOString())).toBe(false);
+    writeFileSync(f, 'not json');
+    expect(isCarryForwardWarehouse(f, now)).toBe(false);
+    expect(isCarryForwardWarehouse(join(dir, 'missing.json'), now)).toBe(false);
+  });
+
+  // Unit-level (no real warehouse bake, which probes a local Brain Server and is slow under load):
+  // a run that re-bakes the warehouse removes even a FRESH file up front, so a bake that then fails
+  // or refuses can never ship the previous payload (refute wf_ec2162a9-34f).
+  it('a FULL run that re-bakes the warehouse removes even a fresh warehouse.json before the bake', () => {
+    mkdirSync(join(dir, 'public'), { recursive: true });
+    writeFileSync(pubFile('warehouse.json'), envelope(hoursAgo(1)));
+    expect(removeStaleBakeOutputs(join(dir, 'public'), { includeConfidential: true, bakeWarehouse: true })).toEqual(['warehouse.json']);
+    expect(existsSync(pubFile('warehouse.json'))).toBe(false);
   });
 
   it('finding 30: a REDACTED bake removes a stale FULL public/warehouse.json it does not regenerate', async () => {

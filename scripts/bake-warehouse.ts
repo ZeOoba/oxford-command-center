@@ -306,7 +306,7 @@ export function describeOmittedRoutes(omitted: string[]): string {
 function bakeRefusal(why: string): Error {
   return new Error(
     `warehouse bake failed: refusing to bake a redacted public/warehouse.json — ${why}. ` +
-      `Leaving the last good public/warehouse.json in place.`,
+      `No public/warehouse.json is published by this run (bake-mirror.ts removed the previous one before the bake).`,
   );
 }
 
