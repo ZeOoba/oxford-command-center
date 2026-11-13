@@ -13,6 +13,7 @@ import { DAY_MS } from '../warehouse/time-constants';
 import { dscrIncompleteRows, GOVERNOR_INPUT_FIELDS, GOVERNOR_INPUT_LABEL } from '../../src/analytics/governor-inputs';
 import { portfolioNoiText } from '../ai/debt-basis-copy';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
+import { pfCrosscheckInsights } from '../property-financials/crosscheck-insights';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
 
 /** Workbook DATA month as "Mon YYYY" (e.g. "Jun 2026"), for the brief header freshness label. */
@@ -137,6 +138,11 @@ export async function runBrief(
       provenance: 'absent',
     });
   }
+
+  // ── Property Financials cross-checks (tax timing, insurance tracker vs ledger) ─────────────────────
+  // Fail-open and fail-loud inside pfCrosscheckInsights: a stale/unreadable dataset yields one warning,
+  // never findings. All warning/info, so nothing here reaches the per-critical alert email below.
+  insights.push(...(await pfCrosscheckInsights(snapshot, now)));
 
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
   const { toAlert, nextAlerted, nextClearStreaks } = diffCriticalAlerts(criticalIds, state);

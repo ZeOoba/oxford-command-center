@@ -1,10 +1,22 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { runBrief } from '../../server/brief/run';
+
+// runBrief also reads the Property Financials dataset (tax-timing / insurance-ledger cross-checks). Point it at a
+// directory that does not exist so this suite stays hermetic ('missing' is a quiet skip) instead of depending on
+// whichever dataset (real or synthetic) the checkout holds. Restored after the file.
+const prevPfDir = process.env.PROPERTY_FINANCIALS_DIR;
+beforeAll(() => {
+  process.env.PROPERTY_FINANCIALS_DIR = join(tmpdir(), `ora-pf-absent-${process.pid}`);
+});
+afterAll(() => {
+  if (prevPfDir === undefined) delete process.env.PROPERTY_FINANCIALS_DIR;
+  else process.env.PROPERTY_FINANCIALS_DIR = prevPfDir;
+});
 
 const dir = () => mkdtempSync(join(tmpdir(), 'run-'));
 function baseSnap(): PortfolioSnapshot {

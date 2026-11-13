@@ -15,7 +15,7 @@ import ExcelJS from 'exceljs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import type { PortfolioSnapshot, Lease, InsurancePolicy } from '../../src/contracts/index';
 import { WORKBOOK_AS_OF, referenceDate } from '../../server/config';
 import { parseWorkbook } from '../../server/workbook/parse';
@@ -24,6 +24,18 @@ import { evaluateConditions } from '../../src/analytics/conditions';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { portfolioCriticalDates } from '../../src/brain/critical-dates';
 import { runBrief } from '../../server/brief/run';
+
+// runBrief also reads the Property Financials dataset (tax-timing / insurance-ledger cross-checks). Point it at a
+// directory that does not exist so this suite stays hermetic ('missing' is a quiet skip) instead of depending on
+// whichever dataset (real or synthetic) the checkout holds. Restored after the file.
+const prevPfDir = process.env.PROPERTY_FINANCIALS_DIR;
+beforeAll(() => {
+  process.env.PROPERTY_FINANCIALS_DIR = join(tmpdir(), `ora-pf-absent-${process.pid}`);
+});
+afterAll(() => {
+  if (prevPfDir === undefined) delete process.env.PROPERTY_FINANCIALS_DIR;
+  else process.env.PROPERTY_FINANCIALS_DIR = prevPfDir;
+});
 
 // ── env hygiene: never leak REPORT_DATE / WAREHOUSE_DB into other tests ─────────────────────────
 const ORIGINAL_REPORT_DATE = process.env.REPORT_DATE;

@@ -26,6 +26,7 @@
     "reconcile:snapshot": "tsx scripts/reconcile-snapshot.ts",
     "reconcile:leases": "tsx scripts/reconcile-lease-sources.ts",
     "reconcile:noi-crosscheck": "tsx scripts/reconcile-noi-crosscheck.ts",
+    "reconcile:pf": "tsx scripts/reconcile-pf.ts",
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
