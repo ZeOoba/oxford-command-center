@@ -66,7 +66,11 @@ const lease: Lease = {
 
 const snapshot = {
   meta: { asOf: '2026-10-30' },
-  properties: [property({}), property({ id: 'res', name: '9510 Persimmon Tree Rd', type: 'Residence', flags: [] })],
+  properties: [
+    property({}),
+    property({ id: 'res', name: '9510 Persimmon Tree Rd', type: 'Residence', flags: [] }),
+    property({ id: 'p2', name: 'Example Blank Bldg', noi: 0, lender: 'Example Bank', debtService: 50_000, flags: [{ entity: 'p2', field: 'governorInputBlank', issue: 'blank', rawValue: 'noi', severity: 'warn' }] }),
+  ],
   leases: [lease],
 };
 
@@ -116,6 +120,12 @@ describe('PropertyPage', () => {
     expect(screen.getByText('NOI · workbook, Oxford 50%')).toBeTruthy();
     expect(screen.getByText('NOI · ledger T12')).toBeTruthy();
     expect(screen.getByText('entity 100% · T12 to 2026-09')).toBeTruthy();
+  });
+
+  it('shows a blank workbook NOI as blank, never $0 (audit 2026-11-12 HIGH #2)', async () => {
+    await renderAt('/property/p2');
+    expect(screen.getByText(/blank in workbook/)).toBeTruthy();
+    expect(screen.queryByText('$0')).toBeNull();
   });
 
   it('flags NNN landlord costs not sourced on the workbook NOI', async () => {

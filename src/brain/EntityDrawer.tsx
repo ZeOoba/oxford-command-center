@@ -24,6 +24,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Sparkline } from '@/charts/Sparkline';
 import { DealDrawer } from './DealDrawer';
 import { PropertyDrawerTrends } from '@/modules/property/PropertyDrawerTrends';
+import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -295,12 +296,12 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Square Feet', value: fmtSf(p.sf) },
           { label: 'Tenants', value: p.tenantCount },
           { label: 'Occupancy', value: fmtPct(p.occPct) },
-          { label: 'NOI (Oxford)', value: fmtUsd(p.noi) },
+          { label: 'NOI (Oxford)', value: hasBlankGovernorInput(p, 'noi') ? BLANK_IN_WORKBOOK : fmtUsd(p.noi) },
           { label: 'Cap Rate', value: fmtPct(p.capRate) },
           { label: 'DSCR', value: p.dscr !== null ? fmtMultiple(p.dscr) : '—' },
           { label: 'Oxford Value', value: fmtUsd(p.oxfordValue) },
           { label: 'Ownership', value: fmtPct(p.oxfordOwnPct) },
-          { label: 'Loan Balance', value: fmtUsd(p.loanBalance) },
+          { label: 'Loan Balance', value: hasBlankGovernorInput(p, 'loanBalance') ? BLANK_IN_WORKBOOK : fmtUsd(p.loanBalance) },
           { label: 'LTV', value: propertyLtvLabel(p) },
           { label: 'Lender', value: p.lender ? `${p.lender}${isAffiliateNoteProperty(p) ? ' (affiliate note — excluded from Total Debt)' : ''}` : '—' },
           { label: 'Equity Invested', value: fmtUsd(p.equityInvested) },

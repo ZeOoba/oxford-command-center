@@ -11,7 +11,8 @@ import {
 import { evaluateConditions } from './conditions';
 import { isInvestmentProperty } from './property-basis';
 import { contractAnnualRent } from './lease-rent';
-import { investmentLoanBalance, isAffiliateNoteProperty, isAffiliateBorrowerLoan } from './debt-basis';
+import { investmentLoanBalance, isAffiliateNoteProperty, isAffiliateBorrowerLoan, namesAffiliateLender } from './debt-basis';
+import { hasBlankGovernorInput, incompleteGovernorRows, ltvIncompleteRows } from './governor-inputs';
 import type {
   AnalyticsBundle,
   CriticalDate,
@@ -60,8 +61,17 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
     const oxfordValue = p.oxfordValue * (f.revenueFactor / f.exitCapFactor);
     // Recompute DSCR and LTV from the shocked noi/oxfordValue so governor alerts reflect
     // the scenario, not the stale Base-case values (audit: applyScenario stale governors).
-    const dscr = p.debtService > 0 ? noi / p.debtService : p.dscr;
-    const ltv = (p.loanBalance > 0 && oxfordValue > 0) ? p.loanBalance / oxfordValue : p.ltv;
+    // A blank workbook input (parse flag, ./governor-inputs) is unknown, not $0: recomputing from it
+    // would fabricate a DSCR of 0x (blank NOI) or drop a real loan (blank balance). Keep the workbook
+    // DSCR / LTV cell instead, unshocked: the same figure Base shows, so a stressed scenario can never
+    // drop a per-property alert that Base fires (refute wf_fe0c7b48-326). parse.ts already nulls a 0
+    // ratio cell derived from a blank, so a fabricated 0x never reaches here (audit 2026-11-12 HIGH #2).
+    const dscr = hasBlankGovernorInput(p, 'noi') || hasBlankGovernorInput(p, 'debtService')
+      ? p.dscr
+      : p.debtService > 0 ? noi / p.debtService : p.dscr;
+    const ltv = hasBlankGovernorInput(p, 'loanBalance')
+      ? p.ltv
+      : (p.loanBalance > 0 && oxfordValue > 0) ? p.loanBalance / oxfordValue : p.ltv;
     return { ...p, noi, noiScenarioAdj: noi, occPct, capRate, oxfordValue, dscr, ltv };
   });
   return { ...s, properties, meta: { ...s.meta, scenario } };
@@ -94,21 +104,53 @@ export function portfolioKpis(
   // the aggregate LTV and disclosed separately — the single rule lives in ./debt-basis.
   const debt = sum(p.map(investmentLoanBalance));
   const affiliateDebt = sum(p.filter(isAffiliateNoteProperty).map((x) => x.loanBalance));
+  const ltvIncomplete = ltvIncompleteRows(p);
+  // A blank NOI (parse flag) is summed as $0: Σ NOI and the weighted cap rate are then incomplete,
+  // with no bound direction since the true NOI may be negative (refute wf_406ad3ef-7de,
+  // wf_c93c6154-6b8). Disclose it on both cells.
+  const noiIncomplete = incompleteGovernorRows(p, ['noi']);
+  const affiliateBlank = incompleteGovernorRows(p.filter((x) => namesAffiliateLender(x.lender)), ['loanBalance']);
+  const noiGap = noiIncomplete.length > 0 ? `blank NOI on ${noiIncomplete.map((r) => r.name).join(', ')}` : null;
   const equity = sum(p.map((x) => x.equityInvested));
   const tenants = sum(p.map((x) => x.tenantCount));
 
   return {
     totalSf: cell(totalSf, 'Property NOI · Σ SF', 'confirmed'),
     occupancy: cell(totalSf ? occSf / totalSf : null, DERIVED, 'derived', { formula: 'Σ(sf·occ)/Σsf' }),
-    noi: cell(noi, tag('Property NOI · Σ NOI (Oxford)'), sourced),
+    noi: noiGap
+      // No direction claim: a blank NOI may be negative, so Σ NOI is neither a lower nor an upper bound.
+      ? cell(noi, tag('Property NOI · Σ NOI (Oxford)'), 'derived', { formula: `incomplete: excludes ${noiGap}` })
+      : cell(noi, tag('Property NOI · Σ NOI (Oxford)'), sourced),
     value: cell(value, tag('Property NOI · Σ Oxford value'), sourced),
-    ltv: cell(value ? debt / value : null, DERIVED, 'derived', { formula: 'Σ third-party loan balance / Σ value (affiliate notes excluded)' }),
-    weightedCapRate: cell(value ? noi / value : null, DERIVED, 'derived', { formula: 'Σ NOI / Σ value' }),
+    // Fails closed (audit 2026-11-12 HIGH #2): a levered investment row whose Loan Balance cell is
+    // blank would otherwise contribute $0 debt and falsely clear the aggregate LTV governor.
+    ltv: ltvIncomplete.length > 0
+      ? cell(null, DERIVED, 'derived', {
+          formula: `incomplete: blank Loan Balance on ${ltvIncomplete.map((r) => r.name).join(', ')} — Σ third-party loan balance / Σ value (affiliate notes excluded)`,
+        })
+      : cell(value ? debt / value : null, DERIVED, 'derived', { formula: 'Σ third-party loan balance / Σ value (affiliate notes excluded)' }),
+    weightedCapRate: cell(value ? noi / value : null, DERIVED, 'derived', {
+      formula: noiGap ? `incomplete: ${noiGap} — Σ NOI / Σ value` : 'Σ NOI / Σ value',
+    }),
     equityInvested: cell(equity, 'Property NOI · Σ equity invested', 'confirmed'),
     propertyCount: cell(p.length, 'Property NOI · row count', 'confirmed'),
     tenantCount: cell(tenants, 'Property NOI · Σ tenants', 'confirmed'),
-    totalDebt: cell(debt, 'Property NOI · Σ loan balance (affiliate notes excluded)', 'confirmed'),
-    affiliateDebt: cell(affiliateDebt, 'Property NOI · Σ loan balance owed to an Oxford affiliate', 'confirmed'),
+    ltvIncomplete: ltvIncomplete,
+    noiIncomplete,
+    affiliateIncomplete: affiliateBlank,
+    // With a blank third-party Loan Balance the sum is a LOWER BOUND, not a confirmed total.
+    totalDebt: ltvIncomplete.length > 0
+      ? cell(debt, 'Property NOI · Σ loan balance (affiliate notes excluded)', 'derived', {
+          formula: `incomplete (lower bound): blank Loan Balance on ${ltvIncomplete.map((r) => r.name).join(', ')}`,
+        })
+      : cell(debt, 'Property NOI · Σ loan balance (affiliate notes excluded)', 'confirmed'),
+    // An affiliate-lender row with a blank balance makes this incomplete (refute wf_2f05948b-aae). No
+    // bound direction: affiliate balances are sign-agnostic, so a blank may hide a negative (refute wf_d7665e23-135).
+    affiliateDebt: affiliateBlank.length > 0
+      ? cell(affiliateDebt, 'Property NOI · Σ loan balance owed to an Oxford affiliate', 'derived', {
+          formula: `incomplete: blank Loan Balance on ${affiliateBlank.map((r) => r.name).join(', ')}`,
+        })
+      : cell(affiliateDebt, 'Property NOI · Σ loan balance owed to an Oxford affiliate', 'confirmed'),
     totalCash: cell(s.cash.totalCash, 'Cash Balances · total', 'confirmed'),
     walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',

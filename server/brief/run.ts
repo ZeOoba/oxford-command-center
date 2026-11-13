@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, MacroSnapshot } from '../../src/contracts/index';
+import type { PortfolioSnapshot, MacroSnapshot, Property } from '../../src/contracts/index';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/conditions';
@@ -10,6 +10,9 @@ import { sendEmail, type SendResult } from './send';
 import { openWarehouseReadOnly } from '../warehouse/db';
 import { insuranceConditions, insuranceWarehouseDriftConditions, fetchCurrentInsuranceRows } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
+import { dscrIncompleteRows, GOVERNOR_INPUT_FIELDS, GOVERNOR_INPUT_LABEL } from '../../src/analytics/governor-inputs';
+import { portfolioNoiText } from '../ai/debt-basis-copy';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
 
 /** Workbook DATA month as "Mon YYYY" (e.g. "Jun 2026"), for the brief header freshness label. */
@@ -24,6 +27,17 @@ const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const DASHBOARD_URL = process.env.BRIEF_DASHBOARD_URL ?? 'https://ora-command-center.pages.dev';
 // Resolved per write (not at import) so a test or caller can redirect it after the module loads.
 const healthPath = (): string => process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
+
+/** Daily-brief DSCR line: the lowest workbook DSCR, plus the rows whose blank NOI / Debt Service leave
+ *  the DSCR picture incomplete (audit 2026-11-12 HIGH #2: a nulled 0x cell must not vanish silently). */
+export function briefDscrSummary(properties: readonly Property[]): string {
+  const dscrs = properties.map((p) => p.dscr).filter((d): d is number => d !== null);
+  const base = dscrs.length ? `min ${Math.min(...dscrs).toFixed(2)}x` : '—';
+  const gaps = dscrIncompleteRows(properties.filter(isInvestmentProperty));
+  if (gaps.length === 0) return base;
+  const fields = GOVERNOR_INPUT_FIELDS.filter((f) => gaps.some((r) => r.fields.includes(f))).map((f) => GOVERNOR_INPUT_LABEL[f]).join('/');
+  return `${base} · incomplete: blank ${fields} on ${gaps.length} row${gaps.length === 1 ? '' : 's'}`;
+}
 
 export interface RunDeps {
   statePath?: string;
@@ -157,7 +171,6 @@ export async function runBrief(
   let briefSent = false;
   if (shouldSendBrief(state, nowEt)) {
     const a = buildAnalytics(snapshot, 'Base', refDate);
-    const dscrs = snapshot.properties.map((p) => p.dscr).filter((d): d is number => d !== null);
     const dealCounts = countByStage(snapshot);
     const criticalDates = upcomingDates(snapshot, a.criticalDates, refDate);
 
@@ -178,11 +191,11 @@ export async function runBrief(
         criticalDates,
         dealCounts,
         kpis: {
-          noi: fmtUsdCompact(a.kpis.noi.value),
+          noi: portfolioNoiText(a.kpis),
           value: fmtUsdCompact(a.kpis.value.value) + otherHoldings,
           occupancy: fmtPct(a.kpis.occupancy.value),
           cash: fmtUsdCompact(snapshot.cash.totalCash),
-          dscrSummary: dscrs.length ? `min ${Math.min(...dscrs).toFixed(2)}x` : '—',
+          dscrSummary: briefDscrSummary(snapshot.properties),
         },
         tasks: snapshot.tasks
           .filter((t) => t.status === 'overdue' || t.status === 'pending')

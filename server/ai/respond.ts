@@ -3,7 +3,7 @@ import type { AiAskResponse } from '../../src/brain/ai/types';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct, fmtYears, fmtNum } from '../../src/analytics/format';
 import { referenceDate } from '../config';
-import { debtBasisNote, externalDebtSentence, portfolioLtvSentence } from './debt-basis-copy';
+import { debtBasisNote, externalDebtSentence, noiIncompleteNames, portfolioDebtLine, portfolioLtvSentence } from './debt-basis-copy';
 
 /**
  * ── AI SEAM ───────────────────────────────────────────────────────────────────
@@ -69,9 +69,14 @@ export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
     // Ratified 2026-09-23: investment value excludes the residence, which is REPORTED beside it as other
     // holdings (never silently dropped — the workbook's own Portfolio Total includes it).
     const other = k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other holdings (residence)` : '';
-    out.push(`• Value ${fmtUsdCompact(k.value.value)} (Oxford share)${other}, NOI ${fmtUsdCompact(k.noi.value)}, weighted cap ${fmtPct(k.weightedCapRate.value)}.`);
-    const aff = k.affiliateDebt.value ? ` · +${fmtUsdCompact(k.affiliateDebt.value)} affiliate notes excluded` : '';
-    out.push(`• Debt ${fmtUsdCompact(k.totalDebt.value)} (property loan balances; LTV ${fmtPct(k.ltv.value)})${aff}.`);
+    // Audit 2026-11-12 HIGH #2: a blank NOI is left out of Σ NOI (no bound direction: it may be negative).
+    const noiGap = noiIncompleteNames(k);
+    out.push(
+      noiGap.length > 0
+        ? `• Value ${fmtUsdCompact(k.value.value)} (Oxford share)${other}, NOI ${fmtUsdCompact(k.noi.value)} excluding blank NOI on ${noiGap.join(', ')}, weighted cap incomplete.`
+        : `• Value ${fmtUsdCompact(k.value.value)} (Oxford share)${other}, NOI ${fmtUsdCompact(k.noi.value)}, weighted cap ${fmtPct(k.weightedCapRate.value)}.`,
+    );
+    out.push(portfolioDebtLine(k));
     out.push(`• Cash ${fmtUsdCompact(k.totalCash.value)}, WALT ${fmtYears(k.walt.value)}.`);
     const note = debtBasisNote(s.dataQuality ?? []);
     if (note) out.push(`• ${note}`);
