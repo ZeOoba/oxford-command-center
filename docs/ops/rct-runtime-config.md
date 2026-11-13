@@ -41,9 +41,13 @@ and let anyone brute-force a future re-ratification by starting from them.
 
 1. Pull the change with the real-data runbook (`docs/ops/2026-11-11-real-data-untrack-pull-runbook.md`). The manifest
    now lists `config/replacement-cost.v3.json`, so the runbook moves it aside before the pull and back after. **A plain
-   `git pull` deletes the file**, because it is no longer tracked. If that happened, restore it byte-for-byte from the
-   last commit that tracked it:
-   `git show <last-tracked-sha>:config/replacement-cost.v3.json > config/replacement-cost.v3.json`
+   `git pull` deletes the file**, because it is no longer tracked. If that happened, restore it from the
+   pinned v3.2 table: `365d6f27` (#569) is the commit that ratified it, and every later `main` commit before this change
+   carries the same blob.
+   `git restore --source=365d6f27 --worktree -- config/replacement-cost.v3.json`
+   It writes the working file only and does not re-track it. Avoid a `>` redirect in Windows PowerShell, which writes
+   UTF-16 and leaves a file the loader refuses. Then run `npm run check:rct-pin` to confirm the restored file is the
+   pinned table.
 2. Add the pin key to `.env`: `RCT_PIN_KEY=<the key>`. The key that produced the committed pin was generated when this
    change was made and handed over out of band (never in git, PR text or chat). Without it, scoring fails closed.
 3. Check: `npm run check:rct-pin` prints `OK ... is the pinned ratified table`.

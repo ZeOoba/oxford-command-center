@@ -99,6 +99,22 @@ describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConf
     (j.psf as Json).low = 0.25;
     expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/plausible/);
   });
+  // The canonical-raw gate: the edge drawer/form read the RAW bundled JSON, so a field zod defaults or strips would let
+  // the parsed (pinned) table and the read table diverge. Both cases parse cleanly; only assertRawIsCanonical rejects.
+  it('THROWS on an RCT market row missing `proxy` (zod would default it to false)', () => {
+    const j = structuredClone(rctObj);
+    const row = (j.markets as Record<string, Json>)['Columbus OH']!;
+    delete row.proxy;
+    expect(() => ReplacementCostTable.parse(j)).not.toThrow();
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/drops or defaults/);
+  });
+  it('THROWS on an RCT market row carrying an unknown extra field (zod would strip it)', () => {
+    const j = structuredClone(rctObj);
+    const row = (j.markets as Record<string, Json>)['Columbus OH']!;
+    row.unexpectedField = 1;
+    expect(() => ReplacementCostTable.parse(j)).not.toThrow();
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/drops or defaults/);
+  });
 });
 
 describe('acquisition edge Function — config identity (pins what BOTH server + edge use)', () => {

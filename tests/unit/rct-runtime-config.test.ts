@@ -8,8 +8,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { ReplacementCostTable } from '@contracts/acquisition';
+import type { ReplacementCostTable as Rct } from '@contracts/acquisition';
 import { loadRatifiedRct, loadReplacementCostTable } from '../../server/warehouse/acquisition';
 import {
   assertPinnedRct, assertPlausibleRct, assertRawIsCanonical, PIN_KEY_MIN_LENGTH, RATIFIED_RCT_HMAC, RCT_PIN_KEY_ENV, rctTableHmac,
@@ -61,8 +62,23 @@ describe('keyed-HMAC pin', () => {
   it('key order and number formatting do not move the pin (canonical form)', () => {
     const j = ratifiedLike();
     const reordered = Object.fromEntries(Object.entries(j).reverse());
-    const text = JSON.stringify(reordered, null, 1).replace(/(\d+\.\d*[1-9])(\d*)/g, '$1$2'); // same numbers, other layout
-    expect(() => load(writeTable(null, text))).not.toThrow();
+    const layout = JSON.stringify(reordered, null, 1);
+    // Change the TEXT of every number but not its VALUE: a trailing zero on every decimal literal (271.43 -> 271.430)
+    // and every integer written as a decimal (13 -> 13.0). Only JSON values (after ': ') are touched, never a string.
+    let decimals = 0;
+    let integers = 0;
+    const text = layout
+      .replace(/(: -?\d+\.\d+)(?=,?\r?\n)/g, (_m, d: string) => { decimals++; return `${d}0`; })
+      .replace(/(: -?\d+)(?=,?\r?\n)/g, (_m, i: string) => { integers++; return `${i}.0`; });
+    expect(decimals).toBeGreaterThan(0);
+    expect(integers).toBeGreaterThan(0);
+    expect(text).not.toBe(layout);
+    expect(text).not.toBe(JSON.stringify(j, null, 2));
+    expect(text).toMatch(/\.\d*[1-9]0[,\r\n]/); // the decimal rewrite landed
+    expect(text).toMatch(/: -?\d+\.0[,\r\n]/); // the integer rewrite landed too (gate review: it was unasserted)
+    expect(JSON.parse(text)).toEqual(j); // same values
+    expect(load(writeTable(null, text)).rctVersion).toBe(j.rctVersion);
+    expect(pinOf(JSON.parse(text) as Json)).toBe(PIN);
     expect(pinOf(reordered)).toBe(PIN);
   });
 
@@ -82,6 +98,24 @@ describe('keyed-HMAC pin', () => {
     expect(() => loadRatifiedRct(writeTable(ratifiedLike()), { env })).toThrow(/does not match the ratified table/);
     expect(() => loadRatifiedRct(writeTable(ratifiedLike()), { env: {} })).toThrow(/RCT_PIN_KEY is not set/);
     expect(RATIFIED_RCT_HMAC).not.toBe(PIN);
+  });
+
+  describe('production default options (no options object: committed pin, key from process.env)', () => {
+    const saved = process.env[RCT_PIN_KEY_ENV];
+    afterEach(() => {
+      if (saved === undefined) delete process.env[RCT_PIN_KEY_ENV];
+      else process.env[RCT_PIN_KEY_ENV] = saved;
+    });
+
+    it('with RCT_PIN_KEY set in process.env, a table pinned only under the test pin is refused by the committed pin', () => {
+      process.env[RCT_PIN_KEY_ENV] = TEST_KEY;
+      expect(() => loadRatifiedRct(writeTable(ratifiedLike()))).toThrow(/does not match the ratified table/);
+    });
+
+    it('with RCT_PIN_KEY unset in process.env, the default load fails closed on the missing key', () => {
+      delete process.env[RCT_PIN_KEY_ENV];
+      expect(() => loadRatifiedRct(writeTable(ratifiedLike()))).toThrow(/RCT_PIN_KEY is not set/);
+    });
   });
 
   it('assertPinnedRct compares the full HMAC (a prefix or a different length never matches)', () => {
@@ -129,6 +163,35 @@ describe('plausibility bounds (apply to any table, pinned or not)', () => {
     const parsed = ReplacementCostTable.safeParse(j);
     if (parsed.success) expect(() => assertPlausibleRct(parsed.data)).toThrow(/plausible|out of order/);
     expect(() => loadRatifiedRct(writeTable(j), { pinnedHmac: null })).toThrow();
+  });
+});
+
+describe('plausibility bounds: the ceiling, the multiplier floor, the adder floor and cwHardPsf', () => {
+  const market = (j: Json): Json => (j.markets as Json)['Columbus OH'] as Json;
+  it.each([
+    ['a whole market band above the ceiling, order preserved', (j: Json) => { const r = market(j); r.low = 5000; r.point = 5000; r.high = 5000; }],
+    ['a whole fallback band above the ceiling, order preserved', (j: Json) => { j.psf = { low: 5000, mid: 5000, high: 5000 }; }],
+    // LOW stays in range: proves every column is bounded, not only LOW (gate round-1 verifier mutant X5)
+    ['a market POINT and HIGH above the ceiling with LOW in range', (j: Json) => { const r = market(j); r.point = 5000; r.high = 5000; }],
+    ['a fallback MID and HIGH above the ceiling with LOW in range', (j: Json) => { const p = j.psf as Json; p.mid = 5000; p.high = 5000; }],
+    ['a multiplier of 0.1', (j: Json) => { (j.constructionMultipliers as Json).brick = 0.1; }],
+    ['a market cwHardPsf of 0.25', (j: Json) => { market(j).cwHardPsf = 0.25; }],
+  ])('%s fails closed (schema accepts it, the bound refuses it)', (_what, mutate) => {
+    const j = ratifiedLike();
+    mutate(j);
+    const parsed = ReplacementCostTable.parse(j); // the schema alone lets it through
+    expect(() => assertPlausibleRct(parsed)).toThrow(/plausible|out of order/);
+    expect(() => loadRatifiedRct(writeTable(j), { pinnedHmac: null })).toThrow(/plausible|out of order/);
+  });
+
+  it('an adder of -1 fails closed in assertPlausibleRct itself, not only in the schema', () => {
+    const j = ratifiedLike();
+    (j.adders as Json).esfr = -1;
+    expect(() => loadRatifiedRct(writeTable(j), { pinnedHmac: null })).toThrow(); // end to end (zod rejects it first)
+    const parsed = ReplacementCostTable.parse(ratifiedLike());
+    const mutated = { ...parsed, adders: { ...parsed.adders, esfr: -1 } } as Rct;
+    expect(() => assertPlausibleRct(parsed)).not.toThrow();
+    expect(() => assertPlausibleRct(mutated)).toThrow(/an adder is outside the plausible/);
   });
 });
 
