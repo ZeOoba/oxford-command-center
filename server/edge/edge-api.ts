@@ -3,6 +3,7 @@
 // Oxford Edge Hono sub-router (spec §5.2), mounted at /api/warehouse/edge via
 // server/warehouse/sub-routers.ts. Routes:
 //   GET  /markets               — loader result; NO withDb guard (works when the warehouse is down)
+//   GET  /news                  — news overlay annotations (read-only file beside markets.json); NO withDb guard
 //   GET  /pull-queue            — queue state per item × scope; 503 through the standard guard
 //   POST /pull-queue            — RecordPullRequest → append one log row → updated item
 //   POST /pull-queue/:id/void   — set voided_at on one row (undo); no delete
@@ -11,9 +12,10 @@
 // is client-side. Not added to scripts/bake-warehouse.ts FIXED_ROUTES: the data is CoStar-licensed.
 import { Hono } from 'hono';
 import type { WarehouseDb } from '../warehouse/db';
-import { EdgeMarketsResponse, EdgePullItem, EdgePullQueueResponse, RecordPullRequest } from '../../src/contracts/edge';
+import { EdgeMarketsResponse, EdgeNewsResponse, EdgePullItem, EdgePullQueueResponse, RecordPullRequest } from '../../src/contracts/edge';
 import { edgeDir } from './config';
 import { loadEdgeDataset, NODE_EDGE_FS, type EdgeFsDeps } from './loader';
+import { loadEdgeNews, NODE_NEWS_FS, type EdgeNewsFsDeps } from './news';
 import {
   buildEdgePullItem, buildEdgePullQueue, computeOutsidePullScope, localIsoDate, PullValidationError, pullScopeKeys,
   readEdgePullLatest, readEdgePullLoggedKeys, recordEdgePull, voidEdgePull,
@@ -36,6 +38,7 @@ export interface EdgeApiDeps {
   edgeDir?: () => string;
   now?: () => Date;
   fs?: EdgeFsDeps;
+  newsFs?: EdgeNewsFsDeps;
 }
 
 /**
@@ -48,6 +51,7 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
   const dirOf = deps.edgeDir ?? edgeDir;
   const now = deps.now ?? (() => new Date());
   const fs = deps.fs ?? NODE_EDGE_FS;
+  const newsFs = deps.newsFs ?? NODE_NEWS_FS;
   const load = () => loadEdgeDataset(dirOf(), now(), fs);
 
   /** Resolve the warehouse per-request behind a 503 guard (mirrors insights-api.ts / debt-api.ts). */
@@ -70,6 +74,8 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
     const result = await load();
     return c.json(EdgeMarketsResponse.parse({ ...result, outsidePullScope: computeOutsidePullScope(result.markets) }));
   });
+
+  app.get('/news', (c) => c.json(EdgeNewsResponse.parse(loadEdgeNews(dirOf(), now(), newsFs))));
 
   app.get('/pull-queue', (c) =>
     withDb(async (db) => {

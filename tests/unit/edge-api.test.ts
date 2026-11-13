@@ -327,7 +327,7 @@ describe('append-only (carry-over 3)', () => {
     const methods = makeApp(noDb).routes.map((r) => r.method.toUpperCase());
     expect(methods.length).toBeGreaterThan(0);
     expect(methods).not.toContain('DELETE');
-    expect(methods.filter((m) => m !== 'ALL').sort()).toEqual(['GET', 'GET', 'POST', 'POST']);
+    expect(methods.filter((m) => m !== 'ALL').sort()).toEqual(['GET', 'GET', 'GET', 'POST', 'POST']); // markets, news, pull-queue + the two pull-queue POSTs
   });
 
   it('void retains the row and sets voided_at', async () => {
