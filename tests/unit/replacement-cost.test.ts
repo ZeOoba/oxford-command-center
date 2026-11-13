@@ -64,6 +64,11 @@ describe('replacementCostAnalysis', () => {
     estPrice: 3_000_000,
     market: 'Columbus OH' as const,
     yearBuilt: 1980,
+    // The tilt-up baseline with CapEx and carry known (zero): the RCT arithmetic below is the table's own. The
+    // construction multiplier, adders and the all-in walk are pinned in tests/unit/rct-construction-type.test.ts.
+    constructionType: 'tilt-precast' as const,
+    capex: 0,
+    leaseUpCarry: 0,
     ...over,
   });
 

@@ -474,7 +474,9 @@ export function isFinancialSourcePath(p: string): boolean {
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
     // Priced against RCT v03, the ratified basis denominator — a governor-adjacent constant table.
-    path === 'src/brain/replacement-cost.ts'
+    path === 'src/brain/replacement-cost.ts' ||
+    // The construction-type multiplier / adder arithmetic both the engine and the drawer divide the Basis by (RCT v3.2).
+    path === 'src/lib/rct-adjust.ts'
   );
 }
 

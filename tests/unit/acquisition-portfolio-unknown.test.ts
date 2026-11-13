@@ -24,7 +24,7 @@ const NOW = '2026-11-09T00:00:00Z';
 const STRONG: Record<string, unknown> = {
   dealId: 'zephyr', totalSf: 40_000, maxBuildingSf: 40_000, productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
+  constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false },
   stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
   sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4, marketRentPsf: 6, waltYears: 1.5, valueAddScore: 0.6,

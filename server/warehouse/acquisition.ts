@@ -34,6 +34,7 @@ import type {
   Verdict,
 } from '../../src/contracts/acquisition';
 import type { Confidence, DataQualityFlag } from '../../src/contracts/common';
+import { adderTotal, adjustBand, basisClearsFloor, basisDiscount, constructionMultiplier, tiltSfFor } from '../../src/lib/rct-adjust';
 import { clamp } from './clamp';
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 
@@ -115,11 +116,15 @@ export function replacementCostPsf(
   rct: ReplacementCostTable,
   band: 'low' | 'mid' | 'high' = 'mid',
   market: string | null = null,
+  /** Construction-type multiplier and adder $/SF (src/lib/rct-adjust.ts). Omitted => the tilt-up baseline, no adders. */
+  adj: { multiplier: number; adderPsf: number } = { multiplier: 1, adderPsf: 0 },
 ): { psf: number; marketCovered: boolean; proxy: boolean } {
-  const row = market !== null ? rct.markets[market] : undefined;
-  if (row === undefined) return { psf: rct.psf[band], marketCovered: false, proxy: false };
-  const psf = band === 'low' ? row.low : band === 'high' ? row.high : row.point;
-  return { psf, marketCovered: true, proxy: row.proxy };
+  // Own keys only: a free-string market such as 'constructor' must take the fallback, never an Object.prototype member.
+  const row = market !== null && Object.prototype.hasOwnProperty.call(rct.markets, market) ? rct.markets[market] : undefined;
+  const base = row === undefined ? { low: rct.psf.low, point: rct.psf.mid, high: rct.psf.high } : row;
+  const b = adjustBand(base, adj.multiplier, adj.adderPsf);
+  const psf = band === 'low' ? b.low : band === 'high' ? b.high : b.point;
+  return row === undefined ? { psf, marketCovered: false, proxy: false } : { psf, marketCovered: true, proxy: row.proxy };
 }
 
 /** Replacement-cost total for a building from the RCT — the Basis floor/score divisor. */
@@ -128,8 +133,11 @@ export function replacementCostTotal(
   rct: ReplacementCostTable,
   band: 'low' | 'mid' | 'high' = 'mid',
   market: string | null = null,
+  /** Construction-type multiplier and adders; omitted => the tilt-up baseline (×1.00, no adders), NOT the engine's
+   *  construction-adjusted divisor. */
+  adj: { multiplier: number; adderPsf: number } = { multiplier: 1, adderPsf: 0 },
 ): number {
-  return sf * replacementCostPsf(rct, band, market).psf;
+  return sf * replacementCostPsf(rct, band, market, adj).psf;
 }
 
 /**
@@ -290,8 +298,12 @@ export function computeInputsVersion(
   // that hashed under the old default keeps its key; only a price between the two caps hashes unknown separately.
   const canonicalIsPortfolio = input.isPortfolio === null && !portfolioStatusDecidesPriceGate(input.price, null, ruleset)
     ? false : input.isPortfolio;
+  // rctAdders (RCT v3.2): adderTotal dedups and treats null and [] alike, so order, duplicates and empty-vs-null are
+  // decision-identical; fold them to one key (refute wf_3124f132-f17, determinism lens). null keeps every pre-v3.2 key.
+  const canonicalAdders = input.rctAdders === null || input.rctAdders.length === 0 ? null : [...new Set(input.rctAdders)].sort();
   const canonicalInput = {
     ...input, ddKnown: canonicalDd(input.ddKnown), use: canonicalUse, groundLeased: canonicalGroundLeased, isPortfolio: canonicalIsPortfolio,
+    rctAdders: canonicalAdders,
   };
   const canonical = stableStringify({
     input: canonicalInput,
@@ -327,8 +339,10 @@ function tierBase(r: AcquisitionRuleset, tier: ClusterTier): number {
 function constructionPts(r: AcquisitionRuleset, ct: ConstructionType): number | null {
   const c = r.scoring.cat3.constructionPoints;
   switch (ct) {
-    case 'block-tilt-brick': return c.blockTiltBrick;
-    case 'mixed': return c.mixed;
+    // Doctrine (Cat 3): block / tilt-up / brick full credit. The 2026-11-12 split keeps every masonry/concrete type on
+    // the full-credit key; hybrid (block wainscot + metal panel on PEMB) takes the mixed points.
+    case 'tilt-precast': case 'cmu': case 'brick': return c.blockTiltBrick;
+    case 'hybrid': case 'mixed': return c.mixed;
     case 'pemb': return c.pemb;
     default: return null; // 'unknown'
   }
@@ -527,10 +541,40 @@ export function scoreAcquisition(
   const rcBand = 'low' as const;
   // Per-market divisor (RCT v03). Unknown/uncovered market ⇒ conservative firm-wide fallback (the
   // cheapest market to build in ⇒ the strictest floor), and we SAY SO rather than pass it silently.
-  const rcResolved = validRct !== null ? replacementCostPsf(validRct, rcBand, input.market) : null;
+  // Construction-type multiplier then adders (SKILL.md v4.37): POINT × multiplier + adders, LOW at −10%. The PEMB size
+  // tilt is read ONLY at maxBuildingSf, a real building's SF (the scoring form fills it from the total for a known
+  // one-building deal). With it unknown the tilt reads at null, the strictest band: missing data never buys a looser
+  // floor. Never at totalSf, and never keyed on isPortfolio: 'not a portfolio' does not mean one building (a 6+ building
+  // deal is 'no'), and inputs_version folds isPortfolio null into false, so a tilt that read isPortfolio would let one
+  // cache key carry two verdicts (refute wf_3124f132-f17 and wf_9e4b0fd3-241). Unknown type => the strictest applicable
+  // multiplier (PEMB for the SF, capped at 0.90), so skipping the type check never loosens the floor either.
+  const ctMult = validRct !== null ? constructionMultiplier(input.constructionType, tiltSfFor(input.maxBuildingSf, input.totalSf), validRct.constructionMultipliers) : null;
+  if (input.maxBuildingSf !== null && input.totalSf !== null && input.totalSf > 0 && input.maxBuildingSf > input.totalSf) {
+    flag('maxBuildingSf', `largest building SF (${input.maxBuildingSf.toLocaleString('en-US')}) exceeds total SF (${input.totalSf.toLocaleString('en-US')}) — the size tilt is read at the total; check the inputs`);
+  }
+  const adders = validRct !== null ? adderTotal(input.rctAdders, validRct.adders) : null;
+  const rcResolved = validRct !== null && ctMult !== null && adders !== null
+    ? replacementCostPsf(validRct, rcBand, input.market, { multiplier: ctMult.multiplier, adderPsf: adders.psf })
+    : null;
   const replacementCost = rcResolved !== null && grossSf !== null && grossSf > 0 ? grossSf * rcResolved.psf : null;
+  if (ctMult !== null && ctMult.assumed) {
+    flag('replacementCost', `construction type ${input.constructionType === 'mixed' ? 'is a mixed façade (no façade weighting in the engine)' : 'unknown'} — RCT ${ctMult.label}, the strictest applicable multiplier. Confirm the type from the OM, CAMA or photos.`);
+  } else if (ctMult !== null && ctMult.outsideBand) {
+    flag('replacementCost', `PEMB above 50,000 SF is outside the size-tilt band — RCT ${ctMult.label}.`);
+  }
+  if (ctMult !== null && input.maxBuildingSf === null && (input.constructionType === 'pemb' || ctMult.assumed)) {
+    flag('replacementCost', 'largest building SF unknown — the PEMB size tilt is read at the strictest band (under 20,000 SF). Enter the largest building SF.');
+  } else if (ctMult !== null && input.maxBuildingSf !== null && input.totalSf !== null && input.totalSf > input.maxBuildingSf
+    && (input.constructionType === 'pemb' || ctMult.assumed)) {
+    // Multi-building: every building is priced at the LARGEST building's tilt, the loosest PEMB band in the deal, until
+    // per-building allocation (Amendment H) exists. Disclosed, not hidden.
+    flag('replacementCost', `total SF exceeds the largest building SF (a multi-building deal, or OM vs county SF that disagree) — the PEMB size tilt is read at the largest building (${input.maxBuildingSf.toLocaleString('en-US')} SF), an upper bound for a multi-building deal until per-building allocation (Amendment H).`);
+  }
+  if (adders !== null && adders.siteWorkStacked) {
+    flag('rctAdders', 'both site-work adders applied (excess site work + paving/lighting) — doctrine forbids stacking them for the same paving scope; confirm they are separate scopes.');
+  }
   if (rcResolved !== null && !rcResolved.marketCovered) {
-    flag('replacementCost', `market ${input.market === null ? 'not supplied' : `'${input.market}' not in ${validRct!.rctVersion}`} — using the conservative firm-wide fallback ($${validRct!.psf[rcBand]}/SF, the strictest floor). Supply a covered market for a per-market basis.`);
+    flag('replacementCost', `market ${input.market === null ? 'not supplied' : `'${input.market}' not in ${validRct!.rctVersion}`} — using the conservative firm-wide fallback ($${validRct!.psf[rcBand]}/SF baseline LOW, the strictest floor). Supply a covered market for a per-market basis.`);
   } else if (rcResolved !== null && rcResolved.proxy) {
     flag('replacementCost', `RCT row for '${input.market}' is a [PROXY] from a neighbouring metro — DENOMINATOR-SENSITIVE: a local insurance comp or GC quote is required pre-LOI.`);
   }
@@ -545,10 +589,14 @@ export function scoreAcquisition(
     if (div > 0.10) flag('replacementCostTotal', `caller replacement cost ${Math.round(input.replacementCostTotal)} diverges ${(div * 100).toFixed(0)}% from ratified RCT ${Math.round(replacementCost)} — using the ratified RCT`);
   }
   const discount = input.allInBasis !== null && input.allInBasis > 0 && replacementCost !== null && replacementCost > 0
-    ? 1 - input.allInBasis / replacementCost
+    ? basisDiscount(input.allInBasis, grossSf!, rcResolved!.psf)
     : null;
   if (discount === null) { floorIndeterminate = true; flag('basis', 'basis indeterminate (all-in basis ≤ 0 / missing, or replacement cost not RCT-derivable)'); }
-  floors.push({ id: 'basis', passed: discount !== null && discount >= vintageFloor, actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required` });
+  const rctCite = ctMult !== null && adders !== null && rcResolved !== null
+    ? ` (RCT ${ctMult.label}${adders.psf > 0 ? ` + $${adders.psf}/SF adders` : ''}, LOW $${rcResolved.psf.toFixed(2)}/SF)`
+    : '';
+  // basisClearsFloor: the one predicate the deal drawer uses too (src/lib/rct-adjust.ts), at 1e-8 floor precision.
+  floors.push({ id: 'basis', passed: discount !== null && basisClearsFloor(discount, vintageFloor), actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required${rctCite}` });
   // yield floor — stabilized YoC
   if (input.stabilizedYoc === null) { floorIndeterminate = true; flag('stabilizedYoc', 'stabilized YoC missing — yield floor indeterminate'); }
   // Strictly ABOVE the floor (SKILL.md v4.45 STAGE 1: "stabilized YoC >8%"); exactly 8.0% does not clear.

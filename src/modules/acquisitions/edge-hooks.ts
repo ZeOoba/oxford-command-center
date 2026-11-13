@@ -344,7 +344,8 @@ export const EDGE_TIER1_ALLOWED_STATES: Readonly<Partial<Record<Market, readonly
 };
 
 /** Market members (plus a null market) that defer to the Tier-2 location match. */
-export const EDGE_TIER2_MARKETS: ReadonlySet<Market> = new Set<Market>(['Mid-Atlantic', 'Other', 'Unknown']);
+// 'Chicago Cook County IL' (added 2026-11-12 with its RCT row) has no Edge market yet, so it defers to the location match.
+export const EDGE_TIER2_MARKETS: ReadonlySet<Market> = new Set<Market>(['Mid-Atlantic', 'Chicago Cook County IL', 'Other', 'Unknown']);
 
 export const EDGE_UNMATCHED_TEXT: Readonly<Record<EdgeUnmatchedReason, string>> = {
   no_location: 'no parseable "City, ST" in the deal location',

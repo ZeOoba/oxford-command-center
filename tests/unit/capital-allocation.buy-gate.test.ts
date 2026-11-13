@@ -53,7 +53,7 @@ const STRONG_RAW: Record<string, unknown> = {
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6,
   multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
+  constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false }, // other-use gate confirmed (audit 2026-11-08)
   // Ruleset 2.0.0 moved Basis full credit 0.90 -> 0.76, which lifts the Basis points of a fixed discount. 4,472,480 is the
   // basis whose Basis points under 0.76 equal 3,600,000's under 0.90 (11.39 of 25), so every composite this file pins

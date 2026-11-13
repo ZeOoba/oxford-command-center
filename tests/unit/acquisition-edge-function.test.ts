@@ -36,7 +36,7 @@ const STRONG_BASE: Record<string, unknown> = {
   price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005,
+  constructionType: 'tilt-precast', yearBuilt: 2005,
   sfhaOnPad: false,
   allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket',

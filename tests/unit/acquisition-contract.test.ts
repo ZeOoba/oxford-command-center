@@ -79,7 +79,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(rct.markets['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
   });
 
-  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill, most recently updated 2026-08-11 — Louisville KY) — drift detector', () => {
+  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill v4.45, most recently 2026-11-12 — Chicago Cook County IL) — drift detector', () => {
     // AUTHORITATIVE COPY: "Replacement Cost Table (RCT v03)" in the acquisition-underwriting skill.
     // If this test fails, either the skill table was re-ratified (update these pins deliberately,
     // with the new ratification) or this config drifted (the config is the bug — fix the config).
@@ -87,7 +87,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     // partial edit of the Basis denominator can never slip through relational checks alone.
     const rct = ReplacementCostTable.parse(rctJson);
     expect(rct.ratifiedBy).toBe('Gabriel Goldberg');
-    expect(rct.ratifiedDate).toBe('2026-07-14');
+    expect(rct.ratifiedDate).toBe('2026-11-12'); // v3.2: Chicago row + construction schedule (table itself ratified 2026-07-14)
     const ratifiedTable: Record<string, { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean }> = {
       'Columbus OH':     { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
       'Cincinnati OH':   { low: 251.46, point: 279.40, high: 307.34, cwHardPsf: 143.15, proxy: false },
@@ -99,6 +99,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       'Richmond VA':     { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: true },  // PROXY: Baltimore
       'Des Moines IA':   { low: 231.66, point: 257.40, high: 283.14, cwHardPsf: 131.46, proxy: true },  // PROXY: Minneapolis
       'Louisville KY':   { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false }, // SOURCED (skill correction 2026-08-11) — added here 2026-09-28, OI-354
+      'Chicago Cook County IL': { low: 225.59, point: 250.66, high: 275.73, cwHardPsf: 127.79, proxy: false }, // SOURCED (C&W 2025 small tier); ratified by Gabriel in-turn 2026-11-12
     };
     expect(Object.keys(rct.markets).sort()).toEqual(Object.keys(ratifiedTable).sort());
     for (const [name, want] of Object.entries(ratifiedTable)) {
@@ -109,8 +110,27 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       expect(got.cwHardPsf, `${name} C&W hard`).toBeCloseTo(want.cwHardPsf, 2);
       expect(got.proxy, `${name} proxy flag`).toBe(want.proxy);
     }
-    // Fallback must be exactly the Kansas City row — cheapest to build ⇒ strictest floor.
-    expect(rct.psf).toEqual({ low: 227.90, mid: 253.22, high: 278.54 });
+    // Fallback must be exactly the cheapest row — Chicago Cook County IL since v3.2 (Kansas City before) ⇒ strictest floor.
+    expect(rct.psf).toEqual({ low: 225.59, mid: 250.66, high: 275.73 });
+  });
+
+  it('pins the Construction-Type Multiplier Schedule and the adder schedule to SKILL.md v4.37 / v4.45', () => {
+    const rct = ReplacementCostTable.parse(rctJson);
+    expect(rct.constructionMultipliers).toEqual({
+      'tilt-precast': 1, cmu: 0.97, brick: 1.1, hybrid: 0.93,
+      pemb: { under20k: 0.88, under40k: 0.9, upTo50k: 0.92, above50k: 0.92 },
+      unknownCap: 0.9,
+    });
+    expect(rct.adders).toEqual({
+      'heavy-office': 15, 'climate-controlled': 12, cranes: 18, esfr: 4, 'excess-site-work': 8, 'paving-lighting': 8,
+    });
+  });
+
+  it('refuses an RCT config without the construction schedule (fail closed, never a silent ×1.00)', () => {
+    const { constructionMultipliers: _m, ...noSchedule } = rctJson as Record<string, unknown>;
+    expect(ReplacementCostTable.safeParse(noSchedule).success).toBe(false);
+    const { adders: _a, ...noAdders } = rctJson as Record<string, unknown>;
+    expect(ReplacementCostTable.safeParse(noAdders).success).toBe(false);
   });
 
   it('RCT coherence: every all-in POINT exceeds its C&W hard cost — the test RCT v02 failed', () => {
@@ -134,7 +154,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     const input = AcquisitionInput.parse({
       dealId: 'test-deal', price: 4_800_000, maxBuildingSf: 42_000, totalSf: 42_000,
       productType: 'shallow-bay-multi', clearHeightFt: 24, hasDriveIn: true, hasDock: true,
-      dockCount: 4, driveInCount: 4, multiStory: false, constructionType: 'block-tilt-brick',
+      dockCount: 4, driveInCount: 4, multiStory: false, constructionType: 'tilt-precast',
       yearBuilt: 1998, sfhaOnPad: false, allInBasis: 4_800_000, replacementCostTotal: 6_150_000,
       stabilizedYoc: 0.095, leveredIrr: 0.16, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'established',
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.8,
@@ -149,9 +169,12 @@ describe('acquisition ruleset contract (ratified v1)', () => {
 // bumping RCT_VERSION leaves every cached score keyed to the old denominator (found by the OI-354 refute:
 // Louisville KY was added to the table while the version stayed put). This pins content -> version.
 describe('RCT version pin: table content and RCT_VERSION must move together', () => {
-  const EXPECTED = { version: 'replacement-cost.v3.1', contentHash: '2e2681c5f62f0f3b' };
-  it('the markets + fallback content hash matches the value recorded for this RCT_VERSION', () => {
-    const hash = createHash('sha256').update(stableStringify({ markets: rctJson.markets, psf: rctJson.psf })).digest('hex').slice(0, 16);
+  // v3.2 widened the hash to the construction multipliers and adders: they move the denominator too.
+  const EXPECTED = { version: 'replacement-cost.v3.2', contentHash: '510201d2f896d463' };
+  it('the markets + fallback + construction schedule content hash matches the value recorded for this RCT_VERSION', () => {
+    const hash = createHash('sha256').update(stableStringify({
+      markets: rctJson.markets, psf: rctJson.psf, constructionMultipliers: rctJson.constructionMultipliers, adders: rctJson.adders,
+    })).digest('hex').slice(0, 16);
     expect(
       { version: RCT_VERSION, contentHash: hash },
       'RCT table content changed: bump RCT_VERSION (src/contracts/acquisition.ts AND config rctVersion) so cached scores re-key, then update EXPECTED here',
