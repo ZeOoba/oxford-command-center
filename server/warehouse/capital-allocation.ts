@@ -388,8 +388,8 @@ function currentBasis(seriesForProperty: PeriodMetrics[] | undefined): string | 
 // bisection (which models a growth curve), and is not itself a measured or ratified figure.
 //
 // [RATIFY] $10/SF — a conservative light-industrial/flex value-add renovation assumption
-// (roof, parking, minor TI), well below the $125-150/SF full-replacement-cost basis already
-// ratified for acquisitions (REPLACEMENT_COST_PSF in src/brain/replacement-cost.ts). Not a
+// (roof, parking, minor TI), well below the full replacement-cost basis ratified for
+// acquisitions (the local-only RCT, docs/ops/rct-runtime-config.md). Not a
 // ratified capital_config governor — revisit if this needs formal governance like
 // dscrFloor/ltvCeiling.
 const ASSUMED_CAPEX_PSF = 10;

@@ -42,10 +42,11 @@ import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { _projectUnleveredReturn, PROJECTION_ASSUMPTIONS } from '../../server/warehouse/capital-allocation';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { loadTestRct } from '../support/rct';
 
 const mockGetMacro = vi.mocked(getMacro);
 const mockScoreProperties = vi.mocked(scoreProperties);
@@ -480,7 +481,7 @@ describe('buildPortfolioAllocation', () => {
 describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202-de8)', () => {
   const ratifiedJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'));
   const RULESET = parseRuleset(ratifiedJson);
-  const RCT = loadRatifiedRct();
+  const RCT = loadTestRct();
   // Strong deal: DSCR proxy = 0.12 / (0.40 x 0.085) = 3.53 -> clears dscr_floor 1.25, fails 4.0.
   const STRONG = AcquisitionInput.parse({
     dealId: 'stale-strong', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,

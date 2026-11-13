@@ -6,16 +6,18 @@ import {
   replacementCostAnalysis,
 } from '../../src/brain/replacement-cost';
 
+const COLUMBUS_LOW = RCT_V03['Columbus OH']!.low;
+
 describe('RCT v03 table', () => {
   it('pins the ratified version so a Basis score stays reproducible', () => {
     expect(RCT_VERSION).toBe('RCT v03');
   });
 
-  it('carries the ratified per-market LOW figures', () => {
-    expect(RCT_V03['Columbus OH']!.low).toBeCloseTo(229.65, 2);
-    expect(RCT_V03['Kansas City MO']!.low).toBeCloseTo(227.9, 2);
-    expect(RCT_V03['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
-    expect(RCT_V03['Mid-Atlantic']!.low).toBeCloseTo(232.97, 2);
+  // Figures come from the committed synthetic stand-in (the ratified table is local-only; docs/ops/rct-runtime-config.md).
+  it('carries a per-market LOW for every covered market', () => {
+    for (const m of ['Columbus OH', 'Kansas City MO', 'Indianapolis IN', 'Mid-Atlantic'] as const) {
+      expect(RCT_V03[m]!.low).toBeGreaterThan(0);
+    }
   });
 
   it('LOW is 90% of POINT for every market (the ±10% band)', () => {
@@ -83,16 +85,18 @@ describe('replacementCostAnalysis', () => {
   });
 
   it('clears the floor when basis is at or below RCT LOW x (1 - floor)', () => {
-    // Columbus LOW 229.65, 1980 -> floor 0.65 -> clears at 80.3775/SF
-    const rc = replacementCostAnalysis(deal({ estPrice: (80 * 40_000) / 1.02 }))!;
-    expect(rc.floorPsf!).toBeCloseTo(80.3775, 3);
-    expect(rc.basisPsf!).toBeCloseTo(80, 6);
+    // Columbus LOW, 1980 -> floor 0.65 -> clears at LOW x 0.35 per SF
+    const floorPsf = COLUMBUS_LOW * 0.35;
+    const basisPsf = Math.floor(floorPsf);
+    const rc = replacementCostAnalysis(deal({ estPrice: (basisPsf * 40_000) / 1.02 }))!;
+    expect(rc.floorPsf!).toBeCloseTo(floorPsf, 3);
+    expect(rc.basisPsf!).toBeCloseTo(basisPsf, 6);
     expect(rc.clearsFloor).toBe(true);
     expect(rc.verdict).toBe('Clears basis floor');
   });
 
   it('fails the floor a dollar above it', () => {
-    const rc = replacementCostAnalysis(deal({ estPrice: (81 * 40_000) / 1.02 }))!;
+    const rc = replacementCostAnalysis(deal({ estPrice: ((Math.floor(COLUMBUS_LOW * 0.35) + 1) * 40_000) / 1.02 }))!;
     expect(rc.clearsFloor).toBe(false);
     expect(rc.verdict).toBe('Fails basis floor');
   });
@@ -114,7 +118,7 @@ describe('replacementCostAnalysis', () => {
   it('flags an unknown vintage and applies the STRICT default', () => {
     const rc = replacementCostAnalysis(deal({ yearBuilt: null }))!;
     expect(rc.vintageAssumed).toBe(true);
-    expect(rc.floorPsf!).toBeCloseTo(229.65 * 0.35, 3);
+    expect(rc.floorPsf!).toBeCloseTo(COLUMBUS_LOW * 0.35, 3);
   });
 
   it('refuses to invent a denominator for a market not in the RCT', () => {

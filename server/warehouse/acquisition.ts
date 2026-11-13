@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { stableStringify } from './stable-stringify';
+import { assertPinnedRct, assertPlausibleRct, assertRawIsCanonical, isSyntheticRct, RATIFIED_RCT_HMAC, RCT_PIN_KEY_ENV } from './rct-pin';
 import {
   AcquisitionInput,
   AcquisitionRuleset,
@@ -95,14 +96,49 @@ export function assertProductionRct(rct: ReplacementCostTable): void {
     throw new Error(`replacement-cost table ${rct.rctVersion} is 'ratified' but missing provenance (ratifiedBy/ratifiedDate) — fail-closed`);
   }
 }
-/** Parse a Replacement-Cost Table (raw — no ratification assertion). */
-export function loadReplacementCostTable(path: string = REPLACEMENT_COST_TABLE_PATH): ReplacementCostTable {
-  return ReplacementCostTable.parse(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+/**
+ * Options for the RCT loaders. The defaults are the PRODUCTION posture. Only code can relax them (tests load the
+ * synthetic stand-in through tests/support/rct.ts); no environment variable can.
+ */
+export interface RctLoadOptions {
+  /** Accept the committed synthetic stand-in (`_synthetic: true`). Default false: production refuses it. */
+  allowSynthetic?: boolean;
+  /** HMAC the table must match under RCT_PIN_KEY; null skips the pin (tests only). Default: RATIFIED_RCT_HMAC. */
+  pinnedHmac?: string | null;
+  /** Where RCT_PIN_KEY is read from. Default process.env. */
+  env?: Record<string, string | undefined>;
 }
-/** Load + assert the ratified Replacement-Cost Table (fail-closed; Q5). */
-export function loadRatifiedRct(path: string = REPLACEMENT_COST_TABLE_PATH): ReplacementCostTable {
-  const rct = loadReplacementCostTable(path);
+function readRctRaw(path: string): unknown {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    throw new Error(`replacement-cost table not found at ${path} (${code ?? 'read error'}); the ratified table is local-only, see docs/ops/rct-runtime-config.md — fail-closed`);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error(`replacement-cost table at ${path} is not valid JSON — fail-closed`);
+  }
+}
+/** Parse a Replacement-Cost Table (no ratification or pin assertion; still refuses the synthetic stand-in unless allowed). */
+export function loadReplacementCostTable(path: string = REPLACEMENT_COST_TABLE_PATH, opts: RctLoadOptions = {}): ReplacementCostTable {
+  const raw = readRctRaw(path);
+  if (isSyntheticRct(raw) && opts.allowSynthetic !== true) {
+    throw new Error(`replacement-cost table at ${path} is the synthetic test stand-in, not the ratified table — fail-closed. See docs/ops/rct-runtime-config.md`);
+  }
+  const parsed = ReplacementCostTable.parse(raw);
+  assertRawIsCanonical(raw, parsed);
+  return parsed;
+}
+/** Load + assert the ratified Replacement-Cost Table (fail-closed; Q5): ratified + signed, plausible, and the pinned table. */
+export function loadRatifiedRct(path: string = REPLACEMENT_COST_TABLE_PATH, opts: RctLoadOptions = {}): ReplacementCostTable {
+  const rct = loadReplacementCostTable(path, opts);
   assertProductionRct(rct);
+  assertPlausibleRct(rct);
+  const pinned = opts.pinnedHmac === undefined ? RATIFIED_RCT_HMAC : opts.pinnedHmac;
+  if (pinned !== null) assertPinnedRct(rct, (opts.env ?? process.env)[RCT_PIN_KEY_ENV], pinned);
   return rct;
 }
 /**
@@ -547,7 +583,7 @@ export function scoreAcquisition(
   // floor. Never at totalSf, and never keyed on isPortfolio: 'not a portfolio' does not mean one building (a 6+ building
   // deal is 'no'), and inputs_version folds isPortfolio null into false, so a tilt that read isPortfolio would let one
   // cache key carry two verdicts (refute wf_3124f132-f17 and wf_9e4b0fd3-241). Unknown type => the strictest applicable
-  // multiplier (PEMB for the SF, capped at 0.90), so skipping the type check never loosens the floor either.
+  // multiplier (PEMB for the SF, capped at the table's unknownCap), so skipping the type check never loosens the floor either.
   const ctMult = validRct !== null ? constructionMultiplier(input.constructionType, tiltSfFor(input.maxBuildingSf, input.totalSf), validRct.constructionMultipliers) : null;
   if (input.maxBuildingSf !== null && input.totalSf !== null && input.totalSf > 0 && input.maxBuildingSf > input.totalSf) {
     flag('maxBuildingSf', `largest building SF (${input.maxBuildingSf.toLocaleString('en-US')}) exceeds total SF (${input.totalSf.toLocaleString('en-US')}) — the size tilt is read at the total; check the inputs`);

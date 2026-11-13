@@ -14,16 +14,17 @@ import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import {
   classifyLatestScore,
   liveScoringRegime,
   rescoreStaleCandidates,
 } from '../../server/warehouse/acq-score-freshness';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 
 const STRONG = AcquisitionInput.parse({
   dealId: 'fresh-strong',

@@ -24,9 +24,10 @@ import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { persistAndLogScore, logAcqOutcome } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const RATIFIED_RULESET: AcquisitionRuleset = parseRuleset(ratifiedJson);
-const RCT: ReplacementCostTable = loadRatifiedRct();
+const RCT: ReplacementCostTable = loadTestRct();
 
 /** Strong input — high YOC → DSCR proxy clears, LTV indeterminate → expected PURSUE or WATCH verdict. */
 const STRONG_RAW: Record<string, unknown> = {

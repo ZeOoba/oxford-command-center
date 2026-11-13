@@ -1,0 +1,114 @@
+{
+  "_comment": "SYNTHETIC TEST FIXTURE. Every figure here is INVENTED and has no relation to the ratified RCT. The real table is local-only (gitignored config/replacement-cost.v3.json, listed in scripts/fixtures/real-data-manifest.json); see docs/ops/rct-runtime-config.md. Production loaders refuse this file (_synthetic: true).",
+  "_synthetic": true,
+  "rctVersion": "replacement-cost.v3.2",
+  "ratification": "ratified",
+  "ratifiedBy": "synthetic-test-fixture",
+  "ratifiedDate": "2000-01-01",
+  "basis": "Synthetic test fixture: invented all-in $/SF bands, tilt-up baseline, for tests only.",
+  "psf": {
+    "low": 258.37,
+    "mid": 287.08,
+    "high": 315.79
+  },
+  "markets": {
+    "Columbus OH": {
+      "low": 271.43,
+      "point": 301.59,
+      "high": 331.75,
+      "cwHardPsf": 159.84,
+      "proxy": false
+    },
+    "Cincinnati OH": {
+      "low": 266.18,
+      "point": 295.76,
+      "high": 325.34,
+      "cwHardPsf": 156.75,
+      "proxy": false
+    },
+    "Kansas City MO": {
+      "low": 283.52,
+      "point": 315.02,
+      "high": 346.52,
+      "cwHardPsf": 166.96,
+      "proxy": false
+    },
+    "Indianapolis IN": {
+      "low": 277.91,
+      "point": 308.79,
+      "high": 339.67,
+      "cwHardPsf": 163.66,
+      "proxy": false
+    },
+    "Mid-Atlantic": {
+      "low": 289.64,
+      "point": 321.82,
+      "high": 354.0,
+      "cwHardPsf": 170.56,
+      "proxy": false
+    },
+    "Madison WI": {
+      "low": 268.37,
+      "point": 298.19,
+      "high": 328.01,
+      "cwHardPsf": 158.04,
+      "proxy": true
+    },
+    "Grand Rapids MI": {
+      "low": 293.15,
+      "point": 325.72,
+      "high": 358.29,
+      "cwHardPsf": 172.63,
+      "proxy": true
+    },
+    "Richmond VA": {
+      "low": 274.86,
+      "point": 305.4,
+      "high": 335.94,
+      "cwHardPsf": 161.86,
+      "proxy": true
+    },
+    "Des Moines IA": {
+      "low": 286.29,
+      "point": 318.1,
+      "high": 349.91,
+      "cwHardPsf": 168.59,
+      "proxy": true
+    },
+    "Louisville KY": {
+      "low": 279.73,
+      "point": 310.81,
+      "high": 341.89,
+      "cwHardPsf": 164.73,
+      "proxy": false
+    },
+    "Chicago Cook County IL": {
+      "low": 258.37,
+      "point": 287.08,
+      "high": 315.79,
+      "cwHardPsf": 152.15,
+      "proxy": false
+    }
+  },
+  "constructionMultipliers": {
+    "tilt-precast": 1.0,
+    "cmu": 0.96,
+    "brick": 1.08,
+    "hybrid": 0.94,
+    "pemb": {
+      "under20k": 0.86,
+      "under40k": 0.89,
+      "upTo50k": 0.91,
+      "above50k": 0.91
+    },
+    "unknownCap": 0.89
+  },
+  "adders": {
+    "heavy-office": 13,
+    "climate-controlled": 10,
+    "cranes": 20,
+    "esfr": 5,
+    "excess-site-work": 7,
+    "paving-lighting": 9
+  }
+}

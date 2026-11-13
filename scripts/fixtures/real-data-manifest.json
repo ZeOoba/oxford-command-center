@@ -23,7 +23,8 @@
     "config/local/ar-seed-mappings.json",
     "config/local/doc-search-golden.json",
     "config/local/lease-term-seeds.json",
-    "config/local/pca-overlay.json"
+    "config/local/pca-overlay.json",
+    "config/replacement-cost.v3.json"
   ],
   "optional": [
     "data/property-financials/golden.local.json",

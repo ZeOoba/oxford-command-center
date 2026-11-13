@@ -17,13 +17,14 @@ import { describe, expect, it } from 'vitest';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { runMigrations } from '../../server/warehouse/migrate';
 import { governorFingerprint, loadGovernors, persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { loadRatifiedRct, parseRuleset } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET = parseRuleset(
   JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')),
 );
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 
 const BASE: Record<string, unknown> = {
   dealId: 'c1',

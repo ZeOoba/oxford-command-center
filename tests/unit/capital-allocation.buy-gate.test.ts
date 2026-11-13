@@ -37,14 +37,15 @@ vi.mock('../../server/warehouse/metrics', async (importOriginal) => {
 import { getMacro } from '../../server/macro/getMacro';
 import { scoreProperties } from '../../server/warehouse/scores';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET: AcquisitionRuleset = parseRuleset(
   JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')),
 );
-const RCT: ReplacementCostTable = loadRatifiedRct();
+const RCT: ReplacementCostTable = loadTestRct();
 
 /** Strong, governor-clearing deal — scores T1 PURSUE (composite 80.6) on the ratified ruleset. */
 const STRONG_RAW: Record<string, unknown> = {
