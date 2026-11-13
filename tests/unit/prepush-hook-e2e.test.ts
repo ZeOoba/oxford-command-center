@@ -1,0 +1,195 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+
+import { WRAPPER } from '../../scripts/install-git-hooks';
+
+// End-to-end: the INSTALLED pre-push hook (WRAPPER: the vendored Python term scanner, then the OCC
+// JS payload scanner) run by a real `git push` into a bare remote. One case per leak shape the refute
+// run wf_72500728-83e reproduced against the JS-only gate; each must BLOCK, and a clean push must go
+// through. The roster term is SYNTHETIC (never a real deal name, person or address).
+//
+// PREPUSH_E2E_SRC=<dir> runs the same cases against another tree's hook template and scanners (for
+// example a `git archive` of the previous commit), which is how these cases were shown to fail before
+// the fix. Unset, the cases run against this checkout.
+
+const TERM = 'Quorvane Blissetter Parcel';
+const SRC = process.env['PREPUSH_E2E_SRC'] ?? process.cwd();
+
+/** The pre-push template of the tree under test (the imported WRAPPER for this checkout). */
+function wrapperOf(src: string): string {
+  if (src === process.cwd()) return WRAPPER;
+  // Read the template literal out of the other tree's source instead of importing it: importing an
+  // older install-git-hooks.ts would run its installer against the shared hooks directory.
+  const text = readFileSync(join(src, 'scripts', 'install-git-hooks.ts'), 'utf8');
+  const start = text.indexOf('export const WRAPPER = `') + 'export const WRAPPER = `'.length;
+  return text.slice(start, text.indexOf('`;', start)).replace(/\\\\/g, '\\');
+}
+
+class Sandbox {
+  root = mkdtempSync(join(tmpdir(), 'occ-prepush-e2e-'));
+  home = join(this.root, 'home');
+  remote = join(this.root, 'remote.git');
+  work = join(this.root, 'work');
+  env: Record<string, string | undefined>;
+
+  constructor() {
+    mkdirSync(join(this.home, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(
+      join(this.home, '.claude', 'hooks', 'confidential-terms.json'),
+      JSON.stringify({ _meta: { purpose: 'test' }, synthetic_deal: { label: 'synthetic', active: true, always: [TERM] } }),
+    );
+    const gcfg = join(this.root, 'gitconfig');
+    writeFileSync(gcfg, '');
+    this.env = {
+      ...process.env,
+      HOME: this.home,
+      USERPROFILE: this.home,
+      GIT_CONFIG_GLOBAL: gcfg,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@example.invalid',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@example.invalid',
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    for (const k of ['PREPUSH_ALLOW_DIFF_ERROR', 'PREPUSH_ALLOW_NO_ROSTER', 'ORA_PREPUSH_REQUIRE_REFS', 'GIT_DIR', 'GIT_WORK_TREE']) delete this.env[k];
+    this.git(this.root, 'init', '-q', '--bare', '-b', 'main', this.remote);
+    this.git(this.root, 'init', '-q', '-b', 'main', this.work);
+    this.git(this.work, 'remote', 'add', 'origin', this.remote);
+    // The scanners the hook runs from "$root/scripts", copied in untracked (and excluded from add -A).
+    mkdirSync(join(this.work, 'scripts', 'fixtures'), { recursive: true });
+    for (const f of ['prepush-confidential-scan.mjs', 'prepush_confidential_scan.py', 'fixtures/real-data-manifest.json']) {
+      if (existsSync(join(SRC, 'scripts', f))) copyFileSync(join(SRC, 'scripts', f), join(this.work, 'scripts', f));
+    }
+    writeFileSync(join(this.work, '.git', 'info', 'exclude'), 'scripts/\n');
+    this.commit('README.md', 'seed\n', 'seed');
+    this.git(this.work, 'push', '-q', '--no-verify', 'origin', 'main');
+    this.git(this.work, 'fetch', '-q', 'origin');
+    const hooks = join(this.root, 'hooks');
+    mkdirSync(hooks);
+    writeFileSync(join(hooks, 'pre-push'), wrapperOf(SRC), { mode: 0o755 });
+    this.git(this.work, 'config', 'core.hooksPath', hooks);
+  }
+
+  git(cwd: string, ...args: string[]): string {
+    const p = spawnSync('git', args, { cwd, env: this.env, encoding: 'utf8' });
+    if (p.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${p.stderr}`);
+    return p.stdout.trim();
+  }
+
+  commit(name: string, content: string | Buffer, msg = 'change'): string {
+    const abs = join(this.work, name);
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, content);
+    this.git(this.work, 'add', '-A');
+    this.git(this.work, 'commit', '-q', '--no-verify', '-m', msg);
+    return this.git(this.work, 'rev-parse', 'HEAD');
+  }
+
+  hashObject(data: string | Buffer): string {
+    const p = spawnSync('git', ['hash-object', '-w', '--stdin'], { cwd: this.work, env: this.env, input: data, encoding: 'utf8' });
+    if (p.status !== 0) throw new Error(p.stderr);
+    return p.stdout.trim();
+  }
+
+  push(remote: string, ...refspec: string[]): { status: number | null; stderr: string } {
+    const p = spawnSync('git', ['push', remote, ...refspec], { cwd: this.work, env: this.env, encoding: 'utf8' });
+    return { status: p.status, stderr: p.stderr };
+  }
+
+  remoteHas(sha: string, remotePath = this.remote): boolean {
+    return spawnSync('git', ['--git-dir', remotePath, 'cat-file', '-e', `${sha}^{commit}`], { env: this.env }).status === 0;
+  }
+
+  close(): void {
+    rmSync(this.root, { recursive: true, force: true });
+  }
+}
+
+describe('installed pre-push hook end to end (Python term scan + JS payload scan)', () => {
+  let sb: Sandbox;
+  beforeEach(() => {
+    sb = new Sandbox();
+  });
+  afterEach(() => sb.close());
+
+  const expectBlocked = (r: { status: number | null; stderr: string }) => {
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(r.stderr).toMatch(/BLOCKED/);
+  };
+
+  it('a clean push goes through', () => {
+    const sha = sb.commit('notes.md', 'nothing to see\n');
+    const r = sb.push('origin', 'main');
+    expect(r.status, r.stderr).toBe(0);
+    expect(sb.remoteHas(sha)).toBe(true);
+  });
+
+  it('BLOCKS a term in a .md hidden by a committed `* -diff` attribute', () => {
+    sb.commit('.gitattributes', '* -diff\n', 'attrs');
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    expectBlocked(sb.push('origin', 'main'));
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
+
+  it('BLOCKS a term in a text file that carries a NUL byte', () => {
+    sb.commit('notes.txt', Buffer.concat([Buffer.from([0]), Buffer.from(`memo about ${TERM}\n`)]));
+    expectBlocked(sb.push('origin', 'main'));
+  });
+
+  it('BLOCKS when `git replace` shows a clean object in place of the one push sends', () => {
+    const base = sb.git(sb.work, 'rev-parse', 'HEAD');
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    const clean = sb.git(sb.work, 'commit-tree', `${base}^{tree}`, '-p', base, '-m', 'clean');
+    sb.git(sb.work, 'replace', leak, clean);
+    expectBlocked(sb.push('origin', 'main'));
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
+
+  it('BLOCKS a tag that points straight at a blob carrying the term', () => {
+    const blob = sb.hashObject(`memo about ${TERM}\n`);
+    sb.git(sb.work, 'tag', 'blobtag', blob);
+    expectBlocked(sb.push('origin', 'refs/tags/blobtag'));
+  });
+
+  it('BLOCKS an annotated tag whose message carries the term', () => {
+    sb.commit('notes.md', 'clean content\n');
+    sb.git(sb.work, 'push', '-q', '--no-verify', 'origin', 'main');
+    sb.git(sb.work, 'tag', '-a', 'v1', '-m', `release notes mention ${TERM}`);
+    expectBlocked(sb.push('origin', 'refs/tags/v1'));
+  });
+
+  it('BLOCKS a commit the remote dropped (rewound) while the local origin/main still claims it', () => {
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`, 'leak');
+    sb.git(sb.work, 'push', '-q', '--no-verify', 'origin', 'main');
+    sb.git(sb.work, 'fetch', '-q', 'origin');
+    // A history scrub elsewhere rewinds the remote; this clone has not fetched since.
+    sb.git(sb.root, '--git-dir', sb.remote, 'update-ref', 'refs/heads/main', `${leak}~1`);
+    expect(sb.git(sb.work, 'rev-parse', 'origin/main')).toBe(leak);
+    sb.git(sb.work, 'checkout', '-q', '-b', 'feat');
+    sb.commit('feature.md', 'clean feature\n');
+    // (The rewound remote still stores the object, so only the verdict is asserted here.)
+    expectBlocked(sb.push('origin', 'feat'));
+  });
+
+  it('BLOCKS a push to a second remote that does not have what origin/main has', () => {
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`, 'leak');
+    sb.git(sb.work, 'push', '-q', '--no-verify', 'origin', 'main');
+    sb.git(sb.work, 'fetch', '-q', 'origin');
+    const mirror = join(sb.root, 'mirror.git');
+    sb.git(sb.root, 'init', '-q', '--bare', '-b', 'main', mirror);
+    sb.git(sb.work, 'remote', 'add', 'mirror', mirror);
+    expectBlocked(sb.push('mirror', 'main'));
+    expect(sb.remoteHas(leak, mirror)).toBe(false);
+  });
+
+  it('BLOCKS a binary under data/ (the JS payload stage) even with no term anywhere', () => {
+    sb.commit('data/ar/export.bin', Buffer.from([0, 1, 2, 3, 4]));
+    const r = sb.push('origin', 'main');
+    expectBlocked(r);
+    expect(r.stderr).toContain('data/ar/export.bin');
+  });
+});

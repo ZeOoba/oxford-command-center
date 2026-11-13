@@ -18,18 +18,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 // and the @ts-expect-error in the "non-array input" test is load-bearing: it asserts the
 // scanner rejects null at the type level. Do not delete it to silence a cascade.
 import {
-  scanDiffForConfidential,
-  scanDiffForContextTerms,
   scanDiffForConfidentialFlag,
   isRegisteredConfidentialRepo,
   currentRepoName,
   parseAddedLines,
-  loadTerms,
-  shouldBlockOnMissingRoster,
-  parseBinaryPathsUnderData,
+  COMMIT_MESSAGE_FILE_PREFIX,
+  isBlockedDataFile,
+  parseRawLog,
   binaryPathsFor,
   shouldBlockOnDiffError,
-  resolveDiffBase,
+  rangeFor,
+  destinationBound,
   collectRefScan,
   loadRealDataManifest,
   isRealDataPath,
@@ -44,62 +43,11 @@ import {
   readPushStdin,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
-// All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
-const FAKE_TERM = 'ACME-SECRET-DEAL';
-const FAKE_TERM_2 = 'fake-deal-xyz';
-
-describe('prepush-confidential-scan / scanDiffForConfidential', () => {
-  it('flags an added line that contains a confidential term', () => {
-    const added = [{ file: 'src/notes.ts', lineNo: 12, text: `const x = 'ACME-SECRET-DEAL terms';` }];
-    const hits = scanDiffForConfidential(added, [FAKE_TERM]);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.term).toBe(FAKE_TERM);
-    expect(hits[0]?.line).toBe(12);
-    expect(hits[0]?.text).toContain('ACME-SECRET-DEAL');
-  });
-
-  it('does not flag context/removed lines because the parser feeds only added lines', () => {
-    // parseAddedLines keeps only '+' lines (and drops the leading '+').
-    const diff = [
-      '@@ -1,3 +1,3 @@',
-      `-const removed = 'ACME-SECRET-DEAL';`,
-      ` const context = 'ACME-SECRET-DEAL';`,
-      `+const added = 'clean value';`,
-    ].join('\n');
-    const added = parseAddedLines(diff);
-    const hits = scanDiffForConfidential(added, [FAKE_TERM]);
-    expect(hits).toHaveLength(0);
-  });
-
-  it('returns no hits when the term is absent from every added line', () => {
-    const added = [{ file: 'a.ts', lineNo: 1, text: 'const ok = 1;' }];
-    expect(scanDiffForConfidential(added, [FAKE_TERM])).toHaveLength(0);
-  });
-
-  it('matches case-insensitively', () => {
-    const added = [{ file: 'a.ts', lineNo: 5, text: 'value = acme-secret-deal' }];
-    const hits = scanDiffForConfidential(added, [FAKE_TERM]);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.term).toBe(FAKE_TERM);
-  });
-
-  it('ignores terms of 2 characters or fewer to avoid false positives', () => {
-    const added = [{ file: 'a.ts', lineNo: 1, text: 'a ab abc' }];
-    expect(scanDiffForConfidential(added, ['a', 'ab'])).toHaveLength(0);
-  });
-
-  it('returns clean when the terms list is empty', () => {
-    const added = [{ file: 'a.ts', lineNo: 1, text: 'ACME-SECRET-DEAL fake-deal-xyz' }];
-    expect(scanDiffForConfidential(added, [])).toHaveLength(0);
-  });
-
-  it('reports a hit per offending term on the same line', () => {
-    const added = [{ file: 'a.ts', lineNo: 7, text: 'ACME-SECRET-DEAL and fake-deal-xyz together' }];
-    const hits = scanDiffForConfidential(added, [FAKE_TERM, FAKE_TERM_2]);
-    expect(hits).toHaveLength(2);
-    expect(hits.map((h) => h.term).sort()).toEqual([FAKE_TERM, FAKE_TERM_2].sort());
-  });
-});
+// Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
+// Confidential TERM matching moved to the vendored Python scanner on 2026-11-12 (refute run
+// wf_72500728-83e); its own suite is scripts/test_prepush_confidential_scan.py (run by
+// tests/unit/prepush-python-scanner.test.ts) and the whole hook is exercised end to end in
+// tests/unit/prepush-hook-e2e.test.ts. This file covers the OCC payload checks the JS scanner keeps.
 
 describe('prepush-confidential-scan / parseAddedLines', () => {
   it('extracts +lines with file paths and incrementing line numbers from hunk headers', () => {
@@ -124,131 +72,10 @@ describe('prepush-confidential-scan / parseAddedLines', () => {
     expect(added).toHaveLength(1);
     expect(added[0]?.text).toBe('real add');
   });
-});
 
-describe('prepush-confidential-scan / loadTerms', () => {
-  let tmpHome: string;
-
-  beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'cc-terms-'));
-  });
-
-  afterEach(() => {
-    rmSync(tmpHome, { recursive: true, force: true });
-  });
-
-  it('returns the built-in denylist (and does not throw) when the roster file is absent', () => {
-    const roster = loadTerms(tmpHome);
-    expect(Array.isArray(roster.alwaysTerms)).toBe(true);
-    // Built-in denylist is always present even with no roster file.
-    expect(roster.alwaysTerms.length).toBeGreaterThan(0);
-    expect(roster.contextGroups).toEqual([]);
-  });
-
-  it('extracts always terms and a context group from an ACTIVE deal shaped like the real one', () => {
-    const hooksDir = join(tmpHome, '.claude', 'hooks');
-    mkdirSync(hooksDir, { recursive: true });
-    // Synthetic roster mirroring the real per-deal object shape (label/active/string arrays).
-    const roster = {
-      _meta: { purpose: 'test', matching: 'lowercased substring', policy: 'fail-closed' },
-      fake_deal: {
-        label: 'Fake Deal (synthetic)',
-        active: true,
-        note: 'not a real deal',
-        always: [FAKE_TERM, FAKE_TERM_2],
-        context: ['SyntheticCounterparty LLC'],
-        context_requires_any: ['12.5x', 'fake-figure-9999'],
-      },
-    };
-    writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify(roster), 'utf8');
-
-    const loaded = loadTerms(tmpHome);
-    expect(loaded.alwaysTerms).toContain(FAKE_TERM);
-    expect(loaded.alwaysTerms).toContain(FAKE_TERM_2);
-    // Context terms are NOT flattened into alwaysTerms — they need the separate gated scan.
-    expect(loaded.alwaysTerms).not.toContain('SyntheticCounterparty LLC');
-    expect(loaded.contextGroups).toHaveLength(1);
-    expect(loaded.contextGroups[0]).toEqual({
-      dealKey: 'fake_deal',
-      contextTerms: ['SyntheticCounterparty LLC'],
-      requiresAny: ['12.5x', 'fake-figure-9999'],
-    });
-  });
-
-  it('excludes a RETIRED deal (active: false) entirely — both always and context terms', () => {
-    // Mirrors the real roster's own documented policy: "Set active=false to retire a deal
-    // post-closing" — a retired deal's block stays in the JSON as an audit-trail record but is
-    // no longer enforced.
-    const hooksDir = join(tmpHome, '.claude', 'hooks');
-    mkdirSync(hooksDir, { recursive: true });
-    const roster = {
-      _meta: { purpose: 'test' },
-      retired_deal: {
-        label: 'Retired Deal (synthetic)',
-        active: false,
-        always: [FAKE_TERM],
-        context: ['SyntheticCounterparty LLC'],
-        context_requires_any: ['fake-figure-9999'],
-      },
-    };
-    writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify(roster), 'utf8');
-
-    const loaded = loadTerms(tmpHome);
-    expect(loaded.alwaysTerms).not.toContain(FAKE_TERM);
-    expect(loaded.contextGroups).toEqual([]);
-  });
-
-  it('does not throw on an unparseable roster file and still returns the built-in denylist', () => {
-    const hooksDir = join(tmpHome, '.claude', 'hooks');
-    mkdirSync(hooksDir, { recursive: true });
-    writeFileSync(join(hooksDir, 'confidential-terms.json'), '{ this is not json', 'utf8');
-
-    const loaded = loadTerms(tmpHome);
-    expect(Array.isArray(loaded.alwaysTerms)).toBe(true);
-    expect(loaded.alwaysTerms.length).toBeGreaterThan(0);
-    expect(loaded.contextGroups).toEqual([]);
-  });
-});
-
-describe('prepush-confidential-scan / scanDiffForContextTerms', () => {
-  // Regression coverage for the real-world false positive this function fixes: a generic
-  // 3-letter context term ('tce', an environmental-context abbreviation on the real roster)
-  // matched as a bare substring inside ordinary code (ExcelJS's `getCell` method — 'ge-tCe-ll')
-  // with no identifying companion anywhere in the push. Synthetic equivalent below.
-  const GROUP = { dealKey: 'fake_deal', contextTerms: ['xyz'], requiresAny: ['fake-fulton-st'] };
-
-  it('does NOT flag a context term when no context_requires_any companion appears anywhere in the corpus', () => {
-    const added = [
-      { file: 'src/widget.ts', lineNo: 1, text: 'function getXyzCell() { return 1; }' },
-      { file: 'src/other.ts', lineNo: 4, text: 'const unrelated = "nothing to see here";' },
-    ];
-    expect(scanDiffForContextTerms(added, [GROUP])).toHaveLength(0);
-  });
-
-  it('DOES flag a context term once a context_requires_any companion appears anywhere in the same push (not necessarily the same line)', () => {
-    const added = [
-      { file: 'src/widget.ts', lineNo: 1, text: 'function getXyzCell() { return 1; }' },
-      { file: 'src/other.ts', lineNo: 4, text: 'reference to fake-fulton-st appears here' },
-    ];
-    const hits = scanDiffForContextTerms(added, [GROUP]);
-    expect(hits).toHaveLength(1);
-    expect(hits[0]?.term).toBe('xyz');
-    expect(hits[0]?.file).toBe('src/widget.ts');
-  });
-
-  it('scopes gating per deal — a companion from deal A does not unlock deal B\'s context terms', () => {
-    const groupA = { dealKey: 'deal_a', contextTerms: ['alpha'], requiresAny: ['alpha-companion'] };
-    const groupB = { dealKey: 'deal_b', contextTerms: ['beta'], requiresAny: ['beta-companion'] };
-    const added = [
-      { file: 'a.ts', lineNo: 1, text: 'alpha alpha-companion beta' }, // beta present, but no beta-companion
-    ];
-    const hits = scanDiffForContextTerms(added, [groupA, groupB]);
-    expect(hits.map((h) => h.term)).toEqual(['alpha']);
-  });
-
-  it('returns no hits for an empty contextGroups list', () => {
-    const added = [{ file: 'a.ts', lineNo: 1, text: 'xyz fake-fulton-st' }];
-    expect(scanDiffForContextTerms(added, [])).toHaveLength(0);
+  it('returns only added lines: removed and context lines are not payload', () => {
+    const diff = ['@@ -1,3 +1,3 @@', '-"confidential": true,', ' "confidential": true,', '+"clean": 1'].join('\n');
+    expect(parseAddedLines(diff).map((a) => a.text)).toEqual(['"clean": 1']);
   });
 });
 
@@ -414,54 +241,47 @@ describe('prepush-confidential-scan / isRegisteredConfidentialRepo', () => {
   });
 });
 
-describe('prepush-confidential-scan / fail-closed roster (cc-audit-army 2026-09-28)', () => {
-  it('loadTerms reports rosterOk=false when the roster is missing', () => {
-    const tmpHome = mkdtempSync(join(tmpdir(), 'prepush-noroster-'));
-    try {
-      expect(loadTerms(tmpHome).rosterOk).toBe(false);
-    } finally {
-      rmSync(tmpHome, { recursive: true, force: true });
-    }
+describe('prepush-confidential-scan / data/ file classification and raw-log parsing', () => {
+  it('blocks a data/ file by CONTENT (any NUL byte) or by export extension, never outside data/', () => {
+    const nul = Buffer.from([0x41, 0x00, 0x42]);
+    const text = Buffer.from('plain text\n');
+    expect(isBlockedDataFile('data/ar/processed/aging.bin', nul)).toBe(true);
+    expect(isBlockedDataFile('data/tenants.csv', text)).toBe(true);
+    expect(isBlockedDataFile('data/report.PDF', text)).toBe(true);
+    expect(isBlockedDataFile('data/ok.json', text)).toBe(false);
+    expect(isBlockedDataFile('docs/diagram.png', nul)).toBe(false);
+    expect(isBlockedDataFile('data\\win\\x.xlsx', text)).toBe(true);
   });
 
-  it('loadTerms reports rosterOk=false on an unparseable roster and true on a valid one', () => {
-    const tmpHome = mkdtempSync(join(tmpdir(), 'prepush-roster-'));
-    try {
-      const hooksDir = join(tmpHome, '.claude', 'hooks');
-      mkdirSync(hooksDir, { recursive: true });
-      writeFileSync(join(hooksDir, 'confidential-terms.json'), '{ nope', 'utf8');
-      expect(loadTerms(tmpHome).rosterOk).toBe(false);
-      writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify({ _meta: {} }), 'utf8');
-      expect(loadTerms(tmpHome).rosterOk).toBe(true);
-    } finally {
-      rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it('blocks when the roster is unavailable unless PREPUSH_ALLOW_NO_ROSTER=1 is set for the push', () => {
-    expect(shouldBlockOnMissingRoster(false, {})).toBe(true);
-    expect(shouldBlockOnMissingRoster(false, { PREPUSH_ALLOW_NO_ROSTER: '0' })).toBe(true);
-    expect(shouldBlockOnMissingRoster(false, { PREPUSH_ALLOW_NO_ROSTER: '1' })).toBe(false);
-    expect(shouldBlockOnMissingRoster(true, {})).toBe(false);
-  });
-});
-
-describe('prepush-confidential-scan / binary files under data/', () => {
-  it('flags binary (numstat "-<TAB>-") paths under data/ only', () => {
-    const numstat = [
-      '-\t-\tdata/ar/processed/aging-2026-09-01.xlsx',
-      '-\t-\tdocs/diagram.png',
-      '12\t3\tdata/snapshots/portfolio.json',
-      '-\t-\tdata/ar/failed/bad.pdf',
-    ].join('\n');
-    expect(parseBinaryPathsUnderData(numstat)).toEqual([
-      'data/ar/processed/aging-2026-09-01.xlsx',
-      'data/ar/failed/bad.pdf',
+  it('parseRawLog reads -z records verbatim (quote, tab, newline in a path), keeps A/M/T, drops deletions and submodules', () => {
+    const marker = 'MARK-';
+    const c1 = '1'.repeat(40);
+    const blob = (n: number) => String(n).repeat(40);
+    const raw = [
+      `${marker}${c1}`,
+      `\n:000000 100644 ${'0'.repeat(40)} ${blob(2)} A`,
+      'data/we"ird\tname\nx.xlsx',
+      `:100644 120000 ${blob(3)} ${blob(4)} T`,
+      'data/link.csv',
+      `:100644 000000 ${blob(5)} ${'0'.repeat(40)} D`,
+      'data/gone.xlsx',
+      `:000000 160000 ${'0'.repeat(40)} ${blob(6)} A`,
+      'vendor/sub',
+      '',
+    ].join('\0');
+    expect(parseRawLog(raw, marker)).toEqual([
+      { commit: c1, path: 'data/we"ird\tname\nx.xlsx', blob: blob(2) },
+      { commit: c1, path: 'data/link.csv', blob: blob(4) },
     ]);
   });
 
-  it('returns nothing for empty output', () => {
-    expect(parseBinaryPathsUnderData('')).toEqual([]);
+  it('parseRawLog reads a merge\'s combined (--cc) record and fails closed on anything unrecognised', () => {
+    const marker = 'MARK-';
+    const m = 'a'.repeat(40);
+    const raw = [`${marker}${m}`, `\n::000000 000000 100644 ${'0'.repeat(40)} ${'0'.repeat(40)} ${'b'.repeat(40)} AA`, 'data/evil.bin', ''].join('\0');
+    expect(parseRawLog(raw, marker)).toEqual([{ commit: m, path: 'data/evil.bin', blob: 'b'.repeat(40) }]);
+    expect(() => parseRawLog(`gpg: Signature made\0`, marker)).toThrow(/unrecognised/);
+    expect(() => parseRawLog(`:100644 100644 x A\0p\0`, marker)).toThrow(/before any commit/);
   });
 });
 
@@ -484,13 +304,14 @@ describe('prepush-confidential-scan / binary scan against a real git repo', () =
     // main later untracks the export
     git(repo, 'rm', '-q', 'data/ar/processed/old.xlsx');
     git(repo, 'commit', '-qm', 'untrack');
-    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
   });
   afterEach(() => rmSync(repo, { recursive: true, force: true }));
+  // What the push destination advertises (destinationBound): here, main.
+  const advertised = () => [git(repo, 'rev-parse', 'main')];
 
-  it('does not false-block an OLDER branch on files main has since removed (merge-base, not two-dot)', () => {
+  it('does not false-block an OLDER branch on files main has since removed (the destination already has them)', () => {
     const sha = git(repo, 'rev-parse', 'older');
-    expect(binaryPathsFor(ZERO, sha, repo)).toEqual([]);
+    expect(binaryPathsFor(ZERO, sha, repo, advertised())).toEqual([]);
   });
 
   it('flags a binary added under data/ with a non-ASCII (en dash) name, unquoted', () => {
@@ -499,7 +320,7 @@ describe('prepush-confidential-scan / binary scan against a real git repo', () =
     writeFileSync(join(repo, 'data', 'ar', 'inbox', 'Rarig – Delinquency 7.15.xlsx'), bin(2));
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'add');
-    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/ar/inbox/Rarig – Delinquency 7.15.xlsx']);
+    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo, advertised())).toEqual(['data/ar/inbox/Rarig – Delinquency 7.15.xlsx']);
   });
 
   it('flags a binary moved into data/ WITH edits (rename detection must not hide it)', () => {
@@ -523,7 +344,7 @@ describe('prepush-confidential-scan / binary scan against a real git repo', () =
     writeFileSync(join(repo, 'data', 'ok.json'), '{"a":1}\n');
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'add');
-    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/tenants.csv']);
+    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo, advertised())).toEqual(['data/tenants.csv']);
   });
 
   it('does not block the deletion of a tracked binary', () => {
@@ -550,14 +371,10 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
   beforeEach(() => {
     repo = mkdtempSync(join(tmpdir(), 'prepush-differr-'));
     home = mkdtempSync(join(tmpdir(), 'prepush-differr-home-'));
-    mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
-    // A valid roster with no active deals, so the roster gate passes and only the diff path is exercised.
-    writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), '{"_meta":{}}');
     git(repo, 'init', '-q', '-b', 'main');
     writeFileSync(join(repo, 'README.md'), 'base\n');
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'base');
-    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
   });
   afterEach(() => {
     rmSync(repo, { recursive: true, force: true });
@@ -589,37 +406,42 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
     expect(shouldBlockOnDiffError([], {})).toBe(false);
   });
 
-  it('resolveDiffBase falls back to the merge-base with origin/main when the remote sha is not in the local object DB', () => {
+  it('rangeFor: a known remote sha bounds the range; an unknown one falls back to the destination bound, never origin/main', () => {
     const main = git(repo, 'rev-parse', 'main');
+    git(repo, 'update-ref', 'refs/remotes/origin/main', main); // must be ignored
     const local = commitOnFeature('a.txt', 'zephyr corp\n');
-    expect(resolveDiffBase(MISSING, local, repo)).toBe(main);
-    // a remote sha that IS present locally is used as-is
-    expect(resolveDiffBase(main, local, repo)).toBe(main);
+    expect(rangeFor(main, local, repo, ['f'.repeat(40)])).toEqual({ args: [local, `^${main}`], exclude: [] });
+    expect(rangeFor(MISSING, local, repo, [main])).toEqual({ args: [local], exclude: [main] });
+    expect(rangeFor(ZERO, local, repo, [])).toEqual({ args: [local], exclude: [] });
+    expect(rangeFor(ZERO, local, repo)).toEqual({ args: [local], exclude: [] });
   });
 
-  it('collectRefScan records a diff error (never silently skips) when the local sha cannot be diffed', () => {
+  it('collectRefScan records a diff error (never silently skips) when the local sha cannot be read', () => {
     const result = collectRefScan(`refs/heads/x ${MISSING} refs/heads/x ${ZERO}\n`, repo);
-    // both the text diff and the binary numstat fail, each recorded on its own
-    expect(result.diffErrors.map((e) => e.localSha)).toEqual([MISSING, MISSING]);
-    expect(result.diffErrors.map((e) => e.message.split(':')[0])).toEqual(['text diff', 'binary numstat']);
+    expect(result.diffErrors.map((e) => e.localSha)).toEqual([MISSING]);
+    expect(result.diffErrors[0]?.message.split(':')[0]).toBe('object type');
     expect(result.addedByRef).toEqual([]);
   });
 
   it('a numstat-only failure keeps the text diff that succeeded (its lines are still scanned)', () => {
     const fakeDiff = '+++ b/a.txt\n@@ -0,0 +1 @@\n+zephyr corp\n';
     const result = collectRefScan(`refs/heads/x ${'a'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      peeledType: () => 'commit',
+      destinationBound: () => [],
       diffFor: () => fakeDiff,
       binaryPathsFor: () => {
         throw Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
       },
     });
     expect(result.addedByRef.flat().map((a) => a.text)).toEqual(['zephyr corp']);
-    expect(result.diffErrors).toEqual([{ localSha: 'a'.repeat(40), message: 'binary numstat: ENOBUFS' }]);
+    expect(result.diffErrors).toEqual([{ localSha: 'a'.repeat(40), message: 'binary paths: ENOBUFS' }]);
     expect(shouldBlockOnDiffError(result.diffErrors, {})).toBe(true);
   });
 
   it('a text-diff-only failure still collects the binary paths', () => {
     const result = collectRefScan(`refs/heads/x ${'b'.repeat(40)} refs/heads/x ${ZERO}\n`, repo, {
+      peeledType: () => 'commit',
+      destinationBound: () => [],
       diffFor: () => {
         throw new Error('fatal: bad object');
       },
@@ -630,7 +452,7 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
     expect(result.diffErrors).toEqual([{ localSha: 'b'.repeat(40), message: 'text diff: fatal: bad object' }]);
   });
 
-  it('collectRefScan still scans the added lines when the remote sha is missing locally', () => {
+  it('collectRefScan still scans the added lines when the remote sha is missing locally (full history, no bound)', () => {
     const local = commitOnFeature('a.txt', 'zephyr corp\n');
     const result = collectRefScan(`refs/heads/feat ${local} refs/heads/feat ${MISSING}\n`, repo);
     expect(result.diffErrors).toEqual([]);
@@ -936,7 +758,7 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
   it('collectRefScan collects real-data hits only when given the manifest, and records their errors', () => {
     const sha = 'c'.repeat(40);
     const stdin = `refs/heads/x ${sha} refs/heads/x ${'0'.repeat(40)}\n`;
-    const base = { diffFor: () => '', binaryPathsFor: () => [] as string[] };
+    const base = { peeledType: () => 'commit', destinationBound: () => [] as string[], diffFor: () => '', binaryPathsFor: () => [] as string[] };
     expect(collectRefScan(stdin, undefined, { ...base, realDataPathsFor: () => ['data/snapshots/portfolio.json'] }).realDataHits).toEqual([]);
     const hit = collectRefScan(stdin, undefined, { ...base, manifest, realDataPathsFor: () => ['data/snapshots/portfolio.json'] });
     expect(hit.realDataHits).toEqual(['data/snapshots/portfolio.json']);
@@ -959,29 +781,35 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     let repo: string;
     let home: string;
 
+    let remote: string;
+
     beforeEach(() => {
       repo = mkdtempSync(join(tmpdir(), 'prepush-realdata-'));
       home = mkdtempSync(join(tmpdir(), 'prepush-realdata-home-'));
-      mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
-      writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), '{"_meta":{}}');
+      remote = `${repo}-remote.git`;
+      git(tmpdir(), 'init', '-q', '--bare', '-b', 'main', remote);
       git(repo, 'init', '-q', '-b', 'main');
       mkdirSync(join(repo, 'data', 'snapshots'), { recursive: true });
       writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[]}\n');
       writeFileSync(join(repo, 'README.md'), 'base\n');
       git(repo, 'add', '-A');
       git(repo, 'commit', '-qm', 'base with a tracked snapshot');
-      git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+      // The destination already has the base commit (from before the untrack ruling).
+      git(repo, 'remote', 'add', 'origin', remote);
+      git(repo, 'push', '-q', '--no-verify', 'origin', 'main');
     });
     afterEach(() => {
       rmSync(repo, { recursive: true, force: true });
+      rmSync(remote, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
     });
+    const advertised = () => destinationBound('origin', remote, repo);
 
     const runHook = (stdin: string) => {
       const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
       delete env['PREPUSH_ALLOW_DIFF_ERROR'];
       delete env['PREPUSH_ALLOW_NO_ROSTER'];
-      return spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env });
+      return spawnSync(process.execPath, [script, 'origin', remote], { cwd: repo, input: stdin, encoding: 'utf8', env });
     };
 
     it('BLOCKS a push that modifies a manifest path', () => {
@@ -989,7 +817,7 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
       writeFileSync(join(repo, 'data', 'snapshots', 'portfolio.json'), '{"leases":[1]}\n');
       git(repo, 'commit', '-qam', 'modify snapshot');
       const local = git(repo, 'rev-parse', 'HEAD');
-      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual(['data/snapshots/portfolio.json']);
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo, advertised())).toEqual(['data/snapshots/portfolio.json']);
       const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('PUSH BLOCKED');
@@ -1016,46 +844,49 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
       git(repo, 'add', 'fixtures');
       git(repo, 'commit', '-qm', 'untrack + synthetic');
       const local = git(repo, 'rev-parse', 'HEAD');
-      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
+      expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo, advertised())).toEqual([]);
       const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
       expect(r.status).toBe(0);
     });
   });
 });
-
 // Per-commit scanning (2026-11-12). The scan used to diff only the two ENDPOINT trees of a pushed
-// range, so a term added in one commit and removed in a later one was never seen even though the
-// first commit's blob still reaches the remote. Every commit (and its message) is scanned now, and
-// every git call that prints diff text is pinned against user config (colour, external diff,
-// textconv, prefixes) that would otherwise hide the '+' lines from the parser.
-describe('prepush-confidential-scan / per-commit scan and pinned git output', () => {
+// range, so a payload added in one commit and removed in a later one was never seen even though the
+// first commit's blob still reaches the remote. Every commit is scanned now, every git call that prints
+// diff text is pinned against user config (colour, external diff, textconv, prefixes, attributes), and
+// the range never trusts a local tracking ref (refute run wf_72500728-83e). Confidential TERMS are the
+// Python scanner's job (tests/unit/prepush-hook-e2e.test.ts); these cases use the JS-owned payloads:
+// a `confidential: true` record (the temp repo is not a registered confidential store), data/ binaries
+// and real-data manifest paths.
+describe('prepush-confidential-scan / per-commit payload scan and pinned git output', () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
   const ZERO = '0000000000000000000000000000000000000000';
-  // SYNTHETIC term, never a real deal name.
-  const TERM = 'ZEPHYR-SYNTH-PARCEL-77';
+  const PAYLOAD = '{"id": "synthetic-deal", "confidential": true}\n';
   const script = join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs');
+  let root: string;
   let repo: string;
+  let remote: string;
   let home: string;
 
   beforeEach(() => {
-    repo = mkdtempSync(join(tmpdir(), 'prepush-percommit-'));
-    home = mkdtempSync(join(tmpdir(), 'prepush-percommit-home-'));
-    mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
-    writeFileSync(
-      join(home, '.claude', 'hooks', 'confidential-terms.json'),
-      JSON.stringify({ _meta: {}, synthetic_deal: { label: 'synthetic', active: true, always: [TERM] } }),
-    );
-    git(repo, 'init', '-q', '-b', 'main');
+    root = mkdtempSync(join(tmpdir(), 'prepush-percommit-'));
+    repo = join(root, 'work');
+    remote = join(root, 'remote.git');
+    home = join(root, 'home');
+    mkdirSync(home);
+    git(root, 'init', '-q', '--bare', '-b', 'main', remote);
+    git(root, 'init', '-q', '-b', 'main', repo);
+    git(repo, 'remote', 'add', 'origin', remote);
     writeFileSync(join(repo, 'README.md'), 'base\n');
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'base');
-    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    git(repo, 'push', '-q', '--no-verify', 'origin', 'main');
+    git(repo, 'fetch', '-q', 'origin');
     git(repo, 'checkout', '-q', '-b', 'feat');
   });
   afterEach(() => {
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   });
 
   const env = (extra: Record<string, string> = {}) => {
@@ -1064,8 +895,9 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
     delete e['PREPUSH_ALLOW_NO_ROSTER'];
     return Object.assign(e, extra);
   };
+  // The hook stage as git runs it: argv = remote name + push URL, stdin = the ref lines.
   const runHook = (stdin: string, extra: Record<string, string> = {}) =>
-    spawnSync(process.execPath, [script], { cwd: repo, input: stdin, encoding: 'utf8', env: env(extra) });
+    spawnSync(process.execPath, [script, 'origin', remote], { cwd: repo, input: stdin, encoding: 'utf8', env: env(extra) });
   const commit = (file: string, content: string | Buffer | null, msg = 'change') => {
     const abs = join(repo, file);
     if (content === null) git(repo, 'rm', '-q', file);
@@ -1078,30 +910,31 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
     return git(repo, 'rev-parse', 'HEAD');
   };
   const addThenRemove = () => {
-    commit('notes.txt', `term ${TERM} here\n`, 'add');
-    return commit('notes.txt', 'clean\n', 'remove');
+    commit('notes.json', PAYLOAD, 'add');
+    return commit('notes.json', '{}\n', 'remove');
   };
 
-  it('BLOCKS a term added in one commit and removed in a later one (new branch)', () => {
+  it('BLOCKS a payload added in one commit and removed in a later one (new branch)', () => {
     const local = addThenRemove();
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('confidential terms found');
-    expect(r.stderr).toContain('notes.txt');
+    expect(r.stderr).toContain('confidential:true record(s) found');
+    expect(r.stderr).toContain('notes.json');
   });
 
-  it('BLOCKS the same add-then-remove when the remote sha is known (update push)', () => {
-    const remote = git(repo, 'rev-parse', 'HEAD');
+  it('BLOCKS the same add-then-remove on an update push (remoteSha..local)', () => {
+    git(repo, 'push', '-q', '--no-verify', 'origin', 'feat');
+    const remoteSha = git(repo, 'rev-parse', 'HEAD');
     const local = addThenRemove();
-    const result = collectRefScan(`refs/heads/feat ${local} refs/heads/feat ${remote}\n`, repo);
-    expect(result.diffErrors).toEqual([]);
-    expect(scanDiffForConfidential(result.addedByRef.flat(), [TERM]).length).toBeGreaterThan(0);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${remoteSha}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('notes.json');
   });
 
   it('BLOCKS a binary under data/ added in one commit and removed in a later one', () => {
     commit('data/export.bin', Buffer.from([0, 1, 2, 3, 4]), 'add binary');
     const local = commit('data/export.bin', null, 'remove binary');
-    expect(binaryPathsFor(ZERO, local, repo)).toEqual(['data/export.bin']);
+    expect(binaryPathsFor(ZERO, local, repo, [git(repo, 'rev-parse', 'main')])).toEqual(['data/export.bin']);
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('data/export.bin');
@@ -1110,42 +943,56 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
   it('BLOCKS a real-data manifest path added in one commit and removed in a later one', () => {
     commit('data/snapshots/portfolio.json', '{"leases":[]}\n', 'add snapshot');
     const local = commit('data/snapshots/portfolio.json', null, 'remove snapshot');
-    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual(['data/snapshots/portfolio.json']);
-  });
-
-  it('BLOCKS a term that appears only in a commit message', () => {
-    const local = commit('ok.txt', 'clean\n', `subject\n\nbody mentions ${TERM}`);
-    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('confidential terms found');
+    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo, [git(repo, 'rev-parse', 'main')])).toEqual(['data/snapshots/portfolio.json']);
   });
 
   it('still BLOCKS with color.diff=always, color.ui=always and diff.noprefix=true in the repo config', () => {
     git(repo, 'config', 'color.diff', 'always');
     git(repo, 'config', 'color.ui', 'always');
     git(repo, 'config', 'diff.noprefix', 'true');
-    const local = commit('notes.txt', `term ${TERM} here\n`);
+    const local = commit('notes.json', PAYLOAD);
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('confidential terms found');
-    expect(r.stderr).toContain('notes.txt:1');
+    expect(r.stderr).toContain('notes.json:1');
   });
 
   it('still BLOCKS with diff.external and a textconv driver that print nothing', () => {
     git(repo, 'config', 'diff.external', 'true');
     git(repo, 'config', 'diff.hide.textconv', 'true');
-    writeFileSync(join(repo, '.gitattributes'), '*.txt diff=hide\n');
-    const local = commit('notes.txt', `term ${TERM} here\n`);
+    writeFileSync(join(repo, '.gitattributes'), '*.json diff=hide\n');
+    const local = commit('notes.json', PAYLOAD);
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('confidential terms found');
+    expect(r.stderr).toContain('confidential:true record(s) found');
   });
 
-  it('a textconv driver cannot make a binary under data/ look like text', () => {
+  it('still BLOCKS when a committed or local -diff attribute, or a NUL byte, makes git call the file binary', () => {
+    writeFileSync(join(repo, '.gitattributes'), '* -diff\n');
+    mkdirSync(join(repo, '.git', 'info'), { recursive: true });
+    writeFileSync(join(repo, '.git', 'info', 'attributes'), '*.json binary\n');
+    const local = commit('notes.json', `\0${PAYLOAD}`);
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('confidential:true record(s) found');
+  });
+
+  it('a textconv or text attribute cannot make a binary under data/ look like text', () => {
     git(repo, 'config', 'diff.astext.textconv', 'cat');
-    writeFileSync(join(repo, '.gitattributes'), '*.bin diff=astext\n');
+    writeFileSync(join(repo, '.gitattributes'), '*.bin diff=astext text\n');
     const local = commit('data/export.bin', Buffer.from([0, 1, 2, 3, 4]));
-    expect(binaryPathsFor(ZERO, local, repo)).toEqual(['data/export.bin']);
+    expect(binaryPathsFor(ZERO, local, repo, [git(repo, 'rev-parse', 'main')])).toEqual(['data/export.bin']);
+  });
+
+  it('BLOCKS a data/ path git would C-quote (double quote, tab)', () => {
+    // Plumbing, so the test runs on NTFS too: the path exists only in the index and the commit
+    // (core.protectNTFS would otherwise refuse the '"' on Windows; a Linux clone takes it as is).
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: 'not really xlsx\n', encoding: 'utf8' }).trim();
+    const weird = 'data/q/we"ird\tname.xlsx';
+    git(repo, 'config', 'core.protectNTFS', 'false');
+    git(repo, 'update-index', '--add', '--cacheinfo', `100644,${blob},${weird}`);
+    git(repo, 'commit', '-qm', 'weird path');
+    const local = git(repo, 'rev-parse', 'HEAD');
+    expect(binaryPathsFor(ZERO, local, repo, [git(repo, 'rev-parse', 'main')])).toEqual([weird]);
   });
 
   it('BLOCKS content an evil merge introduces itself (combined diff)', () => {
@@ -1153,13 +1000,13 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
     git(repo, 'checkout', '-q', 'main');
     commit('main.txt', 'main\n');
     git(repo, 'merge', '-q', '--no-ff', '--no-commit', 'feat');
-    writeFileSync(join(repo, 'evil.txt'), `${TERM}\n`);
+    writeFileSync(join(repo, 'evil.json'), PAYLOAD);
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'merge');
     const local = git(repo, 'rev-parse', 'HEAD');
-    const r = runHook(`refs/heads/main ${local} refs/heads/main ${ZERO}\n`);
+    const r = runHook(`refs/heads/main ${local} refs/heads/main ${git(repo, 'rev-parse', 'origin/main')}\n`);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('evil.txt');
+    expect(r.stderr).toContain('evil.json');
   });
 
   it('BLOCKS a binary under data/ that an evil merge introduces itself', () => {
@@ -1171,22 +1018,67 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
     writeFileSync(join(repo, 'data', 'evil.bin'), Buffer.from([0, 9, 8, 7]));
     git(repo, 'add', '-A');
     git(repo, 'commit', '-qm', 'merge');
-    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/evil.bin']);
+    expect(binaryPathsFor(git(repo, 'rev-parse', 'origin/main'), git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/evil.bin']);
   });
 
-  it('does not false-block a branch that merges origin/main, whose own history touched a real-data path', () => {
-    // main tracked and later untracked a manifest path; those commits are already on the remote.
+  it('the range never trusts origin/main: a payload the remote dropped (rewound) is scanned again', () => {
+    // origin/main locally still points at a commit the remote no longer has.
+    git(repo, 'checkout', '-q', 'main');
+    commit('leak.json', PAYLOAD, 'leak');
+    git(repo, 'push', '-q', '--no-verify', 'origin', 'main');
+    git(repo, 'fetch', '-q', 'origin');
+    git(remote, 'update-ref', 'refs/heads/main', git(repo, 'rev-parse', 'main~1'));
+    git(repo, 'checkout', '-q', 'feat');
+    git(repo, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main');
+    const local = git(repo, 'rev-parse', 'HEAD');
+    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('leak.json');
+  });
+
+  it('the destination bound excludes what the remote advertises (no false block on its own history)', () => {
+    // The remote already has a commit that tracked then untracked a manifest path.
     git(repo, 'checkout', '-q', 'main');
     commit('data/snapshots/portfolio.json', '{"leases":[]}\n', 'old tracked snapshot');
     commit('data/snapshots/portfolio.json', null, 'untrack');
-    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+    git(repo, 'push', '-q', '--no-verify', 'origin', 'main');
     git(repo, 'checkout', '-q', 'feat');
     commit('feature.txt', 'feature\n');
     git(repo, 'merge', '-q', '--no-ff', '-m', 'merge main', 'main');
     const local = git(repo, 'rev-parse', 'HEAD');
-    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo)).toEqual([]);
-    const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
-    expect(r.status).toBe(0);
+    const bound = destinationBound('origin', remote, repo);
+    expect(bound).toContain(git(repo, 'rev-parse', 'main'));
+    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo, bound)).toEqual([]);
+    // Without a usable bound the FULL history is scanned (fail closed): the old snapshot commit shows.
+    expect(realDataPathsFor(ZERO, local, loadRealDataManifest(), repo, [])).toEqual(['data/snapshots/portfolio.json']);
+    expect(runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`).status).toBe(0);
+  });
+
+  it('destinationBound refuses a helper transport, an insteadOf-rewritten target and a custom receivepack', () => {
+    expect(destinationBound('origin', 'ext::sh -c evil', repo)).toEqual([]);
+    expect(destinationBound(undefined, undefined, repo)).toEqual([]);
+    git(repo, 'config', 'remote.origin.receivepack', 'git-receive-pack');
+    expect(destinationBound('origin', remote, repo)).toEqual([]);
+    git(repo, 'config', '--unset', 'remote.origin.receivepack');
+    git(repo, 'config', `url.${remote}.insteadOf`, 'alias:');
+    expect(destinationBound('origin', 'alias:', repo)).toEqual([]);
+  });
+
+  it('git replace cannot show the scan a clean object while push sends the original', () => {
+    const leak = commit('notes.json', PAYLOAD, 'leak');
+    const cleanTree = git(repo, 'rev-parse', 'HEAD~1^{tree}');
+    const clean = git(repo, 'commit-tree', cleanTree, '-p', git(repo, 'rev-parse', 'HEAD~1'), '-m', 'clean');
+    git(repo, 'replace', leak, clean);
+    const r = runHook(`refs/heads/feat ${leak} refs/heads/feat ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('notes.json');
+  });
+
+  it('a pushed tag that peels to a blob or tree fails closed in the payload scan', () => {
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: repo, input: PAYLOAD, encoding: 'utf8' }).trim();
+    const r = runHook(`refs/tags/b ${blob} refs/tags/b ${ZERO}\n`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('peels to a blob');
   });
 
   it('a clean multi-commit push still exits 0', () => {
@@ -1197,14 +1089,19 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
   });
 
   it('an added line whose content starts with "++ " is scanned, not mistaken for a file header', () => {
-    const local = commit('notes.txt', `++ ${TERM}\n`);
+    const local = commit('notes.json', `++ ${PAYLOAD}`);
     const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('notes.txt:1');
+    expect(r.stderr).toContain('notes.json:1');
   });
 
-  it('parseAddedLines reads combined (merge) hunks: any "+" column is an added line', () => {
+  it('parseAddedLines reads combined (merge) hunks and commit-message blocks', () => {
     const diff = [
+      `commit ${'c'.repeat(40)}`,
+      '    subject line',
+      '    ',
+      '    body diff --git not a header',
+      '',
       'diff --cc evil.txt',
       '--- a/evil.txt',
       '+++ b/evil.txt',
@@ -1214,7 +1111,10 @@ describe('prepush-confidential-scan / per-commit scan and pinned git output', ()
       ' +from second parent',
       '- removed vs first',
     ].join('\n');
+    const msg = `${COMMIT_MESSAGE_FILE_PREFIX}${'c'.repeat(12)})`;
     expect(parseAddedLines(diff)).toEqual([
+      { file: msg, lineNo: 1, text: 'subject line' },
+      { file: msg, lineNo: 3, text: 'body diff --git not a header' },
       { file: 'evil.txt', lineNo: 2, text: 'new in merge' },
       { file: 'evil.txt', lineNo: 3, text: 'from second parent' },
     ]);

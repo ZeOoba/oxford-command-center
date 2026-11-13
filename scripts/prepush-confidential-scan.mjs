@@ -1,13 +1,27 @@
 // scripts/prepush-confidential-scan.mjs
 //
-// Pre-push confidentiality scanner (audit finding H1: the repo had NO native pre-push
-// confidentiality hook, which let an active deal's terms get committed). Fail-closed: when
-// run as a git pre-push hook and ANY confidential term appears in an ADDED diff line, it
-// prints the offending locations and exits 1, blocking the push.
+// OCC pre-push PAYLOAD scanner (Hard Invariant 3 and the real-data ruling of 2026-11-10). Fail-closed:
+// run as a git pre-push hook stage, it exits 1 and prints the offending locations when a push would
+// send any of these to the PUBLIC remote:
+//   * a binary or export file (xlsx/pdf/docx/csv...) added or modified under data/;
+//   * a path listed in scripts/fixtures/real-data-manifest.json (or a copy of one);
+//   * added lines carrying FINGERPRINT_BLOCK_MIN+ distinct real amounts from the local real-data files;
+//   * a `confidential: true` payload, unless this repo is registered as a confidential store.
 //
-// The roster of real deal terms lives ONLY on the machine at ~/.claude/hooks/confidential-terms.json
-// (git-ignored, off-repo). If that file is absent or unparseable we still scan a small generic
-// built-in denylist and WARN — we never block all pushes just because the roster is missing.
+// Confidential deal TERMS are NOT matched here (2026-11-12, after refute run wf_72500728-83e). The
+// shared, refute-hardened Python scanner scripts/prepush_confidential_scan.py (vendored from ora-skills)
+// owns term detection for every ORA repo and runs FIRST in the installed hook
+// (scripts/install-git-hooks.ts); one source of truth for terms, roster handling and term output
+// withholding. This file used to carry its own term/context-term matcher and roster gate.
+//
+// Range per pushed ref, mirroring the Python scanner (no local tracking ref is ever trusted):
+//   * an existing remote ref scans remoteSha..localSha (git took remoteSha from the destination);
+//   * a new remote ref (or a remoteSha this clone does not have) scans the pushed commits NOT
+//     reachable from what the destination advertises (`git ls-remote <push url>`, hook argv[2],
+//     with the same insteadOf / receivepack / transport guards), or the FULL history when the
+//     destination cannot be asked or advertises nothing usable.
+// Every git call runs with --no-replace-objects and GIT_NO_REPLACE_OBJECTS=1, so `git replace`
+// cannot show this scan a different object from the one pack-objects sends.
 //
 // Node built-ins only (runs in a git hook with no install step).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -16,20 +30,9 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Generic patterns the repo should never push. Intentionally NOT real deal terms — keep this
-// list synthetic/structural so the file itself is safe to commit. Extend cautiously: anything
-// here matches against every added line case-insensitively.
-const BUILTIN_DENYLIST = [
-  // A document watermark that should never appear in pushed source. Keep entries generic and
-  // structural — NOT real deal terms, and NOT legitimate filenames (e.g. 'confidential-terms.json'
-  // is a path the codebase references legitimately, so it must NOT be a denylist entry). The real
-  // protection is the machine-local roster (loadTerms).
-  'CONFIDENTIAL — DO NOT DISTRIBUTE',
-];
-
-// This scanner's own implementation + tests necessarily contain term-like literals (denylist
-// entries, the roster filename, synthetic fixtures), so they are excluded from scanning to avoid
-// self-triggering — standard linter self-exclusion. The roster scan still protects every other file.
+// This scanner's own implementation + tests necessarily contain payload-like literals
+// (`confidential: true` fixtures, synthetic amounts), so they are excluded from the payload checks to
+// avoid self-triggering. They are NOT excluded from term scanning: the Python scanner reads every file.
 const EXCLUDE_PATHS = new Set([
   'scripts/prepush-confidential-scan.mjs',
   'scripts/prepush-confidential-scan.d.mts',
@@ -37,16 +40,16 @@ const EXCLUDE_PATHS = new Set([
   'tests/unit/prepush-confidential-scan.test.ts',
 ]);
 
-const MIN_TERM_LENGTH = 3;
-
-// ── pinned git output (2026-11-12) ───────────────────────────────────────────────────────────────
+// ── pinned git (2026-11-12) ──────────────────────────────────────────────────────────────────────
 // Every git call whose output this scanner parses is pinned against user/repo config that changes
 // what git prints. Unpinned, `color.diff=always` wraps each '+' line in an escape sequence (no line
 // starts with '+', nothing is scanned), `diff.external` or a textconv driver replaces the diff
 // text outright, `diff.noprefix` / `diff.mnemonicPrefix` / `diff.srcPrefix` change the '+++ b/'
-// header, and `diff.relative` narrows the diff to a subdirectory. Mirrors GIT_BASE in the Python
-// twin (ora-skills tools/prepush_confidential_scan.py).
+// header, and `diff.relative` narrows the diff to a subdirectory. `--no-replace-objects` (plus
+// GIT_NO_REPLACE_OBJECTS=1 in gitEnv) makes git read the objects push actually sends. Mirrors GIT_BASE
+// in the Python scanner.
 const GIT_CONFIG_PIN = [
+  '--no-replace-objects',
   '-c', 'core.quotepath=off',
   '-c', 'color.ui=never',
   '-c', 'color.diff=never',
@@ -57,94 +60,39 @@ const GIT_CONFIG_PIN = [
   '-c', 'i18n.logOutputEncoding=UTF-8',
   '-c', 'log.showSignature=false',
 ];
-const DIFF_OPTION_PIN = ['--no-color', '--no-ext-diff', '--no-textconv', '--no-relative', '--src-prefix=a/', '--dst-prefix=b/'];
+// --text: a `-diff` / `binary` attribute (committed, info/attributes or core.attributesFile), a NUL
+// byte or core.bigFileThreshold would otherwise print "Binary files differ" instead of the lines.
+const DIFF_OPTION_PIN = ['--no-color', '--no-ext-diff', '--no-textconv', '--text', '--no-relative', '--src-prefix=a/', '--dst-prefix=b/'];
 
-/** Run a pinned git command and return stdout (throws on a non-zero exit; callers fail closed). */
-function gitOut(args, cwd) {
+/** The hook's environment with replace refs disabled and no credential prompt. */
+function gitEnv() {
+  const env = { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
+  delete env['GIT_REPLACE_REF_BASE'];
+  return env;
+}
+
+/**
+ * Run a pinned git command and return stdout (throws on a non-zero exit; callers fail closed).
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @param {{input?: string, buffer?: boolean, timeout?: number}} [opts]
+ * @returns {any}
+ */
+function gitRun(args, cwd, opts = {}) {
   return execFileSync('git', [...GIT_CONFIG_PIN, ...args], {
-    encoding: 'utf8',
+    ...(opts.buffer ? {} : { encoding: 'utf8' }),
     maxBuffer: Infinity,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    input: opts.input ?? '',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: gitEnv(),
+    ...(opts.timeout ? { timeout: opts.timeout } : {}),
     cwd,
   });
 }
 
-/**
- * Extract this roster's per-deal terms, honoring the roster's OWN documented contract
- * (confidential-terms.json's `_meta.matching` / `_meta.policy`):
- *   - a deal only contributes terms while `active === true` — `_meta.policy` says "Set
- *     active=false to retire a deal post-closing"; a retired deal's block stays in the JSON as
- *     an audit-trail record, but is no longer enforced by this scanner.
- *   - `always` terms fire on any occurrence, same as BUILTIN_DENYLIST.
- *   - `context` terms (generic words only confidential in deal context — e.g. an environmental
- *     abbreviation) fire ONLY alongside a co-occurring `context_requires_any` term from the SAME
- *     deal, never standalone. `_meta.matching` states this explicitly; the prior implementation
- *     never actually implemented it, flattening every string from every deal (active or not)
- *     into one undifferentiated always-list — which is what let a short, generic context term
- *     false-positive against ordinary code containing it as a substring.
- * Tolerates any roster shape defensively (a malformed deal entry is skipped, not fatal).
- */
-function collectDealTerms(parsed, alwaysTerms, contextGroups) {
-  if (!parsed || typeof parsed !== 'object') return;
-  for (const [key, deal] of Object.entries(parsed)) {
-    if (key === '_meta') continue;
-    if (!deal || typeof deal !== 'object' || deal.active !== true) continue;
-    if (Array.isArray(deal.always)) {
-      for (const t of deal.always) if (typeof t === 'string') alwaysTerms.push(t);
-    }
-    if (Array.isArray(deal.context) && Array.isArray(deal.context_requires_any)) {
-      const contextTerms = deal.context.filter((t) => typeof t === 'string');
-      const requiresAny = deal.context_requires_any.filter((t) => typeof t === 'string');
-      if (contextTerms.length > 0 && requiresAny.length > 0) {
-        contextGroups.push({ dealKey: key, contextTerms, requiresAny });
-      }
-    }
-  }
-}
-
-/**
- * Load confidential terms: built-in denylist MERGED with `always` terms from every ACTIVE deal
- * in the machine-local roster (if present and parseable), plus that roster's `context` groups
- * (scanned separately by scanDiffForContextTerms — see collectDealTerms above for why they
- * can't just be flattened into the same list). Never throws; prints a WARN and returns just the
- * denylist (no context groups) when the roster is missing or unparseable.
- *
- * @param {string} [homeDirOverride] - test seam; defaults to os.homedir().
- * @returns {{alwaysTerms: string[], contextGroups: {dealKey: string, contextTerms: string[], requiresAny: string[]}[], rosterOk: boolean, rosterDetail: string}}
- */
-export function loadTerms(homeDirOverride) {
-  const home = homeDirOverride ?? homedir();
-  const rosterPath = join(home, '.claude', 'hooks', 'confidential-terms.json');
-  const alwaysTerms = [...BUILTIN_DENYLIST];
-  const contextGroups = [];
-
-  const result = readJsonSafe(rosterPath);
-  if (!result.ok) {
-    const detail =
-      result.reason === 'missing'
-        ? `roster not found at ${rosterPath}`
-        : `roster at ${rosterPath} is unparseable (${result.error?.message ?? result.error})`;
-    console.warn(`[prepush-confidential-scan] WARN: ${detail} — scanning built-in denylist only.`);
-    return { alwaysTerms: dedupe(alwaysTerms), contextGroups, rosterOk: false, rosterDetail: detail };
-  }
-
-  collectDealTerms(result.data, alwaysTerms, contextGroups);
-  return { alwaysTerms: dedupe(alwaysTerms), contextGroups, rosterOk: true, rosterDetail: '' };
-}
-
-/**
- * Invariant 3 fail-closed rule (cc-audit-army 2026-09-28, prepush-scan-fails-open): with no usable
- * roster the scan degrades to a one-entry denylist, which is NOT protection for real deal names.
- * Block the push unless the operator explicitly opts out for this push with
- * PREPUSH_ALLOW_NO_ROSTER=1. Pure so it is unit-testable without process.exit.
- *
- * @param {boolean} rosterOk
- * @param {Record<string, string|undefined>} env
- * @returns {boolean} true = block the push
- */
-export function shouldBlockOnMissingRoster(rosterOk, env) {
-  if (rosterOk) return false;
-  return env['PREPUSH_ALLOW_NO_ROSTER'] !== '1';
+/** @param {string[]} args @param {string} [cwd] @param {string} [input] @returns {string} */
+function gitOut(args, cwd, input) {
+  return /** @type {string} */ (gitRun(args, cwd, input === undefined ? {} : { input }));
 }
 
 // ── real-data paths (ruling 2026-11-10) ──────────────────────────────────────────────────────────
@@ -378,51 +326,8 @@ export function parseRealDataPaths(nameStatusText, manifest) {
   return out;
 }
 
-/** Every added/modified real-data path in ANY commit of the pushed range (per commit, not the
- * endpoint trees: a manifest file added and then removed still reaches the remote in history).
- * @param {string} remoteSha
- * @param {string} localSha
- * @param {{files: string[], dirs: string[]}} manifest
- * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @returns {string[]} */
-export function realDataPathsFor(remoteSha, localSha, manifest, cwd) {
-  const revs = rangeRevsFor(remoteSha, localSha, cwd);
-  const text = gitOut(['log', '--name-status', '--cc', '--root', '--no-renames', '--format=', ...DIFF_OPTION_PIN, ...revs, '--'], cwd);
-  return [...new Set(parseRealDataPaths(text, manifest))];
-}
-
-const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
-
-/**
- * Binary files (xlsx/pdf/docx) are invisible to the text-line scan: `git diff` prints only
- * "Binary files differ". Any binary ADDED or MODIFIED under data/ is firm/tenant data that the
- * scan cannot inspect, so it blocks (deletions are fine). Parses `git diff --numstat`, where a
- * binary file is reported as "-<TAB>-<TAB>path".
- *
- * @param {string} numstatText - output of `git diff --numstat --diff-filter=AM`
- * @returns {string[]} binary paths under data/
- */
-export function parseBinaryPathsUnderData(numstatText) {
-  const out = [];
-  for (const line of numstatText.split('\n')) {
-    const m = /^(-|\d+)\t(-|\d+)\t(.+)$/.exec(line.trimEnd());
-    if (!m || !m[3]) continue;
-    const path = m[3].replace(/\\/g, '/');
-    if (!path.startsWith('data/')) continue;
-    // Binary by git's own detection ("-<TAB>-"), OR an export/document extension: a CSV, or a small
-    // PDF with no NUL byte in its first 8 KB, is classified as text and would otherwise pass.
-    if ((m[1] === '-' && m[2] === '-') || EXPORT_EXT_RE.test(path)) out.push(m[3]);
-  }
-  return out;
-}
-
-function dedupe(arr) {
-  return [...new Set(arr)];
-}
-
 /** Safely read+parse a JSON file: `{ok:true, data}` or `{ok:false, reason:'missing'|'unparseable',
- * error}`. Never throws — the one safe-read shape loadTerms() and isRegisteredConfidentialRepo()
- * both need, previously duplicated between them. */
+ * error}`. Never throws (isRegisteredConfidentialRepo). */
 function readJsonSafe(path) {
   if (!existsSync(path)) return { ok: false, reason: 'missing' };
   try {
@@ -511,71 +416,6 @@ export function scanDiffForConfidentialFlag(addedLines) {
     if (!added || typeof added.text !== 'string') continue;
     if (CONFIDENTIAL_FLAG_RE.test(added.text)) {
       hits.push({ line: added.lineNo, text: added.text, file: added.file });
-    }
-  }
-  return hits;
-}
-
-/**
- * Scan added diff lines for confidential terms.
- *
- * @param {{file: string, lineNo: number, text: string}[]} addedLines
- * @param {string[]} terms
- * @returns {{term: string, line: number, text: string, file: string}[]}
- */
-export function scanDiffForConfidential(addedLines, terms) {
-  const hits = [];
-  if (!Array.isArray(addedLines) || !Array.isArray(terms)) return hits;
-
-  const usable = terms.filter((t) => typeof t === 'string' && t.trim().length >= MIN_TERM_LENGTH);
-
-  for (const added of addedLines) {
-    if (!added || typeof added.text !== 'string') continue;
-    const haystack = added.text.toLowerCase();
-    for (const term of usable) {
-      if (haystack.includes(term.toLowerCase())) {
-        hits.push({ term, line: added.lineNo, text: added.text, file: added.file });
-      }
-    }
-  }
-  return hits;
-}
-
-/**
- * Scan added diff lines for `context` terms, per-deal, honoring the roster's documented gating:
- * a context term is a hit ONLY when at least one of its deal's `context_requires_any` companions
- * also appears somewhere in the SAME scanned corpus (this function's whole `addedLines` input —
- * the entire diff range being pushed, not necessarily the same line or file). A generic/ambiguous
- * context term with no identifying companion anywhere in the push is never flagged standalone.
- *
- * @param {{file: string, lineNo: number, text: string}[]} addedLines
- * @param {{dealKey: string, contextTerms: string[], requiresAny: string[]}[]} contextGroups
- * @returns {{term: string, line: number, text: string, file: string}[]}
- */
-export function scanDiffForContextTerms(addedLines, contextGroups) {
-  const hits = [];
-  if (!Array.isArray(addedLines) || !Array.isArray(contextGroups)) return hits;
-
-  const lines = addedLines.filter((a) => a && typeof a.text === 'string');
-  const corpus = lines.map((a) => a.text.toLowerCase()).join('\n');
-
-  for (const group of contextGroups) {
-    const requiresAny = (group?.requiresAny ?? []).filter(
-      (t) => typeof t === 'string' && t.trim().length >= MIN_TERM_LENGTH,
-    );
-    const companionPresent = requiresAny.some((t) => corpus.includes(t.toLowerCase()));
-    if (!companionPresent) continue; // no identifying companion anywhere — context suppressed
-
-    const contextTerms = (group?.contextTerms ?? []).filter(
-      (t) => typeof t === 'string' && t.trim().length >= MIN_TERM_LENGTH,
-    );
-    for (const added of lines) {
-      const haystack = added.text.toLowerCase();
-      for (const term of contextTerms) {
-        if (haystack.includes(term.toLowerCase())) {
-          hits.push({ term, line: added.lineNo, text: added.text, file: added.file });
-        }
-      }
     }
   }
   return hits;
@@ -670,107 +510,246 @@ export function parseAddedLines(diffText) {
 }
 
 const ZERO_SHA = /^0+$/;
+const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const LS_REMOTE_TIMEOUT_MS = 60_000;
+const PLAIN_SCHEMES = new Set(['file', 'ssh', 'http', 'https', 'git']);
 
-/** Resolve a base ref to diff a new branch against: origin/main if it exists, else the empty tree. */
-/** @param {string} [localSha]
- * @param {string} [cwd] - test seam; defaults to the process cwd. */
-export function baseForNewBranch(localSha, cwd) {
-  try {
-    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { stdio: 'pipe', cwd });
-    // merge-base, NOT origin/main itself: a two-dot diff from origin/main reads everything main has
-    // since REMOVED as "added" on the branch, so after an untrack lands on main every older branch
-    // would false-block on the files main deleted.
-    if (localSha) {
-      try {
-        const mb = execFileSync('git', ['merge-base', 'origin/main', localSha], { encoding: 'utf8', stdio: 'pipe', cwd }).trim();
-        if (mb) return mb;
-      } catch {
-        // unrelated histories: fall through to origin/main
-      }
-    }
-    return 'origin/main';
-  } catch {
-    // 4b825dc642cb6eb9a060e54bf8d69288fbee4904 is git's well-known empty-tree object.
-    return '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-  }
+/** True for a plain file / ssh / http(s) / git URL, scp-like `host:path` or local path; false for
+ * `<helper>::...` (ext:: included) or any other scheme. Same rule as the Python scanner.
+ * @param {string} target */
+function plainTransport(target) {
+  if (target.includes('::')) return false;
+  const at = target.indexOf('://');
+  if (at >= 0) return PLAIN_SCHEMES.has(target.slice(0, at).toLowerCase());
+  return true;
 }
 
 /**
- * The base a pushed ref's diff is computed against. A zero remote sha (new branch) uses
- * baseForNewBranch. A non-zero remote sha that is NOT in the local object database (the remote
- * moved and was not fetched, or was force-pushed) also falls back to baseForNewBranch -- the
- * merge-base with origin/main -- instead of letting `git diff` fail and the ref go unscanned
- * (prepush-scan-skips-on-diff-error, 2026-11-08).
+ * Local commit shas the push destination advertises (`git ls-remote`), or [] when it cannot be asked
+ * or advertises nothing usable (the caller then scans full history). Mirrors destination_bound() in
+ * scripts/prepush_confidential_scan.py: the bound is REFUSED unless ls-remote provably asks the
+ * repository the push goes to (the target resolves to itself through insteadOf, no custom
+ * receivepack / uploadpack on the remote, a plain transport). No local tracking ref is consulted.
  *
- * @param {string} remoteSha
- * @param {string} localSha
- * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @returns {string}
- */
-export function resolveDiffBase(remoteSha, localSha, cwd) {
-  if (!remoteSha || ZERO_SHA.test(remoteSha)) return baseForNewBranch(localSha, cwd);
-  try {
-    execFileSync('git', ['cat-file', '-e', `${remoteSha}^{commit}`], { stdio: 'pipe', cwd });
-    return remoteSha;
-  } catch {
-    console.warn(
-      `[prepush-confidential-scan] remote sha ${remoteSha} is not in the local object DB -- ` +
-        'scanning from the merge-base with origin/main instead.',
-    );
-    return baseForNewBranch(localSha, cwd);
-  }
-}
-
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-
-/**
- * The revision arguments naming every commit a push of `localSha` sends: reachable from localSha,
- * minus the resolved base (resolveDiffBase) and minus origin/main when it exists. Commits reachable
- * from origin/main are already on the remote, so a branch that merges main is not re-scanned (and
- * not false-blocked) on main's own history, e.g. the commits that tracked a real-data path before
- * its untrack. With no usable base (empty tree: no origin/main) the whole history of localSha is
- * scanned, root commit included.
- *
- * @param {string} remoteSha
- * @param {string} localSha
- * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @param {string | undefined} remote - the hook's argv[1] (remote name or URL).
+ * @param {string | undefined} url - the hook's argv[2] (push URL).
+ * @param {string} [cwd]
  * @returns {string[]}
  */
-export function rangeRevsFor(remoteSha, localSha, cwd) {
-  const base = resolveDiffBase(remoteSha, localSha, cwd);
-  const revs = [localSha];
-  if (base !== EMPTY_TREE) revs.push(`^${base}`);
-  try {
-    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main^{commit}'], { stdio: 'pipe', cwd });
-    if (base !== 'origin/main') revs.push('^origin/main');
-  } catch {
-    // no origin/main: the base alone bounds the range
+export function destinationBound(remote, url, cwd) {
+  const target = url || remote;
+  if (!target || target.startsWith('-') || !plainTransport(target)) return [];
+  if (remote && !remote.startsWith('-')) {
+    for (const key of ['receivepack', 'uploadpack']) {
+      try {
+        if (gitOut(['config', '--get', `remote.${remote}.${key}`], cwd).trim()) return [];
+      } catch {
+        // unset: exit 1
+      }
+    }
   }
-  return revs;
+  let advertised;
+  try {
+    const resolved = /** @type {string} */ (gitRun(['ls-remote', '--get-url', target], cwd, { timeout: LS_REMOTE_TIMEOUT_MS })).trim();
+    if (resolved !== target) return []; // insteadOf would rewrite the target again: another repository
+    const listing = /** @type {string} */ (gitRun(['ls-remote', target], cwd, { timeout: LS_REMOTE_TIMEOUT_MS }));
+    advertised = [...new Set(listing.split('\n').map((l) => (l.split('\t')[0] ?? '').trim()).filter((s) => SHA_RE.test(s)))];
+  } catch {
+    return [];
+  }
+  if (advertised.length === 0) return [];
+  let check;
+  try {
+    check = gitOut(['cat-file', '--batch-check'], cwd, advertised.map((s) => `${s}^{commit}\n`).join(''));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of check.split('\n')) {
+    const [sha, type] = line.trim().split(/\s+/);
+    if (type === 'commit' && sha && SHA_RE.test(sha) && !out.includes(sha)) out.push(sha);
+  }
+  return out;
 }
 
-// Per-commit (2026-11-12): `git log -p --cc --root` over the pushed range, NOT `git diff base..local`.
-// An endpoint diff compares two trees only, so a term added in commit A and removed in commit B was
-// never scanned, yet A's blob still reaches the remote. --cc shows what a merge resolution itself
-// introduced (an evil merge); --root includes the root commit's full content; --no-renames shows a
-// renamed file's whole content under its new path (a pure rename used to show no lines at all, which
-// let an EXCLUDE_PATHS file be renamed out of the exclusion unscanned). Each commit is preceded by a
-// 'commit <sha>' line and its 4-space-indented message, which parseAddedLines returns as added lines
-// so commit messages are term-scanned too.
-//
-// No fixed maxBuffer cap: the old 64 MB cap threw ENOBUFS on exactly the largest, most
-// data-heavy pushes, and the caller then skipped them. Every scanner needs the ref's whole added
-// corpus in memory anyway (context terms gate on the full range), so streaming would not lower
-// the peak. A diff too large for one JS string still throws, and that throw now BLOCKS the push.
-/** @param {string} remoteSha
+/**
+ * The commits one pushed ref makes new on the destination, as git rev arguments plus `^<sha>` lines
+ * for --stdin (any number of them, no command-line cap).
+ *   * existing remote ref whose sha this clone has: localSha ^remoteSha;
+ *   * otherwise (new ref, or a remote sha unknown here): localSha minus the destination-advertised
+ *     `bound` (destinationBound), i.e. the FULL history of localSha when the bound is empty.
+ *
+ * @param {string} remoteSha
  * @param {string} localSha
- * @param {string} [cwd] */
-function diffFor(remoteSha, localSha, cwd) {
-  const revs = rangeRevsFor(remoteSha, localSha, cwd);
-  return gitOut(
-    ['log', '-p', '--cc', '--root', '--no-renames', '--format=commit %H%n%w(0,4,4)%B', ...DIFF_OPTION_PIN, ...revs, '--'],
-    cwd,
+ * @param {string} [cwd]
+ * @param {string[]} [bound]
+ * @returns {{args: string[], exclude: string[]}}
+ */
+export function rangeFor(remoteSha, localSha, cwd, bound) {
+  if (remoteSha && !ZERO_SHA.test(remoteSha)) {
+    try {
+      gitOut(['cat-file', '-e', `${remoteSha}^{commit}`], cwd);
+      return { args: [localSha, `^${remoteSha}`], exclude: [] };
+    } catch {
+      console.warn(
+        `[prepush-confidential-scan] remote sha ${remoteSha} is not in the local object DB -- ` +
+          'bounding the scan by what the destination advertises instead (full history if it cannot be asked).',
+      );
+    }
+  }
+  return { args: [localSha], exclude: [...(bound ?? [])] };
+}
+
+/** Run `git log <logArgs> <range>`, feeding the range's exclusions on --stdin.
+ * @param {string[]} logArgs @param {{args: string[], exclude: string[]}} range @param {string} [cwd]
+ * @param {boolean} [buffer] @returns {any} */
+function logRange(logArgs, range, cwd, buffer) {
+  const stdin = range.exclude.length > 0;
+  return gitRun(['log', ...logArgs, ...range.args, ...(stdin ? ['--stdin'] : [])], cwd, {
+    input: stdin ? range.exclude.map((s) => `^${s}\n`).join('') : '',
+    buffer,
+  });
+}
+
+/**
+ * The type a pushed sha finally peels to ('commit', 'tree', 'blob', ...), following annotated tags.
+ * @param {string} sha @param {string} [cwd] @returns {string}
+ */
+export function peeledType(sha, cwd) {
+  return gitOut(['cat-file', '-t', `${sha}^{}`], cwd).trim();
+}
+
+/**
+ * Every blob a range adds or modifies, merges included (`--cc` lists what a merge resolution itself
+ * changed), parsed from `git log --raw -z` so a path with a quote, backslash, tab or newline is read
+ * verbatim (never C-quoted), and T (type-change) rows count like A/M. Raw output never consults
+ * gitattributes. Deletions and submodules are skipped.
+ *
+ * @param {{args: string[], exclude: string[]}} range
+ * @param {string} [cwd]
+ * @returns {{commit: string, path: string, blob: string}[]}
+ */
+export function rangeBlobs(range, cwd) {
+  const marker = `ORA-PREPUSH-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+  const raw = /** @type {string} */ (
+    logRange(['--raw', '--cc', '--root', '-z', '--no-abbrev', '--no-renames', '--no-color', `--format=${marker}%H`], range, cwd)
   );
+  return parseRawLog(raw, marker);
+}
+
+/**
+ * Parse `git log --raw -z --format=<marker>%H` output. Any non-empty field that is neither a marker
+ * nor a raw record THROWS (the caller fails closed): an unexpected line could otherwise shift blobs
+ * onto the wrong commit. Same rules as parse_raw_log() in the Python scanner.
+ *
+ * @param {string} raw
+ * @param {string} marker
+ * @returns {{commit: string, path: string, blob: string}[]}
+ */
+export function parseRawLog(raw, marker) {
+  const fields = raw.split('\0');
+  const out = [];
+  const seen = new Set();
+  let commit = '';
+  for (let i = 0; i < fields.length; ) {
+    const meta = (fields[i] ?? '').replace(/^\n+/, '');
+    if (meta.startsWith(marker)) {
+      commit = meta.slice(marker.length).trim();
+      if (!SHA_RE.test(commit)) throw new Error('unparseable `git log --raw` commit line');
+      i += 1;
+      continue;
+    }
+    if (!meta.startsWith(':')) {
+      if (meta.trim()) throw new Error('unrecognised `git log --raw` output');
+      i += 1;
+      continue;
+    }
+    if (!commit) throw new Error('`git log --raw` record before any commit line');
+    const path = fields[i + 1] ?? '';
+    i += 2;
+    const parents = meta.length - meta.replace(/^:+/, '').length;
+    const parts = meta.replace(/^:+/, '').trim().split(/\s+/);
+    if (parts.length < 2 * parents + 3) throw new Error('unparseable `git log --raw` record');
+    const newMode = parts[parents] ?? '';
+    const newSha = parts[2 * parents + 1] ?? '';
+    if (ZERO_SHA.test(newSha) || newMode === '160000') continue; // deletion or submodule
+    const key = `${commit}\0${path}\0${newSha}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ commit, path, blob: newSha });
+  }
+  return out;
+}
+
+/**
+ * Read objects whole through one `git cat-file --batch`. Throws on a missing object.
+ * @param {string[]} shas @param {string} [cwd] @returns {Map<string, Buffer>}
+ */
+function readBlobs(shas, cwd) {
+  const out = new Map();
+  const unique = [...new Set(shas)];
+  if (unique.length === 0) return out;
+  const buf = /** @type {Buffer} */ (gitRun(['cat-file', '--batch'], cwd, { input: unique.map((s) => `${s}\n`).join(''), buffer: true }));
+  let at = 0;
+  for (const sha of unique) {
+    const nl = buf.indexOf(0x0a, at);
+    if (nl < 0) throw new Error(`short read for object ${sha.slice(0, 12)}`);
+    const header = buf.subarray(at, nl).toString('ascii').split(' ');
+    if (header[1] === 'missing' || header.length < 3) throw new Error(`object ${sha.slice(0, 12)} unreadable`);
+    const size = Number(header[2]);
+    out.set(sha, buf.subarray(nl + 1, nl + 1 + size));
+    at = nl + 1 + size + 1; // trailing LF
+  }
+  return out;
+}
+
+const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
+
+/**
+ * True when a file under data/ must not be pushed: binary by CONTENT (a NUL byte anywhere; never by
+ * git's binary flag, which a gitattribute can flip either way), or an export/document extension (a
+ * CSV, or a small PDF with no NUL byte, reads as text and would otherwise pass).
+ * @param {string} path @param {Uint8Array} content
+ */
+export function isBlockedDataFile(path, content) {
+  const p = path.replace(/\\/g, '/');
+  if (!p.startsWith('data/')) return false;
+  return EXPORT_EXT_RE.test(p) || content.includes(0);
+}
+
+/**
+ * Per-commit text of a pushed range for the payload checks: `git log -p --cc --root --text` (see
+ * DIFF_OPTION_PIN). An endpoint `git diff base..local` compares two trees only, so content added in
+ * commit A and removed in commit B was never scanned, yet A's blob still reaches the remote. --cc shows
+ * what a merge resolution itself introduced; --no-renames shows a renamed file's whole content. Each
+ * commit is preceded by a 'commit <sha>' line and its 4-space-indented message (parseAddedLines).
+ *
+ * No fixed maxBuffer cap: a diff too large for one JS string throws, and that throw BLOCKS the push.
+ * @param {string} remoteSha @param {string} localSha @param {string} [cwd] @param {string[]} [bound]
+ * @returns {string}
+ */
+export function diffFor(remoteSha, localSha, cwd, bound) {
+  return /** @type {string} */ (
+    logRange(['-p', '--cc', '--root', '--no-renames', '--format=commit %H%n%w(0,4,4)%B', ...DIFF_OPTION_PIN], rangeFor(remoteSha, localSha, cwd, bound), cwd)
+  );
+}
+
+/** Binary/export paths under data/ added or modified by ANY commit of the pushed range.
+ * @param {string} remoteSha @param {string} localSha @param {string} [cwd] @param {string[]} [bound]
+ * @returns {string[]} */
+export function binaryPathsFor(remoteSha, localSha, cwd, bound) {
+  const entries = rangeBlobs(rangeFor(remoteSha, localSha, cwd, bound), cwd).filter((e) => e.path.replace(/\\/g, '/').startsWith('data/'));
+  const blobs = readBlobs(entries.map((e) => e.blob), cwd);
+  const hits = entries.filter((e) => isBlockedDataFile(e.path, blobs.get(e.blob) ?? new Uint8Array())).map((e) => e.path.replace(/\\/g, '/'));
+  return [...new Set(hits)];
+}
+
+/** Real-data manifest paths added or modified by ANY commit of the pushed range.
+ * @param {string} remoteSha @param {string} localSha @param {{files: string[], dirs: string[]}} manifest
+ * @param {string} [cwd] @param {string[]} [bound] @returns {string[]} */
+export function realDataPathsFor(remoteSha, localSha, manifest, cwd, bound) {
+  const paths = rangeBlobs(rangeFor(remoteSha, localSha, cwd, bound), cwd).map((e) => e.path);
+  return [...new Set(paths.filter((p) => isRealDataPath(p, manifest)).map((p) => p.replace(/\\/g, '/')))];
 }
 
 /**
@@ -814,60 +793,6 @@ function blockOnHits(hits, header, formatHit, trailer) {
   process.exit(1);
 }
 
-/** @param {string} remoteSha
- * @param {string} localSha
- * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @returns {string[]} */
-export function binaryPathsFor(remoteSha, localSha, cwd) {
-  const revs = rangeRevsFor(remoteSha, localSha, cwd);
-  // Per commit (2026-11-12): a binary added in one commit and removed in a later one never shows in
-  // an endpoint numstat, yet its blob reaches the remote. quotepath=off (GIT_CONFIG_PIN): a
-  // non-ASCII filename (en dash in an Excel export name) is otherwise emitted as a quoted
-  // "\342\200\223" string that fails the data/ prefix test. --no-renames: a binary moved into data/
-  // with edits is otherwise status R and dropped by --diff-filter=AM. --no-textconv: a textconv
-  // driver would otherwise make a binary count as text. Merges are excluded here because a merge's
-  // numstat is its first-parent diff (it would re-list everything the merged branch added); what a
-  // merge resolution itself introduces is covered by mergeIntroducedBinaryPaths.
-  const text = gitOut(
-    ['log', '--numstat', '--no-merges', '--root', '--no-renames', '--diff-filter=AM', '--format=', ...DIFF_OPTION_PIN, ...revs, '--'],
-    cwd,
-  );
-  const hits = [...parseBinaryPathsUnderData(text), ...mergeIntroducedBinaryPaths(revs, cwd)];
-  return [...new Set(hits)];
-}
-
-/**
- * Binary/export paths under data/ that a MERGE commit in the range introduced itself (an evil merge:
- * content that matches neither parent). `git log --cc --raw` lists exactly those paths; each one under
- * data/ is checked for binary content against the merge's first parent.
- * @param {string[]} revs
- * @param {string} [cwd]
- * @returns {string[]}
- */
-function mergeIntroducedBinaryPaths(revs, cwd) {
-  const text = gitOut(['log', '--merges', '--cc', '--raw', '--no-abbrev', '--no-renames', '--format=commit %H', ...DIFF_OPTION_PIN, ...revs, '--'], cwd);
-  const out = [];
-  let merge = '';
-  for (const line of text.split('\n')) {
-    const c = /^commit ([0-9a-f]{40,64})$/.exec(line);
-    if (c) {
-      merge = c[1] ?? '';
-      continue;
-    }
-    // "::<modes> <shas> <status>\t<path>" -- one colon per parent; the result's sha comes last.
-    const m = /^(:+)([^\t]+)\t(.+)$/.exec(line.trimEnd());
-    if (!m || !merge) continue;
-    const parents = m[1]?.length ?? 1;
-    const parts = (m[2] ?? '').trim().split(/\s+/);
-    const newSha = parts[2 * parents + 1] ?? '';
-    const path = (m[3] ?? '').replace(/\\/g, '/');
-    if (!newSha || ZERO_SHA.test(newSha) || !path.startsWith('data/')) continue;
-    const numstat = gitOut(['diff', '--numstat', '--no-renames', ...DIFF_OPTION_PIN, `${merge}^1`, merge, '--', path], cwd);
-    out.push(...parseBinaryPathsUnderData(numstat));
-  }
-  return out;
-}
-
 /** First line of an error's code or message, for a one-line diffErrors entry. @param {unknown} err */
 function errorLine(err) {
   const e = /** @type {{code?: string, message?: string}} */ (err);
@@ -876,26 +801,26 @@ function errorLine(err) {
 
 /**
  * Parse git's pre-push stdin ("<local ref> <local sha> <remote ref> <remote sha>" per line) and
- * collect, per pushed ref, the added diff lines (minus EXCLUDE_PATHS) and the binary/export
- * paths under data/. A ref whose diff or numstat could NOT be computed is recorded in diffErrors
- * -- never silently skipped -- so the caller can fail closed.
+ * collect, per pushed ref, the added diff lines (minus EXCLUDE_PATHS), the binary/export paths under
+ * data/ and (with `deps.manifest`) the real-data paths. A ref that could NOT be scanned is recorded in
+ * diffErrors -- never silently skipped -- so the caller can fail closed: a git failure, or a pushed
+ * ref that peels to a tree or blob (git log shows nothing for it; the Python scanner reads its content
+ * for terms, but this payload scan has no commit range to read).
  *
- * The text diff and the binary numstat are computed in SEPARATE try blocks: a numstat failure
- * records its own diffErrors entry but never discards a text diff that succeeded, so its added
- * lines are still term-scanned (refute run wf_44a3341e-b41, low).
- *
- * When `deps.manifest` is given, each ref's added/modified real-data paths (ruling 2026-11-10) are
- * collected into realDataHits, in a third try block with its own diffErrors entry.
+ * The three checks run in SEPARATE try blocks: one failing records its own diffErrors entry and
+ * never discards another that succeeded (refute run wf_44a3341e-b41, low).
  *
  * @param {string} stdinText
  * @param {string} [cwd] - test seam; defaults to the process cwd.
- * @param {{diffFor?: (remoteSha: string, localSha: string, cwd?: string) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string) => string[], realDataPathsFor?: (remoteSha: string, localSha: string, manifest: {files: string[], dirs: string[]}, cwd?: string) => string[], manifest?: {files: string[], dirs: string[]}}} [deps] - test seam; defaults to the real git calls.
+ * @param {{remote?: string, url?: string, destinationBound?: (remote: string | undefined, url: string | undefined, cwd?: string) => string[], diffFor?: (remoteSha: string, localSha: string, cwd?: string, bound?: string[]) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string, bound?: string[]) => string[], realDataPathsFor?: (remoteSha: string, localSha: string, manifest: {files: string[], dirs: string[]}, cwd?: string, bound?: string[]) => string[], peeledType?: (sha: string, cwd?: string) => string, manifest?: {files: string[], dirs: string[]}}} [deps] - the hook's argv (remote, url) and test seams; defaults to the real git calls.
  * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], realDataHits: string[], diffErrors: {localSha: string, message: string}[]}}
  */
 export function collectRefScan(stdinText, cwd, deps) {
   const getDiff = deps?.diffFor ?? diffFor;
   const getBinaries = deps?.binaryPathsFor ?? binaryPathsFor;
   const getRealData = deps?.realDataPathsFor ?? realDataPathsFor;
+  const getType = deps?.peeledType ?? peeledType;
+  const getBound = deps?.destinationBound ?? destinationBound;
   const manifest = deps?.manifest;
   /** @type {string[]} */
   const realDataHits = [];
@@ -905,31 +830,57 @@ export function collectRefScan(stdinText, cwd, deps) {
   const binaryHits = [];
   /** @type {{localSha: string, message: string}[]} */
   const diffErrors = [];
+  /** @type {string[] | undefined} */
+  let bound;
+  // Asked once per push, and only if some ref needs it (rangeFor ignores it for a known remote sha).
+  const boundOnce = () => (bound ??= getBound(deps?.remote, deps?.url, cwd));
   for (const rawLine of String(stdinText ?? '').split('\n')) {
     const line = rawLine.trim();
     if (!line) continue;
     const [, localSha, , remoteSha] = line.split(/\s+/);
     if (!localSha || ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
     try {
-      const diffText = getDiff(remoteSha ?? '', localSha, cwd);
+      const type = getType(localSha, cwd);
+      if (type !== 'commit') {
+        diffErrors.push({ localSha, message: `pushed ref peels to a ${type || 'unknown object'}, not a commit; the payload scan cannot bound it` });
+        continue;
+      }
+    } catch (err) {
+      diffErrors.push({ localSha, message: `object type: ${errorLine(err)}` });
+      continue;
+    }
+    const remote = remoteSha ?? '';
+    const refBound = !remote || ZERO_SHA.test(remote) || !hasCommit(remote, cwd) ? boundOnce() : undefined;
+    try {
+      const diffText = getDiff(remote, localSha, cwd, refBound);
       addedByRef.push(parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file)));
     } catch (err) {
       diffErrors.push({ localSha, message: `text diff: ${errorLine(err)}` });
     }
     try {
-      binaryHits.push(...getBinaries(remoteSha ?? '', localSha, cwd));
+      binaryHits.push(...getBinaries(remote, localSha, cwd, refBound));
     } catch (err) {
-      diffErrors.push({ localSha, message: `binary numstat: ${errorLine(err)}` });
+      diffErrors.push({ localSha, message: `binary paths: ${errorLine(err)}` });
     }
     if (manifest) {
       try {
-        realDataHits.push(...getRealData(remoteSha ?? '', localSha, manifest, cwd));
+        realDataHits.push(...getRealData(remote, localSha, manifest, cwd, refBound));
       } catch (err) {
         diffErrors.push({ localSha, message: `real-data paths: ${errorLine(err)}` });
       }
     }
   }
   return { addedByRef, binaryHits, realDataHits, diffErrors };
+}
+
+/** @param {string} sha @param {string} [cwd] */
+function hasCommit(sha, cwd) {
+  try {
+    gitOut(['cat-file', '-e', `${sha}^{commit}`], cwd);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -952,19 +903,6 @@ function stagedMain() {
 
 function main() {
   if (process.argv.includes('--staged')) return stagedMain();
-  const { alwaysTerms, contextGroups, rosterOk, rosterDetail } = loadTerms();
-  if (!rosterOk && process.env['PREPUSH_ALLOW_NO_ROSTER'] === '1') {
-    console.warn(`[prepush-confidential-scan] WARN: PREPUSH_ALLOW_NO_ROSTER=1 - roster gate BYPASSED for this push (${rosterDetail}).`);
-  }
-  if (shouldBlockOnMissingRoster(rosterOk, process.env)) {
-    console.error(
-      `\n✖  PUSH BLOCKED — the confidential-deal roster is unavailable (${rosterDetail}), so the ` +
-        'scan would cover only the built-in denylist and could miss real deal names (Invariant 3, ' +
-        'fail closed).\n\n   Restore ~/.claude/hooks/confidential-terms.json, or set ' +
-        'PREPUSH_ALLOW_NO_ROSTER=1 for this one push if you have verified it carries no deal data.\n',
-    );
-    process.exit(1);
-  }
   // Real firm data is never tracked (ruling 2026-11-10). The manifest that names it must be readable,
   // or the push is blocked: without it this scan cannot tell a real-data path from any other.
   let manifest;
@@ -981,31 +919,29 @@ function main() {
   // as a diff error and fails closed through the same PREPUSH_ALLOW_DIFF_ERROR gate (2026-11-12). An
   // empty stdin (up-to-date push) is not an error.
   const stdin = readPushStdin();
-  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin.text, undefined, { manifest });
+  // git passes pre-push hooks the remote name and push URL (argv[1], argv[2]); the hook wrapper
+  // forwards them. They bound a new ref by what the destination advertises.
+  const [remote, url] = process.argv.slice(2).filter((a) => a !== '--staged');
+  const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin.text, undefined, { manifest, remote, url });
   if (stdin.error) diffErrors.unshift({ localSha: '(pre-push stdin)', message: stdin.error });
-  const allHits = [];
   const flagHits = [];
   for (const added of addedByRef) {
-    allHits.push(...scanDiffForConfidential(added, alwaysTerms));
-    allHits.push(...scanDiffForContextTerms(added, contextGroups));
     // The confidential:true check is payload-shaped: a commit message describing the flag is not a payload.
     flagHits.push(...scanDiffForConfidentialFlag(added.filter((a) => !a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX))));
   }
 
-  // Fail CLOSED on a ref that could not be diffed (prepush-scan-skips-on-diff-error, 2026-11-08).
-  // This used to warn and skip, so the largest, most data-heavy pushes (ENOBUFS) went out
-  // unscanned. The explicit per-push opt-out keeps a transient git error from bricking pushes
-  // permanently, and it does not suppress real hits found on the refs that WERE scanned (the
-  // hit checks below still run).
+  // Fail CLOSED on a ref that could not be scanned (prepush-scan-skips-on-diff-error, 2026-11-08).
+  // The explicit per-push opt-out keeps a transient git error from bricking pushes permanently, and
+  // it does not suppress real hits found on the refs that WERE scanned (the checks below still run).
   if (diffErrors.length > 0) {
     if (shouldBlockOnDiffError(diffErrors, process.env)) {
       blockOnHits(
         diffErrors,
-        'the confidential scan could not read the pushed refs (stdin) or compute their diff, so they were NOT scanned',
+        'the payload scan could not read the pushed refs (stdin) or scan them, so they were NOT scanned',
         (e) => `${e.localSha}  ->  ${e.message}`,
-        'Invariant 3, fail closed. Fix the git error (for a missing remote sha, `git fetch origin`) ' +
+        'Invariant 3, fail closed. Fix the git error (for a missing remote sha, `git fetch`) ' +
           'and push again, or set PREPUSH_ALLOW_DIFF_ERROR=1 for this one push if you have verified ' +
-          'it carries no deal data.',
+          'it carries no firm data.',
       );
     }
     for (const e of diffErrors) {
@@ -1052,7 +988,7 @@ function main() {
   if (binaryHits.length > 0) {
     blockOnHits(
       [...new Set(binaryHits)],
-      'binary file(s) added or modified under data/ that this text scan cannot inspect',
+      'binary or export file(s) added or modified under data/',
       (p) => p,
       'Tenant/firm exports (xlsx/pdf) must not be pushed. Gitignore the directory and untrack the ' +
         'file (git rm --cached); decide any history purge with Gabriel.',
@@ -1061,8 +997,7 @@ function main() {
 
   // Structural check: a `"confidential": true` payload is only ever legitimate FROM a repo
   // registered as an intentional in-perimeter confidential store. Registered → informational
-  // (the control is visibly firing, not silently no-op); unregistered → BLOCK, independent of
-  // whether any specific term denylist entry also matched.
+  // (the control is visibly firing, not silently no-op); unregistered → BLOCK.
   //
   // currentRepoName()/isRegisteredConfidentialRepo() (a git subprocess spawn + a file read) are
   // resolved HERE, not at the top of main() — they're only ever consulted in this branch, and
@@ -1087,15 +1022,6 @@ function main() {
           'then either remove the payload or add this repo to confidential-repos.json.',
       );
     }
-  }
-
-  if (allHits.length > 0) {
-    blockOnHits(
-      allHits,
-      'confidential terms found in added lines',
-      (h) => `${h.file}:${h.line}  ->  matched '${h.term}'`,
-      'Remove the confidential content (and scrub history if already committed) before pushing.',
-    );
   }
 
   process.exit(0);
