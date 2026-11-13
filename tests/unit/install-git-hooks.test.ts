@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
 import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
@@ -38,9 +38,13 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
   });
 
   it('fails closed when buffering the pre-push stdin fails, before any stage runs', () => {
-    expect(WRAPPER).toMatch(/^refs="\$\(cat\)" \|\| \{ echo "pre-push: could not read push refs from stdin" >&2; exit 1; \}$/m);
-    expect(WRAPPER).not.toMatch(/^refs="\$\(cat\)"\s*$/m);
-    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
+    // Read by node, never cat: cat's exit status on an unreadable stdin varies by implementation.
+    expect(WRAPPER).not.toMatch(/\$\(cat\)/);
+    expect(WRAPPER).toMatch(/^\{ :; \} 2>\/dev\/null 3<&0 \|\| stdin_fail$/m);
+    expect(WRAPPER).toMatch(/^refs="\$\("\$node_bin" -e '[^\n]*'\)" \|\| stdin_fail$/m);
+    expect(WRAPPER).toMatch(/stdin_fail\(\) \{\n\s*echo "pre-push: could not read push refs from stdin" >&2\n\s*exit 1\n\}/);
+    expect(WRAPPER.indexOf('refs="$("$node_bin"')).toBeGreaterThan(WRAPPER.indexOf('node_bin="$(safe_exe node'));
+    expect(WRAPPER.indexOf('refs="$("$node_bin"')).toBeLessThan(WRAPPER.indexOf("if ! grep -q 'runTermScan'"));
   });
 
   // Both version skews over the shared .git/hooks (refute runs wf_0df7879e-d79, wf_e0d7368f-0b3): the
@@ -58,7 +62,7 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     // wf_a50bf4bb-d1a: PATH is rebuilt with built-ins before ANY external command runs.
     expect(WRAPPER).toContain('if [ "$_p" -ef "$here" ]; then _in=1; break; fi');
     expect(WRAPPER).toContain('case "$_d" in /*) ;; *) continue ;; esac');
-    const firstExternal = Math.min(...['root="$(git', 'refs="$(cat)"', 'safe_exe node | head'].map((t) => WRAPPER.indexOf(t)));
+    const firstExternal = Math.min(...['root="$(git', 'refs="$("$node_bin"', 'safe_exe node | head'].map((t) => WRAPPER.indexOf(t)));
     expect(WRAPPER.indexOf('export PATH')).toBeGreaterThan(-1);
     expect(WRAPPER.indexOf('export PATH')).toBeLessThan(firstExternal);
     const code = WRAPPER.split('\n').filter((l) => !l.startsWith('#')).join('\n');
@@ -139,14 +143,17 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     }
   });
 
-  // Residual gap 1 of the per-commit scan fix (2026-11-12): the wrapper buffers stdin with
-  // `refs="$(cat)"` before node runs. When that read failed, the scanner received an empty ref
-  // list, scanned nothing and allowed the push. The buffering step must now fail closed itself.
-  it('hook exits non-zero, before running the scanner, when buffering stdin fails', () => {
+  // Residual gap 1 of the per-commit scan fix (2026-11-12): the wrapper buffers stdin before any
+  // stage runs. When that read failed, the scanner received an empty ref list, scanned nothing and
+  // allowed the push. The buffering step must fail closed itself. It used `refs="$(cat)"`, which
+  // failed open on the ubuntu-26.04 CI runner (its cat returned 0 on a write-only stdin), so the
+  // read is now node's; the stub-cat case reproduces that runner on any platform.
+  function expectStdinBlock(mode: 'write-only' | 'cat-swallows-errors' | 'closed') {
     const hookPath = setupFixtureRepo();
     const wo = join(dir, 'write-only.txt');
     writeFileSync(wo, '');
-    const fd = openSync(wo, 'w'); // reading a write-only fd fails (EBADF), so `cat` exits non-zero
+    const fd = openSync(wo, 'w'); // reading a write-only fd fails (EBADF)
+    const stubDir = mkdtempSync(join(tmpdir(), 'install-git-hooks-stubcat-'));
     try {
       // The scanner PASSES and leaves a marker: if it runs at all, the hook did not stop at stdin.
       writeFileSync(
@@ -154,14 +161,32 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
         `(await import('node:fs')).writeFileSync(${JSON.stringify(join(dir, 'scanner-ran'))}, 'x'); process.exit(0);\n`,
       );
       writeFileSync(join(scriptsDir, 'prepush-noi-crosscheck.mjs'), 'process.exit(0);\n');
-      const r = spawnSync('sh', [hookPath], { cwd: dir, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8' });
+      writeFileSync(join(stubDir, 'cat'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      const env = mode === 'cat-swallows-errors' ? { ...process.env, PATH: `${stubDir}${delimiter}${process.env.PATH ?? ''}` } : process.env;
+      const r =
+        mode === 'closed'
+          ? spawnSync('sh', ['-c', 'exec sh "$0" 0<&-', hookPath], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' })
+          : spawnSync('sh', [hookPath], { cwd: dir, env, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8' });
       expect(r.status).not.toBe(0);
       expect(r.stderr).toContain('could not read push refs from stdin');
       expect(existsSync(join(dir, 'scanner-ran'))).toBe(false);
     } finally {
       closeSync(fd);
       rmSync(dir, { recursive: true, force: true });
+      rmSync(stubDir, { recursive: true, force: true });
     }
+  }
+
+  it('hook exits non-zero, before running the scanner, when buffering stdin fails', () => {
+    expectStdinBlock('write-only');
+  });
+
+  it('hook still blocks an unreadable stdin when the cat on PATH swallows read errors', () => {
+    expectStdinBlock('cat-swallows-errors');
+  });
+
+  it('hook blocks a closed stdin (node would otherwise reopen fd 0 as /dev/null)', () => {
+    expectStdinBlock('closed');
   });
 
   it('hook still exits 0 and runs the scanner on an empty stdin (up-to-date push)', () => {

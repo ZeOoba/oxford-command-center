@@ -51,7 +51,7 @@ export const WRAPPER = `#!/bin/sh
 #    commits verdict only, fail-open on any tooling gap (see scripts/prepush-refute-check.mjs). Git's pre-push stdin is
 #    buffered once so the scanner and this stage each read the full ref list. A failed read
 #    blocks the push: an empty ref list would otherwise let every stage pass with nothing scanned.
-#    (POSIX: a bare assignment's status is its command substitution's, so '||' sees cat's failure.)
+#    The read is done by node (see the comment at that line), never cat.
 # PATH is rebuilt FIRST, with shell built-ins only, before this hook runs any external command
 # (refute runs wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a). Kept: absolute entries with no
 # '.' or '..' segment that are neither the current directory (git runs this hook in the worktree
@@ -95,7 +95,6 @@ if [ -z "$PATH" ]; then
   exit 1
 fi
 root="$(git rev-parse --show-toplevel)"
-refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
 scan_js="$root/scripts/prepush-confidential-scan.mjs"
 # safe_exe NAME: every hit for NAME (or NAME.exe) on the rebuilt PATH, one per line, in PATH order
 # (built-ins only). All are listed so a failing first hit (the Windows Store stub) does not hide a
@@ -119,6 +118,17 @@ if [ -z "$node_bin" ]; then
   echo "pre-push BLOCKED (fail-closed): node not found on an absolute PATH entry outside the worktree." >&2
   exit 1
 fi
+# Buffer git's ref list once. Read by node, not cat: whether cat reports an unreadable stdin
+# depends on which cat is installed (on the ubuntu-26.04 CI runner the hook passed a write-only
+# stdin through cat with status 0), while a node read error always exits non-zero. Node reopens a CLOSED fd 0 as
+# /dev/null at startup, so a closed stdin is caught first by duplicating fd 0 onto fd 3 in the
+# shell (onto ITSELF, bash skips the dup and reports success).
+stdin_fail() {
+  echo "pre-push: could not read push refs from stdin" >&2
+  exit 1
+}
+{ :; } 2>/dev/null 3<&0 || stdin_fail
+refs="$("$node_bin" -e 'const c=[];process.stdin.on("data",(b)=>c.push(b)).on("end",()=>process.stdout.write(Buffer.concat(c))).on("error",()=>process.exit(1));')" || stdin_fail
 if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
   scan_py="$root/scripts/prepush_confidential_scan.py"
   [ -f "$scan_py" ] || scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
