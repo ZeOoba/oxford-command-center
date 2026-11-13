@@ -34,13 +34,13 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
 
   it('still fails closed on the confidentiality scanner', () => {
     expect(WRAPPER).toContain('scan_js="$root/scripts/prepush-confidential-scan.mjs"');
-    expect(WRAPPER).toMatch(/node "\$scan_js" "\$@" \|\| exit 1/);
+    expect(WRAPPER).toMatch(/"\$node_bin" "\$scan_js" "\$@" \|\| exit 1/);
   });
 
   it('fails closed when buffering the pre-push stdin fails, before any stage runs', () => {
     expect(WRAPPER).toMatch(/^refs="\$\(cat\)" \|\| \{ echo "pre-push: could not read push refs from stdin" >&2; exit 1; \}$/m);
     expect(WRAPPER).not.toMatch(/^refs="\$\(cat\)"\s*$/m);
-    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('node "$scan_js"'));
+    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
   });
 
   // Both version skews over the shared .git/hooks (refute runs wf_0df7879e-d79, wf_e0d7368f-0b3): the
@@ -49,11 +49,21 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     expect(WRAPPER).toContain(`if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then`);
     expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$py" -I "\$scan_py" "\$@" \|\| exit 1/);
     expect(WRAPPER).toContain(`/${PY_SCAN_FALLBACK}"`);
-    expect(WRAPPER).toContain('"$c" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"');
+    expect(WRAPPER).toContain('"$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"');
+    // wf_954ebd83-729: interpreters come from safe_exe (absolute PATH entries outside the worktree),
+    // never from a bare-name lookup, and every child gets NoDefaultCurrentDirectoryInExePath.
+    expect(WRAPPER).not.toMatch(/command -v/);
+    expect(WRAPPER).toContain('safe_exe "$c" | while IFS= read -r cand; do');
+    expect(WRAPPER).toContain('node_bin="$(safe_exe node | head -n 1)"');
+    expect(WRAPPER).toMatch(/case "\$_d" in \/\*\) ;; \*\) continue ;; esac/);
+    const code = WRAPPER.split('\n').filter((l) => !l.startsWith('#')).join('\n');
+    expect(code).not.toMatch(/(^|[|;&]\s*)node /m);
+    expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeGreaterThan(-1);
+    expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeLessThan(WRAPPER.indexOf('root="$(git rev-parse'));
     expect(WRAPPER).toMatch(/no scanner copy sits beside the hook[^\n]*\n\s*exit 1/);
     expect(WRAPPER).toMatch(/no Python 3\.8\+ found[^\n]*\n\s*exit 1/);
-    expect(WRAPPER.indexOf('"$py" -I "$scan_py"')).toBeLessThan(WRAPPER.indexOf('node "$scan_js"'));
-    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| node "\$scan_js" "\$@" \|\| exit 1/);
+    expect(WRAPPER.indexOf('"$py" -I "$scan_py"')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
+    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$node_bin" "\$scan_js" "\$@" \|\| exit 1/);
   });
 });
 
@@ -237,6 +247,24 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       expect(viaCopy.stderr).toContain('stub term hit');
       writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_PASS);
       expect(spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' }).status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exports NoDefaultCurrentDirectoryInExePath=1 to the scanner', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      const log = join(dir, 'env.txt');
+      writeFileSync(
+        join(scriptsDir, 'prepush-confidential-scan.mjs'),
+        `// runTermScan\n(await import('node:fs')).writeFileSync(${JSON.stringify(log)}, String(process.env.NoDefaultCurrentDirectoryInExePath)); process.exit(0);\n`,
+      );
+      const env = { ...process.env };
+      delete env['NoDefaultCurrentDirectoryInExePath'];
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8', env });
+      expect(r.status, r.stderr).toBe(0);
+      expect(readFileSync(log, 'utf8')).toBe('1');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -470,7 +498,7 @@ writeFileSync(${JSON.stringify(join(dir, 'scan-stdin.txt'))}, readFileSync(0, 'u
   });
 
   it('runs the confidentiality scanner before the refute stage', () => {
-    const scan = WRAPPER.indexOf('node "$scan_js" "$@" || exit 1');
+    const scan = WRAPPER.indexOf('"$node_bin" "$scan_js" "$@" || exit 1');
     const refute = WRAPPER.indexOf('prepush-refute-check.mjs" || exit 1');
     expect(scan).toBeGreaterThan(-1);
     expect(scan).toBeLessThan(refute);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { closeSync, mkdtempSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { closeSync, lstatSync, mkdtempSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -62,6 +62,7 @@ import {
   scanAddedLinesForWatermarks,
   WATERMARKS,
   resolveOnPath,
+  isExecutableEntry,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
@@ -1141,8 +1142,8 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
     ].join('\n');
     const msg = `${COMMIT_MESSAGE_FILE_PREFIX}${'c'.repeat(12)})`;
     expect(parseAddedLines(diff)).toEqual([
-      { file: msg, lineNo: 1, text: 'subject line' },
-      { file: msg, lineNo: 3, text: 'body diff --git not a header' },
+      { file: msg, lineNo: 1, text: 'subject line', message: true },
+      { file: msg, lineNo: 3, text: 'body diff --git not a header', message: true },
       { file: 'evil.txt', lineNo: 2, text: 'new in merge' },
       { file: 'evil.txt', lineNo: 3, text: 'from second parent' },
     ]);
@@ -1278,6 +1279,45 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('memo.md:1');
+    });
+
+    // wf_954ebd83-729 (medium): message lines were told apart by their '(commit message ' label, so a
+    // real root file with that name skipped the confidential:true check.
+    it('BLOCKS confidential:true in a root file named like a commit-message label', () => {
+      writeFileSync(join(repo, '(commit message notes).json'), '{"name": "x", "confidential": true}\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'notes');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('(commit message notes).json');
+    });
+
+    // wf_954ebd83-729 (medium): Store python.exe / py.exe are AppExecLink reparse points that stat()
+    // cannot follow; rejecting them blocked every push on a Store-only machine.
+    it('isExecutableEntry accepts a reparse-point launcher that stat() cannot follow, not a directory', () => {
+      const eacces = () => {
+        throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      };
+      const link = { isFile: () => false, isDirectory: () => false, isSymbolicLink: () => true };
+      const dir = { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false };
+      expect(isExecutableEntry('x', { stat: eacces, lstat: () => link })).toBe(true);
+      expect(isExecutableEntry('x', { stat: eacces, lstat: () => dir })).toBe(false);
+      expect(isExecutableEntry('x', { stat: eacces, lstat: eacces })).toBe(false);
+      expect(isExecutableEntry('x', { stat: () => ({ isFile: () => true }) })).toBe(true);
+    });
+
+    const storeDir = process.env['LOCALAPPDATA'] ? join(process.env['LOCALAPPDATA'], 'Microsoft', 'WindowsApps') : '';
+    const storeAlias = ['python3.exe', 'python.exe'].map((n) => join(storeDir, n)).find((p) => {
+      try {
+        return storeDir !== '' && lstatSync(p).isSymbolicLink();
+      } catch {
+        return false;
+      }
+    });
+    it.skipIf(process.platform !== 'win32' || !storeAlias)('resolveOnPath finds a real Store app-execution alias', () => {
+      const name = (storeAlias ?? '').endsWith('python3.exe') ? 'python3' : 'python';
+      expect(resolveOnPath(name, { path: storeDir, excludeRoots: [repo] })).toEqual([storeAlias]);
     });
 
     it('findPython skips candidates that fail the probe (e.g. the Windows Store stub)', () => {

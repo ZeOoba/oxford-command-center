@@ -25,7 +25,7 @@
 // cannot show this scan a different object from the one pack-objects sends.
 //
 // Node built-ins only (runs in a git hook with no install step).
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -288,7 +288,7 @@ export function realAmountFingerprints(root, manifestPath) {
 
 /**
  * Files whose added lines carry FINGERPRINT_BLOCK_MIN or more distinct real amounts.
- * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {{file: string, lineNo: number, text: string, message?: boolean}[]} addedLines
  * @param {Set<string>} fingerprints
  * @returns {{file: string, count: number}[]}
  */
@@ -405,7 +405,7 @@ export function isRegisteredConfidentialRepo(repoName, homeDirOverride) {
  * its `confidential: true` flag is pushed, not only once someone remembers to add its terms to
  * confidential-terms.json too).
  *
- * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {{file: string, lineNo: number, text: string, message?: boolean}[]} addedLines
  * @returns {{line: number, text: string, file: string}[]}
  */
 export function scanDiffForConfidentialFlag(addedLines) {
@@ -429,7 +429,7 @@ export const WATERMARKS = ['CONFIDENTIAL — DO NOT DISTRIBUTE'];
 
 /**
  * Added lines carrying a WATERMARKS entry.
- * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {{file: string, lineNo: number, text: string, message?: boolean}[]} addedLines
  * @returns {{line: number, file: string}[]}
  */
 export function scanAddedLinesForWatermarks(addedLines) {
@@ -439,7 +439,11 @@ export function scanAddedLinesForWatermarks(addedLines) {
     .map((a) => ({ line: a.lineNo, file: a.file }));
 }
 
-/** Pseudo-file name that commit-message lines carry in parseAddedLines output. */
+/**
+ * Display label prefix for commit-message lines in parseAddedLines output. Display only: a real root
+ * file can be named '(commit message x).json', so callers tell message lines apart by their
+ * `message: true` field, never by this label (refute run wf_954ebd83-729, medium).
+ */
 export const COMMIT_MESSAGE_FILE_PREFIX = '(commit message ';
 
 // Parses unified `git diff` / `git log -p --cc` text into ADDED content lines only, tracking the
@@ -457,7 +461,7 @@ export const COMMIT_MESSAGE_FILE_PREFIX = '(commit message ';
 // returned as added lines of the pseudo-file "(commit message <sha12>)".
 /**
  * @param {string} diffText
- * @returns {{file: string, lineNo: number, text: string}[]}
+ * @returns {{file: string, lineNo: number, text: string, message?: boolean}[]}
  */
 export function parseAddedLines(diffText) {
   const added = [];
@@ -492,7 +496,7 @@ export function parseAddedLines(diffText) {
       // Message block: every line until the first 'diff ' header (or the next commit) belongs to
       // the commit message. diffFor indents each message line by 4 spaces.
       messageLineNo += 1;
-      if (raw.trim()) added.push({ file: messageFile, lineNo: messageLineNo, text: raw.replace(/^ {4}/, '') });
+      if (raw.trim()) added.push({ file: messageFile, lineNo: messageLineNo, text: raw.replace(/^ {4}/, ''), message: true });
       continue;
     }
     const m = hunkHeader.exec(raw);
@@ -818,6 +822,33 @@ export function findPython(run = spawnSync, resolveExe = (name) => resolveOnPath
 }
 
 /**
+ * Whether `p` is a launchable file entry: a regular file, or a link / reparse point that is not a
+ * directory. The Windows Store's python.exe / py.exe in WindowsApps are AppExecLink reparse points:
+ * stat() cannot follow them (it throws), but lstat() sees them and CreateProcess runs them. Rejecting
+ * them blocked every push on a Store-only machine (refute run wf_954ebd83-729, medium). Any entry
+ * accepted here must still pass the Python 3.8+ probe before it is used.
+ *
+ * @param {string} p
+ * @param {{stat?: (p: string) => {isFile(): boolean}, lstat?: (p: string) => {isFile(): boolean, isDirectory(): boolean, isSymbolicLink(): boolean}}} [fs] - test seams.
+ * @returns {boolean}
+ */
+export function isExecutableEntry(p, fs = {}) {
+  const stat = fs.stat ?? statSync;
+  const lstat = fs.lstat ?? lstatSync;
+  try {
+    if (stat(p).isFile()) return true;
+  } catch {
+    // fall through: an AppExecLink (or a dangling link) cannot be stat()ed
+  }
+  try {
+    const l = lstat(p);
+    return !l.isDirectory() && (l.isFile() || l.isSymbolicLink() || process.platform === 'win32');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Every absolute path `name` resolves to on PATH, in PATH order. A bare name handed to spawn would
  * let Windows search the CURRENT directory first (git runs pre-push in the worktree root), so an
  * untracked python.exe there could stand in for the scanner and pass (refute run wf_df157e64-c52,
@@ -831,13 +862,7 @@ export function findPython(run = spawnSync, resolveExe = (name) => resolveOnPath
 export function resolveOnPath(name, opts = {}) {
   const platform = opts.platform ?? process.platform;
   const win = platform === 'win32';
-  const exists = opts.exists ?? ((p) => {
-    try {
-      return statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  });
+  const exists = opts.exists ?? ((p) => isExecutableEntry(p));
   const excludeRoots = (opts.excludeRoots ?? [process.cwd()]).map((r) => resolve(r));
   const inside = (dir) =>
     excludeRoots.some((root) => {
@@ -951,7 +976,7 @@ function errorLine(err) {
  * @param {string} stdinText
  * @param {string} [cwd] - test seam; defaults to the process cwd.
  * @param {{remote?: string, url?: string, destinationBound?: (remote: string | undefined, url: string | undefined, cwd?: string) => string[], diffFor?: (remoteSha: string, localSha: string, cwd?: string, bound?: string[]) => string, binaryPathsFor?: (remoteSha: string, localSha: string, cwd?: string, bound?: string[]) => string[], realDataPathsFor?: (remoteSha: string, localSha: string, manifest: {files: string[], dirs: string[]}, cwd?: string, bound?: string[]) => string[], peeledType?: (sha: string, cwd?: string) => string, manifest?: {files: string[], dirs: string[]}}} [deps] - the hook's argv (remote, url) and test seams; defaults to the real git calls.
- * @returns {{addedByRef: {file: string, lineNo: number, text: string}[][], binaryHits: string[], realDataHits: string[], diffErrors: {localSha: string, message: string}[]}}
+ * @returns {{addedByRef: {file: string, lineNo: number, text: string, message?: boolean}[][], binaryHits: string[], realDataHits: string[], diffErrors: {localSha: string, message: string}[]}}
  */
 export function collectRefScan(stdinText, cwd, deps) {
   const getDiff = deps?.diffFor ?? diffFor;
@@ -962,7 +987,7 @@ export function collectRefScan(stdinText, cwd, deps) {
   const manifest = deps?.manifest;
   /** @type {string[]} */
   const realDataHits = [];
-  /** @type {{file: string, lineNo: number, text: string}[][]} */
+  /** @type {{file: string, lineNo: number, text: string, message?: boolean}[][]} */
   const addedByRef = [];
   /** @type {string[]} */
   const binaryHits = [];
@@ -1090,7 +1115,7 @@ function main() {
     // The confidential:true check is payload-shaped: a commit message describing the flag is not a
     // payload, and this scanner's own files carry the flag as fixtures (EXCLUDE_PATHS).
     flagHits.push(
-      ...scanDiffForConfidentialFlag(added.filter((a) => !a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX) && !EXCLUDE_PATHS.has(a.file))),
+      ...scanDiffForConfidentialFlag(added.filter((a) => !a.message && !EXCLUDE_PATHS.has(a.file))),
     );
   }
 
@@ -1150,7 +1175,7 @@ function main() {
     // Pooled across every pushed ref, and every commit message counts as one file, so amounts split
     // across refs or across several messages still reach the threshold (wf_0df7879e-d79, low).
     const amountHits = scanAddedLinesForRealAmounts(
-      addedByRef.flat().map((a) => (a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX) ? { ...a, file: `${COMMIT_MESSAGE_FILE_PREFIX}*)` } : a)),
+      addedByRef.flat().map((a) => (a.message ? { ...a, file: `${COMMIT_MESSAGE_FILE_PREFIX}*)` } : a)),
       fingerprints,
     );
     if (amountHits.length > 0) {

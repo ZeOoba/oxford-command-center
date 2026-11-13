@@ -52,9 +52,43 @@ export const WRAPPER = `#!/bin/sh
 #    buffered once so the scanner and this stage each read the full ref list. A failed read
 #    blocks the push: an empty ref list would otherwise let every stage pass with nothing scanned.
 #    (POSIX: a bare assignment's status is its command substitution's, so '||' sees cat's failure.)
+# Windows: no child (node, python, git) may resolve a bare name from the current directory, which is
+# the worktree root here (refute runs wf_df157e64-c52, wf_954ebd83-729).
+NoDefaultCurrentDirectoryInExePath=1
+export NoDefaultCurrentDirectoryInExePath
 root="$(git rev-parse --show-toplevel)"
 refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
 scan_js="$root/scripts/prepush-confidential-scan.mjs"
+# safe_exe NAME: every absolute PATH hit for NAME (or NAME.exe), one per line. Like the scanner's
+# resolveOnPath: empty, '.' and relative entries are skipped, and so is any directory inside the
+# worktree or the current directory (compared physically, case-insensitively), so an untracked
+# python.exe / node.exe in the worktree root can never stand in for the real interpreter.
+lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+root_p="$(lc "$(cd -P -- "$root" 2>/dev/null && pwd -P)")"
+cwd_p="$(lc "$(pwd -P)")"
+safe_exe() {
+  set -f
+  _ifs=$IFS
+  IFS=:
+  for _d in $PATH; do
+    case "$_d" in /*) ;; *) continue ;; esac
+    _dp="$(cd -P -- "$_d" 2>/dev/null && pwd -P)" || continue
+    _dl="$(lc "$_dp")"
+    case "$_dl/" in "$root_p/"*|"$cwd_p/"*) continue ;; esac
+    for _f in "$_dp/$1" "$_dp/$1.exe"; do
+      if { [ -f "$_f" ] || [ -L "$_f" ]; } && [ ! -d "$_f" ]; then
+        printf '%s\\n' "$_f"
+      fi
+    done
+  done
+  IFS=$_ifs
+  set +f
+}
+node_bin="$(safe_exe node | head -n 1)"
+if [ -z "$node_bin" ]; then
+  echo "pre-push BLOCKED (fail-closed): node not found on an absolute PATH entry outside the worktree." >&2
+  exit 1
+fi
 if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
   scan_py="$root/scripts/prepush_confidential_scan.py"
   [ -f "$scan_py" ] || scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
@@ -64,11 +98,13 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
   fi
   py=
   for c in python python3 py; do
-    if command -v "$c" >/dev/null 2>&1 &&
-       "$c" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
-      py=$c
-      break
-    fi
+    py="$(safe_exe "$c" | while IFS= read -r cand; do
+      if "$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
+        printf '%s' "$cand"
+        break
+      fi
+    done)"
+    [ -n "$py" ] && break
   done
   if [ -z "$py" ]; then
     echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
@@ -77,15 +113,15 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
   printf '%s\\n' "$refs" | "$py" -I "$scan_py" "$@" || exit 1
   # Legacy call shape (no argv): an older scanner treats ANY '--staged' argument, e.g. a remote
   # named --staged, as its manual mode and skips the payload checks.
-  printf '%s\\n' "$refs" | node "$scan_js" || exit 1
+  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" || exit 1
 else
-  printf '%s\\n' "$refs" | node "$scan_js" "$@" || exit 1
+  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" "$@" || exit 1
 fi
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
-  printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
+  printf '%s\\n' "$refs" | "$node_bin" "$root/scripts/prepush-refute-check.mjs" || exit 1
 fi
 if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
-  node "$root/scripts/prepush-noi-crosscheck.mjs" || true
+  "$node_bin" "$root/scripts/prepush-noi-crosscheck.mjs" || true
 fi
 exit 0
 `;

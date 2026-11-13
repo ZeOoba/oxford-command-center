@@ -320,6 +320,49 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     });
   });
 
+  /**
+   * Plant an untracked stand-in for `name` in the worktree root that exits 0 for any arguments (Git's
+   * true.exe on Windows, a sh script elsewhere), put '.' FIRST on PATH and unset
+   * NoDefaultCurrentDirectoryInExePath, as in a normal terminal. Returns false when it cannot plant.
+   */
+  const plantInRoot = (box: Sandbox, name: string): boolean => {
+    if (process.platform === 'win32') {
+      if (!trueExe) return false;
+      copyFileSync(trueExe, join(box.work, `${name}.exe`));
+    } else {
+      writeFileSync(join(box.work, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+    writeFileSync(join(box.work, '.git', 'info', 'exclude'), `scripts/\n${name}\n${name}.exe\n`);
+    delete box.env['NoDefaultCurrentDirectoryInExePath'];
+    const key = Object.keys(box.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+    box.env[key] = `.${process.platform === 'win32' ? ';' : ':'}${box.env[key] ?? ''}`;
+    return true;
+  };
+
+  // wf_954ebd83-729 (medium, reproduced as a real leak): the NEW wrapper's own Python stage for a tree
+  // that predates runTermScan found python by a bare name, so '.' on PATH ran a planted python.exe
+  // that "passed" the term scan, and the old tree's JS saw only a clean endpoint diff.
+  it('new wrapper + old tree: a planted python in the worktree root with "." on PATH cannot pass the term scan', () => {
+    const old = new Sandbox({ oldTree: true, copyBesideHook: true });
+    try {
+      if (!plantInRoot(old, 'python')) return;
+      old.commit('notes.md', `memo about ${TERM}\n`, 'add');
+      const leak = old.git(old.work, 'rev-parse', 'HEAD');
+      old.commit('notes.md', 'clean\n', 'remove');
+      expectBlocked(old.push('origin', 'main'));
+      expect(old.remoteHas(leak)).toBe(false);
+    } finally {
+      old.close();
+    }
+  });
+
+  it('a planted node in the worktree root with "." on PATH cannot stand in for the scanner', () => {
+    if (!plantInRoot(sb, 'node')) return;
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    expectBlocked(sb.push('origin', 'main'));
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
+
   // wf_df157e64-c52 (medium): with NoDefaultCurrentDirectoryInExePath unset (a normal Windows
   // terminal), a bare 'python' resolved to an untracked python.exe in the worktree root that exits 0.
   const trueExe = (() => {
