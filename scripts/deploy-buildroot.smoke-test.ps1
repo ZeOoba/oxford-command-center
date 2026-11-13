@@ -197,6 +197,48 @@ try {
   Remove-Item -LiteralPath $deps -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host "=== Sync-DeployBuildRoot: returns ONLY the short HEAD sha ==="
+# 2026-11-13: git's stdout ("HEAD is now at <sha> <subject>" from reset --hard, "Removing <file>"
+# from clean -fd, worktree add's "Preparing worktree") leaked into the function's return value, so
+# the step log read "deps-check (build root @ HEAD is now at 9994e288 fix(mirror): ... 9994e288)".
+# Real git, both paths: first call creates the worktree, second resets and cleans it.
+$syncRepo = New-SmokeTree 'sync-repo'
+$syncBuild = Join-Path ([System.IO.Path]::GetTempPath()) ('deploy-sync-build-' + [guid]::NewGuid().ToString('N'))
+$savedEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  & git -C $syncRepo init -q 2>$null
+  Write-SmokeFile $syncRepo 'tracked.txt' 'v1'
+  & git -C $syncRepo add tracked.txt 2>$null
+  & git -C $syncRepo -c user.email=smoke@example.invalid -c user.name=smoke commit -q -m 'smoke subject line' 2>$null
+  $expected = (& git -C $syncRepo rev-parse --short HEAD 2>$null)
+  $ErrorActionPreference = 'Stop'
+
+  $created = @(Sync-DeployBuildRoot -RepoRoot $syncRepo -BuildRoot $syncBuild -Ref 'HEAD')
+  Assert-True ($created.Count -eq 1 -and $created[0] -eq $expected) "create path returns exactly the sha (got: $($created -join ' | '))"
+
+  Write-SmokeFile $syncBuild 'untracked-junk.txt' 'x'
+  Write-SmokeFile $syncBuild 'tracked.txt' 'drift'
+  $reset = @(Sync-DeployBuildRoot -RepoRoot $syncRepo -BuildRoot $syncBuild -Ref 'HEAD')
+  Assert-True ($reset.Count -eq 1 -and $reset[0] -eq $expected) "reset+clean path returns exactly the sha (got: $($reset -join ' | '))"
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $syncBuild 'untracked-junk.txt'))) 'the clean still removed the untracked file'
+  Assert-True ((Get-Content -LiteralPath (Join-Path $syncBuild 'tracked.txt') -Raw) -eq 'v1') 'the reset still restored the tracked file'
+  # git now runs inside a pipeline (| ForEach-Object): its exit code must still reach the check.
+  # Message-matched (refute wf_3b03928e-67a): the throw must come from the explicit $LASTEXITCODE check.
+  $msg = ''
+  try { Sync-DeployBuildRoot -RepoRoot $syncRepo -BuildRoot $syncBuild -Ref 'no-such-ref-smoke' | Out-Null } catch { $msg = $_.Exception.Message }
+  Assert-True ($msg -like 'git reset --hard no-such-ref-smoke failed in build root (*)') "a failing git reset throws from the exit-code check (got: $msg)"
+  $freshBuild = Join-Path ([System.IO.Path]::GetTempPath()) ('deploy-sync-build2-' + [guid]::NewGuid().ToString('N'))
+  $msg = ''
+  try { Sync-DeployBuildRoot -RepoRoot $syncRepo -BuildRoot $freshBuild -Ref 'no-such-ref-smoke' | Out-Null } catch { $msg = $_.Exception.Message }
+  Assert-True ($msg -like 'git worktree add failed (*)') "a failing worktree add throws from the exit-code check (got: $msg)"
+  Remove-Item -LiteralPath $freshBuild -Recurse -Force -ErrorAction SilentlyContinue
+} finally {
+  $ErrorActionPreference = $savedEap
+  & git -C $syncRepo worktree remove --force $syncBuild 2>$null | Out-Null
+  Remove-Item -LiteralPath $syncBuild, $syncRepo -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host ""
 if ($failures.Count) {
   Write-Host "FAILED ($($failures.Count)):"
