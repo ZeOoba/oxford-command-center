@@ -436,6 +436,9 @@ describe('pipeline items — verdict + buyEligible (refute H3)', () => {
     expect(legacy.tier).toBe('T1');
     expect(legacy.verdict).toBe('PASS');
     expect(legacy.buyEligible).toBe(false);
+    // Display-only flag: the legacy shape reads as governor-demoted, a clean candidate does not.
+    expect(legacy.governorDemoted).toBe(true);
+    expect(ok.governorDemoted).toBe(false);
   });
 
   it('a composite below the floor is not buyEligible even with a clean WATCH verdict', async () => {
@@ -714,6 +717,9 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
       expect([row.tier, row.verdict, row.d]).toEqual(['PASS', 'PASS', 0]);
       expect(row.composite).toBeGreaterThanOrEqual(70);
       expect((JSON.parse(row.score_json) as { reasons: string[] }).reasons.some((r) => r.startsWith('Governor demotion:'))).toBe(true);
+      // The pipeline item carries the display-only governorDemoted flag for this current-engine shape.
+      const demotedItem = (await buy(db)).result.pipeline.find((p) => p.candidateId === id)!;
+      expect([demotedItem.tier, demotedItem.verdict, demotedItem.governorDemoted, demotedItem.buyEligible]).toEqual(['PASS', 'PASS', true, false]);
 
       insertConfig(db, 3, 1.25, 0.40); // repaired governor set
       const { result, buyVerdicts } = await buy(db);
@@ -747,6 +753,7 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
     const row = db.prepare('SELECT verdict, score_json FROM acq_scores WHERE candidate_id = ?').get('cand-c2-native-pass') as { verdict: string; score_json: string };
     expect(row.verdict).toBe('PASS');
     expect((JSON.parse(row.score_json) as { reasons: string[] }).reasons.some((r) => r.startsWith('Governor demotion:'))).toBe(false);
+    expect((await buy(db)).result.pipeline.find((p) => p.candidateId === 'cand-c2-native-pass')!.governorDemoted).toBe(false);
     insertConfig(db, 2, 1.30, 0.40);
     const { result } = await buy(db);
     expect(result.buyGate?.staleScores).toBe(0);

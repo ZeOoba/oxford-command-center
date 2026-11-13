@@ -552,9 +552,63 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     });
     renderModule('/capital?tab=pipeline', qc);
     expect(screen.getByText('9 Legacy Rd')).toBeTruthy();
-    expect(screen.getByText('PASS')).toBeTruthy();
+    // Two PASS badges: the tier badge shows the verdict's tier (not the stale T1), plus the verdict badge.
+    expect(screen.getAllByText('PASS')).toHaveLength(2);
+    expect(screen.queryByText('T1')).toBeNull();
     expect(screen.getByText('not BUY-eligible')).toBeTruthy();
     expect(screen.getByText('BUY suppressed: 1 stale score excluded')).toBeTruthy();
+  });
+
+  it('Buy Pipeline marks a legacy T1 row whose verdict was demoted to PASS, not a clean T1', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-legacy', address: '9 Legacy Rd', market: null, composite: 92, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'PASS', buyEligible: false },
+          { candidateId: 'cand-clean', address: '8 Clean Ave', market: null, composite: 85, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'PURSUE', buyEligible: true },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getAllByText('Governor-demoted (was T1)')).toHaveLength(1);
+  });
+
+  it('Buy Pipeline does not colour a T1 with no verdict (older producer) like a clean PURSUE T1', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-clean', address: '8 Clean Ave', market: null, composite: 85, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'PURSUE', buyEligible: true },
+          { candidateId: 'cand-old', address: '3 Older Way', market: null, composite: 85, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7 },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    const [clean, old] = screen.getAllByText('T1');
+    expect(clean!.getAttribute('style')).not.toBe(old!.getAttribute('style'));
+  });
+
+  it('Buy Pipeline marks a current-engine demotion (tier PASS, server governorDemoted flag); a native PASS stays plain', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-engine', address: '7 Engine Rd', market: null, composite: 88, tier: 'PASS', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'PASS', buyEligible: false, governorDemoted: true },
+          { candidateId: 'cand-native', address: '6 Native Ct', market: null, composite: 40, tier: 'PASS', unleveredIrr10yr: null, basisDiscountPct: null, verdict: 'PASS', buyEligible: false, governorDemoted: false },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getAllByText('Governor-demoted')).toHaveLength(1);
   });
 
   it('Buy Pipeline shows "BUY with open items: ..." for an eligible capped candidate (refute round 2 T2)', () => {

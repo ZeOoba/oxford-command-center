@@ -983,6 +983,12 @@ function loadPipelineCandidates(db: WarehouseDb): {
       unleveredIrr10yr,
       basisDiscountPct,
       verdict: verdictOf(scoreRow?.verdict ?? null),
+      // Display only (never read by the BUY gate below): a governor-demoted PASS, by the same rule as
+      // governorDemotedPass (engine "Governor demotion:" reason) plus the legacy pre-G1 shape (tier
+      // T1/T2 beside a PASS). Pipeline items carry no reasons, so the Capital Buy Pipeline and the IC
+      // memo read this flag (src/analytics/acq-governor-demotion.ts).
+      governorDemoted:
+        governorDemotedPass || (scoreRow?.verdict === 'PASS' && (tier === 'T1' || tier === 'T2')),
       openItems: capReasonsOf(score),
       // Final eligibility (refute H3): every BUY-gate condition, incl. tier + composite floor. The
       // portfolio buy verdict is chosen ONLY from buyEligible items.

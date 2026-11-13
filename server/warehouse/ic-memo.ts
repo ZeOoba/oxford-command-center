@@ -24,6 +24,7 @@
 import type { PortfolioAllocation, AllocationAction, AllocationVerdict } from '../../src/contracts/capital';
 import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
 import { BUY_FLOOR_ADVISORY_FIELD } from './capital-allocation';
+import { effectiveTier, governorDemotedLabel } from '../../src/analytics/acq-governor-demotion';
 
 // ── ORA Style Guide tokens ──────────────────────────────────────────────────────────────────
 const NAVY = '#1B2A4A';
@@ -338,12 +339,20 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       const addr = p.address ? esc(p.address) : DASH;
       const mkt = p.market ? esc(p.market) : DASH;
       const comp = p.composite !== null ? pct0(p.composite) : DASH;
-      const tier = p.tier ? esc(p.tier) : DASH;
+      // Tier column shows the verdict's tier (a legacy T1 beside a demoted PASS reads PASS), as the
+      // Pipeline board and ranked list do; the demotion marker below keeps the original tier visible.
+      const shownTier = effectiveTier(p);
+      const tier = shownTier ? esc(shownTier) : DASH;
       const irr = p.unleveredIrr10yr !== null ? pct1(p.unleveredIrr10yr * 100) : DASH;
       const disc = p.basisDiscountPct !== null ? pct1(p.basisDiscountPct * 100) : DASH;
       // Refute H3: persisted verdict + BUY eligibility beside the tier — a legacy row can carry
       // tier T1 next to a governor-demoted PASS; absent buyEligible reads as Not eligible.
-      const verdict = p.verdict ? esc(p.verdict) : DASH;
+      // A governor-demoted PASS (legacy T1/T2 shape, or the server's governorDemoted flag for a
+      // current-engine demotion) is marked, so it never reads as a plain PASS or a clean target.
+      const demoted = governorDemotedLabel(p);
+      const verdict =
+        (p.verdict ? esc(p.verdict) : DASH) +
+        (demoted ? ` <span class="ic-demoted">${esc(demoted)}</span>` : '');
       const open = p.openItems ?? [];
       const eligible =
         (p.buyEligible !== true
@@ -475,6 +484,7 @@ function styleBlock(): string {
     .ic-rationale { color: var(--muted); max-width: 240px; }
     .ic-badge { display: inline-block; border: 1px solid; border-radius: 3px; padding: 1px 6px;
       font-size: 10px; font-weight: 600; }
+    .ic-demoted { display: block; color: #9A6B00; font-size: 9px; font-weight: 600; }
     .ic-note { font-size: 10px; color: var(--muted); margin-top: 6px; }
     .ic-empty { color: var(--muted); font-style: italic; }
 

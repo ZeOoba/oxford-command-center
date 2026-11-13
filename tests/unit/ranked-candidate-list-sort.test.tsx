@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { RankedCandidate } from '@contracts/acquisition';
 import { RankedCandidateList } from '../../src/modules/acquisitions/RankedCandidateList';
 
-type Shape = { tier: string; verdict: string; composite: number } | null;
+type Shape = { tier: string; verdict: string; composite: number; reasons?: string[] } | null;
 
 function cand(id: string, score: Shape, scoreState?: RankedCandidate['scoreState']): RankedCandidate {
   return {
@@ -106,6 +106,24 @@ describe('RankedCandidateList — tier badge agrees with the sort', () => {
     renderList([cand('legacy-t1-pass', { tier: 'T1', verdict: 'PASS', composite: 95 })]);
     expect(badgeOf('legacy-t1-pass')).toContain('PASS');
     expect(badgeOf('legacy-t1-pass')).not.toContain('PURSUE');
+  });
+
+  it('a legacy governor-demoted row keeps the demotion visible with a was-T1 marker', () => {
+    renderList([
+      cand('legacy-t1-pass', { tier: 'T1', verdict: 'PASS', composite: 95 }),
+      cand('t1', { tier: 'T1', verdict: 'PURSUE', composite: 80 }),
+    ]);
+    expect(badgeOf('legacy-t1-pass')).toContain('Governor-demoted (was T1)');
+    expect(badgeOf('t1')).not.toContain('Governor-demoted');
+  });
+
+  it('a current-engine demotion (tier PASS + Governor demotion reason) is marked; a native PASS is not', () => {
+    renderList([
+      cand('engine-demoted', { tier: 'PASS', verdict: 'PASS', composite: 85, reasons: ['Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.'] }),
+      cand('native-pass', { tier: 'PASS', verdict: 'PASS', composite: 40, reasons: ['Composite below T2'] }),
+    ]);
+    expect(badgeOf('engine-demoted')).toContain('PASS · Governor-demoted (was T1)');
+    expect(badgeOf('native-pass')).not.toContain('Governor-demoted');
   });
 
   it('coherent rows keep their tier label', () => {

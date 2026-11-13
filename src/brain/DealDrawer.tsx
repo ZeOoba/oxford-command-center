@@ -5,6 +5,7 @@ import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-rea
 import type { PortfolioSnapshot, Deal, DealStage, CompSet, AcquisitionInput, AcquisitionScore, RankedCandidate } from '@contracts/index';
 import type { DraftRequest } from './draft';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
+import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
 import { rcDealFor, replacementCostAnalysis } from './replacement-cost';
@@ -403,6 +404,12 @@ function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | n
   }
 
   const score: AcquisitionScore | null = candidate?.latestScore ?? null;
+  // A governor-demoted PASS (current engine: tier PASS + a "Governor demotion:" reason; legacy: tier
+  // T1/T2 left beside the PASS) is marked, never shown as a plain PASS or a clean T1. The gauge and
+  // badge show the verdict's tier (same rule as the ranked list, the Pipeline board and the Capital
+  // Buy Pipeline); the marker keeps the pre-demotion tier visible.
+  const demoted = governorDemotedLabel(score);
+  const shownTier = score ? (effectiveTier(score) ?? score.tier) : null;
 
   return (
     <CardBox title="Underwriting">
@@ -422,8 +429,9 @@ function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | n
         <div className="flex flex-col items-center gap-2 md:w-[190px]">
           {score ? (
             <>
-              <GaugeRing value={score.composite} tone={gaugeTone(score.tier)} label={`${score.tier} · ${score.verdict}`} size={92} />
-              <Badge tone={TIER_BADGE_TONE[score.tier]}>{score.tier}</Badge>
+              <GaugeRing value={score.composite} tone={demoted ? 'neg' : gaugeTone(shownTier!)} label={`${shownTier} · ${score.verdict}`} size={92} />
+              <Badge tone={demoted ? 'neutral' : TIER_BADGE_TONE[shownTier!]}>{shownTier}</Badge>
+              {demoted && <Badge tone="red">{demoted}</Badge>}
               {score.reasons.length > 0 && (
                 <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--text-secondary)' }}>
                   {score.reasons.slice(0, 3).map((r, i) => (
