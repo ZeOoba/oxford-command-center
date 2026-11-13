@@ -100,6 +100,9 @@ export interface MarketSlice {
   market: string;
   value: number;
   pct: number;
+  /** NOI slices only: rows in this market whose blank workbook NOI is summed as $0, so `value` (and
+   *  every market's `pct`) is incomplete. Absent when complete (follow-up to audit 2026-11-12 HIGH #2). */
+  incomplete?: string[];
 }
 
 export interface MaturityBucket {

@@ -18,6 +18,7 @@ import { StaleBanner } from './StaleBanner';
 import { PortfolioFilterProvider, filterProperties, usePortfolioFilter } from './PortfolioFilterContext';
 import { PortfolioFilterBar } from './PortfolioFilterBar';
 import type { Property } from '@contracts/index';
+import { buildFilterSlice } from './filter-slice';
 
 // `Property` (Spine A / `PortfolioSnapshot.properties`) carries no per-property manager
 // attribution today — that lives only in the Spine B warehouse (see
@@ -36,12 +37,8 @@ const NO_MANAGERS: string[] = [];
  */
 function FilterBarWithSlice({ properties }: { properties: Property[] }) {
   const { filter } = usePortfolioFilter();
-  const total = properties.length;
   const matched = filterProperties(properties, filter);
-  const slice =
-    total > 0
-      ? { shown: matched.length, total, noiUsd: matched.reduce((sum, p) => sum + p.noi, 0) }
-      : undefined;
+  const slice = buildFilterSlice(properties, matched);
   return <PortfolioFilterBar managers={NO_MANAGERS} slice={slice} />;
 }
 

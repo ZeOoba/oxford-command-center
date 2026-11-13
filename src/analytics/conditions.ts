@@ -10,6 +10,7 @@ import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
 import { addMonths, type MonthKey } from './portfolio-trends';
 import { isInvestmentProperty } from './property-basis';
+import { hasBlankGovernorInput } from './governor-inputs';
 import { varianceVsTrailing, type PropertyExpenseSeries } from './expense-trends';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -753,13 +754,41 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Revenue concentration (tenant > 15% of portfolio NOI) ───────────────────
-  for (const t of tenantScorecards(s, asOf)) {
+  const scorecards = tenantScorecards(s, asOf);
+  // A blank workbook NOI leaves the screen incomplete: its tenants read 0% and so can never cross the
+  // threshold. Say so once, naming them, instead of passing them silently (refute wf_325f62d5-344).
+  const blankNoiIds = new Set(s.properties.filter((p) => isInvestmentProperty(p) && hasBlankGovernorInput(p, 'noi')).map((p) => p.id));
+  if (blankNoiIds.size > 0 && scorecards.length > 0) {
+    const gap = scorecards[0]!.pctNoiIncomplete;
+    const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+    const onBlank = (l: { propertyId: string | null }): boolean => l.propertyId !== null && blankNoiIds.has(l.propertyId);
+    const touched = scorecards.filter((t) => t.leases.some(onBlank));
+    // Every lease on a blank row → the tenant reads 0% and is not screened at all. Some leases on a
+    // blank row → it IS screened, on its known rows only (refute wf_7b3fb3d6-d93).
+    const unscreened = touched.filter((t) => t.leases.every(onBlank)).map((t) => t.name).sort(byName);
+    const partly = touched.filter((t) => !t.leases.every(onBlank)).map((t) => t.name).sort(byName);
+    out.push({
+      // Outside the per-tenant `concentration-${slug}` namespace, so no tenant name can collide with it.
+      id: 'concentration::incomplete', severity: 'info', category: 'concentration',
+      title: 'Tenant concentration screen incomplete',
+      detail:
+        `Blank NOI on ${gap.join(', ')} is left out of the basis, so every tenant's share of portfolio NOI is incomplete.` +
+        (unscreened.length > 0 ? ` Not screened (every lease is on a blank-NOI property): ${unscreened.join(', ')}.` : '') +
+        (partly.length > 0 ? ` Partly screened (share excludes its blank-NOI property): ${partly.join(', ')}.` : ''),
+      metric: `${gap.length} blank NOI row${gap.length === 1 ? '' : 's'}`,
+      impactAnnualUsd: null, spine: 'A', provenance: 'absent',
+    });
+  }
+  for (const t of scorecards) {
     if (t.pctNoi > T.tenantNoiConcentrationInfo) {
       out.push({
         id: `concentration-${t.id}`, severity: 'info', category: 'concentration',
         title: `Tenant concentration — ${t.name}`,
-        detail: `${t.name} is ${fmtPct(t.pctNoi)} of portfolio NOI across ${t.properties.length} ${t.properties.length === 1 ? 'property' : 'properties'}.`,
-        metric: fmtPct(t.pctNoi),
+        // A blank NOI in the basis makes every share incomplete (follow-up to audit 2026-11-12 HIGH #2).
+        detail:
+          `${t.name} is ${fmtPct(t.pctNoi)} of portfolio NOI across ${t.properties.length} ${t.properties.length === 1 ? 'property' : 'properties'}.` +
+          (t.pctNoiIncomplete.length > 0 ? ` Share is incomplete: blank NOI on ${t.pctNoiIncomplete.join(', ')} is left out of the basis.` : ''),
+        metric: t.pctNoiIncomplete.length > 0 ? `${fmtPct(t.pctNoi)} (incomplete)` : fmtPct(t.pctNoi),
         impactAnnualUsd: null, spine: 'A', provenance: 'absent',
       });
     }

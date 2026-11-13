@@ -1100,5 +1100,14 @@
     "review_needed": true,
     "detail": "Branch fix/governor-integrity-2026-11-13, worktree claude-worktrees/occ-governor-integrity. Architect-owned files touched: src/analytics/engine.ts (applyScenario keeps the workbook DSCR/LTV cell on a blank input; portfolioKpis ltv null, totalDebt marked lower-bound, affiliateDebt and noi marked incomplete with no bound direction, ltvIncomplete/noiIncomplete/affiliateIncomplete carriers) and src/contracts/capital-allocation.ts (optional portfolioNoiIncomplete), plus this status.json entry. Capital-allocation report scores a blank NOI as unknown; per-property surfaces (drawer, Portfolio table, Property page, CSV, AI get_property, debt-basis reconcile text) show blank, never $0. No governor VALUE changed (Invariant 4). Gabriel merges.",
     "last_updated": "2026-11-13T16:30:00Z"
+  },
+  "noi-reader-sweep-2026-11-13": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-directed 2026-11-13",
+    "phase": "Follow-up to audit 2026-11-12 HIGH #2 (PR #579): NOI-reader sweep. Every Spine-A reader of a blank workbook NOI names the blank row and says incomplete, with no bound direction.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "detail": "Branch fix/noi-reader-sweep off main ca79d977 (PR #579 merged), worktree claude-worktrees/occ-noi-sweep-main. Also touches src/brain/tenants.ts, src/brain/searchIndex.ts, server/ai/tools.ts, scripts/extract-workbook.ts, new src/shell/filter-slice.ts and src/modules/market/acquisition-lens.ts, and UI tiles. Architect-owned files touched: src/analytics/engine.ts (marketAllocation NOI slices carry incomplete row names; ties break by market name), src/analytics/types.ts (optional MarketSlice.incomplete), src/analytics/conditions.ts (concentration alert marks incomplete; one concentration-incomplete info insight), src/analytics/index.ts and new src/analytics/noi-incomplete.ts, plus this status entry.",
+    "last_updated": "2026-11-14T01:00:00Z"
   }
 }
