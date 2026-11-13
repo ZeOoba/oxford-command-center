@@ -75,6 +75,12 @@ function Assert-BuildRootIsolated {
   $true
 }
 
+# Keys honoured ONLY from the real process environment, never imported from .env (audit
+# wf_9bf74429-aaf finding 31). Mirrors server/load-env.ts PROCESS_ENV_ONLY_KEYS;
+# tests/unit/mirror-mode.test.ts pins the two lists together. deploy-mirror.ps1 sets both itself,
+# and only after its pre-deploy Access probe passed.
+$script:ProcessEnvOnlyKeys = @('MIRROR_INCLUDE_CONFIDENTIAL', 'MIRROR_ACCESS_PREPROBE')
+
 function Import-DotEnvIntoEnvironment {
   <#
     .SYNOPSIS Load the canonical repo's .env into THIS process's environment.
@@ -96,6 +102,7 @@ function Import-DotEnvIntoEnvironment {
     $m = [regex]::Match($line, '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$')
     if (-not $m.Success) { continue }
     $key = $m.Groups[1].Value
+    if ($script:ProcessEnvOnlyKeys -contains $key) { continue }
     $value = $m.Groups[2].Value -replace '^([''"])(.*)\1$', '$2'
     $existing = [System.Environment]::GetEnvironmentVariable($key)
     if ([string]::IsNullOrEmpty($existing)) {

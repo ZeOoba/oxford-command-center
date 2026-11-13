@@ -101,8 +101,8 @@ function Get-AccessGateFunctionRoutes {
 function Get-AccessGateProbePaths {
   <#
     The full path list probed on every origin: '' (the root / HTML shell), every baked top-level
-    JSON, and every Function route found in any of -FunctionsDirs (deploy-mirror passes both the
-    checkout wrangler deploys from and the build root, so a route in either is covered).
+    JSON, and every Function route found in any of -FunctionsDirs (deploy-mirror passes the build
+    root's functions/, the tree wrangler deploys from -- audit wf_9bf74429-aaf finding 1).
   #>
   param(
     [AllowEmptyString()][string]$DistPath,
@@ -343,6 +343,9 @@ function Assert-AccessGateOnAllTargets {
   $results = @($state.Values)
   $suffix = if ($Context) { " $Context" } else { '' }
   $exposedList = @($results | Where-Object { $_.Exposed })
+  # Exposed targets (Url, Code, Strict) of the most recent check, for a caller that must decide
+  # whether an exposure is served content (lib/mirror-deploy.ps1 Test-MirrorExposureWarrantsContainment).
+  $script:LastAccessGateExposures = $exposedList
   if ($exposedList.Count -gt 0) {
     $list = ($exposedList | ForEach-Object { "$($_.Url) -> answered without Access (last code $($_.Code), Location='$($_.Location)')" }) -join '; '
     throw "GATE CHECK FAILED: $($exposedList.Count) of $($Targets.Count) probed mirror target(s) answered without Access ($list). Expected 302 -> *$AccessHost on every target. Confidential bake may be exposed - investigate immediately.$suffix"

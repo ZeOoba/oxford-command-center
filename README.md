@@ -202,7 +202,7 @@ either has a working default or disables one feature when unset.
 | Documents (RAG) | `DOCUMENTS_DIR`, `DOC_INDEX_PATH`, `DOCUMENTS_INCLUDE_DIRS`, `DOCUMENTS_PATH_INCLUDE`, `DOCUMENTS_EXCLUDE`, `DOCUMENTS_ALLOW_UNSCOPED`, `DOCUMENTS_MAX_DEPTH`, `DOCUMENTS_MAX_FILES`, `DOCUMENTS_MAX_FILE_MB`, `DOCUMENTS_MAX_CHUNKS_PER_DOC`, `DOCUMENTS_EMBED_BATCH`, `DOCUMENTS_EMBED_LIMIT`, `DOCUMENTS_DROP_NONLEASE`, `DOCUMENTS_NONLEASE_PATTERNS` |
 | Alerts and brief | `ALERT_INBOX_PATH`, `ALERT_STATE_PATH`, `ALERT_CONFIRM_CLEAR_RUNS`, `BRIEF_ENABLED`, `BRIEF_HEALTH_PATH`, `BRIEF_OUTBOX_DIR`, `BRIEF_SEND_SCRIPT`, `BRIEF_DASHBOARD_URL` |
 | AR | `AR_INBOX`, `AR_MAPPING_CACHE` |
-| Mirror and confidentiality | `MIRROR_INCLUDE_CONFIDENTIAL`, `BRAIN_BAKE_SOURCE_URL`, `CONFIDENTIAL_TERMS_PATH`, `CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER` |
+| Mirror and confidentiality | `MIRROR_INCLUDE_CONFIDENTIAL` (process environment only, never `.env`), `BRAIN_BAKE_SOURCE_URL`, `CONFIDENTIAL_TERMS_PATH`, `CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER` |
 | Gates | `REFUTE_BASE` |
 
 </details>
@@ -278,8 +278,8 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | Script | Purpose |
 |---|---|
 | `bake` | Bake `public/snapshot.json` + `public/macro.json` (redacted by default) |
-| `build:mirror` | `bake` then `build` |
-| `deploy:mirror` | Manual, un-hardened `wrangler pages deploy`; the scheduled deploy uses `scripts/deploy-mirror.ps1` instead |
+| `build:mirror` | `bake`, `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
+| `deploy:mirror` | Manual, REDACTED-only `wrangler pages deploy`: refuses if a FULL-mode variable is set; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
 | `worktree -- <add\|remove\|prune>` | Junction-safe worktree management (`scripts/safe-worktree.ts`) |
 
 </details>
@@ -362,8 +362,10 @@ Installed by `npm install` (`prepare`) or `npm run hooks:install`:
 - **Confidential deals** carry `confidential: true`. The mirror bake **redacts them by default**:
   deal records, orphaned counterparties, tasks naming them, and any field matching the
   confidential roster are dropped, and the bake refuses outright if the roster is unreadable.
-  Including them requires an explicit `MIRROR_INCLUDE_CONFIDENTIAL=1`, used only for a target
-  verified to sit behind Cloudflare Access.
+  Including them requires `MIRROR_INCLUDE_CONFIDENTIAL=1` in the real process environment (never
+  `.env`) together with `MIRROR_ACCESS_PREPROBE=passed`, which only `scripts/deploy-mirror.ps1`
+  sets after its pre-deploy Access probe passes. The REDACTED bake removes stale outputs and
+  roster-scans the whole built `dist/` before anything can be deployed.
 - **The bake refuses** to publish a degraded deals source or an internally inconsistent snapshot.
 - **Request boundary:** host allowlist (DNS-rebinding defense), localhost-only CORS, optional
   Cloudflare Access JWT verification (`ACCESS_REQUIRE=1`), and per-route rate and concurrency
@@ -379,12 +381,16 @@ The mirror is a read-only copy for remote use: no Brain Server, no live warehous
    `scripts/register-mirror-task.ps1`, runs hourly and at 06:45 ET.
 2. It syncs an **isolated build root** hard-reset to `origin/main`, so the deploy never depends on
    the state of a working checkout.
-3. It bakes (`bake-mirror.ts`, optional `bake-warehouse.ts`), builds, and deploys with the pinned
-   local Wrangler under a bounded timeout.
-4. It then **re-proves the Access gate**: the root, every baked top-level JSON file and every Pages
+3. Before baking FULL, it **probes the live production target** for the Access gate and refuses to
+   bake confidential data if the gate is not proven.
+4. It bakes (`bake-mirror.ts`, optional `bake-warehouse.ts`), builds, and deploys with the pinned
+   local Wrangler under a bounded timeout, run from the build root so only the build root's
+   `functions/` can ship.
+5. It then **re-proves the Access gate**: the root, every baked top-level JSON file and every Pages
    Function route, on both the production URL and the per-deployment `*.pages.dev` alias, must
    redirect unauthenticated requests to Cloudflare Access. Any other answer fails the run and
-   raises an alert.
+   raises an alert. A failure showing served content opens a gate latch (later runs refuse until
+   it is cleared) and swaps the live site for a no-data lockdown page.
 
 `npm run deploy:mirror` exists for a human at a terminal and has none of that hardening.
 

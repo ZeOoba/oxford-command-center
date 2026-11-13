@@ -55,8 +55,16 @@ function Invoke-NativeCommandWithTimeout {
     # per-deployment <hash>.pages.dev URL from wrangler's output to probe it). The redirect is
     # written by cmd.exe at the OS level -- no PowerShell pipe, so none of the ErrorRecord-under-Stop
     # or pipe-buffer deadlock hazards apply. Omitted = the original inherit-the-console behaviour.
-    [string]$OutputFile
+    [string]$OutputFile,
+    # Optional (added 2026-11-12, audit wf_9bf74429-aaf finding 1): the child's working directory.
+    # Omitted = the caller's current PowerShell location (the original behaviour). deploy-mirror.ps1
+    # passes the isolated build root explicitly, because wrangler takes ./functions from its working
+    # directory and the caller's location is the SHARED checkout.
+    [string]$WorkingDirectory
   )
+  if ($WorkingDirectory -and -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
+    throw "Invoke-NativeCommandWithTimeout: WorkingDirectory '$WorkingDirectory' does not exist."
+  }
   if ($OutputFile) {
     try {
       Assert-CmdSafeArgument -Argument $OutputFile
@@ -105,7 +113,7 @@ function Invoke-NativeCommandWithTimeout {
   # (the production call passes the deploy dir as plain `dist`) resolves against wherever this
   # process originally started, not wherever the caller has since cd'd to. Found via review
   # (2026-07-29): reproduced by scenario 5 in the smoke test.
-  $psi.WorkingDirectory = (Get-Location).ProviderPath
+  $psi.WorkingDirectory = if ($WorkingDirectory) { $WorkingDirectory } else { (Get-Location).ProviderPath }
 
   $proc = [System.Diagnostics.Process]::Start($psi)
 

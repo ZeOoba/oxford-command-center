@@ -155,7 +155,9 @@ describe('access-gate probe (scripts/lib/access-gate-probe.ps1)', () => {
       .join('\n');
     expect(code).toContain('lib\\access-gate-probe.ps1');
     // probe paths derived from the built dist/ and the functions/ trees, warehouse.json when baked
-    expect(code).toMatch(/\$functionsDirs\s*= @\(\(Join-Path \$repo 'functions'\), \(Join-Path \$buildRoot 'functions'\)\)/);
+    // functions/ comes from the build root only: wrangler deploys from there (audit wf_9bf74429-aaf finding 1)
+    expect(code).toMatch(/\$functionsDirs = @\(Join-Path \$buildRoot 'functions'\)/);
+    expect(code).not.toMatch(/Join-Path \$repo 'functions'/);
     expect(code).toMatch(/\$probePaths\s*= Get-AccessGateProbePaths -DistPath \$distPath -FunctionsDirs \$functionsDirs -IncludeWarehouse:\$IncludeWarehouse/);
     // derived Function routes are probed strict on both paths
     expect(code).toMatch(/\$functionRoutes = Get-AccessGateFunctionRoutes -FunctionsDirs \$functionsDirs/);

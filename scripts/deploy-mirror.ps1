@@ -108,8 +108,19 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # <hash>.<project>.pages.dev alias -- not just the apex '/'. The path list is derived at deploy
 # time (Get-AccessGateProbePaths), never hand-kept.
 . (Join-Path $PSScriptRoot 'lib\access-gate-probe.ps1')
+# Get-MirrorWranglerDeploy / Assert-MirrorPreDeployAccessGate / the gate latch / the lockdown
+# containment live in lib/mirror-deploy.ps1 (shared with mirror-deploy.smoke-test.ps1). See that file
+# for audit wf_9bf74429-aaf findings 1 and 4 (2026-11-12).
+. (Join-Path $PSScriptRoot 'lib\mirror-deploy.ps1')
 
 $beaconPath = Get-DeployBeaconPath -RepoRoot $repo
+$gateLatchPath = Get-MirrorGateLatchPath -RepoRoot $repo
+$buildRoot = $null
+$deployOutput = ''
+# FULL-mode inputs are set below by THIS script only, after its pre-deploy probe passes; never
+# inherited from the caller's shell (audit finding 31).
+Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
+Remove-Item Env:\MIRROR_ACCESS_PREPROBE      -ErrorAction SilentlyContinue
 # Stamped BEFORE the try block so that a kill at any point inside it -- including during the
 # very first git call -- still leaves a 'running' beacon behind for the health check to find.
 # HEAD is this SHARED checkout's sha, captured purely for diagnostics; it is not used for any
@@ -121,6 +132,9 @@ Write-DeployBeaconStart -BeaconPath $beaconPath -HeadSha $beaconHeadSha
 
 
 try {
+  # 0) An unresolved Access-gate failure blocks every run before anything is baked (finding 4).
+  Assert-MirrorGateLatchClear -Path $gateLatchPath
+
   # 1) Fetch origin so the build root (step 1b) can resolve origin/main from THIS repo's object
   #    store. Historically this step also fast-forwarded the shared checkout; that merge was
   #    REMOVED 2026-08-16 (#279) and `git fetch` is now the only git operation performed against
@@ -197,7 +211,17 @@ try {
   Copy-RealDataIntoBuildRoot -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
   Write-Host "  Building from $buildRoot (origin/main @ $buildHeadSha), NOT from the shared checkout"
 
-  # 2) Bake (confidential included -- target is Access-gated) + build.
+  # 1c) PRE-DEPLOY Access probe of the LIVE production target (audit finding 4). Before 2026-11-12
+  #     the gate was only verified after upload, so a broken Access policy meant the FULL bake was
+  #     already public by the time anything noticed. Only a pass here lets the bake run in FULL
+  #     mode: bake-mirror.ts refuses MIRROR_INCLUDE_CONFIDENTIAL=1 without MIRROR_ACCESS_PREPROBE.
+  #     Function routes come from the BUILD ROOT only -- that is the tree wrangler deploys (finding 1).
+  $functionsDirs = @(Join-Path $buildRoot 'functions')
+  Assert-MirrorPreDeployAccessGate -VerifyUrl $VerifyUrl -ProjectName $ProjectName -AccessHost $AccessHost -FunctionsDirs $functionsDirs -StagedDir (Join-Path $buildRoot 'public') -IncludeWarehouse:$IncludeWarehouse | Out-Null
+  Write-Host "  Pre-deploy Access probe passed on the live production target"
+
+  # 2) Bake (confidential included -- target is Access-gated, just verified) + build.
+  $env:MIRROR_ACCESS_PREPROBE      = 'passed'
   $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
   $env:BRIEF_ENABLED               = '1'
   # The brief runs inside the isolated build root, whose data/ is not the dir the live Brain Server
@@ -280,31 +304,24 @@ try {
     # Probe paths for the Access-gate check (steps 3 and 4), derived from what is about to be
     # published: every top-level *.json in dist/ (warehouse.json is also expected when
     # -IncludeWarehouse), and every Function route. wrangler takes ./functions from its working
-    # directory, which is THIS checkout ($repo) -- the build root's copy is scanned too, so a route
-    # in either tree is probed.
-    $functionsDirs  = @((Join-Path $repo 'functions'), (Join-Path $buildRoot 'functions'))
+    # directory, which is now the BUILD ROOT ($functionsDirs, set in step 1c). Until 2026-11-12 it
+    # was THIS shared checkout ($repo), so the Functions shipped from an unreviewed, possibly dirty
+    # tree (audit finding 1); $repo is deliberately not a functions source any more.
     $probePaths     = Get-AccessGateProbePaths -DistPath $distPath -FunctionsDirs $functionsDirs -IncludeWarehouse:$IncludeWarehouse
     # Function routes are probed STRICT (any non-Access answer = exposure) whatever their prefix.
     $functionRoutes = Get-AccessGateFunctionRoutes -FunctionsDirs $functionsDirs
     Write-Host "  Access-gate probe paths: $((@($probePaths) | ForEach-Object { '/' + $_ }) -join ', ')"
-    $wranglerBin  = Join-Path $buildRoot 'node_modules\.bin\wrangler.cmd'
-    if (Test-Path -LiteralPath $wranglerBin) {
-      $deployExe  = $wranglerBin
-      $deployArgs = @('pages', 'deploy', $distPath, "--project-name=$ProjectName", '--branch=main')
-    } else {
-      Write-Host "[deploy] local wrangler not found at $wranglerBin -- falling back to npx (run 'npm ci' to restore the pinned version)"
-      $deployExe  = 'npx'
-      $deployArgs = @('wrangler', 'pages', 'deploy', $distPath, "--project-name=$ProjectName", '--branch=main')
-    }
     # wrangler's output goes to a file (and is echoed below) so step 4 can read the per-deployment
     # <hash>.<project>.pages.dev URL out of it and probe that alias too (2026-11-08).
     $deployLog = Join-Path ([System.IO.Path]::GetTempPath()) ("ora-mirror-deploy-" + [guid]::NewGuid().ToString('N') + '.log')
-    $deploy = Invoke-NativeCommandWithTimeout `
-      -Executable $deployExe `
-      -Arguments $deployArgs `
+    # wrangler runs IN the build root (process cwd and --cwd), so ./functions is origin/main's (finding 1).
+    $deploy = Invoke-MirrorWranglerDeploy `
+      -WranglerRoot $buildRoot `
+      -WorkingDirectory $buildRoot `
+      -DistPath $distPath `
+      -ProjectName $ProjectName `
       -TimeoutSeconds $DeployTimeoutSeconds `
       -OutputFile $deployLog
-    $deployOutput = ''
     if (Test-Path -LiteralPath $deployLog) {
       $deployOutput = [string](Get-Content -LiteralPath $deployLog -Raw -ErrorAction SilentlyContinue)
       Remove-Item -LiteralPath $deployLog -Force -ErrorAction SilentlyContinue
@@ -332,6 +349,7 @@ try {
   }
   finally {
     Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
+    Remove-Item Env:\MIRROR_ACCESS_PREPROBE      -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_ENABLED               -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_HEALTH_PATH           -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
@@ -389,9 +407,18 @@ catch {
   } catch {
     Write-Host "Write-DeployBeaconEnd (failed) itself failed: $($_.Exception.Message)"
   }
+  $reason = $original.Exception.Message
+  $isGateFailure = $reason -match '^GATE CHECK FAILED'
+  # Contain only on evidence of SERVED content (2xx, or a Function's own 4xx); an edge 5xx/429/401/403
+  # still alerts CRITICAL but must not lock the mirror down (refute wf_ec2162a9-34f).
+  $exposures = Get-Variable -Name LastAccessGateExposures -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+  $containGate = $isGateFailure -and (Test-MirrorExposureWarrantsContainment -Exposures $exposures)
+  # Finding 4: a served exposure (pre- or post-deploy) opens the latch BEFORE the alert, so the
+  # next hourly run refuses to bake even if this process is killed mid-alert or mid-containment.
+  if ($containGate) {
+    try { Set-MirrorGateLatch -Path $gateLatchPath -Reason $reason } catch { Write-Host "Set-MirrorGateLatch itself failed: $($_.Exception.Message)" }
+  }
   try {
-    $reason = $original.Exception.Message
-    $isGateFailure = $reason -match '^GATE CHECK FAILED'
     # Suppressibility widened 2026-08-11 from "offline git fetch/pull signature only" to every
     # class except a confirmed gate failure -- see Test-SuppressibleReason for the 44-email
     # incident that motivated it. Test-OfflineSignature still exists and is still meaningful,
@@ -400,6 +427,19 @@ catch {
     Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure -Suppressible:$isSuppressible
   } catch {
     Write-Host "Send-DeployFailureAlert itself failed: $($_.Exception.Message)"
+  }
+  # Containment AFTER the critical alert has gone out (a human hears first; containment can take
+  # minutes), then a second CRITICAL alert with its outcome. Bounded well under the task's PT30M.
+  if ($containGate -and $buildRoot) {
+    $lockdown = Invoke-MirrorLockdownContainment -WranglerRoot $buildRoot -ProjectName $ProjectName -TimeoutSeconds ([Math]::Min($DeployTimeoutSeconds, 300))
+    $aliases = @(Get-DeploymentAliasUrls -DeployOutput $deployOutput -ProjectName $ProjectName)
+    $aliasNote = if ($aliases.Count) { " The FULL deployment's own alias stays reachable until deleted by hand in the Pages dashboard: $($aliases -join ', ')." } else { ' Delete any FULL deployment alias still listed in the Pages dashboard by hand.' }
+    $outcome = if ($lockdown.Deployed) { 'CONTAINED' } else { 'NOT CONTAINED' }
+    try {
+      Send-DeployFailureAlert -Reason "GATE CHECK FAILED -- containment ${outcome}: $($lockdown.Detail).$aliasNote Gate latch open at $gateLatchPath; every run refuses until it is cleared." -Critical -Suppressible:$false
+    } catch {
+      Write-Host "Send-DeployFailureAlert (containment) itself failed: $($_.Exception.Message)"
+    }
   }
   throw $original
 }

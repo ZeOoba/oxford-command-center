@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { refuseIfSynthetic } from '../server/real-data-status';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
@@ -14,6 +14,7 @@ import type { GovernorSet, PortfolioSnapshot } from '../src/contracts/index';
 // still loaded ONLY via the existsSync-gated dynamic import below (cadence decoupling preserved).
 import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
 import { egressRosterScanner } from '../server/briefing/roster-match';
+import { resolveMirrorMode } from './lib/mirror-mode';
 
 /**
  * Writer policy for the PUBLIC mirror: never bake a degraded deals source. Returns the refusal
@@ -77,9 +78,10 @@ loadEnvFile();
  * CONFIDENTIALITY (non-negotiable): deals carrying `confidential: true` are REDACTED
  * by default. (No worked example is named here on purpose — the previous one, E. Fulton Street, was
  * declassified 2026-07-09 and the stale reference outlived it by weeks. The flag is the contract;
- * the current roster lives in confidential-terms.json.) They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set explicitly,
- * which must happen ONLY for a target verified to be gated behind Cloudflare Access. A public
- * *.pages.dev deploy must always run in the default (redacted) mode.
+ * the current roster lives in confidential-terms.json.) They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set in
+ * the real process environment (never from .env) together with MIRROR_ACCESS_PREPROBE=passed, which
+ * only scripts/deploy-mirror.ps1 sets after its pre-deploy Cloudflare Access probe passes (see
+ * scripts/lib/mirror-mode.ts). A public *.pages.dev deploy must always run in the default (redacted) mode.
  */
 export function redactConfidential(snapshot: PortfolioSnapshot): {
   snapshot: PortfolioSnapshot; removed: string[]; removedCounterparties: string[]; removedTasks: number;
@@ -278,15 +280,80 @@ export function shouldBakeWarehouse(
   return argv.includes('--warehouse') || env.BAKE_WAREHOUSE === '1';
 }
 
+/**
+ * Bake outputs that can carry FULL (confidential) data and that a given run may NOT regenerate.
+ * Only public/warehouse.json today: snapshot.json and macro.json are rewritten on every run.
+ */
+export const OPTIONAL_BAKE_OUTPUTS = ['warehouse.json'] as const;
+
+/** A copy of a baked output at any depth under public/ (`warehouse (1).json`, `snapshot-old.json`,
+ *  `macro.json~`, `Copy of warehouse.json`), the shapes .gitignore lists there. vite would copy any
+ *  of them into dist/ (refute wf_bfcf4714-b6d: copies in subfolders and `Copy of` names too). */
+const BAKE_OUTPUT_COPY = /^(?:copy of )?(snapshot|macro|warehouse)(?:[ _(.~-]|$)/i;
+/** Top-level files this bake rewrites itself; never deleted. */
+const BAKE_OUTPUTS_REWRITTEN = new Set(['snapshot.json', 'macro.json']);
+
+/** Every file path under `dir` (relative, '/'-separated). */
+function listFilesRelative(dir: string, prefix = ''): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    return e.isDirectory() ? listFilesRelative(join(dir, e.name), rel) : [rel];
+  });
+}
+
+/**
+ * Audit wf_9bf74429-aaf finding 30: a REDACTED ("public-safe") bake used to leave a stale FULL
+ * public/warehouse.json behind -- it is gitignored, and the deploy build root's `git clean -fd`
+ * (no -x) keeps it -- and vite copies public/ into dist/, so the "public-safe" artifact shipped the
+ * last FULL warehouse payload. In REDACTED mode every optional output this run does not regenerate
+ * is deleted; FULL mode leaves them (they are FULL-or-redacted, and FULL targets are Access-gated).
+ * Returns the names removed. Throws if one cannot be removed (a refusal: the bake must not finish).
+ */
+export function removeStaleRedactedOutputs(
+  pub: string,
+  opts: { includeConfidential: boolean; bakeWarehouse: boolean },
+): string[] {
+  if (opts.includeConfidential) return [];
+  // Removed even when this run re-bakes the warehouse (refute wf_ec2162a9-34f): the redacted rewrite
+  // comes last, so a run that refuses or fails before it would otherwise leave the FULL file behind.
+  // Copies of any baked output go too; snapshot.json / macro.json themselves are rewritten below.
+  const names = new Set<string>(OPTIONAL_BAKE_OUTPUTS);
+  for (const rel of existsSync(pub) ? listFilesRelative(pub) : []) {
+    const base = rel.slice(rel.lastIndexOf('/') + 1);
+    if (BAKE_OUTPUT_COPY.test(base) && !BAKE_OUTPUTS_REWRITTEN.has(rel)) names.add(rel);
+  }
+  const removed: string[] = [];
+  for (const name of [...names].sort()) {
+    const p = join(pub, ...name.split('/'));
+    if (existsSync(p)) {
+      rmSync(p, { force: true });
+      if (existsSync(p)) throw new Error(`✗ bake-mirror: could not remove stale public/${name} before a REDACTED bake`);
+      removed.push(name);
+    }
+  }
+  return removed;
+}
+
 /** The bake entry point. Exported (refute round 6, G5) only so a test can run it end to end and pin
  *  its confidentiality wiring (tests/unit/bake-mirror-main-wiring.test.ts); it runs on import only
  *  when this file is the invoked entry point (see the guard at the bottom). */
 export async function main() {
   // A production mirror must never ship synthetic stand-in data (ruling 2026-11-10).
   refuseIfSynthetic('bake-mirror');
-  const includeConfidential = process.env.MIRROR_INCLUDE_CONFIDENTIAL === '1';
+  // FULL mode only from the real process env AND only with the deploy script's passed pre-deploy
+  // Access probe (finding 31). A refused FULL request exits before anything is read or written.
+  const { includeConfidential, refusal: modeRefusal } = resolveMirrorMode(process.env);
+  if (modeRefusal) {
+    console.error(modeRefusal);
+    process.exit(1);
+  }
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });
+  // Stale FULL outputs go FIRST, before any write or refusal below (finding 30), so a REDACTED run
+  // that stops part-way can never leave the last FULL warehouse.json in public/.
+  const bakeWarehouse = shouldBakeWarehouse(process.argv, process.env);
+  const staleRemoved = removeStaleRedactedOutputs(pub, { includeConfidential, bakeWarehouse });
+  if (staleRemoved.length) console.log(`  Removed ${staleRemoved.length} stale output(s) this REDACTED bake does not regenerate: ${staleRemoved.join(', ')}`);
 
   // Parse day-counts (lease monthsToExpiry) off the ET run date so the brief — and the mirror
   // this bake feeds — track the firm's timezone, not the process UTC date (a month-boundary
@@ -414,7 +481,7 @@ export async function main() {
   // during which nothing ever set either input and public/warehouse.json was never produced.
   // light hourly snapshot bake never pays for it (cadence decoupling). Dynamic import keeps the
   // warehouse deps (better-sqlite3, the api.ts router) out of the snapshot-only path entirely.
-  if (shouldBakeWarehouse(process.argv, process.env)) {
+  if (bakeWarehouse) {
     const { bakeWarehouseJson, describeOmittedRoutes } = await import('./bake-warehouse');
     // Fix round 1, item 1: public/warehouse.json lands in the SAME public/ directory as
     // snapshot.json, so it must respect the SAME includeConfidential boundary — otherwise a
