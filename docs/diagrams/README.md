@@ -142,7 +142,7 @@ flowchart LR
 
 ## Mirror deploy and daily brief
 
-The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Access probe of the live target, `build:mirror` (bake, brief + Outlook COM send, typecheck, vite build, dist roster scan in REDACTED mode), bounded wrangler deploy from the build root, post-deploy Access 302 probe, failure alert, and lockdown containment on a served exposure (audit wf_9bf74429-aaf findings 1/4/30/31, 2026-11-12).
+The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Access probe of the live target, `build:mirror` (bake, brief + Outlook COM send, `check:rct-pin`, typecheck, vite build, dist roster scan in REDACTED mode), bounded wrangler deploy from the build root, post-deploy Access 302 probe, failure alert, and lockdown containment on a served exposure (audit wf_9bf74429-aaf findings 1/4/30/31, 2026-11-12).
 
 <details><summary>Evidence</summary>
 
@@ -177,7 +177,8 @@ flowchart TB
         BH[("data/brief-health.json<br/>(primary checkout)")]
         PUB[("public/snapshot.json + macro.json")]
         WHB["bake-warehouse.ts (OFF on hourly; daily, BAKE_WAREHOUSE=1)"] --> PUBW[("public/warehouse.json<br/>(carried forward up to 26h on hourly FULL runs)")]
-        TYPES["prebuild: generate confidential-scan types"] --> TSC["tsc --noEmit (full typecheck)"] --> VITE["vite build -> dist/"]
+        PIN["check:rct-pin<br/>local-only RCT must match the keyed pin (RCT_PIN_KEY); else stop, nothing bundled"]
+        PIN --> TYPES["prebuild: generate confidential-scan types"] --> TSC["tsc --noEmit (full typecheck)"] --> VITE["vite build -> dist/"]
         VITE --> SCAN["scan-mirror-dist.ts<br/>REDACTED: roster-scan every dist/ text file"]
         BAKE --> PW
         BAKE --> MAC

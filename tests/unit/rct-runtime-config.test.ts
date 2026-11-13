@@ -227,3 +227,44 @@ describe('loader fail-closed errors', () => {
     for (const m of msgs) for (const f of figures) expect(m.includes(f)).toBe(false);
   });
 });
+
+describe('plausibility bounds: every construction-multiplier slot is bounded (not only brick)', () => {
+  type Slot = 'tilt-precast' | 'cmu' | 'brick' | 'hybrid' | 'pemb.under20k' | 'pemb.under40k' | 'pemb.upTo50k' | 'pemb.above50k' | 'unknownCap';
+  const SLOTS: Slot[] = ['tilt-precast', 'cmu', 'brick', 'hybrid', 'pemb.under20k', 'pemb.under40k', 'pemb.upTo50k', 'pemb.above50k', 'unknownCap'];
+  const setSlot = (j: Json, slot: Slot, v: number): void => {
+    const cm = j.constructionMultipliers as Json;
+    if (slot.startsWith('pemb.')) (cm.pemb as Json)[slot.slice('pemb.'.length)] = v;
+    else cm[slot] = v;
+  };
+  const cases = SLOTS.flatMap((s) => [[s, 9], [s, 0.1]] as [Slot, number][]);
+
+  it('the slot list covers every multiplier the schema defines', () => {
+    const cm = ReplacementCostTable.parse(ratifiedLike()).constructionMultipliers;
+    const keys = Object.keys(cm).flatMap((k) => (k === 'pemb' ? Object.keys(cm.pemb).map((p) => `pemb.${p}`) : [k]));
+    expect([...keys].sort()).toEqual([...SLOTS].sort());
+  });
+
+  it.each(cases)('%s = %s fails closed (schema accepts it, the bound refuses it)', (slot, v) => {
+    const j = ratifiedLike();
+    setSlot(j, slot, v);
+    const parsed = ReplacementCostTable.parse(j); // zod only requires positive, so it lets the slip through
+    expect(() => assertPlausibleRct(parsed)).toThrow(/a construction multiplier is outside the plausible range/);
+    expect(() => loadRatifiedRct(writeTable(j), { pinnedHmac: null })).toThrow(/a construction multiplier is outside the plausible range/);
+  });
+});
+
+describe('the loader refuses a non-ratified or unsigned table (assertProductionRct is wired into loadRatifiedRct)', () => {
+  it.each([
+    ['ratification proposed', (j: Json) => { j.ratification = 'proposed'; }, /not 'ratified'/],
+    ['ratifiedBy null', (j: Json) => { j.ratifiedBy = null; }, /missing provenance/],
+    ['ratifiedDate null', (j: Json) => { j.ratifiedDate = null; }, /missing provenance/],
+  ])('%s fails closed', (_what, mutate, msg) => {
+    const j = ratifiedLike();
+    mutate(j);
+    const p = writeTable(j);
+    // The parse and the raw-is-canonical check pass (an explicit null is canonical), so nothing earlier masks the refusal.
+    expect(() => loadReplacementCostTable(p)).not.toThrow();
+    expect(() => assertPlausibleRct(ReplacementCostTable.parse(j))).not.toThrow();
+    expect(() => loadRatifiedRct(p, { pinnedHmac: null })).toThrow(msg);
+  });
+});

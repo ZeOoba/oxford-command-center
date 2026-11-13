@@ -279,7 +279,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | Script | Purpose |
 |---|---|
 | `bake` | Bake `public/snapshot.json` + `public/macro.json` (redacted by default) |
-| `build:mirror` | `check:rct-pin`, `bake`, `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
+| `build:mirror` | `bake`, `check:rct-pin` (before anything is bundled), `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
 | `deploy:mirror` | Manual, REDACTED-only `wrangler pages deploy`: refuses if a FULL-mode variable is set; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
 | `worktree -- <add\|remove\|prune>` | Junction-safe worktree management (`scripts/safe-worktree.ts`) |
 

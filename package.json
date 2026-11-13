@@ -20,7 +20,7 @@
     "extract": "tsx scripts/extract-workbook.ts",
     "bake": "tsx scripts/bake-mirror.ts",
     "index:docs": "tsx scripts/index-docs.ts",
-    "build:mirror": "npm run check:rct-pin && npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts",
+    "build:mirror": "npm run bake && npm run check:rct-pin && npm run build && tsx scripts/scan-mirror-dist.ts",
     "deploy:mirror": "tsx scripts/scan-mirror-dist.ts --precheck-redacted-only && npm run build:mirror && wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
     "reconcile:snapshot": "tsx scripts/reconcile-snapshot.ts",
