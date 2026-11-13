@@ -34,3 +34,8 @@
 data/snapshots/portfolio.json text eol=lf
 data/ar-mapping-cache.json    text eol=lf
 data/ar/review-queue.json     text eol=lf
+
+# The vendored ora-skills pre-push shim is a test fixture of scripts/test_prepush_confidential_scan.py, which
+# runs it under sh: a CRLF checkout would hand sh "exit 1" plus a carriage return. Same rule as
+# ora-skills tools/hooks/*.
+scripts/hooks/* text eol=lf
