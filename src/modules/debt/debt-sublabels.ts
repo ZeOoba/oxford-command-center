@@ -9,8 +9,15 @@ import type { DebtSummary, PortfolioKpis } from '@analytics/index';
 
 const join = (parts: string[]): string => parts.filter((x) => x.length > 0).join(' · ');
 
-export function overviewTotalDebtSublabel(k: Pick<PortfolioKpis, 'ltv' | 'affiliateDebt'>): string {
-  return join([affiliateNotesClause(k.affiliateDebt.value), 'property loan balances', `${fmtPct(k.ltv.value)} LTV`]);
+export function overviewTotalDebtSublabel(
+  k: Pick<PortfolioKpis, 'ltv' | 'affiliateDebt' | 'ltvIncomplete' | 'affiliateIncomplete'>,
+): string {
+  const aff = affiliateNotesClause(k.affiliateDebt.value, (k.affiliateIncomplete ?? []).map((r) => r.name));
+  // Audit 2026-11-12 HIGH #2: a blank Loan Balance makes the total a lower bound and LTV incomplete.
+  if ((k.ltvIncomplete ?? []).length > 0) {
+    return join([aff, 'property loan balances, at least', 'LTV incomplete']);
+  }
+  return join([aff, 'property loan balances', `${fmtPct(k.ltv.value)} LTV`]);
 }
 
 export function externalDebtSublabel(d: Pick<DebtSummary, 'affiliateDebt'>, thirdPartyBorrowerCount: number): string {

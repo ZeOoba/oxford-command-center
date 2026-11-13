@@ -10,6 +10,7 @@ import { Badge } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import { investmentPropertiesSublabel } from '@/modules/overview/other-holdings';
 import { landlordCostsNotSourced } from '@analytics/property-basis';
+import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 import type { Property } from '@contracts/index';
 import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 import { Sparkline } from '@/charts/Sparkline';
@@ -89,7 +90,10 @@ export function PortfolioModule() {
       header: 'NOI · workbook',
       align: 'right',
       render: (p) =>
-        landlordCostsNotSourced(p) ? (
+        // Audit 2026-11-12 HIGH #2: a blank workbook NOI is unknown, never "$0".
+        hasBlankGovernorInput(p, 'noi') ? (
+          BLANK_IN_WORKBOOK
+        ) : landlordCostsNotSourced(p) ? (
           <span title="NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced yet, so this NOI is overstated by them.">
             {fmtUsdCompact(p.noi)} <Badge tone="amber">LL costs not sourced</Badge>
           </span>

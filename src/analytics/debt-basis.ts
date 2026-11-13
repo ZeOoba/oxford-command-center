@@ -41,14 +41,28 @@ export function namesAffiliateLender(text: string | null | undefined): boolean {
   return typeof text === 'string' && AFFILIATE_RE.test(normalizeWs(text));
 }
 
-type DebtRow = { readonly lender?: string | null; readonly loanBalance?: number | null };
+type DebtRow = {
+  readonly lender?: string | null;
+  readonly loanBalance?: number | null;
+  readonly flags?: readonly { readonly field: string; readonly rawValue?: string | undefined }[];
+};
+
+/** Mirrors governor-inputs GOVERNOR_INPUT_BLANK_FIELD (imported there FROM this module, so it is not
+ *  imported back; tests/unit/governor-blank-inputs.test.ts pins the two equal). */
+const BLANK_FIELD = 'governorInputBlank';
+const loanBalanceBlank = (p: DebtRow): boolean =>
+  (p.flags ?? []).some((f) => f.field === BLANK_FIELD && f.rawValue === 'loanBalance');
 
 /** A property row whose outstanding loan balance is owed to an Oxford affiliate lender. */
 export function isAffiliateNoteProperty(p: DebtRow): boolean {
   const bal = p.loanBalance;
-  // Sign-agnostic: a negative affiliate balance is still an affiliate note. Only a zero / missing /
-  // non-finite balance means there is no note to exclude.
-  return typeof bal === 'number' && Number.isFinite(bal) && bal !== 0 && namesAffiliateLender(p.lender);
+  // Sign-agnostic: a negative affiliate balance is still an affiliate note. A zero / missing /
+  // non-finite balance means there is no note to exclude, UNLESS the workbook cell was blank (parse
+  // flag): an affiliate lender with an unknown balance is still an affiliate note, so the per-property
+  // surfaces agree with the aggregate, which already excludes it (refute wf_c93c6154-6b8: a false
+  // "LTV above 65%" alert fired on such a row).
+  if (!namesAffiliateLender(p.lender)) return false;
+  return (typeof bal === 'number' && Number.isFinite(bal) && bal !== 0) || loanBalanceBlank(p);
 }
 
 /** A BORROWER-direction loan-schedule row whose lender is an Oxford affiliate. */
@@ -105,9 +119,14 @@ export function propertyLtvLabel(p: DebtRow & { readonly ltv: number | null }): 
  * Sign-symmetric: a negative total is still disclosed ("-$13K affiliate notes") — the '+' prefix is
  * added only for a positive amount; otherwise fmtUsdCompact's own minus sign stands.
  */
-export function affiliateNotesClause(amount: number | null | undefined): string {
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) return '';
-  return `${amount > 0 ? '+' : ''}${fmtUsdCompact(amount)} affiliate notes`;
+export function affiliateNotesClause(amount: number | null | undefined, blankNames: readonly string[] = []): string {
+  // A blank affiliate balance (parse flag) is named, never dropped: with it the total is incomplete,
+  // and when it is the only affiliate note the amount is 0 yet the disclosure must stay (refute wf_da5abccb-d31).
+  const blank = blankNames.length > 0 ? blankNames.join(', ') : null;
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) {
+    return blank ? `affiliate notes: balance blank on ${blank}` : '';
+  }
+  return `${amount > 0 ? '+' : ''}${fmtUsdCompact(amount)} affiliate notes${blank ? ` (incomplete: balance blank on ${blank})` : ''}`;
 }
 
 /** Field root for the Overview-vs-Capital debt-basis data-quality flags (server/reconcile-runtime.ts). */

@@ -79,6 +79,10 @@ export const CapitalAllocationReport = z.object({
   propertyCount: z.number(),
   entries: z.array(CapitalAllocationEntry),
   portfolioNoi: z.number(),
+  /** Investment properties whose workbook NOI cell is blank: portfolioNoi excludes them and is
+   *  INCOMPLETE, with no bound direction (a blank NOI may be negative; audit 2026-11-12 HIGH #2).
+   *  Absent when every NOI is known. */
+  portfolioNoiIncomplete: z.array(z.string()).optional(),
   portfolioNoBasis: z.literal('spine-a'),
   investCount: z.number(),
   holdCount: z.number(),

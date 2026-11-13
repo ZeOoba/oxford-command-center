@@ -64,6 +64,7 @@ import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness
 import { governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
+import { hasBlankGovernorInput } from '../../src/analytics/governor-inputs';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
@@ -1439,9 +1440,12 @@ export async function buildCapitalAllocationReport(
     const debtScore = debtByPropertyId.get(property.id);
     const balloonMonths = balloonMonthsByProperty.get(property.id) ?? null;
 
+    // Audit 2026-11-12 HIGH #2 (refute wf_406ad3ef-7de): a blank workbook NOI is UNKNOWN, never $0.
+    // Scoring it as 0 sent leasing risk to the vacant-property branch and printed a 0.0% cap rate.
+    const noiUnknown = hasBlankGovernorInput(property, 'noi');
     const noi = property.noi;
     const sf = property.sf;
-    const noiPerSf = sf > 0 && noi != null && noi !== 0 ? noi / sf : null;
+    const noiPerSf = !noiUnknown && sf > 0 && noi != null && noi !== 0 ? noi / sf : null;
 
     const healthScore = propScore?.health ?? null;
     const attentionBand = propScore?.attentionBand ?? null;
@@ -1494,8 +1498,11 @@ export async function buildCapitalAllocationReport(
 
     const healthVal = healthScore ?? 50;
 
-    const leasingRisk =
-      noi > 0
+    // Unknown NOI with rent expiring inside 12 months is scored as fully exposed (the same "unknown is
+    // scored as if at risk" doctrine as unknown debt below), never as the vacant-property cap.
+    const leasingRisk = noiUnknown
+      ? nearTermExpiryRent > 0 ? 100 : Math.min(100, atRiskLikelihoodCount * 10)
+      : noi > 0
         ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
         : Math.min(50, atRiskLikelihoodCount * 10);
 
@@ -1572,7 +1579,14 @@ export async function buildCapitalAllocationReport(
       ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr, dscrFloor }),
     ];
 
-    if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
+    if (noiUnknown) {
+      reasons.push({
+        text: nearTermExpiryRent > 0
+          ? 'NOI blank in workbook — leasing risk scored conservatively'
+          : 'NOI blank in workbook — cap rate and NOI/SF withheld',
+        impact: leasingRisk * 0.2 + 1,
+      });
+    } else if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
       reasons.push({
         text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,
         impact: leasingRisk * 0.2,
@@ -1604,7 +1618,7 @@ export async function buildCapitalAllocationReport(
     let capRateGap: number | null = null;
     let capRatePercentile: CapitalAllocationEntry['capRatePercentile'] = null;
     const propValue = property.oxfordValue;
-    if (Number.isFinite(propValue) && propValue > 0 && Number.isFinite(noi)) {
+    if (!noiUnknown && Number.isFinite(propValue) && propValue > 0 && Number.isFinite(noi)) {
       const implied = noi / propValue;
       impliedCapRate = implied;
       const bench = benchmarkByKey.get(benchmarkKey(property.market, property.type));
@@ -1650,12 +1664,18 @@ export async function buildCapitalAllocationReport(
     (e) => e.capitalAction === 'disposition-candidate',
   ).length;
   const portfolioNoi = investmentProperties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
+  // Rows whose blank NOI leaves portfolioNoi incomplete, no bound direction (audit 2026-11-12 HIGH #2).
+  const portfolioNoiIncomplete = investmentProperties
+    .filter((p) => hasBlankGovernorInput(p, 'noi'))
+    .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)) // id order, like every other incomplete-row list
+    .map((p) => p.name);
 
   return {
     asOf,
     propertyCount: investmentProperties.length,
     entries,
     portfolioNoi,
+    ...(portfolioNoiIncomplete.length > 0 ? { portfolioNoiIncomplete } : {}),
     portfolioNoBasis: 'spine-a',
     investCount,
     holdCount,

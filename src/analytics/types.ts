@@ -1,3 +1,4 @@
+import type { IncompleteGovernorRow } from './governor-inputs';
 import type { Cell } from '@contracts/index';
 
 export type InsightSeverity = 'critical' | 'warning' | 'info';
@@ -44,6 +45,16 @@ export interface PortfolioKpis {
   propertyCount: Cell;
   tenantCount: Cell;
   totalDebt: Cell;
+  /** Investment rows whose blank third-party Loan Balance makes `ltv` null and `totalDebt` a lower
+   *  bound (./governor-inputs ltvIncompleteRows; audit 2026-11-12 HIGH #2). Empty when complete.
+   *  Optional so hand-built KPI objects (tests, legacy callers) stay valid; absent = complete. */
+  ltvIncomplete?: IncompleteGovernorRow[];
+  /** Investment rows whose blank NOI is left out of `noi` and `weightedCapRate`, both then incomplete
+   *  with no bound direction (a blank NOI may be negative; audit 2026-11-12 HIGH #2). Optional; absent = complete. */
+  noiIncomplete?: IncompleteGovernorRow[];
+  /** Affiliate-lender rows whose Loan Balance cell is blank: `affiliateDebt` is then incomplete and every
+   *  affiliate-notes disclosure names them (refute wf_da5abccb-d31). Optional; absent = complete. */
+  affiliateIncomplete?: IncompleteGovernorRow[];
   /** Σ property-row loan balances owed to an Oxford affiliate lender (src/analytics/debt-basis.ts) —
    *  excluded from totalDebt / ltv and disclosed beside them (ratified 2026-09-24). */
   affiliateDebt: Cell;

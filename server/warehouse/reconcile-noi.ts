@@ -21,6 +21,7 @@ import type { Lease, PortfolioSnapshot } from '../../src/contracts/index';
 import type { WarehouseDb } from './db';
 import { latestFullYearPeriod, propertyPeriodMetrics, type PeriodMetrics } from './metrics';
 import { PROPERTY_ALIASES } from './property-crosswalk';
+import { hasBlankGovernorInput } from '../../src/analytics/governor-inputs';
 
 export interface Tolerance {
   /** Relative band: |delta| / max(|wbNoi|, |whNoi|) ≤ pctBand ⇒ in-tolerance. */
@@ -396,7 +397,8 @@ export function buildNoiReconcileInputs(
     inputs.push({
       propertyId: canonicalId,
       propertyName: wp.name,
-      workbookOxfordNoi: Number.isFinite(wp.noi) ? wp.noi : null,
+      // A blank workbook NOI cell (parse flag) is missing, never a real $0 (audit 2026-11-12 HIGH #2).
+      workbookOxfordNoi: Number.isFinite(wp.noi) && !hasBlankGovernorInput(wp, 'noi') ? wp.noi : null,
       warehouseOxfordNoi: fyRow ? fyRow.oxfordNoi : null,
       warehousePeriod: fyPeriod,
       warehouseBasis: fyRow ? fyRow.basis : null,
