@@ -293,6 +293,7 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('src/data/seed-deals.ts')).toBe(true);
     expect(isFinancialSourcePath('src/data/public-deals.ts')).toBe(true);
     expect(isFinancialSourcePath('src/brain/replacement-cost.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/lib/rct-adjust.ts')).toBe(true); // RCT v3.2 shared Basis-divisor arithmetic
   });
   it('flags the deal + common contracts (deal economics, confidential flag, Market enum)', () => {
     expect(isFinancialSourcePath('src/contracts/deal.ts')).toBe(true);

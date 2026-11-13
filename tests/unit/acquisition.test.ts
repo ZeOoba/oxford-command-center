@@ -35,8 +35,8 @@ function proposedIncomplete(): AcquisitionRuleset {
 const proposed = proposedIncomplete();
 
 /** A strong, fully-known PURSUE-grade deal — HONEST under RCT v03's conservative firm-wide fallback
- *  (no market supplied, $227.90/SF — the cheapest market, per doctrine the strictest available floor):
- *  60k SF → $13.674M replacement; $1.2M all-in ≈ 91.2% discount → full Basis credit (full-credit
+ *  (no market supplied, $225.59/SF — Chicago Cook County IL since RCT v3.2, the cheapest market, per doctrine the
+ *  strictest available floor; tilt-up ×1.00): 60k SF → $13.535M replacement; $1.2M all-in ≈ 91.1% discount → full Basis credit (full-credit
  *  threshold is 0.90 at the yearBuilt=2005 post-cutoff floor). RECALIBRATED 2026-07-14 (refute-fix):
  *  the prior $3.6M/~56% figure only reached full Basis credit because of the step-function bug the
  *  refute pass caught (basisFullCreditDiscount sat below the vintage floor); under the corrected
@@ -49,7 +49,7 @@ const STRONG_BASE: Record<string, unknown> = {
   price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005,
+  constructionType: 'tilt-precast', yearBuilt: 2005,
   sfhaOnPad: false,
   // other-use gate inputs, CONFIRMED (audit 2026-11-08 other-use-gate-unfed-fail-open): fee simple, Phase I clean,
   // no automotive / child-related use. Unknown values now cap at T2, so a "fully-known" deal must carry them.
@@ -383,8 +383,8 @@ describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
 
 describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-14)', () => {
   it('Basis divides by the ratified RCT, not a caller scalar: an honest high basis is KILLED', () => {
-    // RCT v03: STRONG_BASE has no market ⇒ conservative fallback (KC, low=$227.90/SF).
-    // 60k SF × $227.90 = $13.674M replacement; $7M all-in ⇒ ~48.8% discount < 60% floor
+    // RCT v3.2: STRONG_BASE has no market ⇒ conservative fallback (Chicago Cook County IL, low=$225.59/SF).
+    // 60k SF × $225.59 = $13.535M replacement; $7M all-in ⇒ ~48.3% discount < 60% floor
     // (built 2005, post-cutoff) ⇒ KILLED.
     const s = score(strongDeal({ allInBasis: 7_000_000 }));
     expect(s.verdict).toBe('KILLED');
@@ -396,7 +396,7 @@ describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-1
     expect(s.dataQuality.some((d) => d.field === 'replacementCostTotal')).toBe(true);
   });
   it('Basis is RCT-backed even with no caller replacementCostTotal (STRONG_BASE omits it)', () => {
-    // RCT v03: $1.2M all-in vs $13.674M conservative-fallback replacement ⇒ ~91.2% discount.
+    // RCT v3.2: $1.2M all-in vs $13.535M conservative-fallback replacement ⇒ ~91.1% discount.
     const basis = score(strongDeal()).floors.find((f) => f.id === 'basis');
     expect(basis?.passed).toBe(true);
     expect(basis?.actual ?? 0).toBeGreaterThan(0.9);

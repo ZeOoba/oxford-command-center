@@ -11,6 +11,7 @@
 // not emit a capital-allocation verdict until Gabriel ratifies. Nothing here is `ratified` until he signs.
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
+import { RCT_ADDER_IDS, RCT_CONSTRUCTION_TYPES } from '../lib/rct-adjust';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
 export const RULESET_VERSION = '2.0.0' as const;
@@ -36,7 +37,7 @@ export type Ratification = z.infer<typeof Ratification>;
  * The rctVersion is folded into inputsVersion, so bumping it correctly invalidates every score
  * cached under the old denominator. That is intended: those scores are stale, not merely old.
  */
-export const RCT_VERSION = 'replacement-cost.v3.1' as const;
+export const RCT_VERSION = 'replacement-cost.v3.2' as const;
 
 /** One market's all-in shallow-bay band. Basis floor and Basis score divide by `low`. */
 export const MarketRct = z.object({
@@ -58,8 +59,31 @@ export const ReplacementCostTable = z.object({
   basis: z.string(),
   /** CONSERVATIVE FALLBACK for unknown/uncovered markets — the cheapest-to-build row (strictest floor). */
   psf: z.object({ low: z.number().positive(), mid: z.number().positive(), high: z.number().positive() }),
-  /** Per-market table, keyed by market name. Empty ⇒ every deal falls back to `psf`. */
+  /** Per-market table, keyed by market name. Empty ⇒ every deal falls back to `psf`. Every row is the tilt-up baseline. */
   markets: z.record(z.string(), MarketRct).default({}),
+  /** Construction-Type Multiplier Schedule (SKILL.md v4.37; every value [EST]). Applied to POINT before the adders. */
+  constructionMultipliers: z.object({
+    'tilt-precast': z.number().positive(),
+    cmu: z.number().positive(),
+    brick: z.number().positive(),
+    hybrid: z.number().positive(),
+    pemb: z.object({
+      under20k: z.number().positive(),
+      under40k: z.number().positive(),
+      upTo50k: z.number().positive(),
+      above50k: z.number().positive(),
+    }),
+    unknownCap: z.number().positive(),
+  }),
+  /** Adder schedule, $/SF added to the multiplied POINT (SKILL.md "Adder schedule"). */
+  adders: z.object({
+    'heavy-office': z.number().nonnegative(),
+    'climate-controlled': z.number().nonnegative(),
+    cranes: z.number().nonnegative(),
+    esfr: z.number().nonnegative(),
+    'excess-site-work': z.number().nonnegative(),
+    'paving-lighting': z.number().nonnegative(),
+  }),
 })
   .refine(
     (t) => Object.values(t.markets).every((m) => m.point > m.cwHardPsf),
@@ -85,8 +109,21 @@ export type ScorecardCategoryId = z.infer<typeof ScorecardCategoryId>;
 export const ClusterTier = z.enum(['owned-submarket', 'established', 'entry', 'satellite', 'none']);
 export type ClusterTier = z.infer<typeof ClusterTier>;
 
-export const ConstructionType = z.enum(['block-tilt-brick', 'mixed', 'pemb', 'unknown']);
+/**
+ * Construction type (SKILL.md v4.37 Construction-Type Multiplier Schedule). Split 2026-11-12 from the pre-v4.37 lump
+ * `block-tilt-brick`, which could not express the RCT multiplier: block ×0.97, tilt-up ×1.00 and brick ×1.10 differ.
+ * A stored or extracted legacy `block-tilt-brick` parses as `cmu` (Gabriel ruling 2026-11-12: the strictest of its
+ * members short of PEMB). The Cat-3 construction score is unchanged by the split: tilt/CMU/brick take the
+ * block-tilt-brick points, hybrid takes the mixed points.
+ */
+export const LEGACY_BLOCK_TILT_BRICK = 'block-tilt-brick' as const;
+export const ConstructionType = z.preprocess(
+  (v) => (v === LEGACY_BLOCK_TILT_BRICK ? 'cmu' : v),
+  z.enum(RCT_CONSTRUCTION_TYPES),
+);
 export type ConstructionType = z.infer<typeof ConstructionType>;
+export const RctAdder = z.enum(RCT_ADDER_IDS);
+export type RctAdder = z.infer<typeof RctAdder>;
 
 export const DdCriticalId = z.enum(['flood', 'zoning', 'roof', 'deferred-maintenance-capex']); // SKILL.md:69–75
 export type DdCriticalId = z.infer<typeof DdCriticalId>;
@@ -265,6 +302,9 @@ export const AcquisitionInput = z.object({
   multiStory: z.boolean().nullable().default(null),
   truckCourtFt: z.number().nullable().default(null),
   constructionType: ConstructionType.nullable().default(null),
+  // RCT adders the subject genuinely carries (SKILL.md adder schedule). null / [] = none applied, which is the
+  // stricter denominator (an adder only raises replacement cost), so an unassessed list never loosens the floor.
+  rctAdders: z.array(RctAdder).nullable().default(null),
   yearBuilt: z.number().int().nullable().default(null),
 
   // flood (gate: flood)

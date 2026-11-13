@@ -61,10 +61,15 @@ const CLUSTER_TIERS = [
   { value: 'owned-submarket', label: 'ORA-owned submarket' }, { value: 'established', label: 'Established cluster' },
   { value: 'entry', label: 'Entry cluster' }, { value: 'satellite', label: 'Satellite (≤30 min)' }, { value: 'none', label: 'Outside clusters' },
 ];
+// SKILL.md v4.37 Construction-Type Multiplier Schedule. Unknown prices at the strictest multiplier (PEMB, capped ×0.90).
 const CONSTRUCTION = [
-  { value: 'block-tilt-brick', label: 'Block / tilt-up / brick' }, { value: 'mixed', label: 'Mixed' },
-  { value: 'pemb', label: 'All-metal PEMB' }, { value: 'unknown', label: 'Unknown' },
+  { value: 'tilt-precast', label: 'Tilt-up / precast (×1.00)' }, { value: 'cmu', label: 'CMU / block (×0.97)' },
+  { value: 'brick', label: 'Brick / brick-on-block (×1.10)' }, { value: 'hybrid', label: 'Hybrid: block + metal on PEMB (×0.93)' },
+  { value: 'pemb', label: 'PEMB / metal panel (×0.88–0.92 by SF)' }, { value: 'mixed', label: 'Mixed façade (strictest)' },
+  { value: 'unknown', label: 'Unknown (strictest)' },
 ];
+/** Form keys `adder:<id>` assemble into AcquisitionInput.rctAdders (checkboxes; only a ticked adder is applied). */
+const ADDER_PREFIX = 'adder:';
 const CONFIDENCE = ['confirmed', 'estimated', 'derived'].map((v) => ({ value: v, label: v }));
 // Markets with a replacement-cost row (RCT v03). The engine divides the Basis floor/score by THIS market's
 // LOW; with no market it silently uses the strictest (cheapest-market) fallback, so the form must carry it
@@ -89,7 +94,13 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     { key: 'hasDriveIn', label: 'Has drive-in(s)', kind: 'tribool' },
     { key: 'driveInCount', label: 'Drive-in count', kind: 'num' },
     { key: 'truckCourtFt', label: 'Truck court (ft)', kind: 'num' },
-    { key: 'constructionType', label: 'Construction', kind: 'select', options: CONSTRUCTION },
+    { key: 'constructionType', label: 'Construction', kind: 'select', options: CONSTRUCTION, hint: 'sets the RCT multiplier' },
+    { key: 'adder:heavy-office', label: 'RCT adder: office > 30% (+$15)', kind: 'ddbool' },
+    { key: 'adder:climate-controlled', label: 'RCT adder: climate-controlled (+$12)', kind: 'ddbool' },
+    { key: 'adder:cranes', label: 'RCT adder: cranes (+$18)', kind: 'ddbool' },
+    { key: 'adder:esfr', label: 'RCT adder: ESFR (+$4)', kind: 'ddbool' },
+    { key: 'adder:excess-site-work', label: 'RCT adder: excess site work (+$8)', kind: 'ddbool' },
+    { key: 'adder:paving-lighting', label: 'RCT adder: paving/lot lighting (+$8)', kind: 'ddbool', hint: 'not with site work for the same paving' },
     { key: 'yearBuilt', label: 'Year built', kind: 'num' },
     { key: 'sfhaOnPad', label: 'SFHA flood on pad', kind: 'tribool' },
   ] },
@@ -185,10 +196,15 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
   const out: Record<string, unknown> = { dealId };
   const ddKnown: Record<string, boolean> = {};
   const useBits: Record<string, boolean> = {};
+  const adders: string[] = [];
   for (const group of FIELD_GROUPS) {
     for (const spec of group.fields) {
       const raw = form[spec.key];
       if (raw === undefined) continue;
+      if (spec.key.startsWith(ADDER_PREFIX)) {
+        if (raw === 'true') adders.push(spec.key.slice(ADDER_PREFIX.length));
+        continue;
+      }
       if (spec.key.startsWith(USE_PREFIX)) {
         if (raw === 'yes') useBits[spec.key.slice(USE_PREFIX.length)] = true;
         else if (raw === 'no') useBits[spec.key.slice(USE_PREFIX.length)] = false;
@@ -207,6 +223,7 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
     }
   }
   if (Object.keys(ddKnown).length > 0) out.ddKnown = ddKnown;
+  if (adders.length > 0) out.rctAdders = adders;
   const use = assembleUse(useBits);
   if (use !== null) out.use = use;
   // Tenure "No (fee simple)" means there is no ground lease, so a leftover term in the form (e.g. from an earlier OM pass)
@@ -282,8 +299,13 @@ export function inputToForm(input: AcquisitionInput): FormState {
   const f: FormState = {};
   const rec = input as unknown as Record<string, unknown>;
   const dd = (input.ddKnown ?? {}) as Record<string, boolean | undefined>;
+  const adders = new Set<string>(input.rctAdders ?? []);
   for (const group of FIELD_GROUPS) {
     for (const spec of group.fields) {
+      if (spec.key.startsWith(ADDER_PREFIX)) {
+        if (adders.has(spec.key.slice(ADDER_PREFIX.length))) f[spec.key] = 'true';
+        continue;
+      }
       if (spec.kind === 'ddbool') {
         if (dd[spec.key.slice(3)] === true) f[spec.key] = 'true';
         continue;
@@ -377,6 +399,8 @@ export function applyDealMarket(form: FormState, deal: (Pick<Deal, 'sf'> & { mar
  *  on screen saying the skill's local-quote rule applies (refute wf_f6699a8b-92b). Surface them. */
 export function denominatorNotes(score: Pick<AcquisitionScore, 'dataQuality'>): string[] {
   return score.dataQuality
-    .filter((d) => d.field === 'replacementCost' && /PROXY|not supplied|not in /.test(d.issue))
+    .filter((d) => d.field === 'rctAdders'
+      || (d.field === 'maxBuildingSf' && /size tilt/.test(d.issue))
+      || (d.field === 'replacementCost' && /PROXY|not supplied|not in |strictest applicable multiplier|size-tilt band|size tilt/.test(d.issue)))
     .map((d) => d.issue);
 }

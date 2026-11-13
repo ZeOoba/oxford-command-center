@@ -29,7 +29,12 @@ const PRIOR_RCT = {
   'Richmond VA': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: true },
   'Des Moines IA': { low: 231.66, point: 257.4, high: 283.14, cwHardPsf: 131.46, proxy: true },
   'Louisville KY': { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false },
+  // RCT v3.2 (2026-11-12, Gabriel in-turn): the one row added since the freeze; every prior row is unchanged.
+  'Chicago Cook County IL': { low: 225.59, point: 250.66, high: 275.73, cwHardPsf: 127.79, proxy: false },
 } as const;
+// Every value below is the tilt-up baseline (×1.00, no adders), so the pre-v3.2 arithmetic is unchanged for it. The
+// construction multiplier, adders and the true all-in walk are pinned in tests/unit/rct-construction-type.test.ts.
+const BASELINE = { constructionType: 'tilt-precast', capex: 0, leaseUpCarry: 0 } as const;
 const priorVintageFloor = (y: number | null | undefined): number => {
   const c = Math.min(2005, Math.max(1995, y ?? 1995));
   return 0.65 - (c - 1995) * 0.005;
@@ -77,7 +82,7 @@ describe('client basis-floor engine reads the ratified config (values unchanged)
   it('replacementCostAnalysis output is unchanged across the vintage ramp and the uncovered-market branch', () => {
     for (const market of [...Object.keys(PRIOR_RCT), 'Toledo OH', null] as const) {
       for (const yearBuilt of [null, 1960, 1995, 1998, 2000, 2003, 2005, 2010]) {
-        const r = replacementCostAnalysis({ sf: 40_000, estPrice: 3_500_000, market: market as never, yearBuilt });
+        const r = replacementCostAnalysis({ sf: 40_000, estPrice: 3_500_000, market: market as never, yearBuilt, ...BASELINE });
         const entry = market ? PRIOR_RCT[market as keyof typeof PRIOR_RCT] : undefined;
         expect(r!.vintageFloorPct).toBe(priorVintageFloor(yearBuilt));
         expect(r!.marketCovered).toBe(entry !== undefined);
@@ -116,7 +121,7 @@ describe('client vintage floor fails closed on an unratified ruleset', () => {
   });
 
   it('with no ratified floors the analysis prices the RCT but scores no basis verdict', () => {
-    const r = replacementCostAnalysisWith({ sf: 40_000, estPrice: 1_000_000, market: 'Columbus OH', yearBuilt: 2000 }, null)!;
+    const r = replacementCostAnalysisWith({ sf: 40_000, estPrice: 1_000_000, market: 'Columbus OH', yearBuilt: 2000, ...BASELINE }, null)!;
     expect(r.marketCovered).toBe(true);
     expect(r.low).toBe(40_000 * PRIOR_RCT['Columbus OH'].low);
     expect(r.vintageFloorPct).toBeNull();
@@ -146,7 +151,8 @@ describe('drawer vintage note and RCT version follow the ratified configs', () =
   });
 
   it('an RCT config whose rctVersion is not the version the server accepts prices nothing', () => {
-    expect(rctFromConfig({ ...rctJson, rctVersion: 'replacement-cost.v3.2' })).toEqual({});
+    expect(rctFromConfig({ ...rctJson, rctVersion: 'replacement-cost.v3.1' })).toEqual({}); // the pre-v3.2 version
+    expect(rctFromConfig({ ...rctJson, rctVersion: 'replacement-cost.v3.3' })).toEqual({});
     expect(rctFromConfig({ ...rctJson, rctVersion: undefined })).toEqual({});
   });
 });

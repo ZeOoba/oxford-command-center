@@ -7,7 +7,7 @@ import type { DraftRequest } from './draft';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
-import { replacementCostAnalysis } from './replacement-cost';
+import { rcDealFor, replacementCostAnalysis } from './replacement-cost';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { GaugeRing } from '@/primitives/GaugeRing';
 import { useAcqIntel } from '@/modules/acquisitions/grader-hooks';
@@ -71,7 +71,9 @@ export function DealDrawer({
   }, [onClose]);
 
   const ns = deal ? nextStage(deal.stage) : null;
-  const rc = deal ? replacementCostAnalysis(deal) : null;
+  // One record per basis test: with a saved underwriting input, every field (numerator, SF, market, type, adders,
+  // vintage) comes from it, exactly as the engine scored it (rcDealFor, refute-gated in replacement-cost.ts).
+  const rc = deal ? replacementCostAnalysis(rcDealFor(deal, acqInput)) : null;
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Deal detail">
@@ -166,19 +168,46 @@ export function DealDrawer({
                           <Row label="Basis" value={rc.basis} />
                           <Row label="Replacement (range)" value={`${fmtUsdCompact(rc.low)} – ${fmtUsdCompact(rc.high)}`} />
                           <Row label="Replacement (point)" value={fmtUsd(rc.mid)} />
-                          <Row label="Deal basis" value={rc.basisPsf !== null ? `$${rc.basisPsf.toFixed(2)}/SF (incl. 2% closing)` : '—'} />
+                          <Row label="Construction" value={rc.multiplierLabel ?? '—'} />
+                          <Row
+                            label="Deal basis"
+                            value={rc.basisPsf === null ? '—'
+                              : rc.basisFromSavedAllIn ? `$${rc.basisPsf.toFixed(2)}/SF (saved all-in basis)`
+                              : `$${rc.basisPsf.toFixed(2)}/SF (incl. 2% closing${rc.excludesCapexCarry ? ') [EXCL. CAPEX/CARRY]' : ', CapEx and carry)'}`}
+                          />
                           <Row label="Basis floor" value={rc.floorPsf !== null ? `$${rc.floorPsf.toFixed(2)}/SF` : '—'} />
-                          <Row label="Walk price" value={rc.walkPrice !== null ? fmtUsd(rc.walkPrice) : '—'} />
+                          {/* Without CapEx and lease-up carry the walk is overstated, and the walk is a price ceiling: show it as an upper bound. */}
+                          <Row
+                            label={rc.excludesCapexCarry ? 'Walk price (upper bound)' : 'Walk price'}
+                            value={rc.walkPrice !== null ? `${fmtUsd(rc.walkPrice)}${rc.excludesCapexCarry ? ' [EXCL. CAPEX/CARRY]' : ''}` : '—'}
+                          />
+                          {rc.walkPriceAtBaseline !== null && (
+                            <Row label="Walk at ×1.00 (sensitivity)" value={fmtUsd(rc.walkPriceAtBaseline)} />
+                          )}
                           <Row label="Price vs. Replacement" value={rc.basisToPoint !== null ? `${(rc.basisToPoint * 100).toFixed(0)}% of replacement` : '—'} />
                           {rc.verdict && (
                             <div className="pt-1">
-                              <Badge tone={rc.verdict === 'Clears basis floor' ? 'green' : 'red'}>{rc.verdict}</Badge>
+                              <Badge tone={rc.verdict === 'Clears basis floor' ? 'green' : 'red'}>
+                                {rc.verdict}{rc.verdict === 'Clears basis floor' && rc.excludesCapexCarry && !rc.basisFromSavedAllIn ? ' (excl. CapEx/carry)' : ''}
+                              </Badge>
                             </div>
                           )}
                           {rc.proxy && (
                             <div className="text-2xs pt-1" style={{ color: 'var(--text-warn)' }}>
                               [PROXY] denominator: this market's replacement cost is a neighbouring-metro stand-in (DENOMINATOR-SENSITIVE).
                               A local insurance comp or GC quote is required before an LOI, regardless of how close to the floor this reads.
+                            </div>
+                          )}
+                          {rc.onFallback && (
+                            <div className="text-2xs pt-1" style={{ color: 'var(--text-warn)' }}>
+                              The saved underwriting market has no RCT row, so this is priced on the strictest firm-wide fallback, as the engine scores it.
+                              Set a covered market on the scoring form for a per-market basis.
+                            </div>
+                          )}
+                          {rc.multiplierAssumed && (
+                            <div className="text-2xs pt-1" style={{ color: 'var(--text-warn)' }}>
+                              Construction type unknown — strictest multiplier ({rc.multiplierLabel}) assumed; the ×1.00 line is a sensitivity only.
+                              Confirm the type from the OM, CAMA or photos.
                             </div>
                           )}
                           {/* Year from the ratified ruleset (refute wf_3d47a7eb-3e0); absent when no floor is scored (fail closed). */}

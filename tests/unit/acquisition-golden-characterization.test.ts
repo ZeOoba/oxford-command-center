@@ -35,7 +35,7 @@ const FROZEN: Record<string, unknown> = {
   price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005,
+  constructionType: 'tilt-precast', yearBuilt: 2005,
   sfhaOnPad: false,
   allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket',
@@ -72,8 +72,11 @@ function seededGovernorFingerprint(): string {
 // inputs unleveredIrr10yr, ust10yr, ustAsOf and vacantSfShareAtClose (default null), so the parsed-input hash moved.
 // Deliberate. The ruleset version bump already marks every persisted score stale (acq-score-freshness), and the same
 // migration plan applies: restart the Brain Server and run rescoreStaleCandidates. Previous pins: 9822252ee189ddaf / ff9faf6d20ed5866.
-const PIN_LEGACY = '27340762df9a6cb9';
-const PIN_WITH_GOVERNORS = '563ba68374d5e1d1';
+// RE-PINNED 2026-11-12 (RCT v3.2, Gabriel in-turn, PR-B): AcquisitionInput gained rctAdders (default null) and RCT_VERSION
+// moved to replacement-cost.v3.2 (Chicago row, cheapest-market fallback, construction-type multiplier + adders). Deliberate:
+// the RCT bump marks every persisted score stale; same migration plan. Previous pins: 27340762df9a6cb9 / 563ba68374d5e1d1.
+const PIN_LEGACY = '06dbc4980d14121e';
+const PIN_WITH_GOVERNORS = 'c61857631b5713df';
 const PIN_GOVERNOR_FINGERPRINT = '1:1.25:0.4:0.085';
 
 describe('golden: inputs_version pin (R-HASH)', () => {
@@ -92,7 +95,7 @@ describe('golden: inputs_version pin (R-HASH)', () => {
 
 describe('golden: floor-to-tier semantics (ratified ruleset)', () => {
   it('a computable basis below the vintage floor hard-fails the basis floor and KILLS', () => {
-    const s = score(deal({ allInBasis: 13_000_000 })); // ~5% discount vs ~$13.67M replacement
+    const s = score(deal({ allInBasis: 13_000_000 })); // ~4% discount vs ~$13.54M replacement (RCT v3.2 fallback)
     const basis = s.floors.find((f) => f.id === 'basis');
     expect(basis?.passed).toBe(false);
     expect(s.verdict).toBe('KILLED');

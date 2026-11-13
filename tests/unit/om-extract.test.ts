@@ -281,7 +281,7 @@ describe('buildOmExtractSchema', () => {
 
   it('constrains constructionType, hasDock, hasDriveIn via anyOf(enum-string, null)', () => {
     expect(schema.properties.constructionType).toEqual({
-      anyOf: [{ type: 'string', enum: ['block-tilt-brick', 'mixed', 'pemb', 'unknown'] }, { type: 'null' }],
+      anyOf: [{ type: 'string', enum: ['tilt-precast', 'cmu', 'brick', 'hybrid', 'pemb', 'mixed', 'unknown'] }, { type: 'null' }],
     });
     expect(schema.properties.hasDock).toEqual({
       anyOf: [{ type: 'string', enum: ['yes', 'no'] }, { type: 'null' }],

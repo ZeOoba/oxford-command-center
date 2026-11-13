@@ -12,7 +12,7 @@ describe('acquisition Workbench form mapping', () => {
     const input = AcquisitionInput.parse({
       dealId: 'd1', price: 4_800_000, totalSf: 60_000, maxBuildingSf: 42_000,
       productType: 'shallow-bay-multi', officePct: 0.1, clearHeightFt: 28,
-      multiStory: false, hasDock: true, dockCount: 6, constructionType: 'block-tilt-brick',
+      multiStory: false, hasDock: true, dockCount: 6, constructionType: 'tilt-precast',
       sfhaOnPad: false, allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12,
       underwriteHorizonYrs: 5, clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
@@ -23,7 +23,7 @@ describe('acquisition Workbench form mapping', () => {
     expect(round.price).toBe(4_800_000);
     expect(round.maxBuildingSf).toBe(42_000);
     expect(round.clusterTier).toBe('owned-submarket');
-    expect(round.constructionType).toBe('block-tilt-brick');
+    expect(round.constructionType).toBe('tilt-precast');
     expect(round.underwriteHorizonYrs).toBe(5);
     expect(round.stabilizedYoc).toBeCloseTo(0.12, 9);   // pct round-trip
     expect(round.sellerMotivationScore).toBeCloseTo(0.8, 9); // frac01 round-trip
@@ -113,7 +113,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
     const BASE: Record<string, unknown> = {
       dealId: 'm', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000, productType: 'shallow-bay-multi', officePct: 0.1,
       clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-      constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false, groundLeased: false, envRemediationPctOfPrice: 0,
+      constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false, groundLeased: false, envRemediationPctOfPrice: 0,
       allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
       sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
       ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -205,7 +205,7 @@ describe('RCT v03 hygiene — the Workbench form must not present the retired fl
 });
 
 // OI-356 (cc-audit-army 2026-09-28): no live UI path ever set AcquisitionInput.market, so every UI-scored
-// deal scored on the strictest firm-wide fallback (Kansas City LOW) while the deal drawer priced the deal by
+// deal scored on the strictest firm-wide fallback (the cheapest-market LOW: Kansas City then, Chicago Cook County IL since RCT v3.2) while the deal drawer priced the deal by
 // its own market. The form now carries the market, so the engine and the drawer use the same denominator.
 describe('market plumbing: the deal form carries the market to the engine (OI-356)', () => {
   const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));

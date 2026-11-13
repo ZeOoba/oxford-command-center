@@ -63,7 +63,7 @@ const STRONG_RAW: Record<string, unknown> = {
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6,
   multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
+  constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,

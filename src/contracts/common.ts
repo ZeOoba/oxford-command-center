@@ -76,6 +76,8 @@ export const Market = z.enum([
   'Des Moines IA',
   'Louisville KY',
   'Richmond VA',
+  // Chicago–Greater Cook County IL (SKILL.md 11th canonical cluster, ENTRY; RCT row ratified 2026-11-12).
+  'Chicago Cook County IL',
   'Other',
   'Unknown',
 ]);

@@ -7,7 +7,7 @@
     { "key": "yearBuilt",        "desc": "Year the building was constructed (4-digit integer). OM synonyms: year built, constructed, vintage." },
     { "key": "clearHeightFt",    "desc": "Interior clear ceiling height in feet. Number only. OM synonyms: clear height, clear ceiling height." },
     { "key": "officePct",        "desc": "Office percentage of total building area, 0–100 (NOT decimal). OM synonyms: office percentage, office buildout, office ratio." },
-    { "key": "constructionType", "desc": "Output exactly one of: block-tilt-brick (masonry/tilt-up/block/brick), mixed, pemb (all-metal/pre-engineered), unknown.", "enum": ["block-tilt-brick", "mixed", "pemb", "unknown"] },
+    { "key": "constructionType", "desc": "Exterior wall construction. Output exactly one of: tilt-precast (tilt-up or precast concrete panels), cmu (concrete block / CMU), brick (brick, brick-on-block, brick veneer), hybrid (block wainscot with metal panel above on a pre-engineered steel frame), pemb (all-metal pre-engineered / steel frame with metal panel), mixed (a mixed facade not covered above), unknown.", "enum": ["tilt-precast", "cmu", "brick", "hybrid", "pemb", "mixed", "unknown"] },
     { "key": "hasDock",          "desc": "Whether the property has dock-high loading doors. Output: yes or no.", "enum": ["yes", "no"] },
     { "key": "dockCount",        "desc": "Number of dock doors (integer). OM synonyms: dock doors, loading docks." },
     { "key": "hasDriveIn",       "desc": "Whether the property has grade-level drive-in doors. Output: yes or no. OM synonyms: drive-in doors, grade-level doors.", "enum": ["yes", "no"] },

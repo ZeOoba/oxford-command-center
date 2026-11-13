@@ -29,7 +29,7 @@ const BASE: Record<string, unknown> = {
   price: 3_500_000, maxBuildingSf: 42_000, totalSf: TOTAL_SF,
   productType: 'shallow-bay-multi', officePct: 0.1,
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
-  constructionType: 'block-tilt-brick', yearBuilt: 2005,
+  constructionType: 'tilt-precast', yearBuilt: 2005,
   sfhaOnPad: false,
   allInBasis: 1_200_000, stabilizedYoc: 0.12,
   unleveredIrr10yr: 0.12, ust10yr: 0.043, ustAsOf: '2026-11-10', vacantSfShareAtClose: 0,

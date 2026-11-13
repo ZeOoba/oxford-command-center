@@ -83,7 +83,7 @@ JOIN acq_score_inputs i ON i.id = s.score_input_id
 LEFT JOIN acq_candidates c ON c.id = s.candidate_id
 WHERE s.id = (SELECT s2.id FROM acq_scores s2 WHERE s2.candidate_id = s.candidate_id
               ORDER BY s2.scored_at DESC, s2.id DESC LIMIT 1)
-  AND (i.ruleset_version <> '2.0.0' OR i.rct_version <> 'replacement-cost.v3.1')
+  AND (i.ruleset_version <> '2.0.0' OR i.rct_version <> 'replacement-cost.v3.2')
 ORDER BY s.scored_at DESC
 ```
 
