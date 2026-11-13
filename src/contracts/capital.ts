@@ -85,7 +85,8 @@ export const PortfolioAllocation = z.object({
     market: ClusterTier.nullable(),
     composite: z.number().nullable(),
     tier: z.enum(['T1', 'T2', 'PASS', 'KILLED']).nullable(),
-    leveredIrr: z.number().nullable(),
+    /** The 'irr' floor actual: 10-yr UNLEVERED IRR (acquisition ruleset 2.0.0). Levered IRR is not carried here. */
+    unleveredIrr10yr: z.number().nullable(),
     basisDiscountPct: z.number().nullable(),
     /** Refute H3: the PERSISTED verdict (tier alone can read T1 next to a governor-demoted PASS on
      *  pre-fix rows) and whether this candidate passed every BUY-gate condition. Optional so older

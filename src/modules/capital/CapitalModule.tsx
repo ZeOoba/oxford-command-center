@@ -503,7 +503,7 @@ export function CapitalModule() {
                   </span>
                 )}
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  IRR {fmtPct(c.leveredIrr)}
+                  Unlev. IRR (10y) {fmtPct(c.unleveredIrr10yr)}
                 </span>
                 {c.basisDiscountPct !== null && (
                   <span style={{ fontSize: 12, color: 'var(--text-pos)' }}>

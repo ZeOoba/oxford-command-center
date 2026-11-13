@@ -108,8 +108,13 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     // engine's Basis floor/score divisor is HARDCODED to the per-market RCT v03 LOW (2026-07-14
     // refute fix; see server/warehouse/acquisition.ts `rcBand`). Its option labels also asserted the
     // retired flat $125/$137.50/$150 table, superseded by the per-market RCT v03 (ratified 2026-07-14).
-    { key: 'stabilizedYoc', label: 'Stabilized YoC', kind: 'pct', hint: '≥ 8% floor' },
-    { key: 'leveredIrr', label: 'Levered IRR', kind: 'pct', hint: '≥ 15% (5yr) / 12% (10yr)' },
+    { key: 'stabilizedYoc', label: 'Stabilized YoC', kind: 'pct', hint: '> 8% floor' },
+    // IRR floor (ruleset 2.0.0): 10-yr UNLEVERED IRR >= MAX(10%, UST + 550 bps), +100 bps if > 50% vacant at close.
+    { key: 'unleveredIrr10yr', label: 'Unlevered IRR (10-yr)', kind: 'pct', hint: '≥ MAX(10%, UST + 5.5%); +1% if > 50% vacant' },
+    { key: 'ust10yr', label: '10-yr UST (30-day avg)', kind: 'pct', hint: 'FRED DGS10; blank = tested at 10%' },
+    { key: 'ustAsOf', label: 'UST as of', kind: 'date' },
+    { key: 'vacantSfShareAtClose', label: 'Vacant SF at close', kind: 'pct', hint: '> 50% adds 100 bps to the IRR floor' },
+    { key: 'leveredIrr', label: 'Levered IRR', kind: 'pct', hint: 'reported only, not a floor' },
     { key: 'underwriteHorizonYrs', label: 'UW horizon', kind: 'numselect', options: [{ value: '5', label: '5-year' }, { value: '10', label: '10-year' }] },
   ] },
   { title: 'Market', fields: [

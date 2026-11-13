@@ -297,7 +297,7 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
       const mkt = p.market ? esc(p.market) : DASH;
       const comp = p.composite !== null ? pct0(p.composite) : DASH;
       const tier = p.tier ? esc(p.tier) : DASH;
-      const irr = p.leveredIrr !== null ? pct1(p.leveredIrr * 100) : DASH;
+      const irr = p.unleveredIrr10yr !== null ? pct1(p.unleveredIrr10yr * 100) : DASH;
       const disc = p.basisDiscountPct !== null ? pct1(p.basisDiscountPct * 100) : DASH;
       // Refute H3: persisted verdict + BUY eligibility beside the tier — a legacy row can carry
       // tier T1 next to a governor-demoted PASS; absent buyEligible reads as Not eligible.
@@ -330,7 +330,7 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
         <tr>
           <th>Address</th><th>Market</th><th class="ic-r">Tier</th>
           <th class="ic-r">Verdict</th><th class="ic-r">BUY</th>
-          <th class="ic-r">Composite</th><th class="ic-r">Levered IRR</th><th class="ic-r">Basis Discount</th>
+          <th class="ic-r">Composite</th><th class="ic-r">Unlevered IRR (10-yr)</th><th class="ic-r">Basis Discount</th>
         </tr>
       </thead>
       <tbody>

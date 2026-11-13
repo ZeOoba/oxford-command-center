@@ -55,7 +55,10 @@ const STRONG_RAW: Record<string, unknown> = {
   multiStory: false, truckCourtFt: 120,
   constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
   groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false }, // other-use gate confirmed (audit 2026-11-08)
-  allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5,
+  // Ruleset 2.0.0 moved Basis full credit 0.90 -> 0.76, which lifts the Basis points of a fixed discount. 4,472,480 is the
+  // basis whose Basis points under 0.76 equal 3,600,000's under 0.90 (11.39 of 25), so every composite this file pins
+  // (80.6 / 74.6 / 63.6 ...) and the BUY-gate boundaries they exercise are unchanged: only the ramp anchor moved.
+  allInBasis: 4_472_480, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -168,19 +171,19 @@ describe('BUY gate — governor-demoted verdict (audit 2026-10-13 G1)', () => {
 });
 
 // ── Audit 2026-10-13 G2: score_json is parsed with the AcquisitionScore schema; basis discount and
-// levered IRR come from floors[] ('basis' / 'irr'); the basis floor is the RATIFIED ruleset's
+// 10-yr unlevered IRR come from floors[] ('basis' / 'irr'); the basis floor is the RATIFIED ruleset's
 // vintage floor (no separate unratified 5% constant); an indeterminate basis is never buyable.
 const NO_BASIS_WATCH = { allInBasis: null, valueAddScore: 1, sellerMotivationScore: 1, marketRentPsf: 9, waltYears: 0.5, stabilizedYoc: 0.2 };
 
 describe('BUY gate — score_json schema + floors (audit 2026-10-13 G2)', () => {
-  it('basisDiscountPct / leveredIrr come from the real score floors[]', async () => {
+  it('basisDiscountPct / unleveredIrr10yr come from the real score floors[]', async () => {
     const db = freshDb();
     await seedScored(db, 'cand-floors');
     const real = scoreAcquisition(input({ dealId: 'cand-floors' }), RULESET, { rct: RCT });
     const { result } = await buy(db);
     const c = result.pipeline.find((p) => p.candidateId === 'cand-floors')!;
     expect(c.basisDiscountPct).toBe(real.floors.find((f) => f.id === 'basis')!.actual);
-    expect(c.leveredIrr).toBe(real.floors.find((f) => f.id === 'irr')!.actual);
+    expect(c.unleveredIrr10yr).toBe(real.floors.find((f) => f.id === 'irr')!.actual);
     expect(c.basisDiscountPct).not.toBeNull();
   });
 
@@ -213,7 +216,7 @@ describe('BUY gate — score_json schema + floors (audit 2026-10-13 G2)', () => 
     const { result, buyVerdicts } = await buy(db);
     const c = result.pipeline.find((p) => p.candidateId === 'cand-bad-json')!;
     expect(c.basisDiscountPct).toBeNull();
-    expect(c.leveredIrr).toBeNull();
+    expect(c.unleveredIrr10yr).toBeNull();
     expect(buyVerdicts).toHaveLength(0);
   });
 
@@ -247,7 +250,7 @@ describe('BUY gate — score_json schema + floors (audit 2026-10-13 G2)', () => 
   it('real PASS and KILLED scores are never buyable', async () => {
     const db = freshDb();
     await seedScored(db, 'cand-pass', { clusterTier: 'entry', valueAddScore: 0, sellerMotivationScore: 0, clearHeightFt: 16, truckCourtFt: 50, dockCount: 1, driveInCount: 1, inPlaceRentPsf: 6, marketRentPsf: 6, waltYears: 6 });
-    await seedScored(db, 'cand-killed', { leveredIrr: 0.05 });
+    await seedScored(db, 'cand-killed', { unleveredIrr10yr: 0.05 });
     const { buyVerdicts } = await buy(db);
     expect(buyVerdicts).toHaveLength(0);
   });
@@ -444,27 +447,27 @@ describe('pipeline items — verdict + buyEligible (refute H3)', () => {
   });
 });
 
-// ── Refute round 2 T1: an UNKNOWN levered IRR caps at WATCH in the engine (irr floor
+// ── Refute round 2 T1: an UNKNOWN 10-yr unlevered IRR caps at WATCH in the engine (irr floor
 // indeterminate) while a known failing IRR is KILLED — it must not reach BUY.
 describe('BUY gate — unevaluated IRR floor (refute round 2 T1)', () => {
-  it('precondition: leveredIrr = null is a real T2 WATCH ≥ 70 with an indeterminate irr floor', () => {
-    const s = scoreAcquisition(input({ leveredIrr: null }), RULESET, { rct: RCT });
+  it('precondition: unleveredIrr10yr = null is a real T2 WATCH ≥ 70 with an indeterminate irr floor', () => {
+    const s = scoreAcquisition(input({ unleveredIrr10yr: null }), RULESET, { rct: RCT });
     expect(s.verdict).toBe('WATCH');
     expect(s.composite).toBeGreaterThanOrEqual(70);
     expect(s.floors.find((f) => f.id === 'irr')!.actual).toBeNull();
   });
 
-  it('leveredIrr = null is NOT buyable', async () => {
+  it('unleveredIrr10yr = null is NOT buyable', async () => {
     const db = freshDb();
-    await seedScored(db, 'cand-null-irr', { leveredIrr: null });
+    await seedScored(db, 'cand-null-irr', { unleveredIrr10yr: null });
     const { result, buyVerdicts } = await buy(db);
     expect(result.pipeline.find((p) => p.candidateId === 'cand-null-irr')!.buyEligible).toBe(false);
     expect(buyVerdicts).toHaveLength(0);
   });
 
-  it('a known passing IRR (0.16 ≥ the 5yr floor) is still BUY', async () => {
+  it('a known passing unlevered IRR (0.12 ≥ the 10.0% floor) is still BUY', async () => {
     const db = freshDb();
-    await seedScored(db, 'cand-irr-ok', { leveredIrr: 0.16 });
+    await seedScored(db, 'cand-irr-ok', { unleveredIrr10yr: 0.12 });
     expect((await buy(db)).buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-irr-ok']);
   });
 });
@@ -537,7 +540,7 @@ describe('buyGate note wording + counting (refute round 2 T3)', () => {
 
   it('a stale row that would NOT otherwise be T1/T2 PURSUE/WATCH is not counted', async () => {
     const db = freshDb();
-    await seedScored(db, 'cand-stale-killed', { leveredIrr: 0.05 });   // real KILLED
+    await seedScored(db, 'cand-stale-killed', { unleveredIrr10yr: 0.05 });   // real KILLED
     await seedScored(db, 'cand-stale-low', { clusterTier: 'entry', valueAddScore: 0, sellerMotivationScore: 0, clearHeightFt: 16, truckCourtFt: 50, dockCount: 1, driveInCount: 1, inPlaceRentPsf: 6, marketRentPsf: 6, waltYears: 6 }); // real PASS
     bump(db);
     const { result } = await buy(db);

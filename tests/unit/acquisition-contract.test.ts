@@ -136,7 +136,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       productType: 'shallow-bay-multi', clearHeightFt: 24, hasDriveIn: true, hasDock: true,
       dockCount: 4, driveInCount: 4, multiStory: false, constructionType: 'block-tilt-brick',
       yearBuilt: 1998, sfhaOnPad: false, allInBasis: 4_800_000, replacementCostTotal: 6_150_000,
-      stabilizedYoc: 0.095, leveredIrr: 0.16, underwriteHorizonYrs: 5, clusterTier: 'established',
+      stabilizedYoc: 0.095, leveredIrr: 0.16, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'established',
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.8,
     });
     expect(input.dockCount).toBe(4);

@@ -13,7 +13,7 @@ describe('acquisition Workbench form mapping', () => {
       dealId: 'd1', price: 4_800_000, totalSf: 60_000, maxBuildingSf: 42_000,
       productType: 'shallow-bay-multi', officePct: 0.1, clearHeightFt: 28,
       multiStory: false, hasDock: true, dockCount: 6, constructionType: 'block-tilt-brick',
-      sfhaOnPad: false, allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18,
+      sfhaOnPad: false, allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12,
       underwriteHorizonYrs: 5, clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
       ddKnown: { flood: true, roof: true },
@@ -114,7 +114,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
       dealId: 'm', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000, productType: 'shallow-bay-multi', officePct: 0.1,
       clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
       constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false, groundLeased: false, envRemediationPctOfPrice: 0,
-      allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
+      allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
       sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
       ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
     };

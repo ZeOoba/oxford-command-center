@@ -152,6 +152,99 @@ export function basisVintageFloor(yearBuilt: number | null, ruleset: Acquisition
   return strict + ((clamped - start) / (end - start)) * (loose - strict);
 }
 
+/** Floor-comparison precision (1e-8). Both sides of a STAGE 1 IRR/yield comparison are rounded to it, so a percent the
+ *  Grader form converts with n/100 (10.1/100 = 0.10099999999999999) meets a floor computed as 0.046 + 0.055 = 0.101
+ *  (refute wf_27e6656a-51c: 429 of 4,002 exact-boundary form entries were KILLED before this). */
+export function atFloorPrecision(x: number): number {
+  return Math.round(x * 1e8) / 1e8;
+}
+
+/** Parse a date ONLY when it is anchored to UTC: 'YYYY-MM-DD' (parsed as UTC midnight) or an ISO date-time carrying Z
+ *  or an explicit offset. Anything else (a zone-less date-time, '10/13/2026') would be read in the host's local timezone,
+ *  so the same input could flag differently on the local server and the UTC edge function; it returns NaN instead. */
+export function parseUtcAnchoredDate(v: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/.exec(v);
+  if (m === null) return NaN;
+  // Calendar-validate the fields: V8 silently rolls an impossible day forward ('2026-02-30' => 2026-03-02).
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const daysInMonth = mo >= 1 && mo <= 12 ? new Date(Date.UTC(y, mo, 0)).getUTCDate() : 0;
+  if (d < 1 || d > daysInMonth) return NaN;
+  if (m[4] !== undefined && (Number(m[4]) > 23 || Number(m[5]) > 59 || (m[6] !== undefined && Number(m[6]) > 59))) return NaN;
+  return Date.parse(v);
+}
+
+export interface UnleveredIrrFloor {
+  /** The 10-yr unlevered IRR the deal must meet or beat (>=). */
+  required: number;
+  /** When the vacant share at close is UNKNOWN on a not-fully-vacant deal, the floor WITH the majority-vacant premium:
+   *  an IRR between `required` and this value clears only because the premium was skipped, so the floor is
+   *  indeterminate (Gabriel in-turn 2026-11-12: cap at T2 when the unknown share decides). Null otherwise. */
+  requiredIfMajorityVacant: number | null;
+  /** Human-readable derivation for the floor line: UST value and date, and any majority-vacant premium. */
+  basis: string;
+  /** Data-quality flags as [field, issue]. */
+  flags: Array<[string, string]>;
+}
+
+/**
+ * The STAGE 1 IRR floor (ruleset 2.0.0, Gabriel in-turn 2026-11-12; acquisition-underwriting SKILL.md v4.45, v4.33 +
+ * v4.40): MAX(unleveredIrrFloorMin, UST + unleveredIrrUstSpread), + majorityVacantIrrPremium when MORE than
+ * majorityVacantSfShare of the SF is vacant at close.
+ *   - UST unknown ⇒ test at unleveredIrrFloorMin and flag [UST UNVERIFIED] (doctrine's FRED-unreachable rule).
+ *   - Vacant share: isVacant (100% vacant) is decisive and always takes the premium — the strictest reading wins over
+ *     a contradictory share. Otherwise the supplied share decides; unknown ⇒ no premium, flagged (a fully-vacant deal
+ *     is caught by isVacant; a partial vacancy needs the share supplied).
+ * Rounded to 1e-8 so a sum such as 0.05 + 0.055 compares equal to the decimal 0.105 a caller supplies at the boundary.
+ */
+export function unleveredIrrFloor(
+  input: Pick<AcquisitionInput, 'ust10yr' | 'ustAsOf' | 'vacantSfShareAtClose' | 'isVacant' | 'asAtUtc'>,
+  ruleset: AcquisitionRuleset,
+  /** The screen date the UST must be current as of: input.asAtUtc when supplied, else the engine's scoring clock
+   *  (refute wf_47a03538-486: no production caller sets asAtUtc, so the check never ran). Null => unverifiable, flagged. */
+  screenAtIso: string | null = input.asAtUtc,
+): UnleveredIrrFloor {
+  const f = ruleset.floors;
+  const flags: Array<[string, string]> = [];
+  const pct = (x: number, dp: number): string => `${(x * 100).toFixed(dp)}%`;
+  let base = f.unleveredIrrFloorMin;
+  let basis: string;
+  if (input.ust10yr === null) {
+    flags.push(['ust10yr', `[UST UNVERIFIED] 10-yr UST not supplied — IRR floor tested at ${pct(f.unleveredIrrFloorMin, 1)}`]);
+    basis = `MAX(${pct(f.unleveredIrrFloorMin, 1)}, UST + ${pct(f.unleveredIrrUstSpread, 2)}) — UST UNVERIFIED, tested at ${pct(f.unleveredIrrFloorMin, 1)}`;
+  } else {
+    if (input.ustAsOf === null) flags.push(['ustAsOf', '10-yr UST supplied without its as-of date — the floor line must cite value and date']);
+    else {
+      // Doctrine: the trailing 30-day average AS OF THE SCREEN DATE. A UST dated after the screen, or more than 30 days
+      // before it, is still used (it is the cited value) but flagged so a stale or mis-dated rate is visible.
+      const ustAt = parseUtcAnchoredDate(input.ustAsOf);
+      const screenAt = screenAtIso !== null ? parseUtcAnchoredDate(screenAtIso) : NaN;
+      if (Number.isNaN(ustAt)) flags.push(['ustAsOf', `10-yr UST as-of date '${input.ustAsOf}' is not a UTC-anchored date (use YYYY-MM-DD) — recency not checked`]);
+      else if (Number.isNaN(screenAt)) flags.push(['ustAsOf', '10-yr UST recency unverifiable — no usable screen date']);
+      else {
+        // Whole UTC calendar days, so the flag depends only on the two dates, never on the time of day the score runs.
+        const days = Math.floor(screenAt / 86_400_000) - Math.floor(ustAt / 86_400_000);
+        if (days < 0) flags.push(['ustAsOf', `10-yr UST is dated ${input.ustAsOf}, after the screen date — check the rate`]);
+        else if (days > 30) flags.push(['ustAsOf', `10-yr UST is dated ${input.ustAsOf}, ${days} days before the screen — doctrine uses the 30-day average as of the screen date`]);
+      }
+    }
+    base = Math.max(f.unleveredIrrFloorMin, input.ust10yr + f.unleveredIrrUstSpread);
+    basis = `MAX(${pct(f.unleveredIrrFloorMin, 1)}, UST ${pct(input.ust10yr, 2)} as of ${input.ustAsOf ?? 'undated'} + ${pct(f.unleveredIrrUstSpread, 2)})`;
+  }
+  let majorityVacant: boolean;
+  let shareUnknown = false;
+  if (input.isVacant) majorityVacant = true;
+  else if (input.vacantSfShareAtClose !== null) majorityVacant = input.vacantSfShareAtClose > f.majorityVacantSfShare;
+  else {
+    majorityVacant = false;
+    shareUnknown = true;
+    flags.push(['vacantSfShareAtClose', `vacant SF share at close unknown — majority-vacant IRR premium (+${Math.round(f.majorityVacantIrrPremium * 10_000)} bps above ${pct(f.majorityVacantSfShare, 0)} vacant) not applied; if it would decide the floor, the floor is indeterminate`]);
+  }
+  if (majorityVacant) basis += ` + majority-vacant +${Math.round(f.majorityVacantIrrPremium * 10_000)} bps`;
+  const required = atFloorPrecision(base + (majorityVacant ? f.majorityVacantIrrPremium : 0));
+  const requiredIfMajorityVacant = shareUnknown && f.majorityVacantIrrPremium > 0 ? atFloorPrecision(base + f.majorityVacantIrrPremium) : null;
+  return { required, requiredIfMajorityVacant, basis: `10-yr unlevered; ${basis}`, flags };
+}
+
 /** True when an UNKNOWN portfolio status (isPortfolio === null) changes the size-price gate: the price is within the
  *  portfolio cap but above the single-asset cap, so "single asset" would KILL and "portfolio" would pass. Anywhere else
  *  null decides exactly like false (refute wf_6e927240-7cc). Shared by the gate and the inputs_version fold. */
@@ -250,6 +343,7 @@ export function scoreAcquisition(
   opts: ScoreOpts = {},
 ): AcquisitionScore {
   const input = AcquisitionInput.parse(rawInput); // apply defaults (null/false) — never trust a partial caller
+  const scoredAt = opts.now ?? new Date().toISOString();
   const dq: DataQualityFlag[] = [];
   const flag = (field: string, issue: string): void => {
     dq.push({ entity: input.dealId, field, issue, severity: 'warn' });
@@ -457,11 +551,40 @@ export function scoreAcquisition(
   floors.push({ id: 'basis', passed: discount !== null && discount >= vintageFloor, actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required` });
   // yield floor — stabilized YoC
   if (input.stabilizedYoc === null) { floorIndeterminate = true; flag('stabilizedYoc', 'stabilized YoC missing — yield floor indeterminate'); }
-  floors.push({ id: 'yield', passed: input.stabilizedYoc !== null && input.stabilizedYoc >= ruleset.floors.stabilizedYocFloorPct, actual: input.stabilizedYoc, required: ruleset.floors.stabilizedYocFloorPct, detail: input.stabilizedYoc === null ? 'YoC missing' : `${(input.stabilizedYoc * 100).toFixed(1)}% vs ${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}% floor` });
-  // irr floor — levered, horizon-dependent (unknown horizon ⇒ stricter 5yr bar)
-  const irrReq = input.underwriteHorizonYrs === 10 ? ruleset.floors.leveredIrrFloor10yr : ruleset.floors.leveredIrrFloor5yr;
-  if (input.leveredIrr === null) { floorIndeterminate = true; flag('leveredIrr', 'levered IRR missing — IRR floor indeterminate'); }
-  floors.push({ id: 'irr', passed: input.leveredIrr !== null && input.leveredIrr >= irrReq, actual: input.leveredIrr, required: irrReq, detail: input.leveredIrr === null ? 'IRR missing' : `${(input.leveredIrr * 100).toFixed(1)}% vs ${(irrReq * 100).toFixed(0)}% (${input.underwriteHorizonYrs ?? 5}yr)` });
+  // Strictly ABOVE the floor (SKILL.md v4.45 STAGE 1: "stabilized YoC >8%"); exactly 8.0% does not clear.
+  floors.push({ id: 'yield', passed: input.stabilizedYoc !== null && atFloorPrecision(input.stabilizedYoc) > atFloorPrecision(ruleset.floors.stabilizedYocFloorPct), actual: input.stabilizedYoc, required: ruleset.floors.stabilizedYocFloorPct, detail: input.stabilizedYoc === null ? 'YoC missing' : `${(input.stabilizedYoc * 100).toFixed(1)}% vs >${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}% floor` });
+  // irr floor — 10-yr UNLEVERED (ruleset 2.0.0; SKILL.md v4.45 STAGE 1, v4.33 + v4.40). Levered IRR is reported only
+  // and never read here: a strong levered IRR cannot stand in for a missing unlevered one.
+  const irr = unleveredIrrFloor(input, ruleset, input.asAtUtc ?? scoredAt);
+  // Two vacancy inputs exist: isVacant (100% vacant; drives the Tenancy/Value-Add scorecard) and vacantSfShareAtClose
+  // (drives the IRR premium). Disclose a contradiction rather than silently scoring the two halves on different facts.
+  if (input.vacantSfShareAtClose !== null) {
+    if (!input.isVacant && atFloorPrecision(input.vacantSfShareAtClose) >= 1) {
+      flag('vacantSfShareAtClose', 'vacant SF share at close is 100% but the deal is not marked 100% vacant — the scorecard scores it as leased; check the inputs');
+    } else if (input.isVacant && atFloorPrecision(input.vacantSfShareAtClose) < 1) {
+      flag('vacantSfShareAtClose', `deal is marked 100% vacant but vacant SF share at close is ${(input.vacantSfShareAtClose * 100).toFixed(0)}% — the IRR floor takes the majority-vacant premium; check the inputs`);
+    }
+  }
+  for (const [field, issue] of irr.flags) flag(field, issue);
+  if (input.unleveredIrr10yr === null) { floorIndeterminate = true; flag('unleveredIrr10yr', '10-yr unlevered IRR missing — IRR floor indeterminate (levered IRR is reported only, never the floor)'); }
+  const irrCmp = input.unleveredIrr10yr === null ? null : atFloorPrecision(input.unleveredIrr10yr);
+  // Unknown vacant share decides the floor: the IRR clears without the majority-vacant premium but not with it. The
+  // floor is then INDETERMINATE (null actual: caps at T2, not BUY-eligible, never KILLED) until the share is supplied
+  // (Gabriel in-turn 2026-11-12). The IRR itself stays visible in the detail line.
+  const irrUndecided = irrCmp !== null && irrCmp >= irr.required
+    && irr.requiredIfMajorityVacant !== null && irrCmp < irr.requiredIfMajorityVacant;
+  const irrDetailValue = input.unleveredIrr10yr === null ? '10-yr unlevered IRR missing' : `${(input.unleveredIrr10yr * 100).toFixed(2)}%`;
+  // The vacantSfShareAtClose flag was already raised by unleveredIrrFloor(); the floor's detail line carries the specifics.
+  if (irrUndecided) floorIndeterminate = true;
+  floors.push({
+    id: 'irr',
+    passed: irrCmp !== null && !irrUndecided && irrCmp >= irr.required,
+    actual: irrUndecided ? null : input.unleveredIrr10yr,
+    required: irr.required,
+    detail: irrUndecided
+      ? `${irrDetailValue} vs ${(irr.required * 100).toFixed(2)}% required, ${(irr.requiredIfMajorityVacant! * 100).toFixed(2)}% if majority-vacant — vacant share at close unknown, indeterminate (${irr.basis})`
+      : `${irrDetailValue} vs ${(irr.required * 100).toFixed(2)}% required (${irr.basis})`,
+  });
   // A floor with a COMPUTABLE actual that fails ⇒ KILLED. A null-actual floor ⇒ indeterminate (caps at T2, never KILL).
   const floorsHardFail = floors.some((f) => f.actual !== null && !f.passed);
   const floorsPassed = floors.every((f) => f.passed);
@@ -640,7 +763,7 @@ export function scoreAcquisition(
     inputsVersion: computeInputsVersion(input, ruleset, opts.rctVersion ?? opts.rct?.rctVersion ?? RCT_VERSION),
     rulesetVersion: ruleset.rulesetVersion,
     ratification: ruleset.ratification,
-    scoredAt: opts.now ?? new Date().toISOString(),
+    scoredAt,
     dealId: input.dealId,
     isVacant: vacant,
     gates,

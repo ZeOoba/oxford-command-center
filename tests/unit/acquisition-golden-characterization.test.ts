@@ -5,7 +5,7 @@
 // DELIBERATELY, never by accident:
 //   1. computeInputsVersion for a frozen, ratified input set (legacy keyspace AND governor-folded keyspace).
 //   2. Floor semantics not already pinned elsewhere: computable basis below the vintage floor => KILLED;
-//      5yr-vs-10yr IRR floor selection; floors[id=basis|irr].actual populated (the contract the capital
+//      IRR floor = 10-yr unlevered, horizon-independent (ruleset 2.0.0); floors[id=basis|irr].actual populated (the contract the capital
 //      BUY gate must read). The indeterminate-floor T2 cap is already pinned in acquisition.test.ts (B5) —
 //      referenced there, not duplicated here.
 // Synthetic fixtures only: no candidate IDs, addresses or APNs.
@@ -37,7 +37,7 @@ const FROZEN: Record<string, unknown> = {
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
   constructionType: 'block-tilt-brick', yearBuilt: 2005,
   sfhaOnPad: false,
-  allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, underwriteHorizonYrs: 5,
+  allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket',
   sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5,
@@ -68,8 +68,12 @@ function seededGovernorFingerprint(): string {
 // scores) until re-scored. The stale reason text names governor values, not this contract change: expected. Migration
 // plan: after merge, restart the Brain Server and run rescoreStaleCandidates (server/warehouse/acq-score-freshness.ts)
 // against the live warehouse; it re-scores ACTIVE candidates by default, so archived/passed rows stay stale.
-const PIN_LEGACY = '9822252ee189ddaf';
-const PIN_WITH_GOVERNORS = 'ff9faf6d20ed5866';
+// RE-PINNED 2026-11-12 (acquisition ruleset 2.0.0, Gabriel in-turn ratification): AcquisitionInput gained the IRR-floor
+// inputs unleveredIrr10yr, ust10yr, ustAsOf and vacantSfShareAtClose (default null), so the parsed-input hash moved.
+// Deliberate. The ruleset version bump already marks every persisted score stale (acq-score-freshness), and the same
+// migration plan applies: restart the Brain Server and run rescoreStaleCandidates. Previous pins: 9822252ee189ddaf / ff9faf6d20ed5866.
+const PIN_LEGACY = '27340762df9a6cb9';
+const PIN_WITH_GOVERNORS = '563ba68374d5e1d1';
 const PIN_GOVERNOR_FINGERPRINT = '1:1.25:0.4:0.085';
 
 describe('golden: inputs_version pin (R-HASH)', () => {
@@ -100,17 +104,16 @@ describe('golden: floor-to-tier semantics (ratified ruleset)', () => {
     const irr = s.floors.find((f) => f.id === 'irr');
     expect(typeof basis?.actual).toBe('number');
     expect(basis?.actual as number).toBeGreaterThan(0.9);
-    expect(irr?.actual).toBe(0.18);
+    expect(irr?.actual).toBe(0.12); // the 10-yr UNLEVERED IRR, not the reported levered 0.18 (ruleset 2.0.0)
   });
-  it('underwriteHorizonYrs 10 selects the 10yr IRR floor; undefined/5 selects the 5yr floor', () => {
-    const f5 = ratified.floors.leveredIrrFloor5yr;
-    const f10 = ratified.floors.leveredIrrFloor10yr;
+  it('the IRR floor no longer depends on the underwriting horizon (levered 5yr/10yr floors retired, ruleset 2.0.0)', () => {
     const irrOf = (over: Record<string, unknown>) => score(deal(over)).floors.find((f) => f.id === 'irr');
-    expect(irrOf({ underwriteHorizonYrs: 10 })?.required).toBe(f10);
-    expect(irrOf({ underwriteHorizonYrs: 5 })?.required).toBe(f5);
+    const floorMin = ratified.floors.unleveredIrrFloorMin; // no UST supplied => tested at the 10.0% minimum
+    expect(irrOf({ underwriteHorizonYrs: 10 })?.required).toBe(floorMin);
+    expect(irrOf({ underwriteHorizonYrs: 5 })?.required).toBe(floorMin);
     const noHorizon = { ...FROZEN } as Record<string, unknown>;
     delete noHorizon.underwriteHorizonYrs;
     const s = scoreAcquisition(AcquisitionInput.parse(noHorizon), ratified, { now: NOW, rct: RCT });
-    expect(s.floors.find((f) => f.id === 'irr')?.required).toBe(f5);
+    expect(s.floors.find((f) => f.id === 'irr')?.required).toBe(floorMin);
   });
 });

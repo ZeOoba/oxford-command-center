@@ -268,9 +268,10 @@ function BuyBoxPanel() {
         <RuleSection title="Floors">
           <KV label="Basis discount (post-2000)" value={`≥ ${(ruleset.floors.basisDiscountMinPostMillennium * 100).toFixed(0)}%`} />
           <KV label="Basis discount (pre-2000)" value={`≥ ${(ruleset.floors.basisDiscountMinPreMillennium * 100).toFixed(0)}%`} />
-          <KV label="Stabilized YoC floor" value={`≥ ${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}%`} />
-          <KV label="Levered IRR floor (5yr)" value={`≥ ${(ruleset.floors.leveredIrrFloor5yr * 100).toFixed(0)}%`} />
-          <KV label="Levered IRR floor (10yr)" value={`≥ ${(ruleset.floors.leveredIrrFloor10yr * 100).toFixed(0)}%`} />
+          <KV label="Stabilized YoC floor" value={`> ${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}%`} />
+          <KV label="Unlevered IRR floor (10yr)" value={`≥ MAX(${(ruleset.floors.unleveredIrrFloorMin * 100).toFixed(1)}%, UST + ${(ruleset.floors.unleveredIrrUstSpread * 10_000).toFixed(0)} bps)`} />
+          <KV label="Majority-vacant IRR premium" value={`+${(ruleset.floors.majorityVacantIrrPremium * 10_000).toFixed(0)} bps if > ${(ruleset.floors.majorityVacantSfShare * 100).toFixed(0)}% vacant`} />
+          <KV label="Levered IRR" value="Reported only — not a floor" />
         </RuleSection>
 
         <RuleSection title="Scorecard (100 pts)">
