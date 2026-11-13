@@ -161,6 +161,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 ### Prerequisites
 
 - Node.js 20 or newer (CI uses 24) and npm
+- Python 3.8 or newer on PATH (`python`, `python3` or `py`): the pre-push confidentiality hook and `npm test` run the shared Python term scanner
 - Access to the master workbook (`.xlsx`) and the operator's local data files for live data; a fresh
   clone runs on synthetic stand-ins (see [Data and confidentiality model](#data-and-confidentiality-model))
 - Optional: Playwright Chromium (`npx playwright install chromium`) for end-to-end tests
@@ -336,8 +337,9 @@ trailers. Doctrine: [`architecture/coding-standards.md`](architecture/coding-sta
 
 Installed by `npm install` (`prepare`) or `npm run hooks:install`:
 
-- **pre-push** — confidentiality scan of every pushed ref (fail-closed), a refute-trailer check, and
-  an advisory, never-blocking NOI cross-check.
+- **pre-push** — confidentiality scan of every pushed ref (fail-closed; confidential terms via the
+  shared Python scanner, then OCC payload checks), a refute-trailer check, and an advisory,
+  never-blocking NOI cross-check.
 - **commit-msg** — rejects malformed AI `Co-Authored-By:` trailers against an explicit allowlist.
 
 ## Data and confidentiality model

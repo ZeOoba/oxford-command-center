@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
-import { WRAPPER } from '../../scripts/install-git-hooks';
+import { WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
 
 // End-to-end: the INSTALLED pre-push hook (WRAPPER -> the JS scanner, which runs the vendored Python
 // term scanner and then the OCC payload checks) run by a real `git push` into a bare remote. One case per leak shape the refute
@@ -54,7 +54,14 @@ class Sandbox {
   work = join(this.root, 'work');
   env: Record<string, string | undefined>;
 
-  constructor(wrapper?: string) {
+  /**
+   * @param opts.wrapper - pre-push template to install (default: the tree under test's WRAPPER).
+   * @param opts.oldTree - the pushing tree predates runTermScan: its JS scanner is a term-blind stub
+   *   (exit 0) and it has no Python scanner, so only the wrapper's own Python stage can catch a term.
+   * @param opts.copyBesideHook - place the Python scanner beside the hook, as the installer does.
+   */
+  constructor(opts: { wrapper?: string; oldTree?: boolean; copyBesideHook?: boolean } = {}) {
+    const { wrapper, oldTree = false, copyBesideHook = false } = opts;
     mkdirSync(join(this.home, '.claude', 'hooks'), { recursive: true });
     writeFileSync(
       join(this.home, '.claude', 'hooks', 'confidential-terms.json'),
@@ -81,8 +88,10 @@ class Sandbox {
     // The scanners the hook runs from "$root/scripts", copied in untracked (and excluded from add -A).
     mkdirSync(join(this.work, 'scripts', 'fixtures'), { recursive: true });
     for (const f of ['prepush-confidential-scan.mjs', 'prepush_confidential_scan.py', 'fixtures/real-data-manifest.json']) {
+      if (oldTree && f !== 'fixtures/real-data-manifest.json') continue;
       if (existsSync(join(SRC, 'scripts', f))) copyFileSync(join(SRC, 'scripts', f), join(this.work, 'scripts', f));
     }
+    if (oldTree) writeFileSync(join(this.work, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
     writeFileSync(join(this.work, '.git', 'info', 'exclude'), 'scripts/\n');
     this.commit('README.md', 'seed\n', 'seed');
     this.git(this.work, 'push', '-q', '--no-verify', 'origin', 'main');
@@ -90,6 +99,7 @@ class Sandbox {
     const hooks = join(this.root, 'hooks');
     mkdirSync(hooks);
     writeFileSync(join(hooks, 'pre-push'), wrapper ?? wrapperOf(SRC), { mode: 0o755 });
+    if (copyBesideHook) copyFileSync(join(SRC, 'scripts', 'prepush_confidential_scan.py'), join(hooks, PY_SCAN_FALLBACK));
     this.git(this.work, 'config', 'core.hooksPath', hooks);
   }
 
@@ -206,7 +216,7 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
   });
 
   it('BLOCKS a term through the LEGACY wrapper (no Python stage, no argv) that older worktrees reinstall', () => {
-    const legacy = new Sandbox(LEGACY_WRAPPER);
+    const legacy = new Sandbox({ wrapper: LEGACY_WRAPPER });
     try {
       const leak = legacy.commit('notes.md', `memo about ${TERM}\n`);
       expectBlocked(legacy.push('origin', 'main'));
@@ -220,6 +230,53 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     } finally {
       legacy.close();
     }
+  });
+
+  // The other skew (refute run wf_e0d7368f-0b3, high): the NEW wrapper in the shared hooks dir and a
+  // push from a worktree whose tree predates runTermScan. Its JS is modelled as term-blind (exit 0),
+  // the worst case, so only the wrapper's Python stage (the copy beside the hook) can block.
+  describe('new wrapper + a tree that predates runTermScan', () => {
+    const shapes: [string, (o: Sandbox) => void][] = [
+      ['a plain .md', (o) => o.commit('notes.md', `memo about ${TERM}\n`)],
+      ['a committed `* -diff` attribute', (o) => {
+        o.commit('.gitattributes', '* -diff\n', 'attrs');
+        o.commit('notes.md', `memo about ${TERM}\n`);
+      }],
+      ['a term added then removed', (o) => {
+        o.commit('notes.md', `memo about ${TERM}\n`, 'add');
+        o.commit('notes.md', 'clean\n', 'remove');
+      }],
+      ['a term only in the commit message', (o) => o.commit('notes.md', 'clean\n', `about ${TERM}`)],
+    ];
+    for (const [name, make] of shapes) {
+      it(`BLOCKS ${name}`, () => {
+        const old = new Sandbox({ oldTree: true, copyBesideHook: true });
+        try {
+          make(old);
+          expectBlocked(old.push('origin', 'main'));
+        } finally {
+          old.close();
+        }
+      });
+    }
+
+    it('still lets a clean push through, and BLOCKS when no scanner copy sits beside the hook', () => {
+      const ok = new Sandbox({ oldTree: true, copyBesideHook: true });
+      try {
+        ok.commit('notes.md', 'nothing to see\n');
+        const r = ok.push('origin', 'main');
+        expect(r.status, r.stderr).toBe(0);
+      } finally {
+        ok.close();
+      }
+      const bare = new Sandbox({ oldTree: true });
+      try {
+        bare.commit('notes.md', 'nothing to see\n');
+        expectBlocked(bare.push('origin', 'main'));
+      } finally {
+        bare.close();
+      }
+    });
   });
 
   it('BLOCKS a binary under data/ (the JS payload stage) even with no term anywhere', () => {

@@ -420,6 +420,25 @@ export function scanDiffForConfidentialFlag(addedLines) {
   return hits;
 }
 
+/**
+ * Generic document watermarks that never belong in pushed source. Structural, not deal terms (the
+ * roster terms are the Python scanner's job); kept from the old JS term denylist so dropping that
+ * matcher did not drop this check (refute run wf_e0d7368f-0b3, low). Matched case-insensitively.
+ */
+export const WATERMARKS = ['CONFIDENTIAL — DO NOT DISTRIBUTE'];
+
+/**
+ * Added lines carrying a WATERMARKS entry.
+ * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @returns {{line: number, file: string}[]}
+ */
+export function scanAddedLinesForWatermarks(addedLines) {
+  const marks = WATERMARKS.map((w) => w.toLowerCase());
+  return addedLines
+    .filter((a) => typeof a?.text === 'string' && marks.some((w) => a.text.toLowerCase().includes(w)))
+    .map((a) => ({ line: a.lineNo, file: a.file }));
+}
+
 /** Pseudo-file name that commit-message lines carry in parseAddedLines output. */
 export const COMMIT_MESSAGE_FILE_PREFIX = '(commit message ';
 
@@ -974,7 +993,9 @@ function stagedMain() {
 }
 
 function main() {
-  if (process.argv.includes('--staged')) return stagedMain();
+  // Only a bare `--staged` call: as a hook, git passes two argv entries (remote name, push URL), and a
+  // remote named '--staged' must not switch the scanner off (refute run wf_e0d7368f-0b3, low).
+  if (process.argv.length === 3 && process.argv[2] === '--staged') return stagedMain();
   // Real firm data is never tracked (ruling 2026-11-10). The manifest that names it must be readable,
   // or the push is blocked: without it this scan cannot tell a real-data path from any other.
   let manifest;
@@ -987,14 +1008,14 @@ function main() {
     );
     process.exit(1);
   }
-  // A stdin read ERROR means the pushed refs are unknown, so nothing would be scanned: it is recorded
-  // as a diff error and fails closed through the same PREPUSH_ALLOW_DIFF_ERROR gate (2026-11-12). An
-  // empty stdin (up-to-date push) is not an error.
+  // A stdin read ERROR means the pushed refs are unknown, so nothing would be scanned: it blocks below,
+  // with no environment opt-out (the term scan cannot run). An empty stdin (up-to-date push) is not an
+  // error.
   const stdin = readPushStdin();
   // git passes pre-push hooks the remote name and push URL (argv[1], argv[2]); the hook wrapper
   // forwards them. They bound a new ref by what the destination advertises. A wrapper that predates
   // the forwarding passes neither, and both scanners then scan new refs in full.
-  const [remote, url] = process.argv.slice(2).filter((a) => a !== '--staged');
+  const [remote, url] = process.argv.slice(2);
 
   // Confidential TERMS first. This file runs the Python scanner itself, so the term scan cannot be
   // skipped by whichever pre-push wrapper happens to be installed in the SHARED .git/hooks (an older
@@ -1039,6 +1060,16 @@ function main() {
         `[prepush-confidential-scan] WARN: PREPUSH_ALLOW_DIFF_ERROR=1 - ref ${e.localSha} pushed UNSCANNED (${e.message}).`,
       );
     }
+  }
+
+  const watermarkHits = scanAddedLinesForWatermarks(addedByRef.flat().filter((a) => !EXCLUDE_PATHS.has(a.file)));
+  if (watermarkHits.length > 0) {
+    blockOnHits(
+      watermarkHits,
+      'document watermark(s) in added lines (scripts/prepush-confidential-scan.mjs WATERMARKS)',
+      (h) => `${h.file}:${h.line}`,
+      'A watermarked document is about to be pushed to a PUBLIC repo. Remove it from the commit and push again.',
+    );
   }
 
   if (realDataHits.length > 0) {

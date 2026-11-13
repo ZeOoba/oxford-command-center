@@ -59,6 +59,8 @@ import {
   readPushStdin,
   runTermScan,
   findPython,
+  scanAddedLinesForWatermarks,
+  WATERMARKS,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
@@ -1247,6 +1249,34 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       calls.length = 0;
       runTermScan('', [undefined, undefined], { scanner: py, python: 'py', run });
       expect(calls[0]?.[1]).toEqual(['-I', py]);
+    });
+
+    it('a remote named --staged does not switch the hook into --staged mode', () => {
+      writeRoster({ probe: { active: true, always: [TERM] } });
+      writeFileSync(join(repo, 'memo.md'), `note: ${TERM}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'memo');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const r = spawnSync(process.execPath, [script, '--staged', remote], {
+        cwd: repo,
+        input: `refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`,
+        encoding: 'utf8',
+        env: env(),
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('confidentiality term scan exited 1');
+    });
+
+    it('BLOCKS a document watermark in an added line (wf_e0d7368f-0b3)', () => {
+      expect(scanAddedLinesForWatermarks([{ file: 'a.md', lineNo: 3, text: `x ${WATERMARKS[0]?.toLowerCase()} y` }])).toEqual([{ file: 'a.md', line: 3 }]);
+      expect(scanAddedLinesForWatermarks([{ file: 'a.md', lineNo: 1, text: 'confidential' }])).toEqual([]);
+      writeFileSync(join(repo, 'memo.md'), `${WATERMARKS[0]}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'memo');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('memo.md:1');
     });
 
     it('findPython skips candidates that fail the probe (e.g. the Windows Store stub)', () => {

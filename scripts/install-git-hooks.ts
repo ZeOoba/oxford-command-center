@@ -24,6 +24,10 @@ function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
+/** File name of the Python term scanner's copy beside the installed pre-push hook (for trees that
+ * predate runTermScan; see WRAPPER). */
+export const PY_SCAN_FALLBACK = 'ora_prepush_confidential_scan.py';
+
 // Exported (not just a local const) so tests/unit/install-git-hooks.test.ts can assert on the
 // literal template — this is what tests/unit/prepush-noi-crosscheck.test.ts guards against
 // regressing back into a blocking 'exec' of the advisory-only stage.
@@ -32,9 +36,13 @@ export const WRAPPER = `#!/bin/sh
 # 1) Confidentiality scanner (scripts/prepush-confidential-scan.mjs, Hard Invariant 3) — fail-closed.
 #    It runs the shared Python term scanner (scripts/prepush_confidential_scan.py, vendored from
 #    ora-skills) ITSELF, then the OCC payload checks (data/ binaries, real-data manifest paths, real
-#    amounts, confidential:true). The term scan lives in the scanner, not in this wrapper, because
-#    .git/hooks is shared by every worktree and an older worktree's installer can put back a wrapper
-#    without it. It gets git's argv ("$@": remote name and push URL) and the buffered ref lines.
+#    amounts, confidential:true). It gets git's argv ("$@": remote name and push URL) and the
+#    buffered ref lines. .git/hooks is shared by every worktree, so both version skews are covered:
+#    an older wrapper still reaches the term scan through the new scanner, and a worktree whose tree
+#    predates runTermScan (its JS matches terms on the endpoint diff only) gets the Python term scan
+#    here first, from the copy the installer places beside this hook. No usable Python 3.8+ or no
+#    scanner copy => BLOCKED. Each candidate python is probed by running it (the Windows Store stub
+#    fails); it runs isolated (-I).
 # 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
 #    .git/hooks is the common dir shared by every worktree; a checkout that predates this file
@@ -46,7 +54,29 @@ export const WRAPPER = `#!/bin/sh
 #    (POSIX: a bare assignment's status is its command substitution's, so '||' sees cat's failure.)
 root="$(git rev-parse --show-toplevel)"
 refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
-printf '%s\\n' "$refs" | node "$root/scripts/prepush-confidential-scan.mjs" "$@" || exit 1
+scan_js="$root/scripts/prepush-confidential-scan.mjs"
+if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
+  scan_py="$root/scripts/prepush_confidential_scan.py"
+  [ -f "$scan_py" ] || scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
+  if [ ! -f "$scan_py" ]; then
+    echo "pre-push BLOCKED (fail-closed): this tree predates the Python term scan and no scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
+    exit 1
+  fi
+  py=
+  for c in python python3 py; do
+    if command -v "$c" >/dev/null 2>&1 &&
+       "$c" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
+      py=$c
+      break
+    fi
+  done
+  if [ -z "$py" ]; then
+    echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
+    exit 1
+  fi
+  printf '%s\\n' "$refs" | "$py" -I "$scan_py" "$@" || exit 1
+fi
+printf '%s\\n' "$refs" | node "$scan_js" "$@" || exit 1
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
   printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
 fi
@@ -99,6 +129,24 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
   }
 }
 
+/**
+ * Copy scripts/prepush_confidential_scan.py beside the hooks (as PY_SCAN_FALLBACK, LF line endings)
+ * so a push from a worktree whose tree predates runTermScan still gets the Python term scan.
+ * A tree without the scanner leaves any existing copy alone (and the wrapper blocks if none exists).
+ */
+function installPythonScanFallback(hooksDir: string, toplevel: string): void {
+  const src = join(toplevel, 'scripts', 'prepush_confidential_scan.py');
+  if (!existsSync(src)) {
+    console.warn(`[install-git-hooks] ${src} not found; Python term-scan copy beside the hook not refreshed.`);
+    return;
+  }
+  const contents = readFileSync(src, 'utf8').replace(/\r\n/g, '\n');
+  const dst = join(hooksDir, PY_SCAN_FALLBACK);
+  if (existsSync(dst) && readFileSync(dst, 'utf8') === contents) return;
+  writeFileSync(dst, contents, 'utf8');
+  console.log(`[install-git-hooks] installed Python term-scan copy: ${dst}`);
+}
+
 function main(): void {
   let hooksDir: string;
   let toplevel: string;
@@ -120,6 +168,7 @@ function main(): void {
 
   installHook(hooksDir, 'pre-push', WRAPPER);
   installHook(hooksDir, 'commit-msg', COMMIT_MSG_WRAPPER);
+  installPythonScanFallback(hooksDir, toplevel);
 }
 
 // Only install when run as a script (`npm run hooks:install`, `prepare`). This module is also

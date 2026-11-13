@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-import { WRAPPER, COMMIT_MSG_WRAPPER } from '../../scripts/install-git-hooks';
+import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
+
+/** Stand-ins for the Python term scanner in fixture repos (the wrapper runs it for a stub scanner
+ * that lacks runTermScan, i.e. a tree that predates it). */
+const PY_PASS = 'import sys\nsys.exit(0)\n';
+const PY_FAIL = 'import sys\nsys.stderr.write("pre-push BLOCKED: stub term hit\\n")\nsys.exit(1)\n';
 
 // Regression coverage for the bug an adversarial review caught before this landed (2026-08-16):
 // the pre-push wrapper originally `exec`d the advisory-only NOI cross-check script as its last
@@ -28,21 +33,27 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
   });
 
   it('still fails closed on the confidentiality scanner', () => {
-    expect(WRAPPER).toMatch(/prepush-confidential-scan\.mjs" "\$@" \|\| exit 1/);
+    expect(WRAPPER).toContain('scan_js="$root/scripts/prepush-confidential-scan.mjs"');
+    expect(WRAPPER).toMatch(/node "\$scan_js" "\$@" \|\| exit 1/);
   });
 
   it('fails closed when buffering the pre-push stdin fails, before any stage runs', () => {
     expect(WRAPPER).toMatch(/^refs="\$\(cat\)" \|\| \{ echo "pre-push: could not read push refs from stdin" >&2; exit 1; \}$/m);
     expect(WRAPPER).not.toMatch(/^refs="\$\(cat\)"\s*$/m);
-    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('node "$root/scripts/prepush-confidential-scan.mjs"'));
+    expect(WRAPPER.indexOf('refs="$(cat)" ||')).toBeLessThan(WRAPPER.indexOf('node "$scan_js"'));
   });
 
-  // 2026-11-12 (refute run wf_0df7879e-d79): the Python term scan runs INSIDE the JS scanner, not in
-  // this wrapper, so an older wrapper put back into the shared .git/hooks still gets it.
-  it('leaves the term scan to the JS scanner: no Python stage, git\'s argv forwarded', () => {
-    const code = WRAPPER.split('\n').filter((l) => !l.startsWith('#')).join('\n');
-    expect(code).not.toMatch(/python|scan_py|prepush_confidential_scan\.py/);
-    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| node "\$root\/scripts\/prepush-confidential-scan\.mjs" "\$@" \|\| exit 1/);
+  // Both version skews over the shared .git/hooks (refute runs wf_0df7879e-d79, wf_e0d7368f-0b3): the
+  // JS scanner runs the term scan itself, and the wrapper runs it for a tree whose JS predates that.
+  it('runs the Python term scan itself only for a tree whose scanner lacks runTermScan, isolated, fail closed', () => {
+    expect(WRAPPER).toContain(`if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then`);
+    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$py" -I "\$scan_py" "\$@" \|\| exit 1/);
+    expect(WRAPPER).toContain(`/${PY_SCAN_FALLBACK}"`);
+    expect(WRAPPER).toContain('"$c" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"');
+    expect(WRAPPER).toMatch(/no scanner copy sits beside the hook[^\n]*\n\s*exit 1/);
+    expect(WRAPPER).toMatch(/no Python 3\.8\+ found[^\n]*\n\s*exit 1/);
+    expect(WRAPPER.indexOf('"$py" -I "$scan_py"')).toBeLessThan(WRAPPER.indexOf('node "$scan_js"'));
+    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| node "\$scan_js" "\$@" \|\| exit 1/);
   });
 });
 
@@ -57,6 +68,8 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     // WRAPPER resolves $root via `git rev-parse --show-toplevel`, so the fixture must itself
     // be a git repo for that to resolve to `dir` rather than erroring out.
     execSync('git init -q', { cwd: dir });
+    // The stub scanners below lack runTermScan, so the wrapper runs this Python stage first.
+    writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_PASS);
     const hookPath = join(dir, 'pre-push');
     writeFileSync(hookPath, WRAPPER, { mode: 0o755 });
     return hookPath;
@@ -181,13 +194,61 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('a tree that predates runTermScan: the wrapper runs the Python term scan first and blocks on it', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_FAIL);
+      writeFileSync(
+        join(scriptsDir, 'prepush-confidential-scan.mjs'),
+        `(await import('node:fs')).writeFileSync(${JSON.stringify(join(dir, 'js-ran'))}, 'x'); process.exit(0);\n`,
+      );
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('stub term hit');
+      expect(existsSync(join(dir, 'js-ran'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a tree with no Python scanner uses the copy beside the hook, and BLOCKS when there is none', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      rmSync(join(scriptsDir, 'prepush_confidential_scan.py'));
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const none = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(none.status).not.toBe(0);
+      expect(none.stderr).toContain('no scanner copy sits beside the hook');
+      writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_FAIL);
+      const viaCopy = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(viaCopy.status).not.toBe(0);
+      expect(viaCopy.stderr).toContain('stub term hit');
+      writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_PASS);
+      expect(spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' }).status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a tree whose scanner has runTermScan skips the wrapper\'s Python stage (the scanner runs it)', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_FAIL);
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), '// runTermScan (stub)\nprocess.exit(0);\n');
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('install-git-hooks installer — runs only as a script, never on import', () => {
   const installer = join(process.cwd(), 'scripts', 'install-git-hooks.ts');
   const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
-  it('importing the module (as the tests do) installs nothing; running it installs the hooks', () => {
+  it('importing the module (as the tests do) installs nothing; running it installs the hooks and the Python copy', () => {
     const dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-import-'));
     try {
       execSync('git init -q', { cwd: dir });
@@ -195,9 +256,12 @@ describe('install-git-hooks installer — runs only as a script, never on import
       const imp = spawnSync(process.execPath, [tsxCli, '-e', `import(${JSON.stringify(pathToFileURL(installer).href)}).then(() => console.log('imported'))`], { cwd: dir, encoding: 'utf8' });
       expect(imp.status, imp.stderr).toBe(0);
       expect(existsSync(join(hooks, 'pre-push'))).toBe(false);
+      mkdirSync(join(dir, 'scripts'));
+      writeFileSync(join(dir, 'scripts', 'prepush_confidential_scan.py'), 'print("scanner")\r\n');
       const run = spawnSync(process.execPath, [tsxCli, installer], { cwd: dir, encoding: 'utf8' });
       expect(run.status, run.stderr).toBe(0);
       expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe(WRAPPER);
+      expect(readFileSync(join(hooks, PY_SCAN_FALLBACK), 'utf8')).toBe('print("scanner")\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -225,6 +289,7 @@ describe('install-git-hooks WRAPPER — refute-trailer stage', () => {
       }
     }
     writeFileSync(join(dir, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+    writeFileSync(join(dir, 'scripts', 'prepush_confidential_scan.py'), PY_PASS);
     writeFileSync(join(dir, 'scripts', 'prepush-refute-check.mjs'), REFUTE_SCRIPT);
     writeFileSync(join(dir, 'scripts', 'check-refute-required.ts'), '// stub\n');
     if (opts.withTsx !== false) {
@@ -394,7 +459,7 @@ writeFileSync(${JSON.stringify(join(dir, 'scan-stdin.txt'))}, readFileSync(0, 'u
   });
 
   it('runs the confidentiality scanner before the refute stage', () => {
-    const scan = WRAPPER.indexOf('prepush-confidential-scan.mjs" "$@" || exit 1');
+    const scan = WRAPPER.indexOf('node "$scan_js" "$@" || exit 1');
     const refute = WRAPPER.indexOf('prepush-refute-check.mjs" || exit 1');
     expect(scan).toBeGreaterThan(-1);
     expect(scan).toBeLessThan(refute);
