@@ -161,14 +161,15 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 ### Prerequisites
 
 - Node.js 20 or newer (CI uses 24) and npm
-- Access to the master workbook (`.xlsx`) for live data; without it the app runs on seed fixtures
+- Access to the master workbook (`.xlsx`) and the operator's local data files for live data; a fresh
+  clone runs on synthetic stand-ins (see [Data and confidentiality model](#data-and-confidentiality-model))
 - Optional: Playwright Chromium (`npx playwright install chromium`) for end-to-end tests
 - Optional: Wrangler + a Cloudflare token for mirror deploys
 
 ### Install and run
 
 ```bash
-npm install            # also installs the git hooks via `prepare`
+ORA_ALLOW_SYNTHETIC_SEED=1 npm install   # git hooks via `prepare`; seeds synthetic data via `postinstall`
 cp env.example .env    # every key is optional; see below
 npm run dev            # Brain Server on :8911 + Vite on :5273
 # open http://localhost:5273
@@ -347,9 +348,17 @@ Installed by `npm install` (`prepare`) or `npm run hooks:install`:
   user write surface), alert state and inbox, the document index, backups, AR working
   directories, raw lease-market exports, the brief outbox, and all bake output
   (`public/snapshot.json`, `public/macro.json`, `public/warehouse.json`).
-- **Tracked data** is limited to files CI or the app read directly, such as the snapshot that
-  `reconcile:snapshot` validates and the AR mapping cache; see [`.gitignore`](.gitignore) for the
-  exact rules.
+- **No real firm data is tracked.** Every real-data file (the portfolio snapshot, the property
+  financials dataset, seed deals and counterparties, AR, building-spec, calibration and cost-seg data,
+  among others) is listed in
+  [`scripts/fixtures/real-data-manifest.json`](scripts/fixtures/real-data-manifest.json) and
+  gitignored. The repo ships synthetic stand-ins under `fixtures/synthetic/` with money drawn from a
+  public seed, unrelated to real figures. `scripts/ensure-local-data.ts` seeds them on `npm install`
+  in CI or with `ORA_ALLOW_SYNTHETIC_SEED=1`, and refuses to seed beside real files. The app, the
+  writers and the mirror bake all flag or refuse synthetic data, so it cannot be mistaken for live
+  data. Exact-value regression locks for the real data live in gitignored `golden.local.json`
+  files (`npm run golden:ratify`). The manifest's `neverTrack` list, the pre-push scan and
+  `npm run governance` block any real-data file, or a copy of one, from being committed.
 - **Confidential deals** carry `confidential: true`. The mirror bake **redacts them by default**:
   deal records, orphaned counterparties, tasks naming them, and any field matching the
   confidential roster are dropped, and the bake refuses outright if the roster is unreadable.
