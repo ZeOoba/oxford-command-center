@@ -135,14 +135,17 @@ function Sync-DeployBuildRoot {
     if (Test-Path -LiteralPath $BuildRoot) {
       throw "Build root $BuildRoot exists but is not a git worktree -- refusing to overwrite an unknown directory."
     }
-    & git -C $RepoRoot worktree add --detach $BuildRoot $Ref
+    # Every git command's stdout goes to the HOST, never the pipeline: this function returns the
+    # short sha, and git's "Preparing worktree" / "HEAD is now at <sha> <subject>" / "Removing <file>"
+    # lines used to come back with it (2026-11-13 step log: "build root @ HEAD is now at ...").
+    & git -C $RepoRoot worktree add --detach $BuildRoot $Ref | ForEach-Object { Write-Host "    $_" }
     if ($LASTEXITCODE -ne 0) { throw "git worktree add failed ($LASTEXITCODE)" }
   } else {
-    & git -C $BuildRoot reset --hard $Ref
+    & git -C $BuildRoot reset --hard $Ref | ForEach-Object { Write-Host "    $_" }
     if ($LASTEXITCODE -ne 0) { throw "git reset --hard $Ref failed in build root ($LASTEXITCODE)" }
     # -fd, NOT -fdx: node_modules is gitignored and rebuilding it hourly would add minutes to every
     # run for no benefit. Tracked-file drift is what must not survive.
-    & git -C $BuildRoot clean -fd
+    & git -C $BuildRoot clean -fd | ForEach-Object { Write-Host "    $_" }
     if ($LASTEXITCODE -ne 0) { throw "git clean failed in build root ($LASTEXITCODE)" }
   }
 
@@ -247,7 +250,9 @@ function Install-DeployBuildRootDeps {
   Write-Host "  Installing build-root deps (npm ci) -- lockfile or Node runtime changed, or node_modules absent"
   Push-Location $BuildRoot
   try {
-    npm ci
+    # stdout to the HOST, not the pipeline: this function returns a bool (installed or not), and npm's
+    # output used to come back with it as an array (refute wf_3b03928e-67a, same leak as Sync-DeployBuildRoot).
+    npm ci | ForEach-Object { Write-Host "    $_" }
     if ($LASTEXITCODE -ne 0) { throw "npm ci failed in build root ($LASTEXITCODE)" }
   } finally {
     Pop-Location
