@@ -109,6 +109,130 @@ describe('bash-guard.mjs — original 7 blocked classes (regression, post-indire
     expect(runGuard('git push --force-with-lease origin main', repo).denied).toBe(false);
   });
 
+  // Audit wf_9bf74429-aaf finding 13: git accepts any unambiguous prefix of a long option, so
+  // `--no-verif` skipped the pre-push confidentiality scan past an exact-token check.
+  it('(b)/(c) denies every abbreviation of --no-verify on commit and push', () => {
+    for (const abbrev of ['--no-v', '--no-ve', '--no-ver', '--no-veri', '--no-verif', '--no-verify']) {
+      expect(runGuard(`git commit ${abbrev} -m "x"`, repo).denied, `commit ${abbrev}`).toBe(true);
+      expect(runGuard(`git push ${abbrev} origin main`, repo).denied, `push ${abbrev}`).toBe(true);
+    }
+  });
+
+  it('(c) denies every abbreviation of --force on push, still allows the lease forms', () => {
+    for (const abbrev of ['--fo', '--for', '--forc', '--force']) {
+      expect(runGuard(`git push ${abbrev} origin main`, repo).denied, `push ${abbrev}`).toBe(true);
+    }
+    expect(runGuard('git push --force-with-lease=main origin main', repo).denied).toBe(false);
+    expect(runGuard('git push --force-if-includes --force-with-lease origin main', repo).denied).toBe(false);
+    expect(runGuard('git push --follow-tags origin main', repo).denied).toBe(false);
+  });
+
+  // Refute wf_ec2162a9-34f: quoting/escaping a whole option, `+refspec`, --mirror and merge/am.
+  it('(b)/(c) a quoted or escaped option is still the option git sees', () => {
+    for (const cmd of [
+      'git push "--force" origin main',
+      "git push '--forc' origin main",
+      'git push \\-\\-force origin main',
+      'git push --no-"verify" origin main',
+      'git commit "--no-verif" -m "x"',
+      "git commit '-n' -m x",
+      'git "push" --force origin main',
+    ]) {
+      expect(runGuard(cmd, repo).denied, cmd).toBe(true);
+    }
+  });
+
+  it('(c) a +refspec or --mirror force-push is denied', () => {
+    expect(runGuard('git push origin +main', repo).denied).toBe(true);
+    expect(runGuard('git push origin +HEAD:main', repo).denied).toBe(true);
+    expect(runGuard('git push --mirror origin', repo).denied).toBe(true);
+    expect(runGuard('git push --mir origin', repo).denied).toBe(true);
+    expect(runGuard('git push origin main:main', repo).denied).toBe(false);
+  });
+
+  it('(b2) merge/am --no-verify (and prefixes) are denied; merge -n (--no-stat) is not', () => {
+    expect(runGuard('git merge --no-verify feature', repo).denied).toBe(true);
+    expect(runGuard('git merge --no-verif feature', repo).denied).toBe(true);
+    expect(runGuard('git am --no-verify patch.mbox', repo).denied).toBe(true);
+    expect(runGuard('git merge -n feature', repo).denied).toBe(false);
+    expect(runGuard('git merge --no-ff feature', repo).denied).toBe(false);
+  });
+
+  // Refute wf_bfcf4714-b6d: quote handling must be one left-to-right pass, and an empty quoted
+  // value must stay a word. Every case here was ALLOWED by the first tokenizer.
+  it('(b)/(c) apostrophes, interleaved quotes and empty values cannot hide an option', () => {
+    for (const cmd of [
+      `git commit -m "don't" -n -m "won't"`,
+      `git commit -m "don't" --no-verify -m "won't"`,
+      `git push origin "it's" --force "x'y"`,
+      `git merge -m "it's" --no-verify -m "x'y" feature`,
+      `git commit -m 'a "b' --no-verify -m "c d"`,
+      `git push -o 'a "b' --force -o "c d" origin main`,
+      `git push --repo '' --no-verify origin HEAD:main`,
+      `git push --repo "" --force origin main`,
+      `git commit --allow-empty-message -m '' -n`,
+      `git push $'--no-verify' origin x`,
+      `git push {--no-verify,} origin x`,
+      `git push origin $'+main:main'`,
+      `git commit $'-n' -m a`,
+    ]) {
+      expect(runGuard(cmd, repo).denied, cmd).toBe(true);
+    }
+  });
+
+  // Refute wf_6bae3d4e-aec: an abbreviated value option (--rep, --trail, --exe, --mess) must not
+  // shift the value-skip onto the real option or refspec; --m is --mirror; am -n is am --no-verify.
+  it('(b)/(c) abbreviated value options cannot realign the skip onto a real option', () => {
+    for (const cmd of [
+      'git commit --allow-empty --trail -m "--no-verify" -m x',
+      'git commit --mess -m "--no-verify"',
+      "git commit --mess -m '--no-verify'",
+      'git push origin --rep -o +main',
+      'git push origin --rep -o --mirror',
+      'git push origin --exe -o +main',
+      'git push --rep --repo "--no-verify" origin main',
+      'git push --rep --repo "--force" origin main',
+      'git push --m origin',
+      'git am -n 0001.patch',
+      'git am -3n 0001.patch',
+      'git push -4f origin main',
+    ]) {
+      expect(runGuard(cmd, repo).denied, cmd).toBe(true);
+    }
+  });
+
+  it('(b2) git pull --no-verify (and prefixes) is denied; pull -n is not', () => {
+    expect(runGuard('git pull --no-verify origin main', repo).denied).toBe(true);
+    expect(runGuard('git pull --no-verif origin main', repo).denied).toBe(true);
+    expect(runGuard('git pull -n origin main', repo).denied).toBe(false);
+  });
+
+  it('(b) message text with apostrophes and quotes is still not read as an option', () => {
+    expect(runGuard(`git commit -m "don't use --no-verify or -n here" -m "won't"`, repo).denied).toBe(false);
+    expect(runGuard(`git commit -m 'say "--force" -n' -m "ok"`, repo).denied).toBe(false);
+    expect(runGuard(`git push -o 'note +x' origin main`, repo).denied).toBe(false);
+  });
+
+  it('(b) the value of a message/file option is data, but a no-value option is not skipped', () => {
+    // An UNQUOTED `-m -n` stays denied (the original quote-blanked view sees a bare -n); conservative.
+    expect(runGuard('git commit -m -n', repo).denied).toBe(true);
+    // A value that starts with - or + is never skipped (refute wf_6bae3d4e-aec), so this is denied too.
+    expect(runGuard('git commit -m "-n"', repo).denied).toBe(true);
+    expect(runGuard('git commit -m "fix -n handling"', repo).denied).toBe(false);
+    expect(runGuard('git commit -F --no-verify.txt', repo).denied).toBe(false);
+    // -s is --signoff for commit (no value): the next token is still scanned.
+    expect(runGuard('git commit -s --no-verify -m x', repo).denied).toBe(true);
+    expect(runGuard('git push -o ci.skip --force origin main', repo).denied).toBe(true);
+  });
+
+  it('(b)/(c) prefix matching does not over-reach onto unrelated options', () => {
+    expect(runGuard('git commit --no-edit --amend', repo).denied).toBe(false);
+    expect(runGuard('git commit --verbose -m "x"', repo).denied).toBe(false);
+    expect(runGuard('git push --no-thin origin main', repo).denied).toBe(false);
+    // `--no-` alone is too short to name --no-verify; git rejects it as ambiguous anyway.
+    expect(runGuard('git push --no- origin main', repo).denied).toBe(false);
+  });
+
   it('(d) denies core.hooksPath tampering', () => {
     expect(runGuard('git config core.hooksPath /tmp/evil', repo).denied).toBe(true);
   });

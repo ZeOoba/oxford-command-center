@@ -13,12 +13,17 @@ Denies always-wrong commands. No override exists for these.
 | Blocked | Doctrine |
 |---|---|
 | `git add -A` / `--all` / bare `.` pathspec | CLAUDE.md 2 — commit explicit paths only |
-| `git commit --no-verify` / `-n` | CLAUDE.md 9 — never bypass the gate |
-| `git push --force` / `-f` / `--no-verify` (`--force-with-lease` allowed) | CLAUDE.md 8 + pre-push confidential-history scan |
+| `git commit --no-verify` / `-n`; `git merge` / `git pull` / `git am --no-verify` | CLAUDE.md 9 — never bypass the gate |
+| `git push --force` / `-f` / `--no-verify` / `--mirror` / a `+refspec` (`--force-with-lease` allowed) | CLAUDE.md 8 + pre-push confidential-history scan |
 | `git config` / `git -c` touching `core.hooksPath` | hook tampering |
 | `sqlite3` write DDL/DML (`DROP/ALTER/DELETE/UPDATE/INSERT/VACUUM`) against `data/warehouse/finance.sqlite` | CLAUDE.md 9 — use migrations |
 | `rm`/`unlink` of `data/warehouse` or `data/overlay.json` | CLAUDE.md 9 |
 | writes (`>`/`>>`, `tee`, `sed -i`, `mv`/`cp`, `rm`) to `.claude/settings*.json` or `.claude/hooks/` | guardrails are edited only via a reviewed PR |
+
+Long options match every abbreviation git accepts (`--no-verif`, `--forc`). Options are read
+from the argv the shell actually builds (quotes, backslashes, `$'..'` and brace expansion
+resolved), as well as from the quote-blanked view, and a check denies if either matches; the
+value of a message/file option is data and is skipped (audit wf_9bf74429-aaf finding 13).
 
 Compound commands are split on `&&`, `||`, `;`, `|`, and newlines; git checks
 are token-scoped to the actual `git <subcommand>` invocation. The `git add`
