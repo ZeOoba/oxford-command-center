@@ -47,7 +47,9 @@ and let anyone brute-force a future re-ratification by starting from them.
    no BUY) until steps 2-4 are done.
 2. Pull the change with the real-data runbook (`docs/ops/2026-11-11-real-data-untrack-pull-runbook.md`). The manifest
    now lists `config/replacement-cost.v3.json`, so the runbook moves it aside before the pull and back after. **A plain
-   `git pull` deletes the file**, because it is no longer tracked. If that happened, restore it from the
+   `git pull` deletes the file**, because it is no longer tracked. A missing table is stricter than a missing key: until
+   the table is restored, the hourly deploy refuses in the build-root copy step, which runs before `bake`, so the Daily
+   Brief does not send either. If that happened, restore it from the
    pinned v3.2 table: `365d6f27` (#569) is the commit that ratified it, and every later `main` commit before this change
    carries the same blob.
    `git restore --source=365d6f27 --worktree -- config/replacement-cost.v3.json`

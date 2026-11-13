@@ -188,6 +188,29 @@ describe('acquisition edge Function — fail-closed 503 WIRING (config init fail
       vi.resetModules();
     }
   });
+
+  // Merge gate round 3, H2: every other test here bundles the stand-in with its synthetic marker REMOVED (the file-level
+  // vi.mock above), so nothing proved that a bundle carrying the RAW stand-in, which is what a checkout without the
+  // local-only table bundles, makes the deployed Function refuse at module init. build:mirror's check:rct-pin also
+  // refuses that stand-in before anything is bundled; this pins the runtime half.
+  it('onRequestPost returns 503 with no score when the bundled RCT is the synthetic stand-in', async () => {
+    vi.resetModules();
+    const rctPath = '../../config/replacement-cost.v3.json';
+    vi.doMock(rctPath, () => ({ default: structuredClone(syntheticRaw) }));
+    try {
+      const mod = await import('../../functions/api/warehouse/acquisition/score');
+      const res = await mod.onRequestPost(postCtx(STRONG_BASE));
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error?: string; score?: unknown; detail?: unknown };
+      expect(body.error).toMatch(/unavailable/);
+      expect(body.score).toBeUndefined();
+      expect(body.detail).toBeUndefined();
+    } finally {
+      // Restore the file-level de-synthesized bundle for anything that re-imports later.
+      vi.doMock(rctPath, () => ({ default: structuredClone(rctObj) }));
+      vi.resetModules();
+    }
+  });
 });
 
 describe('acquisition edge Function — shared governor proxy (consistency with the ranked path)', () => {
