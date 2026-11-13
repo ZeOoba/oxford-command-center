@@ -52,34 +52,53 @@ export const WRAPPER = `#!/bin/sh
 #    buffered once so the scanner and this stage each read the full ref list. A failed read
 #    blocks the push: an empty ref list would otherwise let every stage pass with nothing scanned.
 #    (POSIX: a bare assignment's status is its command substitution's, so '||' sees cat's failure.)
-# Windows: no child (node, python, git) may resolve a bare name from the current directory, which is
-# the worktree root here (refute runs wf_df157e64-c52, wf_954ebd83-729).
+# PATH is rebuilt FIRST, with shell built-ins only, before this hook runs any external command
+# (refute runs wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a). Kept: absolute entries with no
+# '.' or '..' segment that are neither the current directory (git runs this hook in the worktree
+# root) nor inside it; test -ef compares the directories themselves, so case variants and links
+# count. Dropped: empty, '.' and relative entries. So nothing untracked in the worktree (a planted
+# cat, head, grep, node, python, git) can stand in for a tool this hook or its children run.
+# Windows: children (node, python, git) must not search the current directory either.
 NoDefaultCurrentDirectoryInExePath=1
 export NoDefaultCurrentDirectoryInExePath
+here="$(pwd -P)"
+_safe=
+_ifs=$IFS
+IFS=:
+set -f
+for _d in $PATH; do
+  case "$_d" in /*) ;; *) continue ;; esac
+  case "$_d/" in */./*|*/../*) continue ;; esac
+  _p=$_d
+  _in=
+  while [ -n "$_p" ]; do
+    if [ "$_p" -ef "$here" ]; then _in=1; break; fi
+    _next=\${_p%/*}
+    [ "$_next" = "$_p" ] && break
+    _p=$_next
+  done
+  [ -n "$_in" ] && continue
+  _safe=\${_safe:+$_safe:}$_d
+done
+set +f
+IFS=$_ifs
+PATH=$_safe
+export PATH
+if [ -z "$PATH" ]; then
+  echo "pre-push BLOCKED (fail-closed): no usable PATH entry outside the worktree." >&2
+  exit 1
+fi
 root="$(git rev-parse --show-toplevel)"
 refs="$(cat)" || { echo "pre-push: could not read push refs from stdin" >&2; exit 1; }
 scan_js="$root/scripts/prepush-confidential-scan.mjs"
-# safe_dirs: the PATH entries an interpreter may come from, one per line, computed ONCE by a single
-# awk (a fork per entry made every push take ~30 s on Windows). Like the scanner's resolveOnPath:
-# kept are absolute entries with no '.' or '..' segment that are not the worktree root, the current
-# directory or inside either (case-insensitive); empty, '.', relative and non-canonical entries are
-# dropped. So an untracked python.exe / node.exe in the worktree root can never stand in for the real
-# interpreter (refute run wf_954ebd83-729).
-root_p="$(cd -P -- "$root" 2>/dev/null && pwd -P)"
-safe_dirs="$(printf '%s' "$PATH" | awk -v r="$root_p" -v c="$(pwd -P)" 'BEGIN { RS = ":"; r = tolower(r) "/"; c = tolower(c) "/" }
-  { d = $0; sub(/\\n$/, "", d) }
-  d !~ /^\\// { next }
-  ("/" d "/") ~ /\\/\\.\\.?\\// { next }
-  { l = tolower(d); sub(/\\/+$/, "", l); l = l "/" }
-  index(l, r) == 1 || index(l, c) == 1 { next }
-  { print d }')"
-# safe_exe NAME: every hit for NAME (or NAME.exe) in safe_dirs, one per line (shell built-ins only).
+# safe_exe NAME: every hit for NAME (or NAME.exe) on the rebuilt PATH, one per line, in PATH order
+# (built-ins only). All are listed so a failing first hit (the Windows Store stub) does not hide a
+# working interpreter later on PATH.
 safe_exe() {
   _ifs=$IFS
-  IFS='
-'
+  IFS=:
   set -f
-  for _d in $safe_dirs; do
+  for _d in $PATH; do
     for _f in "$_d/$1" "$_d/$1.exe"; do
       if { [ -f "$_f" ] || [ -L "$_f" ]; } && [ ! -d "$_f" ]; then
         printf '%s\\n' "$_f"

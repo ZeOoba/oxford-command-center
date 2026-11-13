@@ -55,8 +55,12 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     expect(WRAPPER).not.toMatch(/command -v/);
     expect(WRAPPER).toContain('safe_exe "$c" | while IFS= read -r cand; do');
     expect(WRAPPER).toContain('node_bin="$(safe_exe node | head -n 1)"');
-    expect(WRAPPER).toContain('d !~ /^\\// { next }');
-    expect(WRAPPER).toContain('index(l, r) == 1 || index(l, c) == 1 { next }');
+    // wf_a50bf4bb-d1a: PATH is rebuilt with built-ins before ANY external command runs.
+    expect(WRAPPER).toContain('if [ "$_p" -ef "$here" ]; then _in=1; break; fi');
+    expect(WRAPPER).toContain('case "$_d" in /*) ;; *) continue ;; esac');
+    const firstExternal = Math.min(...['root="$(git', 'refs="$(cat)"', 'safe_exe node | head'].map((t) => WRAPPER.indexOf(t)));
+    expect(WRAPPER.indexOf('export PATH')).toBeGreaterThan(-1);
+    expect(WRAPPER.indexOf('export PATH')).toBeLessThan(firstExternal);
     const code = WRAPPER.split('\n').filter((l) => !l.startsWith('#')).join('\n');
     expect(code).not.toMatch(/(^|[|;&]\s*)node /m);
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeGreaterThan(-1);

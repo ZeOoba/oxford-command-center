@@ -1346,6 +1346,11 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       const path = ['', '.', 'relative/bin', repo, inRepo, good].join(sep);
       expect(resolveOnPath('python', { path, excludeRoots: [repo] })).toEqual([join(good, `python${ext}`)]);
       expect(resolveOnPath('python', { path: ['.', repo].join(sep), excludeRoots: [repo] })).toEqual([]);
+      // A child directory whose name starts with '..' is still inside the worktree (wf_a50bf4bb-d1a, low).
+      const dotdotChild = join(repo, '..tools');
+      mkdirSync(dotdotChild, { recursive: true });
+      writeFileSync(join(dotdotChild, `python${ext}`), '');
+      expect(resolveOnPath('python', { path: [dotdotChild, good].join(sep), excludeRoots: [repo] })).toEqual([join(good, `python${ext}`)]);
     });
   });
 });

@@ -356,6 +356,32 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     }
   });
 
+  /** Plant an untracked sh script `name` in the worktree root ('.' first on PATH, as plantInRoot). */
+  const plantScript = (box: Sandbox, name: string, body: string): void => {
+    writeFileSync(join(box.work, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    writeFileSync(join(box.work, '.git', 'info', 'exclude'), `scripts/\n${name}\n`);
+    delete box.env['NoDefaultCurrentDirectoryInExePath'];
+    const key = Object.keys(box.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+    box.env[key] = `.${process.platform === 'win32' ? ';' : ':'}${box.env[key] ?? ''}`;
+  };
+
+  // wf_a50bf4bb-d1a (medium, reproduced as real leaks): the wrapper ran its own helpers by bare name,
+  // so with '.' on PATH a planted `cat` that prints nothing emptied the ref list (nothing scanned) and
+  // a planted `head` swapped in a fake node. The wrapper now rebuilds PATH before any external command.
+  for (const [name, body] of [
+    ['cat', 'exit 0'],
+    ['head', 'echo /usr/bin/true'],
+    ['grep', 'exit 0'],
+  ] as const) {
+    it(`a planted ${name} in the worktree root with "." on PATH cannot open the gate`, () => {
+      const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+      plantScript(sb, name, body); // after committing: only the hook's own lookups see the plant
+      const r = sb.push('origin', 'main');
+      expect(r.status, r.stderr).not.toBe(0);
+      expect(sb.remoteHas(leak)).toBe(false);
+    });
+  }
+
   it('a planted node in the worktree root with "." on PATH cannot stand in for the scanner', () => {
     if (!plantInRoot(sb, 'node')) return;
     const leak = sb.commit('notes.md', `memo about ${TERM}\n`);

@@ -28,7 +28,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // This scanner's own implementation + tests necessarily contain `confidential: true` fixtures and the
@@ -867,7 +867,8 @@ export function resolveOnPath(name, opts = {}) {
   const inside = (dir) =>
     excludeRoots.some((root) => {
       const rel = relative(win ? root.toLowerCase() : root, win ? dir.toLowerCase() : dir);
-      return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+      // '..tools' is a CHILD named '..tools'; only '..' itself or a '../' prefix leaves the root.
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !rel.startsWith('../') && !isAbsolute(rel));
     });
   const pathVar = opts.path ?? process.env['PATH'] ?? process.env['Path'] ?? '';
   const exts = win ? ['.exe', '.com'] : [''];
