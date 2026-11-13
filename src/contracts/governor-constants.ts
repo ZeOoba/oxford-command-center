@@ -15,6 +15,12 @@ export const RATIFIED_GOVERNORS = {
   dscrFloor: 1.25,
   /** Aggregate loan-to-value ceiling (fraction). Hard invariant — CLAUDE.md §4. */
   ltvCeiling: 0.40,
+  /** PER-PROPERTY refi-sizing LTV ceiling (fraction). Hard invariant — CLAUDE.md §4 ("65% per-property refi ceiling",
+   *  protected). Not in tension with the 40% aggregate ceiling (Gabriel, 2026-07-11). Encoded here 2026-11-12 (PR-C,
+   *  Gabriel in-turn go-ahead) as the one home of the literal: the acquisition DSCR floor sizes its test loan at it
+   *  (acquisition-underwriting SKILL.md v4.44/v4.45). Not a capital_config column — no live set overrides it. ALERT_THRESHOLDS.refiLtvCeilingPerProperty
+   *  (src/analytics/conditions.ts) and debt-maturity's REFI_LTV_CEILING derive from this. */
+  perPropertyLtvCeiling: 0.65,
   /** Ratified set version + effective date (capital_config version-1 seed row). */
   version: 1,
   effectiveFrom: '2026-06-13',

@@ -58,7 +58,7 @@ const STRONG_RAW: Record<string, unknown> = {
   // Ruleset 2.0.0 moved Basis full credit 0.90 -> 0.76, which lifts the Basis points of a fixed discount. 4,472,480 is the
   // basis whose Basis points under 0.76 equal 3,600,000's under 0.90 (11.39 of 25), so every composite this file pins
   // (80.6 / 74.6 / 63.6 ...) and the BUY-gate boundaries they exercise are unchanged: only the ramp anchor moved.
-  allInBasis: 4_472_480, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
+  allInBasis: 4_472_480, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -330,10 +330,11 @@ describe('BUY gate — empty capital_config (audit 2026-10-13 G6)', () => {
 });
 
 // ── Refute H1: an UNEVALUATED DSCR governor / yield floor must not reach BUY. A deal with
-// stabilizedYoc = null scores T2 WATCH (yield floor indeterminate ⇒ capped, not KILLED) with
-// governor_dscr_cleared NULL, while the same deal with a known low YoC is KILLED.
+// stabilizedYoc = null scores T2 WATCH (yield floor indeterminate ⇒ capped, not KILLED), while the same deal with a
+// known low YoC is KILLED. Since PR-C the DSCR floor reads the exit cap (not the YoC), so the fixture also leaves the
+// exit cap unknown to keep governor_dscr_cleared NULL; the exit-cap-only case is pinned separately below.
 const NULL_YOC = {
-  stabilizedYoc: null, allInBasis: 1_500_000, clearHeightFt: 24, yearBuilt: 2005, waltYears: 0.5,
+  stabilizedYoc: null, exitCapPct: null, allInBasis: 1_500_000, clearHeightFt: 24, yearBuilt: 2005, waltYears: 0.5,
   marketRentPsf: 9, officePct: 0.05, valueAddScore: 1, sellerMotivationScore: 1,
 };
 
@@ -351,6 +352,19 @@ describe('BUY gate — unevaluated DSCR governor / yield floor (refute H1)', () 
     const row = db.prepare('SELECT governor_dscr_cleared AS g FROM acq_scores WHERE candidate_id = ?').get('cand-null-yoc') as { g: number | null };
     expect(row.g).toBeNull();
     expect((await buy(db)).buyVerdicts).toHaveLength(0);
+  });
+
+  it('an unknown exit cap alone (YoC known) leaves governor_dscr_cleared NULL and is NOT buyable', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-null-cap', { exitCapPct: null });
+    const row = db.prepare('SELECT governor_dscr_cleared AS g FROM acq_scores WHERE candidate_id = ?').get('cand-null-cap') as { g: number | null };
+    expect(row.g).toBeNull();
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    // ...and it says why (refute wf_0a80ea57-515): the indeterminate DSCR floor is an open item on the pipeline row.
+    const item = result.pipeline.find((p) => p.candidateId === 'cand-null-cap')!;
+    expect(item.buyEligible).toBe(false);
+    expect(item.openItems).toContain('DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered');
   });
 
   it('a NULL governor_dscr_cleared alone blocks BUY even on an otherwise clean row', async () => {
@@ -465,10 +479,19 @@ describe('BUY gate — unevaluated IRR floor (refute round 2 T1)', () => {
     expect(buyVerdicts).toHaveLength(0);
   });
 
-  it('a known passing unlevered IRR (0.12 ≥ the 10.0% floor) is still BUY', async () => {
+  it('a known passing unlevered IRR just above the floor (10.4% ≥ 10.0%, vacant share known) is still BUY', async () => {
+    // A value distinct from the 0.12 base fixture, so this test actually exercises the IRR floor (PR-A review low).
     const db = freshDb();
-    await seedScored(db, 'cand-irr-ok', { unleveredIrr10yr: 0.12 });
+    await seedScored(db, 'cand-irr-ok', { unleveredIrr10yr: 0.104, vacantSfShareAtClose: 0 });
     expect((await buy(db)).buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-irr-ok']);
+  });
+
+  it('an IRR between the 10% and 11% floors with an UNKNOWN vacant share is indeterminate and NOT buyable', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-irr-undecided', { unleveredIrr10yr: 0.105, vacantSfShareAtClose: null, isVacant: false });
+    const { result, buyVerdicts } = await buy(db);
+    expect(result.pipeline.find((p) => p.candidateId === 'cand-irr-undecided')!.buyEligible).toBe(false);
+    expect(buyVerdicts).toHaveLength(0);
   });
 });
 

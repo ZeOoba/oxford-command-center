@@ -416,6 +416,8 @@ function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | n
           <Row label="Stabilized YoC" value={fmtPct(input.stabilizedYoc)} />
           <Row label="Unlevered IRR (10yr)" value={fmtPct(input.unleveredIrr10yr)} />
           <Row label="Levered IRR" value={fmtPct(input.leveredIrr)} />
+          <Row label="Exit cap" value={fmtPct(input.exitCapPct)} />
+          <Row label="10-yr UST" value={fmtPct(input.ust10yr)} />
           <Row label="Horizon" value={input.underwriteHorizonYrs !== null ? `${input.underwriteHorizonYrs} yr` : '—'} />
         </div>
 

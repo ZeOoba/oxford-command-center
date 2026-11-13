@@ -1,5 +1,5 @@
 import type { PortfolioSnapshot, MacroSnapshot } from '@contracts/index';
-import { GOVERNOR_FALLBACK } from '@contracts/index';
+import { GOVERNOR_FALLBACK, RATIFIED_GOVERNORS } from '@contracts/index';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
@@ -28,8 +28,9 @@ export const ALERT_THRESHOLDS = {
   // alert-specific NAMES so they can never be mistaken for GovernorSet.dscrFloor / .ltvCeiling
   // (renamed 2026-09-26; values unchanged).
   /** Per-property refinance LTV ceiling (65%) — CLAUDE.md §Identity governors; distinct from the
-   *  40% AGGREGATE ceiling that is the capital governor. */
-  refiLtvCeilingPerProperty: 0.65,
+   *  40% AGGREGATE ceiling that is the capital governor. Derived from RATIFIED_GOVERNORS since 2026-11-12 (PR-C),
+   *  the one home of the literal that the acquisition DSCR floor also reads; value unchanged. */
+  refiLtvCeilingPerProperty: RATIFIED_GOVERNORS.perPropertyLtvCeiling,
   leaseCriticalDays: 60,
   leaseWarningDays: 180,
   insuranceRenewWarnDays: 30,

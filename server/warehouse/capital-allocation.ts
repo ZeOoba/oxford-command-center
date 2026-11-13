@@ -61,7 +61,7 @@ import { loadGovernors } from './governors';
 import { loadRatifiedRct, loadRatifiedRuleset } from './acquisition';
 import { classifyPersistedScore, CURRENT_SCORE_WITH_INPUTS_SQL, liveScoringRegime } from './acq-score-freshness';
 import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness';
-import { governorFingerprint } from './acq-governor-proxy';
+import { GOVERNOR_OPEN_ITEM_PREFIX, governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
@@ -705,17 +705,24 @@ export const OPEN_ITEM_DISPLAY: Readonly<Record<string, string>> = {
 
 function capReasonsOf(score: AcquisitionScore | null): string[] {
   if (score === null) return [];
+  const items: string[] = [];
   for (const r of score.reasons) {
     const m = /^(?:Capped T1 → T2|Notes): (.*?)\.?$/.exec(r);
     if (m && m[1]) {
-      return m[1]
+      items.push(...m[1]
         .split('; ')
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
-        .map((s) => OPEN_ITEM_DISPLAY[s] ?? s);
+        .map((s) => OPEN_ITEM_DISPLAY[s] ?? s));
+      break; // the engine emits at most one cap/notes line
     }
   }
-  return [];
+  // Governor disclosures (acq-governor-proxy GOVERNOR_OPEN_ITEM_PREFIX), e.g. an indeterminate DSCR floor: a deal held
+  // out of BUY for a missing exit cap or UST always shows why (refute wf_0a80ea57-515).
+  for (const r of score.reasons) {
+    if (r.startsWith(GOVERNOR_OPEN_ITEM_PREFIX)) items.push(r.slice(GOVERNOR_OPEN_ITEM_PREFIX.length));
+  }
+  return items;
 }
 
 function verdictOf(v: string | null): 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED' | null {

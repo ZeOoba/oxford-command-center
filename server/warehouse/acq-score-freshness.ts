@@ -43,7 +43,7 @@ export interface LiveScoringRegime {
   /**
    * Every governor fingerprint (governorFingerprint(), the inputs_version component) of a
    * capital_config version whose SCORING-RELEVANT values — dscrFloor and ltvCeiling, with the
-   * current SCREENING_DEBT_CONSTANT baked into the fingerprint — equal the live ones (refute H2).
+   * current DSCR-floor refi terms baked into the fingerprint — equal the live ones (refute H2).
    * The persisted dedup key leads with capital_config.version, so comparing against the LIVE
    * fingerprint alone made ANY capital_config write (e.g. dispositionCapRate) stale every score and
    * silently strip every BUY. A score whose key matches ANY same-valued version was produced by
@@ -258,7 +258,7 @@ export function classifyPersistedScore(row: PersistedScoreRow | undefined, live:
   if (!matches) {
     return {
       state: 'stale',
-      staleReasons: ['scored under different governor values (DSCR floor / LTV ceiling / screening debt constant) than the live capital_config'],
+      staleReasons: ['scored under different governor values (DSCR floor / LTV ceiling / DSCR-floor refi terms: 65% LTV, UST + 200 bps, 25-yr) than the live capital_config'],
       score,
     };
   }

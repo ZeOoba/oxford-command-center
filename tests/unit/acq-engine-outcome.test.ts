@@ -45,22 +45,22 @@ const STRONG_RAW: Record<string, unknown> = {
   multiStory: false, truckCourtFt: 120,
   constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   allInBasis: 3_600_000,
-  stabilizedYoc: 0.12,     // DSCR proxy: 0.12 / (0.40 × 0.085) = 3.53 ≥ 1.25 → clears; LTV indeterminate
-  leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
+  stabilizedYoc: 0.12,     // DSCR floor: 7.50% exit cap ⇒ ~1.45x ≥ 1.25 → clears; LTV indeterminate
+  leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
 };
 
 /**
- * DSCR-failing input: very low YOC → DSCR proxy fails → verdict demoted to PASS.
- * 0.02 / (0.40 × 0.085) = 0.588 < 1.25 → governorDscrCleared = false → PASS.
+ * DSCR-failing input: a 5.0% exit cap → DSCR at a 65%-LTV refi (UST 4.30% + 200 bps, 25 yr) ≈ 0.97x < 1.25
+ * → governorDscrCleared = false → PASS.
  * LTV is always indeterminate at screen time (ratified correction 2026-06-20).
  */
 const DSCR_FAIL_RAW: Record<string, unknown> = {
   ...STRONG_RAW,
   dealId: 'outcome-dscr-fail',
-  stabilizedYoc: 0.02,   // 0.02 / (0.40 × 0.085) = 0.588 < 1.25 → DSCR proxy fails → PASS
+  exitCapPct: 0.05,   // DSCR ≈ 0.97x < 1.25 → DSCR floor fails → PASS
 };
 
 /** High composite — DSCR proxy clears (same as STRONG_RAW); used for PURSUE/WATCH verdict tests. */

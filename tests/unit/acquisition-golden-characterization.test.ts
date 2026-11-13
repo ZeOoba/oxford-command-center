@@ -75,9 +75,14 @@ function seededGovernorFingerprint(): string {
 // RE-PINNED 2026-11-12 (RCT v3.2, Gabriel in-turn, PR-B): AcquisitionInput gained rctAdders (default null) and RCT_VERSION
 // moved to replacement-cost.v3.2 (Chicago row, cheapest-market fallback, construction-type multiplier + adders). Deliberate:
 // the RCT bump marks every persisted score stale; same migration plan. Previous pins: 27340762df9a6cb9 / 563ba68374d5e1d1.
-const PIN_LEGACY = '06dbc4980d14121e';
-const PIN_WITH_GOVERNORS = 'c61857631b5713df';
-const PIN_GOVERNOR_FINGERPRINT = '1:1.25:0.4:0.085';
+// RE-PINNED 2026-11-12 (PR-C, DSCR floor at a 65%-LTV refi): AcquisitionInput gained exitCapPct (default null) and the
+// governor fingerprint carries the refi terms instead of 0.085. Deliberate: every candidate re-keys once and is stale
+// (not BUY-eligible) until re-scored; same migration plan. Previous pins: 06dbc4980d14121e / c61857631b5713df.
+const PIN_LEGACY = 'fc03fabd5fa9732d';
+const PIN_WITH_GOVERNORS = 'ec629c0a8d53b59b';
+// RE-PINNED 2026-11-12 (PR-C): the retired screening debt constant 0.085 gave way to the 65%-LTV refi terms of the
+// DSCR floor. Previous pin: 1:1.25:0.4:0.085.
+const PIN_GOVERNOR_FINGERPRINT = '1:1.25:0.4:refi0.65/ust+0.02/25y';
 
 describe('golden: inputs_version pin (R-HASH)', () => {
   it('legacy keyspace (no governor fingerprint) is pinned', () => {

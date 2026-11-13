@@ -353,6 +353,10 @@ export const AcquisitionInput = z.object({
   ust10yr: z.number().min(0).max(0.2).nullable().default(null),
   ustAsOf: z.string().nullable().default(null),
   vacantSfShareAtClose: z.number().min(0).max(1).nullable().default(null),
+  // DSCR floor input (2026-11-12, PR-C): the market exit cap (SKILL.md UNDERWRITING CONVENTIONS exit-cap table, e.g.
+  // Columbus 7.50%) as a decimal. The governor DSCR test sizes a 65%-LTV loan on stabilized value (NOI ÷ exit cap) at
+  // UST + 200 bps / 25 yr, reading ust10yr above; null => the DSCR floor is indeterminate (not BUY-eligible).
+  exitCapPct: z.number().gt(0).max(0.25).nullable().default(null),
   // REPORTED ONLY since ruleset 2.0.0 — the levered IRR floor is retired (SKILL.md v4.33). No floor reads these.
   leveredIrr: z.number().nullable().default(null),
   underwriteHorizonYrs: z.union([z.literal(5), z.literal(10)]).nullable().default(null),

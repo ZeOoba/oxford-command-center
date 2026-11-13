@@ -63,7 +63,7 @@ function GovernorCell({ dscrCleared, ltvCleared }: GovernorCellProps) {
     return <span style={{ color: 'var(--text-pos)', fontSize: '0.75rem' }}>✓</span>;
   }
   const tip = [
-    dscrCleared === false ? `DSCR governor failed (proxy < ${gov.dscrFloor.toFixed(2)}x)` : '',
+    dscrCleared === false ? `DSCR floor failed (< ${gov.dscrFloor.toFixed(2)}x at a 65%-LTV refi)` : '',
     ltvCleared === false  ? `LTV governor failed (> ${(gov.ltvCeiling * 100).toFixed(0)}%)` : '',
   ].filter(Boolean).join(' · ');
   return (

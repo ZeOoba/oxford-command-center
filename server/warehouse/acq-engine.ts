@@ -10,7 +10,8 @@
 // Governor enforcement (Invariant 4) — delegated to the SHARED, edge-portable proxy module
 // acq-governor-proxy.ts so the ranked path, the ad-hoc /acquisition/score route, and the edge
 // Pages Function apply IDENTICAL demotion:
-//   DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) ≥ dscrFloor.
+//   DSCR floor: DSCR at a 65%-LTV refi of stabilized value (UST + 200 bps, 25-yr) = exitCap ÷ (0.65 × k) ≥ dscrFloor
+//               (SKILL.md v4.45; replaced the stabilizedYoc ÷ (0.40 × 0.085) proxy 2026-11-12).
 //   LTV proxy:  INDETERMINATE at screen time (no loan amount in the inputs) → null, never demotes.
 //               The ≤40% LTV ceiling is a FINANCING-stage governor; no pipeline-candidate code path
 //               enforces a per-deal LTV today (see acq-governor-proxy.ts header — the capital_config
@@ -20,8 +21,8 @@
 //   A FAILED governor hard-demotes the verdict to 'PASS'; KILLED is never upgraded.
 //
 // Governor VALUES loaded via loadGovernors() (never hardcoded) — satisfies the governance-check
-// `acquisition_scorecard_governor_coupling` rule (Step 9). The ratified SCREENING_DEBT_CONSTANT
-// lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
+// `acquisition_scorecard_governor_coupling` rule (Step 9). The refi terms (UST + 200 bps, 25 yr) live in
+// acq-governor-proxy.ts; the 65% per-property LTV is RATIFIED_GOVERNORS.perPropertyLtvCeiling.
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
 import { applyGovernorProxyToScore, governorFingerprint } from './acq-governor-proxy';
@@ -99,8 +100,8 @@ export interface PersistAndLogScoreResult {
 /**
  * The governor-regime component of the persisted dedup key (I1): a DSCR/LTV governor edit must
  * mint a NEW inputs_version so INSERT OR IGNORE re-derives the verdict instead of silently keeping
- * one made under the old regime. SCREENING_DEBT_CONSTANT is part of the DSCR-proxy formula, so a
- * (ratified) change to it re-keys too. Format pinned — changing it re-keys every candidate once.
+ * one made under the old regime. The DSCR floor's refi terms (per-property LTV, UST spread, amortization) are part
+ * of the fingerprint, so a (ratified) change to them re-keys too. Format pinned — changing it re-keys every candidate once.
  *
  * Leads with the monotonic capital_config `version` (refute fix): capital_config is append-only,
  * so hashing only VALUES let a reversion (v1 dscrFloor 1.25 -> v2 1.30 -> v3 back to 1.25) collide
@@ -118,7 +119,7 @@ export { governorFingerprint };
  * Returns the AcquisitionScore (with verdict reflecting governor demotion) + calibration verdict id.
  *
  * GOVERNOR ENFORCEMENT (Invariant 4) — via the shared applyGovernorProxy (acq-governor-proxy.ts):
- *   - DSCR proxy: stabilizedYoc / (ltvCeiling * SCREENING_DEBT_CONSTANT). Absent → NULL (no demotion).
+ *   - DSCR floor: exitCap ÷ (0.65 × k(UST + 200 bps, 25 yr)) ≥ dscrFloor. Exit cap or UST absent → NULL (no demotion).
  *   - LTV proxy: INDETERMINATE at screen time → NULL (enforced at financing; see module header).
  *   - A FAILED governor hard-demotes verdict to 'PASS' (never upgrades KILLED).
  *   - Composite is preserved (analysts can see the underlying score).
@@ -206,7 +207,7 @@ export async function persistAndLogScore(
 
   // 3b. Apply the SHARED governor proxy — the SAME demotion the ad-hoc /acquisition/score route
   //     and the edge Pages Function apply, so all three surfaces agree. LTV is indeterminate at
-  //     screen time (null, never demotes); DSCR proxy + KILLED-monotonicity unchanged.
+  //     screen time (null, never demotes); DSCR floor (65%-LTV refi) + KILLED-monotonicity.
   //     Score-level wrapper (audit 2026-10-13 G1): a demotion moves tier WITH the verdict, so the
   //     persisted tier column and score_json can never read T1/T2 next to a governor-demoted PASS.
   const { score: governedScore, governorDscrCleared, governorLtvCleared } =

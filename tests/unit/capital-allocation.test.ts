@@ -481,13 +481,13 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
   const ratifiedJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'));
   const RULESET = parseRuleset(ratifiedJson);
   const RCT = loadRatifiedRct();
-  // Strong deal: DSCR proxy = 0.12 / (0.40 x 0.085) = 3.53 -> clears dscr_floor 1.25, fails 4.0.
+  // Strong deal: DSCR at a 65%-LTV refi = 7.50% exit cap / (0.65 x k(6.30%, 25y)) = ~1.45x -> clears dscr_floor 1.25, fails 4.0.
   const STRONG = AcquisitionInput.parse({
     dealId: 'stale-strong', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
     productType: 'shallow-bay-multi', officePct: 0.1, clearHeightFt: 28, hasDriveIn: true, hasDock: true,
     dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
     constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false, allInBasis: 3_600_000,
-    stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
+    stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
     sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5,
     valueAddScore: 0.5, ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
   });
@@ -507,7 +507,7 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
   }
 
   /** An older governor regime stamp (capital_config version 0 never exists in a fresh warehouse). */
-  const OLD_REGIME = '0:1.25:0.4:0.085';
+  const OLD_REGIME = '0:1.25:0.4:refi0.65/ust+0.02/25y';
 
   /**
    * Rewrite a candidate's latest REAL acq_scores row (written by persistAndLogScore) into a legacy /
