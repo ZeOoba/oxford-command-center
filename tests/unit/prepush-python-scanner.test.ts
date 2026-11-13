@@ -23,12 +23,13 @@ function findPython(): string | null {
   return null;
 }
 
-// Blob ids (`git hash-object`, LF-normalized) of ora-skills commit b3e0d0c5: tools/prepush_confidential_scan.py,
-// tools/test_prepush_confidential_scan.py and tools/hooks/pre-push. Re-vendor all three together and
+// Blob ids (`git hash-object`, LF-normalized) of the shared files in ora-skills (branch
+// fix/prepush-context-and-urlencode, commit cc51f230; also ZeOoba/ora-pm 8a951c4):
+// tools/prepush_confidential_scan.py, tools/test_prepush_confidential_scan.py and tools/hooks/pre-push. Re-vendor all three together and
 // update these ids in the same commit; an edit made only here would fork the shared scanner.
 const VENDORED = {
   'scripts/prepush_confidential_scan.py': '71e19a76a6f1102f9b62bc2de490c4d5fb17037b',
-  'scripts/test_prepush_confidential_scan.py': '50f05275f151ab0d1d4bdb0a5914ff8e5e6da522',
+  'scripts/test_prepush_confidential_scan.py': 'e7e0ddb230f8a23e278efe1ebf1c63dacbc56034',
   'scripts/hooks/pre-push': 'a18f2cd38a45000ea7f6f9fb016487a488310893',
 } as const;
 

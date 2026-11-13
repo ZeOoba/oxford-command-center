@@ -6,8 +6,8 @@ import { spawnSync } from 'node:child_process';
 
 import { WRAPPER } from '../../scripts/install-git-hooks';
 
-// End-to-end: the INSTALLED pre-push hook (WRAPPER: the vendored Python term scanner, then the OCC
-// JS payload scanner) run by a real `git push` into a bare remote. One case per leak shape the refute
+// End-to-end: the INSTALLED pre-push hook (WRAPPER -> the JS scanner, which runs the vendored Python
+// term scanner and then the OCC payload checks) run by a real `git push` into a bare remote. One case per leak shape the refute
 // run wf_72500728-83e reproduced against the JS-only gate; each must BLOCK, and a clean push must go
 // through. The roster term is SYNTHETIC (never a real deal name, person or address).
 //
@@ -16,6 +16,25 @@ import { WRAPPER } from '../../scripts/install-git-hooks';
 // the fix. Unset, the cases run against this checkout.
 
 const TERM = 'Quorvane Blissetter Parcel';
+
+/**
+ * The pre-push wrapper origin/main installed before 2026-11-12, verbatim: no Python stage, no "$@",
+ * no stdin-read check. .git/hooks is shared by every worktree, and an older worktree's installer
+ * rewrites it with this on any `npm install` / `npm test`, so the new scanners must still block
+ * through it (refute run wf_0df7879e-d79, high).
+ */
+const LEGACY_WRAPPER = `#!/bin/sh
+root="$(git rev-parse --show-toplevel)"
+refs="$(cat)"
+printf '%s\\n' "$refs" | node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
+if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
+  printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
+fi
+if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
+  node "$root/scripts/prepush-noi-crosscheck.mjs" || true
+fi
+exit 0
+`;
 const SRC = process.env['PREPUSH_E2E_SRC'] ?? process.cwd();
 
 /** The pre-push template of the tree under test (the imported WRAPPER for this checkout). */
@@ -35,7 +54,7 @@ class Sandbox {
   work = join(this.root, 'work');
   env: Record<string, string | undefined>;
 
-  constructor() {
+  constructor(wrapper?: string) {
     mkdirSync(join(this.home, '.claude', 'hooks'), { recursive: true });
     writeFileSync(
       join(this.home, '.claude', 'hooks', 'confidential-terms.json'),
@@ -70,7 +89,7 @@ class Sandbox {
     this.git(this.work, 'fetch', '-q', 'origin');
     const hooks = join(this.root, 'hooks');
     mkdirSync(hooks);
-    writeFileSync(join(hooks, 'pre-push'), wrapperOf(SRC), { mode: 0o755 });
+    writeFileSync(join(hooks, 'pre-push'), wrapper ?? wrapperOf(SRC), { mode: 0o755 });
     this.git(this.work, 'config', 'core.hooksPath', hooks);
   }
 
@@ -184,6 +203,23 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     sb.git(sb.work, 'remote', 'add', 'mirror', mirror);
     expectBlocked(sb.push('mirror', 'main'));
     expect(sb.remoteHas(leak, mirror)).toBe(false);
+  });
+
+  it('BLOCKS a term through the LEGACY wrapper (no Python stage, no argv) that older worktrees reinstall', () => {
+    const legacy = new Sandbox(LEGACY_WRAPPER);
+    try {
+      const leak = legacy.commit('notes.md', `memo about ${TERM}\n`);
+      expectBlocked(legacy.push('origin', 'main'));
+      expect(legacy.remoteHas(leak)).toBe(false);
+      // ...and a clean push still goes through it.
+      legacy.git(legacy.work, 'reset', '-q', '--hard', 'HEAD~1');
+      const clean = legacy.commit('notes.md', 'nothing to see\n');
+      const r = legacy.push('origin', 'main');
+      expect(r.status, r.stderr).toBe(0);
+      expect(legacy.remoteHas(clean)).toBe(true);
+    } finally {
+      legacy.close();
+    }
   });
 
   it('BLOCKS a binary under data/ (the JS payload stage) even with no term anywhere', () => {

@@ -8,11 +8,12 @@
 //   * added lines carrying FINGERPRINT_BLOCK_MIN+ distinct real amounts from the local real-data files;
 //   * a `confidential: true` payload, unless this repo is registered as a confidential store.
 //
-// Confidential deal TERMS are NOT matched here (2026-11-12, after refute run wf_72500728-83e). The
-// shared, refute-hardened Python scanner scripts/prepush_confidential_scan.py (vendored from ora-skills)
-// owns term detection for every ORA repo and runs FIRST in the installed hook
-// (scripts/install-git-hooks.ts); one source of truth for terms, roster handling and term output
-// withholding. This file used to carry its own term/context-term matcher and roster gate.
+// Confidential deal TERMS are matched by the shared, refute-hardened Python scanner
+// scripts/prepush_confidential_scan.py (vendored from ora-skills; one source of truth for terms, roster
+// handling and term output withholding across every ORA repo). This file RUNS it first (runTermScan)
+// and blocks on any failure, so every installed wrapper version gets the term scan, including an older
+// one that never calls Python itself (refute run wf_0df7879e-d79). This file used to carry its own
+// term/context-term matcher.
 //
 // Range per pushed ref, mirroring the Python scanner (no local tracking ref is ever trusted):
 //   * an existing remote ref scans remoteSha..localSha (git took remoteSha from the destination);
@@ -25,14 +26,15 @@
 //
 // Node built-ins only (runs in a git hook with no install step).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// This scanner's own implementation + tests necessarily contain payload-like literals
-// (`confidential: true` fixtures, synthetic amounts), so they are excluded from the payload checks to
-// avoid self-triggering. They are NOT excluded from term scanning: the Python scanner reads every file.
+// This scanner's own implementation + tests necessarily contain `confidential: true` fixtures, so they
+// are excluded from that one check to avoid self-triggering. They are NOT excluded from the real-amount
+// check (synthetic literals cannot match real fingerprints) or from term scanning (the Python scanner
+// reads every file).
 const EXCLUDE_PATHS = new Set([
   'scripts/prepush-confidential-scan.mjs',
   'scripts/prepush-confidential-scan.d.mts',
@@ -367,10 +369,7 @@ const CONFIDENTIAL_FLAG_RE = /["']?\bconfidential\b["']?\s*:\s*true\b/;
  * @param {string} [cwdOverride] - test seam; defaults to the real process cwd. */
 export function currentRepoName(cwdOverride) {
   try {
-    const gitDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-      encoding: 'utf8',
-      ...(cwdOverride ? { cwd: cwdOverride } : {}),
-    }).trim();
+    const gitDir = gitOut(['rev-parse', '--git-common-dir'], cwdOverride).trim();
     const top = resolve(cwdOverride ?? '.', gitDir, '..');
     return top.split(/[\\/]/).filter(Boolean).pop() ?? '';
   } catch {
@@ -487,7 +486,10 @@ export function parseAddedLines(diffText) {
     if (!inHunk) {
       if (raw.startsWith('+++ ')) {
         // '+++ b/path/to/file' (or '+++ /dev/null'); strip the a/ or b/ prefix.
-        currentFile = raw.slice(4).trim().replace(/^[ab]\//, '');
+        // Strip only the TAB git appends after a name containing a space: trimming all whitespace
+        // turned 'scripts/install-git-hooks.ts ' (trailing space) into an EXCLUDE_PATHS entry
+        // (refute run wf_0df7879e-d79, low).
+        currentFile = raw.slice(4).replace(/\t$/, '').replace(/^[ab]\//, '');
         continue;
       }
       if (raw.startsWith('--- ')) continue;
@@ -767,6 +769,74 @@ export function shouldBlockOnDiffError(diffErrors, env) {
   return env['PREPUSH_ALLOW_DIFF_ERROR'] !== '1';
 }
 
+// ── confidential-term scan (Python, run from here) ───────────────────────────────────────────────
+/** The shared Python term scanner, from the same tree as this file (vendored from ora-skills). */
+export const PY_SCANNER = join(dirname(fileURLToPath(import.meta.url)), 'prepush_confidential_scan.py');
+
+/** Interpreter names probed in order. Each must actually RUN Python 3.8+ (the Windows Store
+ * 'python' stub exists on PATH but fails the probe). */
+export const PYTHON_CANDIDATES = ['python', 'python3', 'py'];
+
+/**
+ * First interpreter in PYTHON_CANDIDATES that runs Python 3.8+ in isolated mode, or null.
+ * @param {typeof spawnSync} [run] - test seam.
+ * @returns {string | null}
+ */
+export function findPython(run = spawnSync) {
+  for (const c of PYTHON_CANDIDATES) {
+    const r = run(c, ['-I', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 30_000,
+    });
+    if (!r.error && r.status === 0) return c;
+  }
+  return null;
+}
+
+/**
+ * Run the Python term scanner over the push: the buffered ref lines on its stdin, git's remote name
+ * and push URL as argv. `-I` (isolated mode): no PYTHONPATH / PYTHONSTARTUP / PYTHONINSPECT, no user
+ * site-packages, and the script's directory is not on sys.path, so nothing beside it can shadow a
+ * stdlib module. Its stderr (block lines, never a term) passes through. Fails closed on everything:
+ * no scanner, no usable Python, a spawn error, a signal, any non-zero exit.
+ *
+ * @param {string} stdinText
+ * @param {(string | undefined)[]} argv - [remote, url]; trailing undefined entries are dropped.
+ * @param {{scanner?: string, python?: string | null, run?: typeof spawnSync}} [deps] - test seams.
+ * @returns {{ok: true} | {ok: false, message: string}}
+ */
+export function runTermScan(stdinText, argv, deps = {}) {
+  const scanner = deps.scanner ?? PY_SCANNER;
+  const run = deps.run ?? spawnSync;
+  if (!existsSync(scanner)) {
+    return { ok: false, message: `confidentiality term scanner not found (${scanner}); fail closed (Invariant 3).` };
+  }
+  const python = deps.python !== undefined ? deps.python : findPython(run);
+  if (!python) {
+    return {
+      ok: false,
+      message: `no Python 3.8+ found (tried ${PYTHON_CANDIDATES.join(', ')}) to run the confidentiality term scan; fail closed (Invariant 3).`,
+    };
+  }
+  const args = [...argv];
+  while (args.length && args[args.length - 1] === undefined) args.pop();
+  const r = run(python, ['-I', scanner, ...args.map((a) => a ?? '')], {
+    input: stdinText,
+    stdio: ['pipe', 'inherit', 'inherit'],
+    windowsHide: true,
+    maxBuffer: Infinity,
+  });
+  if (r.error) return { ok: false, message: `confidentiality term scan could not run (${errorLine(r.error)}); fail closed (Invariant 3).` };
+  if (r.status !== 0) {
+    return {
+      ok: false,
+      message: `confidentiality term scan ${r.status === null ? `was killed (${r.signal})` : `exited ${r.status}`}; see the lines above (Invariant 3).`,
+    };
+  }
+  return { ok: true };
+}
+
 /**
  * Read git's pre-push stdin. A read ERROR used to be swallowed into '' -- no refs, nothing scanned,
  * exit 0 -- so it now comes back as `error` and the caller fails closed (2026-11-12). A genuinely
@@ -853,7 +923,9 @@ export function collectRefScan(stdinText, cwd, deps) {
     const refBound = !remote || ZERO_SHA.test(remote) || !hasCommit(remote, cwd) ? boundOnce() : undefined;
     try {
       const diffText = getDiff(remote, localSha, cwd, refBound);
-      addedByRef.push(parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file)));
+      // Unfiltered: EXCLUDE_PATHS applies only to the confidential:true check (main), the one check
+      // these files would self-trigger. Real amounts are counted in them too (wf_0df7879e-d79, medium).
+      addedByRef.push(parseAddedLines(diffText));
     } catch (err) {
       diffErrors.push({ localSha, message: `text diff: ${errorLine(err)}` });
     }
@@ -893,7 +965,7 @@ function stagedMain() {
   const names = gitOut(['diff', '--cached', '--name-status', '--no-renames', '--diff-filter=AMT', ...DIFF_OPTION_PIN]);
   const pathHits = parseRealDataPaths(names, manifest);
   const added = parseAddedLines(gitOut(['diff', '--cached', '-U0', '--no-renames', ...DIFF_OPTION_PIN]));
-  const fps = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+  const fps = realAmountFingerprints(String(gitOut(['rev-parse', '--show-toplevel'])).trim());
   const amountHits = fps ? scanAddedLinesForRealAmounts(added, fps) : [];
   if (!fps) console.log('[prepush-confidential-scan --staged] content fingerprint check skipped: no real data on this machine.');
   for (const p of pathHits) console.error(`real-data path staged: ${p}`);
@@ -920,14 +992,32 @@ function main() {
   // empty stdin (up-to-date push) is not an error.
   const stdin = readPushStdin();
   // git passes pre-push hooks the remote name and push URL (argv[1], argv[2]); the hook wrapper
-  // forwards them. They bound a new ref by what the destination advertises.
+  // forwards them. They bound a new ref by what the destination advertises. A wrapper that predates
+  // the forwarding passes neither, and both scanners then scan new refs in full.
   const [remote, url] = process.argv.slice(2).filter((a) => a !== '--staged');
+
+  // Confidential TERMS first. This file runs the Python scanner itself, so the term scan cannot be
+  // skipped by whichever pre-push wrapper happens to be installed in the SHARED .git/hooks (an older
+  // worktree's installer rewrites it with a wrapper that never calls Python; refute run
+  // wf_0df7879e-d79, high). No override here: PREPUSH_ALLOW_DIFF_ERROR covers the payload scan only.
+  if (stdin.error) {
+    console.error(`\n✖  PUSH BLOCKED — the pushed refs could not be read (${stdin.error}), so the confidential-term scan cannot run (Invariant 3, fail closed).\n`);
+    process.exit(1);
+  }
+  const terms = runTermScan(stdin.text, [remote, url]);
+  if (!terms.ok) {
+    console.error(`\n✖  PUSH BLOCKED — ${terms.message}\n`);
+    process.exit(1);
+  }
+
   const { addedByRef, binaryHits, realDataHits, diffErrors } = collectRefScan(stdin.text, undefined, { manifest, remote, url });
-  if (stdin.error) diffErrors.unshift({ localSha: '(pre-push stdin)', message: stdin.error });
   const flagHits = [];
   for (const added of addedByRef) {
-    // The confidential:true check is payload-shaped: a commit message describing the flag is not a payload.
-    flagHits.push(...scanDiffForConfidentialFlag(added.filter((a) => !a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX))));
+    // The confidential:true check is payload-shaped: a commit message describing the flag is not a
+    // payload, and this scanner's own files carry the flag as fixtures (EXCLUDE_PATHS).
+    flagHits.push(
+      ...scanDiffForConfidentialFlag(added.filter((a) => !a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX) && !EXCLUDE_PATHS.has(a.file))),
+    );
   }
 
   // Fail CLOSED on a ref that could not be scanned (prepush-scan-skips-on-diff-error, 2026-11-08).
@@ -966,14 +1056,19 @@ function main() {
   // real data exists, e.g. CI).
   let fingerprints = null;
   try {
-    fingerprints = realAmountFingerprints(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
+    fingerprints = realAmountFingerprints(String(gitOut(['rev-parse', '--show-toplevel'])).trim());
   } catch (err) {
     console.warn(`[prepush-confidential-scan] WARN: real-amount fingerprint list unavailable (${errorLine(err)}); content check skipped.`);
   }
   if (fingerprints === null) {
     console.log('[prepush-confidential-scan] content fingerprint check skipped: no real data on this machine (CI or a synthetic checkout).');
   } else {
-    const amountHits = addedByRef.flatMap((added) => scanAddedLinesForRealAmounts(added, fingerprints));
+    // Pooled across every pushed ref, and every commit message counts as one file, so amounts split
+    // across refs or across several messages still reach the threshold (wf_0df7879e-d79, low).
+    const amountHits = scanAddedLinesForRealAmounts(
+      addedByRef.flat().map((a) => (a.file.startsWith(COMMIT_MESSAGE_FILE_PREFIX) ? { ...a, file: `${COMMIT_MESSAGE_FILE_PREFIX}*)` } : a)),
+      fingerprints,
+    );
     if (amountHits.length > 0) {
       blockOnHits(
         amountHits,

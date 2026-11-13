@@ -5,6 +5,22 @@ import { tmpdir } from 'node:os';
 
 import { execFileSync, spawnSync } from 'node:child_process';
 
+/**
+ * The scanner runs the Python term scan first, and a missing roster blocks (fail closed). Fixture
+ * homes get an empty roster (no active deal) unless a test writes its own.
+ */
+function withEmptyRoster(home: string): string {
+  const dir = join(home, '.claude', 'hooks');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'confidential-terms.json');
+  try {
+    writeFileSync(file, '{}\n', { flag: 'wx' });
+  } catch {
+    // a test's own roster wins
+  }
+  return home;
+}
+
 // The module below is plain .mjs on purpose (the raw .git/hooks/pre-push script invokes it
 // with no npm context). Its types come from a GENERATED sibling .d.mts, emitted from that
 // script's own JSDoc by `npm run typecheck`'s `pretypecheck` step and gitignored by design --
@@ -41,6 +57,8 @@ import {
   FINGERPRINT_BLOCK_MIN,
   FINGERPRINT_BLOCK_MIN_SYNTHETIC,
   readPushStdin,
+  runTermScan,
+  findPython,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
@@ -76,6 +94,13 @@ describe('prepush-confidential-scan / parseAddedLines', () => {
   it('returns only added lines: removed and context lines are not payload', () => {
     const diff = ['@@ -1,3 +1,3 @@', '-"confidential": true,', ' "confidential": true,', '+"clean": 1'].join('\n');
     expect(parseAddedLines(diff).map((a) => a.text)).toEqual(['"clean": 1']);
+  });
+
+  // wf_0df7879e-d79 (low): git appends a TAB after a header name containing a space; trimming all
+  // whitespace turned 'scripts/install-git-hooks.ts ' into an excluded path.
+  it('keeps a trailing space in the file name (strips only git\'s TAB)', () => {
+    const diff = ['+++ b/scripts/install-git-hooks.ts \t', '@@ -0,0 +1 @@', '+x'].join('\n');
+    expect(parseAddedLines(diff)[0]?.file).toBe('scripts/install-git-hooks.ts ');
   });
 });
 
@@ -390,7 +415,7 @@ describe('prepush-confidential-scan / diff errors fail closed', () => {
   };
 
   const runHook = (stdin: string, extraEnv: Record<string, string> = {}) => {
-    const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+    const env: Record<string, string | undefined> = { ...process.env, HOME: withEmptyRoster(home), USERPROFILE: home };
     delete env['PREPUSH_ALLOW_DIFF_ERROR'];
     delete env['PREPUSH_ALLOW_NO_ROSTER'];
     Object.assign(env, extraEnv);
@@ -806,7 +831,7 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     const advertised = () => destinationBound('origin', remote, repo);
 
     const runHook = (stdin: string) => {
-      const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+      const env: Record<string, string | undefined> = { ...process.env, HOME: withEmptyRoster(home), USERPROFILE: home };
       delete env['PREPUSH_ALLOW_DIFF_ERROR'];
       delete env['PREPUSH_ALLOW_NO_ROSTER'];
       return spawnSync(process.execPath, [script, 'origin', remote], { cwd: repo, input: stdin, encoding: 'utf8', env });
@@ -890,7 +915,7 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
   });
 
   const env = (extra: Record<string, string> = {}) => {
-    const e: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
+    const e: Record<string, string | undefined> = { ...process.env, HOME: withEmptyRoster(home), USERPROFILE: home };
     delete e['PREPUSH_ALLOW_DIFF_ERROR'];
     delete e['PREPUSH_ALLOW_NO_ROSTER'];
     return Object.assign(e, extra);
@@ -1134,24 +1159,19 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       expect(bad.error).toContain('EBADF');
     });
 
-    it('BLOCKS when stdin cannot be read (fail closed), naming PREPUSH_ALLOW_DIFF_ERROR as the only opt-out', () => {
+    // 2026-11-12 (wf_0df7879e-d79): unreadable refs mean the term scan cannot run, so there is no
+    // environment opt-out any more (PREPUSH_ALLOW_DIFF_ERROR covers the payload scan only).
+    it('BLOCKS when stdin cannot be read (fail closed), even with PREPUSH_ALLOW_DIFF_ERROR=1', () => {
       const wo = join(home, 'write-only.txt');
       writeFileSync(wo, '');
       const fd = openSync(wo, 'w');
       try {
-        const r = spawnSync(process.execPath, [script], { cwd: repo, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: env() });
-        expect(r.status).toBe(1);
-        expect(r.stderr).toContain('PUSH BLOCKED');
-        expect(r.stderr).toContain('stdin');
-        expect(r.stderr).toContain('PREPUSH_ALLOW_DIFF_ERROR');
-        const allowed = spawnSync(process.execPath, [script], {
-          cwd: repo,
-          stdio: [fd, 'pipe', 'pipe'],
-          encoding: 'utf8',
-          env: env({ PREPUSH_ALLOW_DIFF_ERROR: '1' }),
-        });
-        expect(allowed.status).toBe(0);
-        expect(allowed.stderr).toMatch(/PREPUSH_ALLOW_DIFF_ERROR=1[^\n]*UNSCANNED/);
+        for (const extra of [{}, { PREPUSH_ALLOW_DIFF_ERROR: '1' }] as Record<string, string>[]) {
+          const r = spawnSync(process.execPath, [script], { cwd: repo, stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: env(extra) });
+          expect(r.status).toBe(1);
+          expect(r.stderr).toContain('PUSH BLOCKED');
+          expect(r.stderr).toContain('confidential-term scan cannot run');
+        }
       } finally {
         closeSync(fd);
       }
@@ -1159,6 +1179,85 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
 
     it('an empty stdin (up-to-date push) still exits 0', () => {
       expect(runHook('').status).toBe(0);
+    });
+  });
+
+  describe('confidential-term scan run from the JS (wf_0df7879e-d79)', () => {
+    const TERM = 'zqxv marsh parcel';
+    const writeRoster = (roster: unknown) => {
+      mkdirSync(join(home, '.claude', 'hooks'), { recursive: true });
+      writeFileSync(join(home, '.claude', 'hooks', 'confidential-terms.json'), JSON.stringify(roster));
+    };
+
+    it('BLOCKS a pushed term with no wrapper at all (the scanner runs Python itself), never echoing it', () => {
+      writeRoster({ probe: { active: true, always: [TERM] } });
+      writeFileSync(join(repo, 'memo.md'), `note: ${TERM}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'memo');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const r = runHook(`refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('pre-push BLOCKED');
+      expect(r.stderr).toContain('confidentiality term scan exited 1');
+      expect(r.stderr).not.toContain(TERM);
+    });
+
+    it('BLOCKS with argv absent (a wrapper that predates "$@"): new refs are scanned in full', () => {
+      writeRoster({ probe: { active: true, always: [TERM] } });
+      writeFileSync(join(repo, 'memo.md'), `note: ${TERM}\n`);
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'memo');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const r = spawnSync(process.execPath, [script], { cwd: repo, input: `refs/heads/feat ${local} refs/heads/feat ${ZERO}\n`, encoding: 'utf8', env: env() });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('confidentiality term scan exited 1');
+    });
+
+    it('BLOCKS when the roster is missing, even with PREPUSH_ALLOW_DIFF_ERROR=1', () => {
+      const e = env({ PREPUSH_ALLOW_DIFF_ERROR: '1' }); // (env() writes the empty roster; remove it after)
+      rmSync(join(home, '.claude'), { recursive: true, force: true });
+      const r = spawnSync(process.execPath, [script, 'origin', remote], { cwd: repo, input: '', encoding: 'utf8', env: e });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('roster');
+    });
+
+    it('runTermScan fails closed on a missing scanner, no Python, a non-zero exit and a spawn error', () => {
+      expect(runTermScan('', [], { scanner: join(home, 'absent.py') })).toMatchObject({ ok: false });
+      const py = join(home, 'stub.py');
+      writeFileSync(py, 'print(1)\n');
+      expect(runTermScan('', [], { scanner: py, python: null })).toMatchObject({ ok: false, message: expect.stringContaining('no Python 3.8+') });
+      const fake = (status: number | null, error?: Error) => () => ({ status, error, signal: status === null ? 'SIGKILL' : null }) as never;
+      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(1) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(null) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(0, new Error('ENOENT')) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(0) })).toEqual({ ok: true });
+    });
+
+    it('runTermScan runs Python isolated (-I) with git\'s argv and the ref lines on stdin', () => {
+      const py = join(home, 'stub.py');
+      writeFileSync(py, '');
+      /** @type {unknown[]} */
+      const calls: unknown[][] = [];
+      const run = ((cmd: string, args: string[], opts: { input?: string }) => {
+        calls.push([cmd, args, opts.input]);
+        return { status: 0 };
+      }) as never;
+      expect(runTermScan('refs\n', ['origin', 'https://x.invalid/r.git'], { scanner: py, python: 'py', run })).toEqual({ ok: true });
+      expect(calls).toEqual([['py', ['-I', py, 'origin', 'https://x.invalid/r.git'], 'refs\n']]);
+      calls.length = 0;
+      runTermScan('', [undefined, undefined], { scanner: py, python: 'py', run });
+      expect(calls[0]?.[1]).toEqual(['-I', py]);
+    });
+
+    it('findPython skips candidates that fail the probe (e.g. the Windows Store stub)', () => {
+      const tried: string[] = [];
+      const run = ((cmd: string) => {
+        tried.push(cmd);
+        return cmd === 'python3' ? { status: 0 } : { status: 9009 };
+      }) as never;
+      expect(findPython(run)).toBe('python3');
+      expect(tried).toEqual(['python', 'python3']);
+      expect(findPython((() => ({ status: 1 })) as never)).toBeNull();
     });
   });
 });
