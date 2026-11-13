@@ -255,6 +255,11 @@ function AllocationHeader({ data }: { data: CapitalData }) {
                   border: `1px solid color-mix(in oklab, ${actionFillColor(action as AllocationAction)} 35%, transparent)`,
                 }}>
                   {actionLabel(action as AllocationAction)} {count}
+                  {/* Ruling 2026-11-13: name the advisory share (unratified constant) unless the whole set is advisory. */}
+                  {!portfolio.advisoryOnly && (() => {
+                    const adv = portfolio.verdicts.filter((v) => v.action === action && v.advisoryOnly).length;
+                    return adv > 0 ? ` (${adv} advisory)` : null;
+                  })()}
                 </span>
               ))}
             </div>
@@ -495,6 +500,8 @@ export function CapitalModule() {
                 {c.verdict && <Badge tone="neutral">{c.verdict}</Badge>}
                 <span style={{ fontSize: 11, color: c.buyEligible === true ? 'var(--text-pos)' : 'var(--text-secondary)' }}>
                   {c.buyEligible === true ? 'BUY-eligible' : 'not BUY-eligible'}
+                  {/* Ruling 2026-11-13: eligibility rests on the unratified composite floor (server flag). */}
+                  {(portfolio.dataQuality ?? []).some((f) => f.field === 'buyCompositeFloor') ? ' (advisory)' : ''}
                 </span>
                 {/* Refute round 2 T2: capped-but-buyable candidates disclose their open items. */}
                 {c.buyEligible === true && (c.openItems?.length ?? 0) > 0 && (
