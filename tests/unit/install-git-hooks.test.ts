@@ -182,7 +182,7 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       const log = join(dir, 'js-args.json');
       writeFileSync(
         join(scriptsDir, 'prepush-confidential-scan.mjs'),
-        `const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), stdin: fs.readFileSync(0, 'utf8') })); process.exit(0);\n`,
+        `// runTermScan (a current tree)\nconst fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), stdin: fs.readFileSync(0, 'utf8') })); process.exit(0);\n`,
       );
       const refs = `refs/heads/x ${'a'.repeat(40)} refs/heads/x ${'0'.repeat(40)}`;
       const r = spawnSync('sh', [hookPath, 'origin', 'https://example.invalid/r.git'], { cwd: dir, input: `${refs}\n`, encoding: 'utf8' });
@@ -190,6 +190,17 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       const got = JSON.parse(readFileSync(log, 'utf8')) as { argv: string[]; stdin: string };
       expect(got.argv).toEqual(['origin', 'https://example.invalid/r.git']);
       expect(got.stdin.trim()).toBe(refs);
+      // An old tree (no runTermScan) gets the legacy call shape: refs on stdin, NO argv
+      // (refute run wf_df157e64-c52: an old scanner reads any '--staged' argv as its manual mode).
+      writeFileSync(
+        join(scriptsDir, 'prepush-confidential-scan.mjs'),
+        `const fs = await import('node:fs'); fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), stdin: fs.readFileSync(0, 'utf8') })); process.exit(0);\n`,
+      );
+      const old = spawnSync('sh', [hookPath, '--staged', 'https://example.invalid/r.git'], { cwd: dir, input: `${refs}\n`, encoding: 'utf8' });
+      expect(old.status, old.stderr).toBe(0);
+      const gotOld = JSON.parse(readFileSync(log, 'utf8')) as { argv: string[]; stdin: string };
+      expect(gotOld.argv).toEqual([]);
+      expect(gotOld.stdin.trim()).toBe(refs);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 import { WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
 
@@ -59,9 +59,10 @@ class Sandbox {
    * @param opts.oldTree - the pushing tree predates runTermScan: its JS scanner is a term-blind stub
    *   (exit 0) and it has no Python scanner, so only the wrapper's own Python stage can catch a term.
    * @param opts.copyBesideHook - place the Python scanner beside the hook, as the installer does.
+   * @param opts.oldJs - the old tree's JS scanner source (default: a term-blind `process.exit(0)` stub).
    */
-  constructor(opts: { wrapper?: string; oldTree?: boolean; copyBesideHook?: boolean } = {}) {
-    const { wrapper, oldTree = false, copyBesideHook = false } = opts;
+  constructor(opts: { wrapper?: string; oldTree?: boolean; copyBesideHook?: boolean; oldJs?: string } = {}) {
+    const { wrapper, oldTree = false, copyBesideHook = false, oldJs = 'process.exit(0);\n' } = opts;
     mkdirSync(join(this.home, '.claude', 'hooks'), { recursive: true });
     writeFileSync(
       join(this.home, '.claude', 'hooks', 'confidential-terms.json'),
@@ -91,7 +92,7 @@ class Sandbox {
       if (oldTree && f !== 'fixtures/real-data-manifest.json') continue;
       if (existsSync(join(SRC, 'scripts', f))) copyFileSync(join(SRC, 'scripts', f), join(this.work, 'scripts', f));
     }
-    if (oldTree) writeFileSync(join(this.work, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+    if (oldTree) writeFileSync(join(this.work, 'scripts', 'prepush-confidential-scan.mjs'), oldJs);
     writeFileSync(join(this.work, '.git', 'info', 'exclude'), 'scripts/\n');
     this.commit('README.md', 'seed\n', 'seed');
     this.git(this.work, 'push', '-q', '--no-verify', 'origin', 'main');
@@ -260,6 +261,46 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
       });
     }
 
+    // wf_df157e64-c52 (medium): an old scanner treats ANY '--staged' argv entry as its manual mode,
+    // so the new wrapper must call an old tree the legacy way, without git's argv.
+    it('does not forward git\'s argv to an old tree (a remote named --staged cannot skip its checks)', () => {
+      const old = new Sandbox({
+        oldTree: true,
+        copyBesideHook: true,
+        oldJs: "if (process.argv.includes('--staged')) process.exit(0);\nconsole.error('pre-push BLOCKED: old payload stub');\nprocess.exit(1);\n",
+      });
+      try {
+        old.git(old.work, 'remote', 'add', '--', '--staged', old.remote);
+        old.commit('notes.md', 'clean\n');
+        const r = old.push('--', '--staged', 'main');
+        expect(r.status, r.stderr).not.toBe(0);
+        expect(r.stderr).toContain('old payload stub');
+      } finally {
+        old.close();
+      }
+    });
+
+    // The same cell against origin/main's REAL scanner (pinned at 9a852473), when this clone has it
+    // (a shallow CI checkout does not; the stub case above always runs).
+    const LEGACY_COMMIT = '9a852473';
+    const legacyJs = (() => {
+      try {
+        return execFileSync('git', ['show', `${LEGACY_COMMIT}:scripts/prepush-confidential-scan.mjs`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch {
+        return null;
+      }
+    })();
+    it.skipIf(legacyJs === null)('origin/main\'s real scanner still BLOCKS a confidential:true payload pushed to a remote named --staged', () => {
+      const old = new Sandbox({ oldTree: true, copyBesideHook: true, oldJs: legacyJs ?? '' });
+      try {
+        old.git(old.work, 'remote', 'add', '--', '--staged', old.remote);
+        old.commit('deal.json', '{"name": "x", "confidential": true}\n');
+        expectBlocked(old.push('--', '--staged', 'main'));
+      } finally {
+        old.close();
+      }
+    });
+
     it('still lets a clean push through, and BLOCKS when no scanner copy sits beside the hook', () => {
       const ok = new Sandbox({ oldTree: true, copyBesideHook: true });
       try {
@@ -277,6 +318,27 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
         bare.close();
       }
     });
+  });
+
+  // wf_df157e64-c52 (medium): with NoDefaultCurrentDirectoryInExePath unset (a normal Windows
+  // terminal), a bare 'python' resolved to an untracked python.exe in the worktree root that exits 0.
+  const trueExe = (() => {
+    if (process.platform !== 'win32') return null;
+    try {
+      const execPath = execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim();
+      const p = join(execPath, '..', '..', '..', 'usr', 'bin', 'true.exe');
+      return existsSync(p) ? p : null;
+    } catch {
+      return null;
+    }
+  })();
+  it.skipIf(trueExe === null)('BLOCKS a term when a python.exe that always exits 0 sits in the worktree root', () => {
+    copyFileSync(trueExe ?? '', join(sb.work, 'python.exe'));
+    writeFileSync(join(sb.work, '.git', 'info', 'exclude'), 'scripts/\npython.exe\n');
+    delete sb.env['NoDefaultCurrentDirectoryInExePath'];
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    expectBlocked(sb.push('origin', 'main'));
+    expect(sb.remoteHas(leak)).toBe(false);
   });
 
   it('BLOCKS a binary under data/ (the JS payload stage) even with no term anywhere', () => {

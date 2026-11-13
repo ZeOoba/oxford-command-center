@@ -14,17 +14,18 @@ import { join } from 'node:path';
 
 const ROOT = process.cwd();
 
-/** Same candidate order and probe as the hook (a WindowsApps `python` stub fails the probe). */
+/** Same candidate order and isolated (-I) probe as the hook (a WindowsApps `python` stub fails it). */
 function findPython(): string | null {
   for (const c of ['python', 'python3', 'py']) {
-    const r = spawnSync(c, ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], { stdio: 'ignore' });
+    const r = spawnSync(c, ['-I', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], { stdio: 'ignore' });
     if (r.status === 0) return c;
   }
   return null;
 }
 
-// Blob ids (`git hash-object`, LF-normalized) of the shared files in ora-skills (branch
-// fix/prepush-context-and-urlencode, commit cc51f230; also ZeOoba/ora-pm 8a951c4):
+// Blob ids (`git hash-object`, LF-normalized) of the shared files as carried by ZeOoba/ora-skills#249
+// (branch fix/prepush-context-and-urlencode, f4ff604; ora-skills main still has the older scanner
+// until that PR merges, so do NOT re-vendor from main before then) and ZeOoba/ora-pm#92 (8a951c4):
 // tools/prepush_confidential_scan.py, tools/test_prepush_confidential_scan.py and tools/hooks/pre-push. Re-vendor all three together and
 // update these ids in the same commit; an edit made only here would fork the shared scanner.
 const VENDORED = {
@@ -49,6 +50,8 @@ describe('vendored Python confidential-term scanner', () => {
         cwd: ROOT,
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
+        // No scripts/__pycache__ left in the (often shared) checkout.
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
       });
       expect(r.status, `${r.stdout}\n${r.stderr}`.slice(-4000)).toBe(0);
       expect(r.stderr).toMatch(/\nOK/);

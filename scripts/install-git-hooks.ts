@@ -75,8 +75,12 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
     exit 1
   fi
   printf '%s\\n' "$refs" | "$py" -I "$scan_py" "$@" || exit 1
+  # Legacy call shape (no argv): an older scanner treats ANY '--staged' argument, e.g. a remote
+  # named --staged, as its manual mode and skips the payload checks.
+  printf '%s\\n' "$refs" | node "$scan_js" || exit 1
+else
+  printf '%s\\n' "$refs" | node "$scan_js" "$@" || exit 1
 fi
-printf '%s\\n' "$refs" | node "$scan_js" "$@" || exit 1
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
   printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
 fi

@@ -28,11 +28,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// This scanner's own implementation + tests necessarily contain `confidential: true` fixtures, so they
-// are excluded from that one check to avoid self-triggering. They are NOT excluded from the real-amount
+// This scanner's own implementation + tests necessarily contain `confidential: true` fixtures and the
+// watermark literal, so they are excluded from those two checks to avoid self-triggering. They are NOT excluded from the real-amount
 // check (synthetic literals cannot match real fingerprints) or from term scanning (the Python scanner
 // reads every file).
 const EXCLUDE_PATHS = new Set([
@@ -68,7 +68,7 @@ const DIFF_OPTION_PIN = ['--no-color', '--no-ext-diff', '--no-textconv', '--text
 
 /** The hook's environment with replace refs disabled and no credential prompt. */
 function gitEnv() {
-  const env = { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' };
+  const env = { ...process.env, GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0', NoDefaultCurrentDirectoryInExePath: '1' };
   delete env['GIT_REPLACE_REF_BASE'];
   return env;
 }
@@ -799,18 +799,65 @@ export const PYTHON_CANDIDATES = ['python', 'python3', 'py'];
 /**
  * First interpreter in PYTHON_CANDIDATES that runs Python 3.8+ in isolated mode, or null.
  * @param {typeof spawnSync} [run] - test seam.
- * @returns {string | null}
+ * @param {(name: string) => string[]} [resolveExe] - test seam; defaults to resolveOnPath.
+ * @returns {string | null} the interpreter's ABSOLUTE path
  */
-export function findPython(run = spawnSync) {
+export function findPython(run = spawnSync, resolveExe = (name) => resolveOnPath(name)) {
   for (const c of PYTHON_CANDIDATES) {
-    const r = run(c, ['-I', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], {
-      stdio: 'ignore',
-      windowsHide: true,
-      timeout: 30_000,
-    });
-    if (!r.error && r.status === 0) return c;
+    for (const exe of resolveExe(c)) {
+      const r = run(exe, ['-I', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 30_000,
+        env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' },
+      });
+      if (!r.error && r.status === 0) return exe;
+    }
   }
   return null;
+}
+
+/**
+ * Every absolute path `name` resolves to on PATH, in PATH order. A bare name handed to spawn would
+ * let Windows search the CURRENT directory first (git runs pre-push in the worktree root), so an
+ * untracked python.exe there could stand in for the scanner and pass (refute run wf_df157e64-c52,
+ * medium). Skipped: empty, relative and '.' entries, and any directory inside `excludeRoots` (the
+ * hook's cwd and the worktree root). Windows: .exe and .com only (a .bat/.cmd would need a shell).
+ *
+ * @param {string} name
+ * @param {{path?: string, excludeRoots?: string[], platform?: string, exists?: (p: string) => boolean}} [opts] - test seams.
+ * @returns {string[]}
+ */
+export function resolveOnPath(name, opts = {}) {
+  const platform = opts.platform ?? process.platform;
+  const win = platform === 'win32';
+  const exists = opts.exists ?? ((p) => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  });
+  const excludeRoots = (opts.excludeRoots ?? [process.cwd()]).map((r) => resolve(r));
+  const inside = (dir) =>
+    excludeRoots.some((root) => {
+      const rel = relative(win ? root.toLowerCase() : root, win ? dir.toLowerCase() : dir);
+      return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+    });
+  const pathVar = opts.path ?? process.env['PATH'] ?? process.env['Path'] ?? '';
+  const exts = win ? ['.exe', '.com'] : [''];
+  const out = [];
+  for (const raw of pathVar.split(win ? ';' : delimiter)) {
+    const dirEntry = raw.trim().replace(/^"(.*)"$/, '$1');
+    if (!dirEntry || !isAbsolute(dirEntry)) continue;
+    const dir = resolve(dirEntry);
+    if (inside(dir)) continue;
+    for (const ext of exts) {
+      const p = join(dir, name + ext);
+      if (exists(p) && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
 }
 
 /**
@@ -845,6 +892,8 @@ export function runTermScan(stdinText, argv, deps = {}) {
     stdio: ['pipe', 'inherit', 'inherit'],
     windowsHide: true,
     maxBuffer: Infinity,
+    // The scanner's own git calls must not resolve a git.exe from the worktree root either.
+    env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' },
   });
   if (r.error) return { ok: false, message: `confidentiality term scan could not run (${errorLine(r.error)}); fail closed (Invariant 3).` };
   if (r.status !== 0) {
@@ -993,6 +1042,10 @@ function stagedMain() {
 }
 
 function main() {
+  // Windows: never resolve a bare executable name (git, node children) from the current directory,
+  // which is the worktree root under a git hook (refute run wf_df157e64-c52, medium). libuv reads
+  // this from the process environment.
+  process.env['NoDefaultCurrentDirectoryInExePath'] = '1';
   // Only a bare `--staged` call: as a hook, git passes two argv entries (remote name, push URL), and a
   // remote named '--staged' must not switch the scanner off (refute run wf_e0d7368f-0b3, low).
   if (process.argv.length === 3 && process.argv[2] === '--staged') return stagedMain();

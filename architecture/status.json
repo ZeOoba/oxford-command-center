@@ -1094,10 +1094,11 @@
   },
   "prepush-scan-per-commit": {
     "agent_role": "Engineering (Claude Code) - confidentiality-gate fixes from the 2026-11-12 six-repo code review (Gabriel: 'Yes, fix gates', 'Delegate to Python scanner', 'Fix and re-refute')",
-    "phase": "Pre-push confidentiality gate: per-commit scan; vendored shared Python term scanner, run from scripts/prepush-confidential-scan.mjs (refute runs wf_72500728-83e, wf_0df7879e-d79). Touches the Architect-owned architecture/coding-standards.md 'Pre-push confidentiality hook' section only, to describe the new hook.",
+    "phase": "Pre-push confidentiality gate: per-commit scan; vendored shared Python term scanner run from scripts/prepush-confidential-scan.mjs and, for trees that predate runTermScan, from the wrapper (refute runs wf_72500728-83e, wf_0df7879e-d79, wf_e0d7368f-0b3, wf_df157e64-c52).",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,
-    "last_updated": "2026-11-13T14:00:00Z"
+    "last_updated": "2026-11-13T18:00:00Z",
+    "review_detail": "Architect-owned / shared-infra edits: architecture/coding-standards.md (pre-push hook section), README.md (prerequisites, tech stack, git hooks), .gitattributes (scripts/hooks/* eol=lf), .gitignore (__pycache__, *.py[cod]), scripts/install-git-hooks.ts (WRAPPER written into the common .git/hooks of every worktree, plus the ora_prepush_confidential_scan.py copy beside it), vendored scripts/prepush_confidential_scan.py, scripts/test_prepush_confidential_scan.py and scripts/hooks/pre-push. Squash-merge only: intermediate commits are not supported push sources."
   }
 }

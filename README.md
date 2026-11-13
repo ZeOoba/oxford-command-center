@@ -128,7 +128,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 
 | Layer | Technology |
 |---|---|
-| Language | TypeScript (strict, `noUncheckedIndexedAccess`), Node >= 20 (CI on Node 24) |
+| Language | TypeScript (strict, `noUncheckedIndexedAccess`), Node >= 20 (CI on Node 24); Python >= 3.8 for the pre-push confidentiality scanner |
 | Client | React 19, Vite 6, TanStack Query + React Virtual, react-router-dom, React Aria Components, Tailwind CSS 4, visx, framer-motion, cmdk, PWA via `vite-plugin-pwa` |
 | Server | Hono on `@hono/node-server`, chokidar file watching, Server-Sent Events |
 | Data | ExcelJS (workbook + P&L parsing), better-sqlite3 (WAL) warehouse, sqlite-vec + `@huggingface/transformers` local embeddings for document search, pdf-parse / mammoth |

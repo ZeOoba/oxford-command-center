@@ -61,6 +61,7 @@ import {
   findPython,
   scanAddedLinesForWatermarks,
   WATERMARKS,
+  resolveOnPath,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
@@ -1285,9 +1286,26 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
         tried.push(cmd);
         return cmd === 'python3' ? { status: 0 } : { status: 9009 };
       }) as never;
-      expect(findPython(run)).toBe('python3');
+      const byName = (n: string) => [n];
+      expect(findPython(run, byName)).toBe('python3');
       expect(tried).toEqual(['python', 'python3']);
-      expect(findPython((() => ({ status: 1 })) as never)).toBeNull();
+      expect(findPython((() => ({ status: 1 })) as never, byName)).toBeNull();
+    });
+
+    // wf_df157e64-c52 (medium): a bare 'python' let Windows run a python.exe from the worktree root.
+    it('resolveOnPath returns absolute PATH hits only, never from relative entries or the excluded roots', () => {
+      const ext = process.platform === 'win32' ? '.exe' : '';
+      const good = join(home, 'bin');
+      const inRepo = join(repo, 'tools');
+      for (const d of [good, inRepo]) {
+        mkdirSync(d, { recursive: true });
+        writeFileSync(join(d, `python${ext}`), '');
+      }
+      writeFileSync(join(repo, `python${ext}`), '');
+      const sep = process.platform === 'win32' ? ';' : ':';
+      const path = ['', '.', 'relative/bin', repo, inRepo, good].join(sep);
+      expect(resolveOnPath('python', { path, excludeRoots: [repo] })).toEqual([join(good, `python${ext}`)]);
+      expect(resolveOnPath('python', { path: ['.', repo].join(sep), excludeRoots: [repo] })).toEqual([]);
     });
   });
 });
