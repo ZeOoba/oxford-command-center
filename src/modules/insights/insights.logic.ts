@@ -83,7 +83,7 @@ export interface InsightsSummary {
 //
 // InsightCandidate.family is one of CF/DR/TE/TR/CR (src/contracts/insights.ts). Spine-A
 // `Insight.category` is a free-form domain string (debt/lease/insurance/concentration/
-// occupancy/cash/deal/data/anomaly/collections). This table exists ONLY to let the dedup key
+// occupancy/cash/deal/data/anomaly/collections/capex). This table exists ONLY to let the dedup key
 // (below) compare a Spine-A insight against a warehouse candidate on a common vocabulary — it
 // is NEVER used to relabel or filter what the UI displays (MergedInsight.category always keeps
 // each source's own native value: the raw Insight.category string for Spine-A-derived rows, the
@@ -100,6 +100,7 @@ export interface InsightsSummary {
 //   cash          -> DR  liquidity/treasury position read as a trailing data-driven trend
 //   anomaly       -> DR  statistical anomaly detection is definitionally a data-driven signal
 //   data          -> DR  data-quality flags are, by definition, about the data itself
+//   capex         -> CF  PCA reserve / warranty signals drive capital-spend timing (a capital action)
 // No Spine-A category maps to TR (track-record signals) today — Spine-A `Insight` objects are
 // point-in-time snapshots, not the trailing multi-period trend the TR family is defined for.
 // That's fine: the join spec only requires the table be consistent, not exhaustive over family.
@@ -114,6 +115,7 @@ export const CATEGORY_TO_FAMILY: Record<Insight['category'], InsightFamily> = {
   cash: 'DR',
   anomaly: 'DR',
   data: 'DR',
+  capex: 'CF',
 };
 
 // ── Category -> badge tone (severity/status color-coding, threaded through TierBoard) ───────
@@ -128,6 +130,7 @@ const CATEGORY_TONE: Record<Insight['category'], BadgeTone> = {
   cash: 'green',
   anomaly: 'red',
   data: 'neutral',
+  capex: 'amber',
 };
 
 export function categoryTone(category: Insight['category']): BadgeTone {
