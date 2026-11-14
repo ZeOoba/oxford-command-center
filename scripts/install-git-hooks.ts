@@ -16,7 +16,9 @@
 // present — unlike the two scripts it installs as hooks, which stay plain .mjs on purpose (see
 // their own headers: "Node built-ins only, no install step" — they run from the raw shared
 // .git/hooks with no npm context and must survive a missing/wiped node_modules).
-import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
 
@@ -136,6 +138,12 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
     echo "pre-push BLOCKED (fail-closed): this tree predates the Python term scan and no scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
     exit 1
   fi
+  # An empty or cut-short scanner exits 0 under Python and would skip the term scan. The installer
+  # replaces the copy atomically, but a file truncated any other way must still block.
+  if ! grep -q '^if __name__ == "__main__":' "$scan_py" 2>/dev/null; then
+    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py is empty or incomplete (run npm run hooks:install from an up-to-date tree)." >&2
+    exit 1
+  fi
   py=
   for c in python python3 py; do
     py="$(safe_exe "$c" | while IFS= read -r cand; do
@@ -185,6 +193,25 @@ fi
 exit 0
 `;
 
+/**
+ * Write `contents` to `dest` so a concurrent reader sees either the old file or the new one, never
+ * an empty or partial file: write a uniquely named temp file beside it, then rename it over `dest`.
+ * A plain writeFileSync truncates first, and a push from another worktree in that window ran the
+ * EMPTY Python copy, which exits 0 and skipped the term scan (merge gate PR 577 round 1, HIGH).
+ * Windows can refuse the rename while another process has `dest` open; renameSyncWithRetry retries
+ * those transient codes. A rename that still fails leaves `dest` as it was and removes the temp file.
+ */
+export function writeFileAtomic(dest: string, contents: string): void {
+  const tmp = `${dest}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, contents, 'utf8');
+  try {
+    renameSyncWithRetry(tmp, dest);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 function installHook(hooksDir: string, hookName: string, contents: string): void {
   const hookPath = join(hooksDir, hookName);
   const existing = existsSync(hookPath) ? readFileSync(hookPath, 'utf8') : null;
@@ -192,7 +219,7 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
   if (existing === contents) {
     console.log(`[install-git-hooks] ${hookName} hook already up to date: ${hookPath}`);
   } else {
-    writeFileSync(hookPath, contents, 'utf8');
+    writeFileAtomic(hookPath, contents);
     console.log(
       existing === null
         ? `[install-git-hooks] installed ${hookName} hook: ${hookPath}`
@@ -223,7 +250,7 @@ function installPythonScanFallback(hooksDir: string, toplevel: string): void {
   const contents = readFileSync(src, 'utf8').replace(/\r\n/g, '\n');
   const dst = join(hooksDir, PY_SCAN_FALLBACK);
   if (existsSync(dst) && readFileSync(dst, 'utf8') === contents) return;
-  writeFileSync(dst, contents, 'utf8');
+  writeFileAtomic(dst, contents);
   console.log(`[install-git-hooks] installed Python term-scan copy: ${dst}`);
 }
 

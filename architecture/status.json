@@ -1094,7 +1094,7 @@
   },
   "prepush-scan-per-commit": {
     "agent_role": "Engineering (Claude Code) - confidentiality-gate fixes from the 2026-11-12 six-repo code review (Gabriel: 'Yes, fix gates', 'Delegate to Python scanner', 'Fix and re-refute')",
-    "phase": "Pre-push confidentiality gate: per-commit scan; vendored shared Python term scanner run from scripts/prepush-confidential-scan.mjs and, for trees that predate runTermScan, from the wrapper; the wrapper rebuilds PATH with shell built-ins before any external command and the scanner resolves interpreters to absolute paths off the worktree (refute runs wf_72500728-83e, wf_0df7879e-d79, wf_e0d7368f-0b3, wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a).",
+    "phase": "Pre-push confidentiality gate: per-commit scan; vendored shared Python term scanner run from scripts/prepush-confidential-scan.mjs and, for trees that predate runTermScan, from the wrapper; the wrapper rebuilds PATH with shell built-ins before any external command and the scanner resolves interpreters to absolute paths off the worktree (refute runs wf_72500728-83e, wf_0df7879e-d79, wf_e0d7368f-0b3, wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a, wf_39e200e8-462; merge gate round 1 fixes: atomic hook writes, raw-byte ref relay, node stdin read).",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,

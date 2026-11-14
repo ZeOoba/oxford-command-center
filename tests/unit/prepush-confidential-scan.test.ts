@@ -1151,11 +1151,15 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
 
   describe('pre-push stdin', () => {
     it('readPushStdin returns the text, treats EOF as empty, and reports any other read error', () => {
-      expect(readPushStdin(() => 'refs/heads/x a refs/heads/x b\n')).toEqual({ text: 'refs/heads/x a refs/heads/x b\n', error: null });
+      expect(readPushStdin(() => 'refs/heads/x a refs/heads/x b\n')).toEqual({
+        text: 'refs/heads/x a refs/heads/x b\n',
+        bytes: Buffer.from('refs/heads/x a refs/heads/x b\n'),
+        error: null,
+      });
       const eof = readPushStdin(() => {
         throw Object.assign(new Error('EOF: end of file'), { code: 'EOF' });
       });
-      expect(eof).toEqual({ text: '', error: null });
+      expect(eof).toEqual({ text: '', bytes: Buffer.alloc(0), error: null });
       const bad = readPushStdin(() => {
         throw Object.assign(new Error('EBADF: bad file descriptor, read'), { code: 'EBADF' });
       });
@@ -1253,6 +1257,28 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       expect(calls[0]?.[1]).toEqual(['-I', py]);
     });
 
+    // Merge gate PR 577 round 1: the ref list used to be decoded as UTF-8 before it reached Python, so
+    // a ref name in cp1252 (or raw bytes under reftable / on Linux) arrived with U+FFFD in place of the
+    // term it spelled. The raw bytes now pass through untouched.
+    it('readPushStdin keeps the raw bytes, and main hands those bytes (not decoded text) to the term scan', () => {
+      const raw = Buffer.from([0x72, 0x65, 0x66, 0x73, 0x2f, 0x5a, 0xe9, 0x0a]); // "refs/Z\xe9\n", not UTF-8
+      const r = readPushStdin(() => raw);
+      expect(r.bytes.equals(raw)).toBe(true);
+      expect(r.text).toContain('�');
+      const py = join(home, 'stub.py');
+      writeFileSync(py, '');
+      let seen: unknown;
+      const run = ((_c: string, _a: string[], opts: { input?: unknown }) => {
+        seen = opts.input;
+        return { status: 0 };
+      }) as never;
+      runTermScan(r.bytes, [], { scanner: py, python: 'py', run });
+      expect(Buffer.isBuffer(seen) && (seen as Buffer).equals(raw)).toBe(true);
+      const src = readFileSync(join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs'), 'utf8');
+      expect(src).toMatch(/runTermScan\(stdin\.bytes, \[remote, url\]\)/);
+      expect(src).not.toMatch(/readFileSync\(0, 'utf8'\)/);
+    });
+
     it('a remote named --staged does not switch the hook into --staged mode', () => {
       writeRoster({ probe: { active: true, always: [TERM] } });
       writeFileSync(join(repo, 'memo.md'), `note: ${TERM}\n`);
@@ -1265,6 +1291,21 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
         encoding: 'utf8',
         env: env(),
       });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('confidentiality term scan exited 1');
+    });
+
+    // Merge gate PR 577 round 1 (correctness, MEDIUM): a ref NAME spelling a term in cp1252 bytes got
+    // through, because the scanner decoded stdin as UTF-8 before relaying it to Python.
+    it('BLOCKS a roster term spelled in a non-UTF-8 (cp1252) ref name', () => {
+      writeRoster({ probe: { active: true, always: ['zqxv marsé parcel'] } });
+      writeFileSync(join(repo, 'clean.md'), 'nothing here\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'clean');
+      const local = git(repo, 'rev-parse', 'HEAD');
+      const name = Buffer.concat([Buffer.from('refs/heads/zqxv-mars'), Buffer.from([0xe9]), Buffer.from('-parcel')]);
+      const line = Buffer.concat([name, Buffer.from(` ${local} `), name, Buffer.from(` ${ZERO}\n`)]);
+      const r = spawnSync(process.execPath, [script, 'origin', remote], { cwd: repo, input: line, encoding: 'utf8', env: env() });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('confidentiality term scan exited 1');
     });

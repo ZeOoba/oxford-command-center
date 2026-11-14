@@ -1,16 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
-import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
+import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK, writeFileAtomic } from '../../scripts/install-git-hooks';
 
 /** Stand-ins for the Python term scanner in fixture repos (the wrapper runs it for a stub scanner
  * that lacks runTermScan, i.e. a tree that predates it). */
-const PY_PASS = 'import sys\nsys.exit(0)\n';
-const PY_FAIL = 'import sys\nsys.stderr.write("pre-push BLOCKED: stub term hit\\n")\nsys.exit(1)\n';
+const PY_PASS = 'import sys\nif __name__ == "__main__":\n    sys.exit(0)\n';
+const PY_FAIL = 'import sys\nif __name__ == "__main__":\n    sys.stderr.write("pre-push BLOCKED: stub term hit\\n")\n    sys.exit(1)\n';
+
+/** process.env minus `name` in EVERY casing: Windows env names are case-insensitive, and inside vitest
+ * the key can be stored as NODEFAULTCURRENTDIRECTORYINEXEPATH, so a plain delete removed nothing and
+ * the variable still reached the hook (merge gate PR 577 round 1). */
+export function envWithout(name: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (k.toLowerCase() !== name.toLowerCase()) env[k] = v;
+  return env;
+}
 
 // Regression coverage for the bug an adversarial review caught before this landed (2026-08-16):
 // the pre-push wrapper originally `exec`d the advisory-only NOI cross-check script as its last
@@ -277,6 +286,14 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       expect(viaCopy.stderr).toContain('stub term hit');
       writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_PASS);
       expect(spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' }).status).toBe(0);
+      // Merge gate PR 577 round 1 (HIGH): an EMPTY copy (the state a non-atomic install left mid-write)
+      // ran under Python, exited 0 and skipped the term scan. Empty or cut-short copies now block.
+      for (const broken of ['', 'import sys\n', PY_PASS.slice(0, PY_PASS.indexOf('if __name__'))]) {
+        writeFileSync(join(dir, PY_SCAN_FALLBACK), broken);
+        const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+        expect(r.status, JSON.stringify(broken)).not.toBe(0);
+        expect(r.stderr).toContain('empty or incomplete');
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -290,8 +307,7 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
         join(scriptsDir, 'prepush-confidential-scan.mjs'),
         `// runTermScan\n(await import('node:fs')).writeFileSync(${JSON.stringify(log)}, String(process.env.NoDefaultCurrentDirectoryInExePath)); process.exit(0);\n`,
       );
-      const env = { ...process.env };
-      delete env['NoDefaultCurrentDirectoryInExePath'];
+      const env = envWithout('NoDefaultCurrentDirectoryInExePath');
       const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8', env });
       expect(r.status, r.stderr).toBe(0);
       expect(readFileSync(log, 'utf8')).toBe('1');
@@ -331,6 +347,27 @@ describe('install-git-hooks installer — runs only as a script, never on import
       expect(run.status, run.stderr).toBe(0);
       expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe(WRAPPER);
       expect(readFileSync(join(hooks, PY_SCAN_FALLBACK), 'utf8')).toBe('print("scanner")\n');
+      expect(readdirSync(hooks).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Merge gate PR 577 round 1 (HIGH): writeFileSync truncates before it writes, so a push from another
+  // worktree could run an EMPTY scanner copy. Every hooks-dir write now goes temp file + rename.
+  it('writes the hook and the Python copy atomically (temp file + rename), leaving no temp file', () => {
+    const src = readFileSync(installer, 'utf8');
+    const body = src.slice(src.indexOf('function installHook'), src.indexOf('function main'));
+    expect(body).not.toMatch(/writeFileSync\(/);
+    expect(body.match(/writeFileAtomic\(/g)?.length).toBe(2);
+    const dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-atomic-'));
+    try {
+      const dest = join(dir, 'f.py');
+      writeFileSync(dest, 'old\n');
+      writeFileAtomic(dest, 'new\n');
+      expect(readFileSync(dest, 'utf8')).toBe('new\n');
+      writeFileAtomic(join(dir, 'g.py'), 'fresh\n');
+      expect(readdirSync(dir).sort()).toEqual(['f.py', 'g.py']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

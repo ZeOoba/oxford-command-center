@@ -893,12 +893,14 @@ export function resolveOnPath(name, opts = {}) {
  * stdlib module. Its stderr (block lines, never a term) passes through. Fails closed on everything:
  * no scanner, no usable Python, a spawn error, a signal, any non-zero exit.
  *
- * @param {string} stdinText
+ * @param {string | Buffer} stdinInput - git's ref lines. Pass the RAW bytes (readPushStdin().bytes): a ref
+ *   name that is not valid UTF-8 (cp1252, raw bytes on Linux or under reftable) would otherwise reach the
+ *   scanner with U+FFFD in place of the term it spells (merge gate PR 577, round 1).
  * @param {(string | undefined)[]} argv - [remote, url]; trailing undefined entries are dropped.
  * @param {{scanner?: string, python?: string | null, run?: typeof spawnSync}} [deps] - test seams.
  * @returns {{ok: true} | {ok: false, message: string}}
  */
-export function runTermScan(stdinText, argv, deps = {}) {
+export function runTermScan(stdinInput, argv, deps = {}) {
   const scanner = deps.scanner ?? PY_SCANNER;
   const run = deps.run ?? spawnSync;
   if (!existsSync(scanner)) {
@@ -914,7 +916,7 @@ export function runTermScan(stdinText, argv, deps = {}) {
   const args = [...argv];
   while (args.length && args[args.length - 1] === undefined) args.pop();
   const r = run(python, ['-I', scanner, ...args.map((a) => a ?? '')], {
-    input: stdinText,
+    input: stdinInput,
     stdio: ['pipe', 'inherit', 'inherit'],
     windowsHide: true,
     maxBuffer: Infinity,
@@ -937,15 +939,20 @@ export function runTermScan(stdinText, argv, deps = {}) {
  * empty stdin (git sends none on an up-to-date push) is still `{text: '', error: null}`, and so is
  * an EOF error, which some platforms raise for a closed, empty pipe.
  *
- * @param {() => string} [read] - test seam; defaults to a synchronous read of fd 0.
- * @returns {{text: string, error: string | null}}
+ * `bytes` is exactly what git sent, for the Python term scanner; `text` is its UTF-8 decoding, for the
+ * payload checks in this file.
+ *
+ * @param {() => string | Buffer} [read] - test seam; defaults to a synchronous read of fd 0.
+ * @returns {{text: string, bytes: Buffer, error: string | null}}
  */
 export function readPushStdin(read) {
   try {
-    return { text: (read ?? (() => readFileSync(0, 'utf8')))(), error: null };
+    const raw = (read ?? (() => readFileSync(0)))();
+    const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(raw, 'utf8');
+    return { text: bytes.toString('utf8'), bytes, error: null };
   } catch (err) {
-    if (/** @type {{code?: string}} */ (err)?.code === 'EOF') return { text: '', error: null };
-    return { text: '', error: `stdin read: ${errorLine(err)}` };
+    if (/** @type {{code?: string}} */ (err)?.code === 'EOF') return { text: '', bytes: Buffer.alloc(0), error: null };
+    return { text: '', bytes: Buffer.alloc(0), error: `stdin read: ${errorLine(err)}` };
   }
 }
 
@@ -1104,7 +1111,7 @@ function main() {
     console.error(`\n✖  PUSH BLOCKED — the pushed refs could not be read (${stdin.error}), so the confidential-term scan cannot run (Invariant 3, fail closed).\n`);
     process.exit(1);
   }
-  const terms = runTermScan(stdin.text, [remote, url]);
+  const terms = runTermScan(stdin.bytes, [remote, url]);
   if (!terms.ok) {
     console.error(`\n✖  PUSH BLOCKED — ${terms.message}\n`);
     process.exit(1);

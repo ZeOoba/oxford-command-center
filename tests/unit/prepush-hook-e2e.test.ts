@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import { WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
+// The watermark is imported, never spelled out here: as a literal it would itself block this push.
+import { WATERMARKS } from '../../scripts/prepush-confidential-scan.mjs';
 
 // End-to-end: the INSTALLED pre-push hook (WRAPPER -> the JS scanner, which runs the vendored Python
 // term scanner and then the OCC payload checks) run by a real `git push` into a bare remote. One case per leak shape the refute
@@ -16,6 +18,13 @@ import { WRAPPER, PY_SCAN_FALLBACK } from '../../scripts/install-git-hooks';
 // the fix. Unset, the cases run against this checkout.
 
 const TERM = 'Quorvane Blissetter Parcel';
+
+/** Remove `name` from `env` in EVERY casing. Windows env names are case-insensitive and vitest can hold
+ * NODEFAULTCURRENTDIRECTORYINEXEPATH upper-cased, so a plain delete left it set and the tests that
+ * "unset" it never exercised the scanner's own defence (merge gate PR 577 round 1). */
+function dropEnv(env: NodeJS.ProcessEnv, name: string): void {
+  for (const k of Object.keys(env)) if (k.toLowerCase() === name.toLowerCase()) delete env[k];
+}
 
 /**
  * The pre-push wrapper origin/main installed before 2026-11-12, verbatim: no Python stage, no "$@",
@@ -333,7 +342,7 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
       writeFileSync(join(box.work, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     }
     writeFileSync(join(box.work, '.git', 'info', 'exclude'), `scripts/\n${name}\n${name}.exe\n`);
-    delete box.env['NoDefaultCurrentDirectoryInExePath'];
+    dropEnv(box.env, 'NoDefaultCurrentDirectoryInExePath');
     const key = Object.keys(box.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
     box.env[key] = `.${process.platform === 'win32' ? ';' : ':'}${box.env[key] ?? ''}`;
     return true;
@@ -360,7 +369,7 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
   const plantScript = (box: Sandbox, name: string, body: string): void => {
     writeFileSync(join(box.work, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
     writeFileSync(join(box.work, '.git', 'info', 'exclude'), `scripts/\n${name}\n`);
-    delete box.env['NoDefaultCurrentDirectoryInExePath'];
+    dropEnv(box.env, 'NoDefaultCurrentDirectoryInExePath');
     const key = Object.keys(box.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
     box.env[key] = `.${process.platform === 'win32' ? ';' : ':'}${box.env[key] ?? ''}`;
   };
@@ -368,19 +377,29 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
   // wf_a50bf4bb-d1a (medium, reproduced as real leaks): the wrapper ran its own helpers by bare name,
   // so with '.' on PATH a planted `cat` that prints nothing emptied the ref list (nothing scanned) and
   // a planted `head` swapped in a fake node. The wrapper now rebuilds PATH before any external command.
-  for (const [name, body] of [
-    ['cat', 'exit 0'],
-    ['head', 'echo /usr/bin/true'],
-    ['grep', 'exit 0'],
-  ] as const) {
-    it(`a planted ${name} in the worktree root with "." on PATH cannot open the gate`, () => {
-      const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
-      plantScript(sb, name, body); // after committing: only the hook's own lookups see the plant
-      const r = sb.push('origin', 'main');
+  it('a planted head in the worktree root with "." on PATH cannot open the gate', () => {
+    const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
+    plantScript(sb, 'head', 'echo /usr/bin/true'); // after committing: only the hook's own lookups see the plant
+    const r = sb.push('origin', 'main');
+    expect(r.status, r.stderr).not.toBe(0);
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
+
+  // The wrapper no longer runs cat at all, and on a NEW tree a grep that "finds" runTermScan is harmless
+  // (the JS runs the term scan). The real threat is an OLD tree: a planted grep exiting 0 would make
+  // the wrapper believe the tree has runTermScan and skip its own Python stage (merge gate PR 577 r1).
+  it('a planted grep with "." on PATH cannot make an OLD tree skip the wrapper\'s Python term scan', () => {
+    const old = new Sandbox({ oldTree: true, copyBesideHook: true });
+    try {
+      const leak = old.commit('notes.md', `memo about ${TERM}\n`);
+      plantScript(old, 'grep', 'exit 0');
+      const r = old.push('origin', 'main');
       expect(r.status, r.stderr).not.toBe(0);
-      expect(sb.remoteHas(leak)).toBe(false);
-    });
-  }
+      expect(old.remoteHas(leak)).toBe(false);
+    } finally {
+      old.close();
+    }
+  });
 
   // wf_39e200e8-462 (medium, reproduced): a PATH entry OUTSIDE the worktree that is a junction /
   // symlink to a worktree SUBDIRECTORY survived the string-prefix walk, so a node planted there ran
@@ -398,7 +417,7 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     writeFileSync(join(sb.work, '.git', 'info', 'exclude'), 'scripts/\nbin/\n');
     const link = join(sb.root, 'linkbin');
     symlinkSync(bin, link, process.platform === 'win32' ? 'junction' : 'dir');
-    delete sb.env['NoDefaultCurrentDirectoryInExePath'];
+    dropEnv(sb.env, 'NoDefaultCurrentDirectoryInExePath');
     const key = Object.keys(sb.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
     sb.env[key] = `${link}${process.platform === 'win32' ? ';' : ':'}${sb.env[key] ?? ''}`;
     const r = sb.push('origin', 'main');
@@ -428,9 +447,34 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
   it.skipIf(trueExe === null)('BLOCKS a term when a python.exe that always exits 0 sits in the worktree root', () => {
     copyFileSync(trueExe ?? '', join(sb.work, 'python.exe'));
     writeFileSync(join(sb.work, '.git', 'info', 'exclude'), 'scripts/\npython.exe\n');
-    delete sb.env['NoDefaultCurrentDirectoryInExePath'];
+    dropEnv(sb.env, 'NoDefaultCurrentDirectoryInExePath');
     const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
     expectBlocked(sb.push('origin', 'main'));
+    expect(sb.remoteHas(leak)).toBe(false);
+  });
+
+  // Merge gate PR 577 round 1 (test validity, MEDIUM): the planted-python case above runs under the NEW
+  // wrapper, which exports NoDefaultCurrentDirectoryInExePath itself, so it could not see the JS
+  // scanner's own defences (absolute python lookup, its own env export). The LEGACY wrapper exports
+  // nothing, so only the scanner stands between a planted python and the push here.
+  it('legacy wrapper: a planted python in the worktree root with "." on PATH cannot pass the term scan', () => {
+    const legacy = new Sandbox({ wrapper: LEGACY_WRAPPER });
+    try {
+      if (!plantInRoot(legacy, 'python')) return;
+      const leak = legacy.commit('notes.md', `memo about ${TERM}\n`);
+      expectBlocked(legacy.push('origin', 'main'));
+      expect(legacy.remoteHas(leak)).toBe(false);
+    } finally {
+      legacy.close();
+    }
+  });
+
+  // Merge gate PR 577 round 1 (test validity): nothing tested that the JS payload scan reads commit
+  // MESSAGES, so dropping %B from its log format passed every test.
+  it('BLOCKS a document watermark that appears only in a commit message', () => {
+    const leak = sb.commit('notes.md', 'clean\n', `release notes\n\n${WATERMARKS[0] ?? ''}`);
+    const r = sb.push('origin', 'main');
+    expectBlocked(r);
     expect(sb.remoteHas(leak)).toBe(false);
   });
 
