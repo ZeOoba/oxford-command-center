@@ -769,19 +769,25 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   if (blankNoiIds.size > 0 && scorecards.length > 0) {
     const gap = scorecards[0]!.pctNoiIncomplete;
     const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+    const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
     const onBlank = (l: { propertyId: string | null }): boolean => l.propertyId !== null && blankNoiIds.has(l.propertyId);
+    // Same basis as tenantScorecards' pctNoi: a lease carries a share when it sits on a known-NOI
+    // investment row or is unlinked (rent-share fallback). A blank-NOI row and a non-investment row
+    // (the residence) both carry 0 (sweep review L1).
+    const carriesShare = (l: { propertyId: string | null }): boolean =>
+      !onBlank(l) && !(l.propertyId !== null && nonInvestmentIds.has(l.propertyId));
     const touched = scorecards.filter((t) => t.leases.some(onBlank));
-    // Every lease on a blank row → the tenant reads 0% and is not screened at all. Some leases on a
-    // blank row → it IS screened, on its known rows only (refute wf_7b3fb3d6-d93).
-    const unscreened = touched.filter((t) => t.leases.every(onBlank)).map((t) => t.name).sort(byName);
-    const partly = touched.filter((t) => !t.leases.every(onBlank)).map((t) => t.name).sort(byName);
+    // No lease carries a share → the tenant reads 0% and is not screened at all. Some do → it IS
+    // screened, on those rows only (refute wf_7b3fb3d6-d93).
+    const unscreened = touched.filter((t) => !t.leases.some(carriesShare)).map((t) => t.name).sort(byName);
+    const partly = touched.filter((t) => t.leases.some(carriesShare)).map((t) => t.name).sort(byName);
     out.push({
       // Outside the per-tenant `concentration-${slug}` namespace, so no tenant name can collide with it.
       id: 'concentration::incomplete', severity: 'info', category: 'concentration',
       title: 'Tenant concentration screen incomplete',
       detail:
         `Blank NOI on ${gap.join(', ')} is left out of the basis, so every tenant's share of portfolio NOI is incomplete.` +
-        (unscreened.length > 0 ? ` Not screened (every lease is on a blank-NOI property): ${unscreened.join(', ')}.` : '') +
+        (unscreened.length > 0 ? ` Not screened (share reads 0%: every lease is on a blank-NOI or non-investment property): ${unscreened.join(', ')}.` : '') +
         (partly.length > 0 ? ` Partly screened (share excludes its blank-NOI property): ${partly.join(', ')}.` : ''),
       metric: `${gap.length} blank NOI row${gap.length === 1 ? '' : 's'}`,
       impactAnnualUsd: null, spine: 'A', provenance: 'absent',
