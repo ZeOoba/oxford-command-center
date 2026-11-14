@@ -307,9 +307,23 @@ export function marketAllocation(properties: Property[], metric: 'noi' | 'sf' | 
   const total = sum(properties.map(pick));
   const byMkt = new Map<string, number>();
   for (const p of properties) byMkt.set(p.market, (byMkt.get(p.market) ?? 0) + pick(p));
+  // A blank workbook NOI is summed as $0: name it on its market instead of a silent $0 slice.
+  const blankByMkt = new Map<string, string[]>();
+  if (metric === 'noi') {
+    const marketOf = new Map(properties.map((p) => [p.id, p.market]));
+    for (const r of incompleteGovernorRows(properties, ['noi'])) {
+      const m = marketOf.get(r.id)!;
+      blankByMkt.set(m, [...(blankByMkt.get(m) ?? []), r.name]);
+    }
+  }
   return [...byMkt.entries()]
-    .map(([market, value]) => ({ market, value, pct: total ? value / total : 0 }))
-    .sort((a, b) => b.value - a.value);
+    .map(([market, value]) => {
+      const blank = blankByMkt.get(market);
+      return { market, value, pct: total ? value / total : 0, ...(blank ? { incomplete: blank } : {}) };
+    })
+    // Ties (e.g. two markets whose only row is a blank NOI, both $0) break by market name, never by
+    // input row order (refute wf_325f62d5-344).
+    .sort((a, b) => b.value - a.value || (a.market < b.market ? -1 : a.market > b.market ? 1 : 0));
 }
 
 // ── Debt ──────────────────────────────────────────────────────────────────────

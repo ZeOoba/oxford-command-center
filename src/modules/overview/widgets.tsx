@@ -2,7 +2,7 @@
 import type { ComponentType } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
-import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum } from '@analytics/index';
+import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum, noiGapNames, noiGapText } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { AsOfChip } from '@/primitives/AsOfChip';
 import { KpiStat } from '@/primitives/KpiStat';
@@ -63,7 +63,8 @@ function KpiStripWidget() {
         value={k.noi.value}
         format={fmtUsdCompact}
         prov={k.noi.prov}
-        sublabel={`Oxford share · workbook · ${fmtPct(k.weightedCapRate.value)} wtd cap`}
+        // A blank workbook NOI leaves Σ NOI and the weighted cap incomplete (follow-up to audit HIGH #2).
+        sublabel={`Oxford share · workbook · ${noiGapText(k) ?? `${fmtPct(k.weightedCapRate.value)} wtd cap`}`}
         caveat={llCaveat ? <LandlordCostChip caveat={llCaveat} /> : undefined}
         accentColor="var(--color-pos)"
         onPress={goTo('intel')}
@@ -83,12 +84,21 @@ function KpiStripWidget() {
 function NoiByMarketWidget() {
   const { analytics } = useAnalytics();
   if (!analytics) return null;
-  const marketData = analytics.marketByNoi.filter((m) => m.value > 0).map((m) => ({ label: m.market, value: m.value }));
+  // A market holding a blank-NOI row is labelled incomplete, and kept even when its only row is
+  // blank, instead of vanishing behind the $0 filter (follow-up to audit 2026-11-12 HIGH #2).
+  const slices = analytics.marketByNoi.filter((m) => m.value > 0 || m.incomplete);
+  const marketData = slices.map((m) => ({ label: m.incomplete ? `${m.market} (incomplete)` : m.market, value: m.value }));
+  const blank = noiGapNames(analytics.kpis); // id order, independent of slice order
   return (
     <Card>
       <CardHeader title="NOI by Market" trailing={<Badge tone="gold">{marketData.length} markets</Badge>} />
       <div className="px-3 pb-2 pt-3">
         <BarChart data={marketData} valueFormat={fmtUsdCompact} height={250} ariaLabel="NOI by market (workbook basis, Oxford share)" />
+        {blank.length > 0 && (
+          <p className="num mt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            Incomplete: blank NOI on {blank.join(', ')} (left out of its market).
+          </p>
+        )}
       </div>
     </Card>
   );

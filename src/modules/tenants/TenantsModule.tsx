@@ -5,25 +5,25 @@ import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { saveTenantNote } from '@/data/actions';
-import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtDate } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtNum, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
-import { tenantScorecards, type TenantScorecard } from '@/brain/tenants';
+import { tenantScorecards, type TenantScorecard, pctNoiText } from '@/brain/tenants';
 import type { RenewalStage } from '@contracts/index';
 
 const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Expiring: 'red', Outreach: 'amber', Negotiating: 'blue', LOI: 'purple', Executed: 'green',
 };
 
-function NoiBar({ pct, max }: { pct: number; max: number }) {
+function NoiBar({ pct, max, label }: { pct: number; max: number; label: string }) {
   const w = max > 0 ? Math.min(100, (pct / max) * 100) : 0;
   return (
     <div className="flex items-center justify-end gap-2">
       <div className="h-1.5 w-16 overflow-hidden rounded-full" style={{ background: 'var(--surface-overlay)' }}>
         <div className="h-full rounded-full" style={{ width: `${w}%`, background: 'var(--accent)' }} />
       </div>
-      <span className="num text-2xs" style={{ color: 'var(--text-secondary)' }}>{fmtPct(pct, 1)}</span>
+      <span className="num text-2xs" style={{ color: 'var(--text-secondary)' }}>{label}</span>
     </div>
   );
 }
@@ -61,7 +61,7 @@ export function TenantsModule() {
       sortValue: (t) => t.name,
     },
     { key: 'rent', header: 'Annual Rent', align: 'right', render: (t) => fmtUsd(t.annualRent), sortValue: (t) => t.annualRent },
-    { key: 'noi', header: '% Portfolio NOI', align: 'right', render: (t) => <NoiBar pct={t.pctNoi} max={maxPct} />, sortValue: (t) => t.pctNoi },
+    { key: 'noi', header: '% Portfolio NOI', align: 'right', render: (t) => <NoiBar pct={t.pctNoi} max={maxPct} label={pctNoiText(t)} />, sortValue: (t) => t.pctNoi },
     { key: 'sf', header: 'SF', align: 'right', render: (t) => fmtNum(t.sf), sortValue: (t) => t.sf },
     { key: 'exp', header: 'Next Expiry', align: 'right', render: (t) => fmtDate(t.nextExpiry), sortValue: (t) => t.daysToExpiry ?? 999999 },
     { key: 'stage', header: 'Renewal', render: (t) => (t.renewalStage ? <Badge tone={STAGE_TONE[t.renewalStage]}>{t.renewalStage}</Badge> : <span style={{ color: 'var(--text-tertiary)' }}>—</span>), sortValue: (t) => t.renewalStage ?? '' },
@@ -88,6 +88,12 @@ export function TenantsModule() {
           initialSort={{ key: 'rent', dir: 'desc' }}
           maxHeight={520}
         />
+        {/* A blank workbook NOI is left out of the basis, so every share is incomplete (follow-up to audit HIGH #2). */}
+        {(cards[0]?.pctNoiIncomplete.length ?? 0) > 0 && (
+          <p className="num px-4 pb-3 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            % Portfolio NOI is incomplete: blank NOI on {cards[0]!.pctNoiIncomplete.join(', ')} is left out of the basis.
+          </p>
+        )}
       </Card>
 
       {selected && <TenantDetail key={selected.id} tenant={selected} onOpenLease={(id) => ui.openEntity({ type: 'lease', id })} onDraft={(id) => ui.openDraft({ kind: 'renewal', entity: { type: 'lease', id } })} onSaveNote={(note) => noteMut.mutate({ tenantId: selected.id, note })} isSaving={noteMut.isPending} />}
@@ -109,12 +115,12 @@ function TenantDetail({
 
   return (
     <Card>
-      <CardHeader title={tenant.name} trailing={<Badge tone="gold">{fmtPct(tenant.pctNoi, 1)} of portfolio NOI</Badge>} />
+      <CardHeader title={tenant.name} trailing={<Badge tone="gold">{pctNoiText(tenant)} of portfolio NOI</Badge>} />
       <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
         <div>
           <div className="mb-2 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>Financial Exposure</div>
           <Row label="Annual Rent" value={fmtUsd(tenant.annualRent)} />
-          <Row label="% Portfolio NOI" value={fmtPct(tenant.pctNoi, 1)} />
+          <Row label="% Portfolio NOI" value={pctNoiText(tenant)} />
           <Row label="Total SF" value={fmtNum(tenant.sf)} />
           <Row label="Leases" value={String(tenant.leaseCount)} />
           <Row label="Renewal Stage" value={tenant.renewalStage ?? '—'} />

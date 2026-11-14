@@ -3,6 +3,7 @@ import type { Market } from '@contracts/index';
 import { PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 import { Button } from '@/primitives/Button';
 import { usePortfolioFilter } from './PortfolioFilterContext';
+import { filterSliceText, type FilterSlice } from './filter-slice';
 
 const fieldCls = 'num h-8 rounded-[var(--radius-sm)] px-2.5 text-2xs outline-none';
 const fieldStyle: CSSProperties = {
@@ -22,7 +23,7 @@ export interface PortfolioFilterBarProps {
   managers: string[];
   /** Display-only slice readout ("12 of 31 assets · $2.7M NOI"), computed by the
    *  mounting component from already-fetched data — no new fetching here. */
-  slice?: { shown: number; total: number; noiUsd?: number };
+  slice?: FilterSlice;
 }
 
 export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps) {
@@ -91,8 +92,7 @@ export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps)
 
       {isFiltered && slice && (
         <span className="num ml-auto text-2xs" style={{ color: 'var(--text-secondary)' }}>
-          {slice.shown} of {slice.total} assets
-          {slice.noiUsd != null && ` · $${(slice.noiUsd / 1_000_000).toFixed(1)}M workbook NOI`}
+          {filterSliceText(slice)}
         </span>
       )}
 

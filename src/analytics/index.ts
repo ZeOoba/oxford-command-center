@@ -8,3 +8,4 @@ export * from './lease-forecast';
 export * from './portfolio-trends';
 export * from './governor-headroom';
 export * from './governor-inputs';
+export * from './noi-incomplete';

@@ -9,10 +9,12 @@ import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouseReadOnly } from '../warehouse/db';
 import { insuranceConditions, insuranceWarehouseDriftConditions, fetchCurrentInsuranceRows } from '../warehouse/insurance-conditions';
+import { propertyConditionConditions } from '../warehouse/property-condition-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
 import { dscrIncompleteRows, GOVERNOR_INPUT_FIELDS, GOVERNOR_INPUT_LABEL } from '../../src/analytics/governor-inputs';
 import { portfolioNoiText } from '../ai/debt-basis-copy';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
+import { pfCrosscheckInsights } from '../property-financials/crosscheck-insights';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
 
 /** Workbook DATA month as "Mon YYYY" (e.g. "Jun 2026"), for the brief header freshness label. */
@@ -132,6 +134,43 @@ export async function runBrief(
       category: 'data',
       title: 'Insurance alerts unavailable this run',
       detail: `The warehouse could not be read for insurance conditions (${reason}). Expiry and drift alerts were not evaluated this run.`,
+      impactAnnualUsd: null,
+      spine: 'B',
+      provenance: 'absent',
+    });
+  }
+
+  // ── Property Financials cross-checks (tax timing, insurance tracker vs ledger) ─────────────────────
+  // Fail-open and fail-loud inside pfCrosscheckInsights: a stale/unreadable dataset yields one warning,
+  // never findings. All warning/info, so nothing here reaches the per-critical alert email below.
+  insights.push(...(await pfCrosscheckInsights(snapshot, now)));
+
+  // ── Warehouse-backed Property Condition conditions (Phase 3) ───────────────
+  // Its OWN guarded block, deliberately separate from the insurance block above: a failure here must
+  // never drop the insurance-expiry criticals (the email path), and vice versa. Severity ceiling is
+  // warning/info, so nothing here emails — it rides the digest / Ops Hub path. A warehouse without
+  // migration 035 yields no insights (propertyConditionConditions returns [] when pca_reports is
+  // absent: not deployed there, not a failure); any other read error is surfaced, not swallowed.
+  try {
+    const warehousePath =
+      process.env['WAREHOUSE_DB'] ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    if (existsSync(warehousePath)) {
+      const wdb = openWarehouseReadOnly(warehousePath);
+      try {
+        insights.push(...propertyConditionConditions(wdb, refDate));
+      } finally {
+        wdb.close();
+      }
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`brief: property condition conditions unavailable — ${reason}`);
+    insights.push({
+      id: 'brief-property-condition-conditions-unavailable',
+      severity: 'warning',
+      category: 'data',
+      title: 'Property condition alerts unavailable this run',
+      detail: `The warehouse could not be read for property condition conditions (${reason}). Warranty and dated-PCA alerts were not evaluated this run.`,
       impactAnnualUsd: null,
       spine: 'B',
       provenance: 'absent',

@@ -230,6 +230,49 @@ describe('DealDrawer — Underwriting panel with an input and a persisted score 
   });
 });
 
+describe('DealDrawer — Underwriting panel with a governor-demoted score', () => {
+  function candidateWith(tier: AcquisitionScore['tier'], verdict: AcquisitionScore['verdict'], dscr: boolean | null, reasons?: string[]): RankedCandidate {
+    return {
+      candidate: makeCandidate({ id: 'c-demotion', notionDealId: 'd-demotion' }),
+      latestScore: makeScore({ tier, verdict, ...(reasons ? { reasons } : {}) }),
+      governorDscrCleared: dscr,
+      governorLtvCleared: null,
+      calibrationHitRate: null,
+      scoredAt: '2026-06-14T00:00:00Z',
+    };
+  }
+  function renderFor(rc: RankedCandidate) {
+    stubFetchWithIntel(makeIntelResponse([rc]));
+    const input = AcquisitionInput.parse({ dealId: 'd-demotion', price: 1_000_000 });
+    renderDrawer('d-demotion', makeSnapshot([makeDeal({ id: 'd-demotion' })], { 'd-demotion': input }));
+  }
+
+  it('marks a legacy T1 score whose verdict was demoted to PASS', async () => {
+    renderFor(candidateWith('T1', 'PASS', false));
+    expect(await screen.findByText('Governor-demoted (was T1)')).toBeTruthy();
+    // The badge shows the verdict's tier, not the stale persisted T1.
+    expect(screen.queryByText('T1')).toBeNull();
+    expect(screen.getAllByText('PASS').length).toBeGreaterThan(0);
+  });
+
+  it('marks a current-engine demotion (tier PASS + Governor demotion reason)', async () => {
+    renderFor(candidateWith('PASS', 'PASS', false, ['Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.']));
+    expect(await screen.findByText('Governor-demoted (was T1)')).toBeTruthy();
+  });
+
+  it('does not mark a native PASS', async () => {
+    renderFor(candidateWith('PASS', 'PASS', true, ['Composite below T2']));
+    await waitFor(() => expect(screen.getAllByText('PASS').length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Governor-demoted/)).toBeNull();
+  });
+
+  it('does not mark a clean T1', async () => {
+    renderFor(candidateWith('T1', 'PURSUE', true));
+    await waitFor(() => expect(screen.getAllByText('T1').length).toBeGreaterThan(0));
+    expect(screen.queryByText(/Governor-demoted/)).toBeNull();
+  });
+});
+
 describe('DealDrawer — Underwriting panel with an input but no persisted score yet', () => {
   it('does not fabricate a score when only an input exists (candidate unscored)', async () => {
     const input = AcquisitionInput.parse({ dealId: 'd-input-only', price: 1_000_000 });
