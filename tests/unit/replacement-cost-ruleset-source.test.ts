@@ -3,8 +3,12 @@
 // Audit 2026-11-08 client-basis-floor-engine-hardcodes-ruleset (Wave 1, batch A-1). The deal-drawer basis-floor engine
 // (src/brain/replacement-cost.ts) hardcoded the vintage ramp (65% at <=1995, 60% at >=2005) and a hand-copied RCT v03
 // table, so a ratified ruleset or RCT change would move the server engine's verdict and leave the drawer badge on the old
-// numbers. It now reads both from the ratified config files. MECHANISM ONLY: every value must stay identical, which the
-// frozen snapshot below (the literals the module carried before this change) proves.
+// numbers. It now reads both from the ratified config files. MECHANISM ONLY. The vintage ramp is still checked against
+// the prior hardcoded literals below. The RCT is local-only (docs/ops/rct-runtime-config.md), so these tests run on
+// the synthetic stand-in and prove only that the drawer reads the bundled config verbatim. They cannot detect a moved
+// RCT value. That guarantee is the keyed-HMAC pin (server/warehouse/rct-pin.ts). The Brain Server checks it on every
+// load; build:mirror (check:rct-pin) checks the file bundled into this drawer and the edge Function, which carry no key at
+// runtime; and tests/unit/rct-public-leak.test.ts checks it locally when the real table and key are present.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -14,24 +18,17 @@ import {
 } from '../../src/brain/replacement-cost';
 
 const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-const rctJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')) as Record<string, unknown>;
+const rctJson = JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')) as Record<string, unknown>;
 
-// The hardcoded values the client module carried BEFORE this change (2026-11-08). Frozen here on purpose: if a test below
-// fails, the change moved a value and must not ship as mechanism-only.
-const PRIOR_RCT = {
-  'Columbus OH': { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
-  'Cincinnati OH': { low: 251.46, point: 279.4, high: 307.34, cwHardPsf: 143.15, proxy: false },
-  'Kansas City MO': { low: 227.9, point: 253.22, high: 278.54, cwHardPsf: 129.94, proxy: false },
-  'Indianapolis IN': { low: 253.83, point: 282.03, high: 310.24, cwHardPsf: 143.46, proxy: false },
-  'Mid-Atlantic': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: false },
-  'Madison WI': { low: 229.08, point: 254.53, high: 279.98, cwHardPsf: 130.05, proxy: true },
-  'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },
-  'Richmond VA': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: true },
-  'Des Moines IA': { low: 231.66, point: 257.4, high: 283.14, cwHardPsf: 131.46, proxy: true },
-  'Louisville KY': { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false },
-  // RCT v3.2 (2026-11-12, Gabriel in-turn): the one row added since the freeze; every prior row is unchanged.
-  'Chicago Cook County IL': { low: 225.59, point: 250.66, high: 275.73, cwHardPsf: 127.79, proxy: false },
-} as const;
+// The ratified RCT is local-only (docs/ops/rct-runtime-config.md). The bundled import resolves to the committed synthetic
+// stand-in under test, so the expected rows are read from that same file: the mechanism under test is that the drawer
+// reads the config verbatim (every market, every field, no hand copy). That the LOCAL ratified table is unchanged is
+// proven by the keyed-HMAC pin (server/warehouse/rct-pin.ts; local check: tests/unit/rct-public-leak.test.ts). The pin
+// mechanism itself is tested with a test key in tests/unit/rct-runtime-config.test.ts.
+type Row = { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean };
+const PRIOR_RCT = Object.fromEntries(
+  Object.entries(rctJson.markets as Record<string, Row>).map(([m, r]) => [m, { low: r.low, point: r.point, high: r.high, cwHardPsf: r.cwHardPsf, proxy: r.proxy }]),
+) as Record<string, Row>;
 // Every value below is the tilt-up baseline (×1.00, no adders), so the pre-v3.2 arithmetic is unchanged for it. The
 // construction multiplier, adders and the true all-in walk are pinned in tests/unit/rct-construction-type.test.ts.
 const BASELINE = { constructionType: 'tilt-precast', capex: 0, leaseUpCarry: 0 } as const;
@@ -40,8 +37,9 @@ const priorVintageFloor = (y: number | null | undefined): number => {
   return 0.65 - (c - 1995) * 0.005;
 };
 
-describe('client basis-floor engine reads the ratified config (values unchanged)', () => {
-  it('RCT_V03 is exactly the prior table (same markets, bit-identical values)', () => {
+describe('client basis-floor engine reads the bundled config verbatim (RCT values pinned by the keyed HMAC, not here)', () => {
+  it('RCT_V03 is exactly the config table (same markets, bit-identical values)', () => {
+    expect(Object.keys(PRIOR_RCT).length).toBeGreaterThanOrEqual(10);
     expect(RCT_V03).toEqual(PRIOR_RCT);
   });
 
@@ -79,11 +77,11 @@ describe('client basis-floor engine reads the ratified config (values unchanged)
     expect(odd).toEqual(PRIOR_RCT);
   });
 
-  it('replacementCostAnalysis output is unchanged across the vintage ramp and the uncovered-market branch', () => {
+  it('replacementCostAnalysis follows the config rows and the prior vintage ramp, including the uncovered-market branch', () => {
     for (const market of [...Object.keys(PRIOR_RCT), 'Toledo OH', null] as const) {
       for (const yearBuilt of [null, 1960, 1995, 1998, 2000, 2003, 2005, 2010]) {
         const r = replacementCostAnalysis({ sf: 40_000, estPrice: 3_500_000, market: market as never, yearBuilt, ...BASELINE });
-        const entry = market ? PRIOR_RCT[market as keyof typeof PRIOR_RCT] : undefined;
+        const entry = market ? PRIOR_RCT[market] : undefined;
         expect(r!.vintageFloorPct).toBe(priorVintageFloor(yearBuilt));
         expect(r!.marketCovered).toBe(entry !== undefined);
         if (entry) {
@@ -123,7 +121,7 @@ describe('client vintage floor fails closed on an unratified ruleset', () => {
   it('with no ratified floors the analysis prices the RCT but scores no basis verdict', () => {
     const r = replacementCostAnalysisWith({ sf: 40_000, estPrice: 1_000_000, market: 'Columbus OH', yearBuilt: 2000, ...BASELINE }, null)!;
     expect(r.marketCovered).toBe(true);
-    expect(r.low).toBe(40_000 * PRIOR_RCT['Columbus OH'].low);
+    expect(r.low).toBe(40_000 * PRIOR_RCT['Columbus OH']!.low);
     expect(r.vintageFloorPct).toBeNull();
     expect(r.floorPsf).toBeNull();
     expect(r.clearsFloor).toBeNull();

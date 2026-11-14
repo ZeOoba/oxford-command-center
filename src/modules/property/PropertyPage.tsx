@@ -21,6 +21,7 @@ import { provenanceKinds } from '@/charts/series-provenance';
 import { pointProvenance } from '../portfolio/scenario-spread';
 import { fmtDate, fmtMultiple, fmtPct, fmtSf, fmtUsd, fmtUsdCompact, propertyLtvLabel } from '@analytics/index';
 import { isInvestmentProperty, landlordCostsNotSourced } from '@analytics/property-basis';
+import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 import { useLeaseForecast } from '../leasing/hooks';
 import { BUCKET_LABEL, monthEndIso, propertyAlerts, rolloverLadder, type LadderRow } from './property-page-model';
 import { usePropertyLedger, usePropertyOccupancy } from './hooks';
@@ -189,9 +190,13 @@ export function PropertyPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <KpiStat
           label={p.oxfordOwnPct < 1 ? `NOI · workbook, Oxford ${fmtPct(p.oxfordOwnPct, 0)}` : 'NOI · workbook'}
-          value={p.noi}
+          value={hasBlankGovernorInput(p, 'noi') ? null : p.noi}
           format={fmtUsdCompact}
-          sublabel={nnn ? <span title={NNN_NOTE}><Badge tone="amber">NNN · LL costs not sourced</Badge></span> : 'Oxford share, annualized'}
+          sublabel={
+            // Audit 2026-11-12 HIGH #2: a blank workbook NOI is unknown, never "$0".
+            hasBlankGovernorInput(p, 'noi') ? BLANK_IN_WORKBOOK
+              : nnn ? <span title={NNN_NOTE}><Badge tone="amber">NNN · LL costs not sourced</Badge></span> : 'Oxford share, annualized'
+          }
         />
         <KpiStat label="NOI · ledger T12" value={lastT12?.value ?? null} format={fmtUsdCompact} sublabel={ledgerSub} spark={ledger?.t12.map((t) => t.value)} />
         <KpiStat label="Occupancy · workbook" value={p.occPct} format={(n) => fmtPct(n)} />

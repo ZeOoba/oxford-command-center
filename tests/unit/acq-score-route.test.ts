@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import type * as AcquisitionModule from '../../server/warehouse/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const ACQ_MODULE = '../../server/warehouse/acquisition';
 
@@ -45,10 +46,22 @@ function seedCandidate(db: WarehouseDb, id = 'manual:route-1'): string {
 /** Fresh api module (fresh acqConfig cache). mode controls the ./acquisition loaders. */
 async function loadApp(
   db: WarehouseDb,
-  mode: 'real' | 'ratified-missing-no-fallback' | 'ratified-missing-fallback-present',
+  mode: 'real' | 'real-unseamed' | 'ratified-missing-no-fallback' | 'ratified-missing-fallback-present',
 ) {
   vi.resetModules();
-  if (mode !== 'real') {
+  if (mode === 'real') {
+    // 'real' = the production loaders, on the committed synthetic RCT (the ratified table is local-only;
+    // tests/support/rct-loader.ts). Re-registered here because afterEach's doUnmock drops the suite-wide mock.
+    vi.doMock(ACQ_MODULE, async () => {
+      const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
+      const { syntheticRctLoader } = await import('../support/rct-loader');
+      return { ...actual, loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct) };
+    });
+  } else if (mode === 'real-unseamed') {
+    // 'real-unseamed' = the ACTUAL acquisition module with NO synthetic seam: the route's no-argument
+    // loadRatifiedRct() reads the default config path in the production posture (synthetic refused, pin checked).
+    vi.doMock(ACQ_MODULE, async () => vi.importActual<typeof AcquisitionModule>(ACQ_MODULE));
+  } else {
     vi.doMock(ACQ_MODULE, async () => {
       const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
       const missing = () => { throw new Error('ENOENT: simulated missing ratified config'); };
@@ -61,7 +74,7 @@ async function loadApp(
         loadRuleset: mode === 'ratified-missing-fallback-present'
           ? () => actual.loadRatifiedRuleset()
           : missing,
-        loadReplacementCostTable: () => actual.loadRatifiedRct(),
+        loadReplacementCostTable: () => loadTestRct(),
       };
     });
   }
@@ -81,7 +94,7 @@ const count = (db: WarehouseDb, table: string): number =>
   (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 
 beforeEach(() => vi.resetModules());
-afterEach(() => { vi.doUnmock(ACQ_MODULE); vi.resetModules(); });
+afterEach(() => { vi.doUnmock(ACQ_MODULE); vi.unstubAllEnvs(); vi.resetModules(); });
 
 describe('POST /acq/score/:candidateId', () => {
   it('404s an unknown candidate BEFORE parsing the body (an invalid body still 404s)', async () => {
@@ -188,6 +201,33 @@ describe('POST /acq/score/:candidateId', () => {
     expect(count(db, 'calibration_verdict')).toBe(0);
   });
 
+  // F1 (route half): the fail-closed contract with the REAL loader -- no simulated ENOENT, no synthetic seam. In
+  // tests and CI the default path config/replacement-cost.v3.json holds the seeded synthetic stand-in, which the
+  // production loader must refuse, so the route must 503 with the generic body and persist nothing.
+  async function expectRealLoader503(): Promise<void> {
+    const db = freshDb();
+    const id = seedCandidate(db);
+    const app = await loadApp(db, 'real-unseamed');
+    const res = await postScore(app, id, VALID_INPUT);
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string; detail?: string };
+    expect(body).toEqual({ error: 'acquisition engine unavailable' });
+    expect(count(db, 'acq_scores')).toBe(0);
+    expect(count(db, 'acq_score_inputs')).toBe(0);
+    expect(count(db, 'calibration_verdict')).toBe(0);
+  }
+
+  it('503s and persists nothing with the REAL (unseamed) RCT loader: the stand-in at the default path is refused', async () => {
+    vi.stubEnv('RCT_PIN_KEY', undefined);
+    await expectRealLoader503();
+  });
+
+  it('503s and persists nothing with the REAL loader EVEN WITH RCT_PIN_KEY set (the stand-in never passes: synthetic refusal or pin)', async () => {
+    // Invented 40-char test key. Even a de-synthesized stand-in would not match the committed pin under it.
+    vi.stubEnv('RCT_PIN_KEY', 'test-pin-key-0123456789abcdefghijklmnopq');
+    await expectRealLoader503();
+  });
+
   it('500s (scoring failed) when persistence throws, without leaking a partial score row', async () => {
     const db = freshDb();
     const id = seedCandidate(db);
@@ -220,8 +260,10 @@ describe('POST /acq/score/:candidateId', () => {
     let calls = 0;
     vi.doMock(ACQ_MODULE, async () => {
       const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
+      const { syntheticRctLoader } = await import('../support/rct-loader');
       return {
         ...actual,
+        loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct),
         loadRatifiedRuleset: () => {
           calls += 1;
           if (calls === 1) throw new Error('EBUSY: transient OneDrive lock');

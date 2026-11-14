@@ -430,12 +430,13 @@ describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
 import { readFileSync as readFileSyncG3 } from 'node:fs';
 import { resolve as resolveG3 } from 'node:path';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 describe('GET /acq/intel — score freshness state (audit 2026-10-13 G3)', () => {
   const RULESET = parseRuleset(JSON.parse(readFileSyncG3(resolveG3(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-  const RCT = loadRatifiedRct();
+  const RCT = loadTestRct();
   const STRONG = AcquisitionInput.parse({
     dealId: 'intel-fresh',
     price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,

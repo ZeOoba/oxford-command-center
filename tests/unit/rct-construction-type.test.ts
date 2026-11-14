@@ -3,64 +3,81 @@
 // RCT v3.2 (Gabriel in-turn 2026-11-12, PR-B of the 2026-11-12 doctrine-drift audit) brings the replacement-cost
 // denominator to acquisition-underwriting SKILL.md v4.45:
 //   1. Construction-Type Multiplier Schedule (v4.37): POINT × multiplier, then the adder schedule, LOW/HIGH at ±10%.
-//      Tilt-up/precast 1.00 · CMU 0.97 · brick 1.10 · hybrid 0.93 · PEMB 0.88 / 0.90 / 0.92 by SF. Unknown => the PEMB
-//      value for the subject SF capped at 0.90 (0.88 under ~20,000 SF), the STRICTEST applicable multiplier.
-//   2. Legacy `block-tilt-brick` => CMU ×0.97 (Gabriel ruling 2026-11-12).
+//      Tilt-up/precast ×1.00 is the baseline; CMU, brick, hybrid and a three-band PEMB size tilt come from the table.
+//      Unknown => the PEMB value for the subject SF capped at the table's unknown cap, the STRICTEST applicable multiplier.
+//   2. Legacy `block-tilt-brick` => CMU (Gabriel ruling 2026-11-12).
 //   3. The true all-in walk (STAGE 1): (adjusted LOW × (1 − floor) × SF − CapEx − carry) ÷ 1.02; without CapEx/carry the
 //      walk is an UPPER BOUND, labelled [EXCL. CAPEX/CARRY].
-//   4. The Chicago Cook County IL row (LOW 225.59 / POINT 250.66 / HIGH 275.73), now also the cheapest-market fallback.
-// Synthetic fixtures only (the drift audit's Columbus 25,000 SF case): no candidate IDs, addresses or APNs.
+//   4. The Chicago Cook County IL row, now also the cheapest-market fallback.
+// Every expected figure is DERIVED from the loaded table (the committed SYNTHETIC stand-in, invented figures); the ratified
+// table is local-only and no figure from it may appear here. Synthetic deal fixtures only: no candidate IDs, addresses or APNs.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AcquisitionInput } from '@contracts/acquisition';
-import { computeInputsVersion, loadRatifiedRct, parseRuleset, replacementCostPsf, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { computeInputsVersion, parseRuleset, replacementCostPsf, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { fallbackFromConfig, rcDealFor, RCT_FALLBACK, RCT_SCHEDULE, replacementCostAnalysis, scheduleFromConfig } from '../../src/brain/replacement-cost';
 import type { Deal } from '@contracts/deal';
 import { adderTotal, adjustBand, constructionMultiplier, pembMultiplier, RCT_CONSTRUCTION_TYPES, tiltSfFor } from '../../src/lib/rct-adjust';
 import { buildInput, dealToForm, denominatorNotes, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
+import { loadTestRct } from '../support/rct';
 
 const rawRuleset = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')) as Record<string, unknown>;
-const rctJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')) as Record<string, unknown>;
+const rctJson = JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')) as Record<string, unknown>;
 const ruleset = parseRuleset(rawRuleset);
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 const SCHED = RCT.constructionMultipliers;
 const NOW = '2026-11-12T00:00:00Z';
 const COLUMBUS = RCT.markets['Columbus OH']!;
+const CHICAGO = RCT.markets['Chicago Cook County IL']!;
+const A = RCT.adders;
+/** The doctrine's ±10% LOW/HIGH spread on adders. */
+const SPREAD = 0.1;
+/** The unknown-type multiplier at a given SF: the PEMB band for the SF, capped at the table's unknown cap. */
+const unknownAt = (sf: number | null) => Math.min(constructionMultiplier('pemb', sf, SCHED).multiplier, SCHED.unknownCap);
+const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The label form the engine and drawer print, e.g. `PEMB ×<m to 2 dp>`. */
+const labelRe = (name: string, m: number) => new RegExp(esc(`${name} ×${m.toFixed(2)}`));
 
 describe('construction-type multiplier (SKILL.md v4.37 schedule)', () => {
   it('checked types take the schedule value', () => {
     expect(constructionMultiplier('tilt-precast', 30_000, SCHED)).toMatchObject({ multiplier: 1, assumed: false });
-    expect(constructionMultiplier('cmu', 30_000, SCHED)).toMatchObject({ multiplier: 0.97, assumed: false, label: 'CMU ×0.97' });
-    expect(constructionMultiplier('brick', 30_000, SCHED)).toMatchObject({ multiplier: 1.1, assumed: false });
-    expect(constructionMultiplier('hybrid', 30_000, SCHED)).toMatchObject({ multiplier: 0.93, assumed: false });
+    expect(constructionMultiplier('cmu', 30_000, SCHED)).toMatchObject({ multiplier: SCHED.cmu, assumed: false, label: `CMU ×${SCHED.cmu.toFixed(2)}` });
+    expect(constructionMultiplier('brick', 30_000, SCHED)).toMatchObject({ multiplier: SCHED.brick, assumed: false });
+    expect(constructionMultiplier('hybrid', 30_000, SCHED)).toMatchObject({ multiplier: SCHED.hybrid, assumed: false });
   });
 
-  it('PEMB size tilt: 0.88 under 20,000 SF, 0.90 to under 40,000, 0.92 to 50,000, 0.92 tagged outside band above', () => {
+  it('PEMB size tilt: under-20K band below 20,000 SF, under-40K band to 39,999, up-to-50K band to 50,000, then tagged outside band', () => {
     const at = (sf: number | null) => constructionMultiplier('pemb', sf, SCHED);
-    expect(at(19_999).multiplier).toBe(0.88);
-    expect(at(20_000).multiplier).toBe(0.9);
-    expect(at(39_999).multiplier).toBe(0.9);
-    expect(at(40_000).multiplier).toBe(0.92);
-    expect(at(50_000)).toMatchObject({ multiplier: 0.92, outsideBand: false });
-    expect(at(50_001)).toMatchObject({ multiplier: 0.92, outsideBand: true });
+    expect(at(19_999).multiplier).toBe(SCHED.pemb.under20k);
+    expect(at(20_000).multiplier).toBe(SCHED.pemb.under40k);
+    expect(at(39_999).multiplier).toBe(SCHED.pemb.under40k);
+    expect(at(40_000).multiplier).toBe(SCHED.pemb.upTo50k);
+    expect(at(50_000)).toMatchObject({ multiplier: SCHED.pemb.upTo50k, outsideBand: false });
+    expect(at(50_001)).toMatchObject({ multiplier: SCHED.pemb.above50k, outsideBand: true });
     expect(at(50_001).label).toMatch(/outside band/);
+    // the tilt runs strictest-first: a smaller building never prices looser than a larger one
+    expect(SCHED.pemb.under20k).toBeLessThan(SCHED.pemb.under40k);
+    expect(SCHED.pemb.under40k).toBeLessThan(SCHED.pemb.upTo50k);
     // unknown SF => the smallest band, the strictest value
-    expect(at(null).multiplier).toBe(0.88);
+    expect(at(null).multiplier).toBe(SCHED.pemb.under20k);
   });
 
-  it('unknown type => PEMB for the SF capped at 0.90, tagged [DATA-GAP: construction type]', () => {
+  it('unknown type => PEMB for the SF capped at the unknown cap, tagged [DATA-GAP: construction type]', () => {
+    // the cap binds in the top band and not in the smallest one
+    expect(SCHED.unknownCap).toBeLessThan(SCHED.pemb.upTo50k);
+    expect(SCHED.unknownCap).toBeGreaterThan(SCHED.pemb.under20k);
     for (const t of ['unknown', null, undefined] as const) {
-      expect(constructionMultiplier(t, 15_000, SCHED)).toMatchObject({ multiplier: 0.88, assumed: true });
-      expect(constructionMultiplier(t, 25_000, SCHED)).toMatchObject({ multiplier: 0.9, assumed: true });
-      expect(constructionMultiplier(t, 45_000, SCHED)).toMatchObject({ multiplier: 0.9, assumed: true }); // PEMB 0.92, capped
+      expect(constructionMultiplier(t, 15_000, SCHED)).toMatchObject({ multiplier: SCHED.pemb.under20k, assumed: true });
+      expect(constructionMultiplier(t, 25_000, SCHED)).toMatchObject({ multiplier: Math.min(SCHED.pemb.under40k, SCHED.unknownCap), assumed: true });
+      expect(constructionMultiplier(t, 45_000, SCHED)).toMatchObject({ multiplier: SCHED.unknownCap, assumed: true }); // PEMB up-to-50K band, capped
       expect(constructionMultiplier(t, 25_000, SCHED).label).toMatch(/DATA-GAP: construction type/);
     }
   });
 
   it('a mixed façade (no façade share in the engine) takes the strict unknown value and says why', () => {
     const m = constructionMultiplier('mixed', 25_000, SCHED);
-    expect(m).toMatchObject({ multiplier: 0.9, assumed: true });
+    expect(m).toMatchObject({ multiplier: unknownAt(25_000), assumed: true });
     expect(m.label).toMatch(/mixed façade/);
   });
 
@@ -78,8 +95,8 @@ describe('construction-type multiplier (SKILL.md v4.37 schedule)', () => {
 describe('adders and the adjusted band', () => {
   it('sums each adder once and discloses stacked site-work adders', () => {
     expect(adderTotal(null, RCT.adders)).toEqual({ psf: 0, ids: [], siteWorkStacked: false });
-    expect(adderTotal(['esfr', 'cranes', 'esfr'], RCT.adders)).toMatchObject({ psf: 22, siteWorkStacked: false });
-    expect(adderTotal(['excess-site-work', 'paving-lighting'], RCT.adders)).toMatchObject({ psf: 16, siteWorkStacked: true });
+    expect(adderTotal(['esfr', 'cranes', 'esfr'], RCT.adders)).toMatchObject({ psf: A.esfr + A.cranes, siteWorkStacked: false });
+    expect(adderTotal(['excess-site-work', 'paving-lighting'], RCT.adders)).toMatchObject({ psf: A['excess-site-work'] + A['paving-lighting'], siteWorkStacked: true });
     // a function of the set, not the sequence, even for non-integer schedule values
     const odd = { ...RCT.adders, esfr: 0.1, cranes: 0.2, 'heavy-office': 0.3 };
     expect(adderTotal(['esfr', 'cranes', 'heavy-office'], odd).psf).toBe(adderTotal(['heavy-office', 'esfr', 'cranes'], odd).psf);
@@ -90,14 +107,16 @@ describe('adders and the adjusted band', () => {
   });
 
   it('POINT × multiplier + adders, LOW/HIGH at ±10% of the adder', () => {
-    const b = adjustBand(COLUMBUS, 0.9, 22);
-    expect(b.point).toBeCloseTo(255.16 * 0.9 + 22, 10);
-    expect(b.low).toBeCloseTo(229.65 * 0.9 + 0.9 * 22, 10);
-    expect(b.high).toBeCloseTo(280.68 * 0.9 + 1.1 * 22, 10);
+    const m = SCHED.cmu;
+    const adder = A.esfr + A.cranes;
+    const b = adjustBand(COLUMBUS, m, adder);
+    expect(b.point).toBeCloseTo(COLUMBUS.point * m + adder, 10);
+    expect(b.low).toBeCloseTo(COLUMBUS.low * m + (1 - SPREAD) * adder, 10);
+    expect(b.high).toBeCloseTo(COLUMBUS.high * m + (1 + SPREAD) * adder, 10);
   });
 });
 
-// The drift audit's synthetic case: Columbus, 25,000 SF, 1980 vintage (floor 65%). Engine walk at ×1.00 = $1,970,037.
+// The drift audit's synthetic case: Columbus, 25,000 SF, 1980 vintage (floor 65%). Every dollar figure is derived from the table.
 const SF = 25_000;
 const BASE: Record<string, unknown> = {
   dealId: 'rct-synthetic', market: 'Columbus OH',
@@ -115,34 +134,39 @@ const BASE: Record<string, unknown> = {
 const input = (over: Record<string, unknown> = {}) => AcquisitionInput.parse({ ...BASE, ...over });
 const score = (over: Record<string, unknown> = {}) => scoreAcquisition(input(over), ruleset, { now: NOW, rct: RCT });
 const basisFloor = (over: Record<string, unknown> = {}) => score(over).floors.find((f) => f.id === 'basis')!;
+/** The all-in basis at which the Basis floor is exactly met: adjusted LOW × (1 − vintage floor) × SF. */
+const boundaryAllIn = (sf: number, m: number, yearBuilt: number | null = 1980, low = COLUMBUS.low) =>
+  low * m * (1 - basisFloor({ yearBuilt }).required) * sf;
 
 describe('engine: the Basis floor divides by the construction-type-adjusted LOW', () => {
   it.each([
-    ['tilt-precast', 1],
-    ['cmu', 0.97],
-    ['brick', 1.1],
-    ['hybrid', 0.93],
-    ['pemb', 0.9],
-    ['unknown', 0.9],
-    [null, 0.9],
-  ] as const)('%s at 25,000 SF => LOW × %s', (type, m) => {
+    ['tilt-precast', SCHED['tilt-precast']],
+    ['cmu', SCHED.cmu],
+    ['brick', SCHED.brick],
+    ['hybrid', SCHED.hybrid],
+    ['pemb', SCHED.pemb.under40k],
+    ['unknown', unknownAt(SF)],
+    [null, unknownAt(SF)],
+  ] as const)('%s at 25,000 SF => LOW × the schedule value (%s)', (type, m) => {
     const f = basisFloor({ constructionType: type });
     expect(f.actual).toBeCloseTo(1 - 1_900_000 / (SF * COLUMBUS.low * m), 12);
   });
 
-  it('adders raise the denominator (LOW + 0.90 × adder)', () => {
+  it('adders raise the denominator (LOW + (1 − 10%) × adder)', () => {
+    const adder = A.esfr + A['heavy-office'];
     const f = basisFloor({ rctAdders: ['esfr', 'heavy-office'] });
-    expect(f.actual).toBeCloseTo(1 - 1_900_000 / (SF * (COLUMBUS.low + 0.9 * 19)), 12);
-    expect(f.detail).toMatch(/\$19\/SF adders/);
+    expect(f.actual).toBeCloseTo(1 - 1_900_000 / (SF * (COLUMBUS.low + (1 - SPREAD) * adder)), 12);
+    expect(f.detail).toMatch(new RegExp(esc(`$${adder}/SF adders`)));
   });
 
   it('cites the multiplier on the floor line, as doctrine requires on every screen', () => {
-    expect(basisFloor({ constructionType: 'cmu' }).detail).toMatch(/RCT CMU ×0\.97, LOW \$222\.76\/SF/);
+    const low = (COLUMBUS.low * SCHED.cmu).toFixed(2);
+    expect(basisFloor({ constructionType: 'cmu' }).detail).toMatch(new RegExp(esc(`RCT CMU ×${SCHED.cmu.toFixed(2)}, LOW $${low}/SF`)));
   });
 
   it('unknown construction type is the STRICTER verdict, never the looser one (the pre-v3.2 bug was the reverse)', () => {
-    // At this price a tilt-up building clears the 65% floor and an unknown one does not.
-    const price = 1_950_000;
+    // Midway between the two boundaries: a tilt-up building clears the 65% floor and an unknown one does not.
+    const price = Math.round((boundaryAllIn(SF, 1) + boundaryAllIn(SF, unknownAt(SF))) / 2);
     expect(basisFloor({ allInBasis: price, constructionType: 'tilt-precast' }).passed).toBe(true);
     expect(basisFloor({ allInBasis: price, constructionType: 'unknown' }).passed).toBe(false);
     const flags = score({ constructionType: 'unknown' }).dataQuality.filter((d) => d.field === 'replacementCost').map((d) => d.issue);
@@ -151,12 +175,12 @@ describe('engine: the Basis floor divides by the construction-type-adjusted LOW'
 
   it('the size tilt reads the single building SF (largest building), not the portfolio total', () => {
     const f = basisFloor({ constructionType: 'pemb', maxBuildingSf: 18_000, totalSf: 54_000, isPortfolio: true, allInBasis: 4_000_000 });
-    expect(f.actual).toBeCloseTo(1 - 4_000_000 / (54_000 * COLUMBUS.low * 0.88), 12);
+    expect(f.actual).toBeCloseTo(1 - 4_000_000 / (54_000 * COLUMBUS.low * SCHED.pemb.under20k), 12);
   });
 
   it('no largest-building SF => the strictest band, whatever the portfolio status (refute wf_3124f132-f17, wf_9e4b0fd3-241)', () => {
     const at = (over: Record<string, unknown>) => basisFloor({ constructionType: 'unknown', maxBuildingSf: null, totalSf: 36_000, allInBasis: 2_000_000, ...over }).actual;
-    const strict = 1 - 2_000_000 / (36_000 * COLUMBUS.low * 0.88);
+    const strict = 1 - 2_000_000 / (36_000 * COLUMBUS.low * SCHED.pemb.under20k);
     // 'not a portfolio' is not 'one building' (a 6+ building deal is 'no'), so it never reads the tilt at the total
     for (const isPortfolio of [false, true, null]) expect(at({ isPortfolio }), String(isPortfolio)).toBeCloseTo(strict, 12);
     const issues = score({ constructionType: 'pemb', maxBuildingSf: null, totalSf: 36_000 }).dataQuality.map((d) => d.issue);
@@ -164,7 +188,8 @@ describe('engine: the Basis floor divides by the construction-type-adjusted LOW'
   });
 
   it('isPortfolio null and false share an inputs_version key AND a verdict (the tilt never reads isPortfolio)', () => {
-    const over = { constructionType: 'pemb', maxBuildingSf: null, totalSf: 36_000, allInBasis: 2_575_000, price: 1_900_000 };
+    // just above the strict-band boundary, so reading a looser band for either value would flip the verdict
+    const over = { constructionType: 'pemb', maxBuildingSf: null, totalSf: 36_000, allInBasis: Math.round(boundaryAllIn(36_000, SCHED.pemb.under20k) * 1.01), price: 1_900_000 };
     const a = input({ ...over, isPortfolio: false });
     const b = input({ ...over, isPortfolio: null });
     expect(computeInputsVersion(a, ruleset)).toBe(computeInputsVersion(b, ruleset));
@@ -178,10 +203,11 @@ describe('engine: the Basis floor divides by the construction-type-adjusted LOW'
     const form = dealToForm({ sf: 45_000, buildings: 6, estPrice: 3_000_000, irr: null, holdYrs: null, market: 'Columbus OH' });
     const built = AcquisitionInput.parse({ ...BASE, ...buildInput({ ...form, constructionType: 'pemb' }, 'd'), maxBuildingSf: null });
     expect(built.isPortfolio).toBe(false);
-    const engine = scoreAcquisition({ ...built, allInBasis: 3_250_000 }, ruleset, { now: NOW, rct: RCT }).floors.find((f) => f.id === 'basis')!;
-    expect(engine.detail).toMatch(/PEMB ×0\.88/);
+    const allInBasis = Math.round(boundaryAllIn(45_000, SCHED.pemb.under20k) * 1.03);
+    const engine = scoreAcquisition({ ...built, allInBasis }, ruleset, { now: NOW, rct: RCT }).floors.find((f) => f.id === 'basis')!;
+    expect(engine.detail).toMatch(labelRe('PEMB', SCHED.pemb.under20k));
     const drawer = replacementCostAnalysis({ sf: 45_000, buildings: 6, estPrice: 3_000_000, market: 'Columbus OH', constructionType: 'pemb' })!;
-    expect(drawer.multiplier).toBe(0.88);
+    expect(drawer.multiplier).toBe(SCHED.pemb.under20k);
   });
 
   it('a largest building above the total is clamped to the total and flagged', () => {
@@ -190,7 +216,7 @@ describe('engine: the Basis floor divides by the construction-type-adjusted LOW'
     expect(tiltSfFor(null, 45_000)).toBeNull();
     expect(tiltSfFor(30_000, null)).toBe(30_000);
     const s = score({ constructionType: 'pemb', maxBuildingSf: 52_000, totalSf: 18_000 });
-    expect(s.floors.find((f) => f.id === 'basis')!.detail).toMatch(/PEMB ×0\.88/);
+    expect(s.floors.find((f) => f.id === 'basis')!.detail).toMatch(labelRe('PEMB', SCHED.pemb.under20k));
     expect(s.dataQuality.some((d) => d.field === 'maxBuildingSf' && /exceeds total SF/.test(d.issue))).toBe(true);
   });
 
@@ -228,7 +254,7 @@ describe('engine: the Basis floor divides by the construction-type-adjusted LOW'
   });
 });
 
-describe('legacy block-tilt-brick => CMU ×0.97 (Gabriel ruling 2026-11-12)', () => {
+describe('legacy block-tilt-brick => CMU (Gabriel ruling 2026-11-12)', () => {
   it('parses as cmu, scores as cmu and hashes as cmu', () => {
     const legacy = input({ constructionType: 'block-tilt-brick' });
     expect(legacy.constructionType).toBe('cmu');
@@ -257,19 +283,21 @@ describe('Chicago Cook County IL row (ratified 2026-11-12)', () => {
   it('is priced on its own row, not the fallback', () => {
     const s = score({ market: 'Chicago Cook County IL' });
     expect(s.dataQuality.some((d) => d.field === 'replacementCost' && /fallback/.test(d.issue))).toBe(false);
-    expect(s.floors.find((f) => f.id === 'basis')!.actual).toBeCloseTo(1 - 1_900_000 / (SF * 225.59), 12);
+    expect(s.floors.find((f) => f.id === 'basis')!.actual).toBeCloseTo(1 - 1_900_000 / (SF * CHICAGO.low), 12);
   });
 
-  it('the fallback is now the Chicago row — the cheapest market, so an unknown market is never looser than a ratified row', () => {
-    expect(RCT.psf).toEqual({ low: 225.59, mid: 250.66, high: 275.73 });
-    expect(replacementCostPsf(RCT, 'low', null).psf).toBe(225.59);
-    expect(replacementCostPsf(RCT, 'low', 'Atlantis', { multiplier: 0.9, adderPsf: 0 }).psf).toBeCloseTo(225.59 * 0.9, 12);
+  it('the fallback is the Chicago row — the cheapest market, so an unknown market is never looser than a ratified row', () => {
+    expect(RCT.psf).toEqual({ low: CHICAGO.low, mid: CHICAGO.point, high: CHICAGO.high });
+    for (const [name, row] of Object.entries(RCT.markets)) expect(CHICAGO.low, name).toBeLessThanOrEqual(row.low);
+    expect(replacementCostPsf(RCT, 'low', null).psf).toBe(CHICAGO.low);
+    const m = SCHED.unknownCap;
+    expect(replacementCostPsf(RCT, 'low', 'Atlantis', { multiplier: m, adderPsf: 0 }).psf).toBeCloseTo(CHICAGO.low * m, 12);
   });
 
   it('the drawer prices it too', () => {
     const r = replacementCostAnalysis({ sf: SF, estPrice: 1_000_000, market: 'Chicago Cook County IL', yearBuilt: 1980, constructionType: 'tilt-precast' })!;
     expect(r.marketCovered).toBe(true);
-    expect(r.floorPsf).toBeCloseTo(225.59 * 0.35, 10);
+    expect(r.floorPsf).toBeCloseTo(CHICAGO.low * 0.35, 10);
   });
 });
 
@@ -277,23 +305,25 @@ describe('drawer: true all-in walk and construction multiplier', () => {
   const drawer = (over: Record<string, unknown> = {}) =>
     replacementCostAnalysis({ sf: SF, maxBuildingSf: SF, estPrice: 1_900_000, market: 'Columbus OH', yearBuilt: 1980, ...over })!;
 
-  it('the drift audit\'s synthetic case: $1,970,037 at ×1.00 => $1,773,033 for an unknown type', () => {
+  it('the drift audit\'s synthetic case: the unknown-type walk is the ×1.00 walk at the strict multiplier, and lower', () => {
+    const tiltWalk = (COLUMBUS.low * 0.35 * SF) / 1.02;
+    const unknownWalk = (COLUMBUS.low * unknownAt(SF) * 0.35 * SF) / 1.02;
     const tilt = drawer({ constructionType: 'tilt-precast', capex: 0, leaseUpCarry: 0 });
-    expect(tilt.walkPrice!).toBeCloseTo((229.65 * 0.35 * SF) / 1.02, 6);
-    expect(Math.round(tilt.walkPrice!)).toBe(1_970_037);
+    expect(tilt.walkPrice!).toBeCloseTo(tiltWalk, 6);
     const unknown = drawer({ capex: 0, leaseUpCarry: 0 });
-    expect(unknown.multiplier).toBe(0.9);
+    expect(unknown.multiplier).toBe(unknownAt(SF));
     expect(unknown.multiplierAssumed).toBe(true);
-    expect(Math.round(unknown.walkPrice!)).toBe(1_773_033);
+    expect(unknown.walkPrice!).toBeCloseTo(unknownWalk, 6);
+    expect(unknown.walkPrice!).toBeLessThan(tilt.walkPrice!);
     // ×1.00 is a sensitivity line only
-    expect(Math.round(unknown.walkPriceAtBaseline!)).toBe(1_970_037);
+    expect(unknown.walkPriceAtBaseline!).toBeCloseTo(tiltWalk, 6);
     expect(tilt.walkPriceAtBaseline).toBeNull();
   });
 
   it('CapEx and lease-up carry come off the walk and onto the basis', () => {
     const r = drawer({ constructionType: 'tilt-precast', capex: 250_000, leaseUpCarry: 150_000 });
     expect(r.excludesCapexCarry).toBe(false);
-    expect(r.walkPrice!).toBeCloseTo((229.65 * 0.35 * SF - 400_000) / 1.02, 6);
+    expect(r.walkPrice!).toBeCloseTo((COLUMBUS.low * 0.35 * SF - 400_000) / 1.02, 6);
     expect(r.basisPsf!).toBeCloseTo((1_900_000 * 1.02 + 400_000) / SF, 10);
     expect(r.basis).not.toMatch(/EXCL\. CAPEX\/CARRY/);
   });
@@ -306,47 +336,55 @@ describe('drawer: true all-in walk and construction multiplier', () => {
     }
     // a known part still comes off the walk; the label stays until both are known
     const partial = drawer({ constructionType: 'tilt-precast', capex: 100_000 });
-    expect(partial.walkPrice!).toBeCloseTo((229.65 * 0.35 * SF - 100_000) / 1.02, 6);
+    expect(partial.walkPrice!).toBeCloseTo((COLUMBUS.low * 0.35 * SF - 100_000) / 1.02, 6);
   });
 
   it('a pipeline Deal (no type, CapEx or carry on the record) gets the strict multiplier and the upper-bound label', () => {
     const r = replacementCostAnalysis({ sf: SF, maxBuildingSf: SF, estPrice: 1_900_000, market: 'Columbus OH' })!;
-    expect(r.multiplier).toBe(0.9);
+    expect(r.multiplier).toBe(unknownAt(SF));
     expect(r.multiplierLabel).toMatch(/DATA-GAP: construction type/);
     expect(r.excludesCapexCarry).toBe(true);
   });
 
   it('the drawer reads the size tilt at a single building, never the multi-building total (refute wf_3124f132-f17)', () => {
-    // 3 × 12,000 SF: the total (36,000) would read ×0.90; per building (or unknown) it is ×0.88, as in the engine.
-    const multi = replacementCostAnalysis({ sf: 36_000, buildings: 3, estPrice: 2_520_000, market: 'Columbus OH', yearBuilt: 1990 })!;
-    expect(multi.multiplier).toBe(0.88);
-    const unknownCount = replacementCostAnalysis({ sf: 36_000, estPrice: 2_520_000, market: 'Columbus OH', yearBuilt: 1990 })!;
-    expect(unknownCount.multiplier).toBe(0.88);
-    const withBuildingSf = replacementCostAnalysis({ sf: 36_000, buildings: 3, maxBuildingSf: 12_000, estPrice: 2_520_000, market: 'Columbus OH', yearBuilt: 1990 })!;
-    expect(withBuildingSf.multiplier).toBe(0.88);
+    // 3 × 12,000 SF: the total (36,000) would read the under-40K band (capped); per building (or unknown) it is the under-20K band, as in the engine.
+    expect(unknownAt(36_000)).not.toBe(SCHED.pemb.under20k);
+    // between the strict boundary and the total-SF boundary, so reading the total would flip the verdict
+    const estPrice = Math.round((boundaryAllIn(36_000, SCHED.pemb.under20k, 1990) + boundaryAllIn(36_000, unknownAt(36_000), 1990)) / 2 / 1.02);
+    const multi = replacementCostAnalysis({ sf: 36_000, buildings: 3, estPrice, market: 'Columbus OH', yearBuilt: 1990 })!;
+    expect(multi.multiplier).toBe(SCHED.pemb.under20k);
+    const unknownCount = replacementCostAnalysis({ sf: 36_000, estPrice, market: 'Columbus OH', yearBuilt: 1990 })!;
+    expect(unknownCount.multiplier).toBe(SCHED.pemb.under20k);
+    const withBuildingSf = replacementCostAnalysis({ sf: 36_000, buildings: 3, maxBuildingSf: 12_000, estPrice, market: 'Columbus OH', yearBuilt: 1990 })!;
+    expect(withBuildingSf.multiplier).toBe(SCHED.pemb.under20k);
     // and the engine agrees on the same deal
-    const engine = basisFloor({ constructionType: null, maxBuildingSf: null, totalSf: 36_000, isPortfolio: true, allInBasis: 2_520_000 * 1.02, yearBuilt: 1990 });
+    const engine = basisFloor({ constructionType: null, maxBuildingSf: null, totalSf: 36_000, isPortfolio: true, allInBasis: estPrice * 1.02, yearBuilt: 1990 });
     expect(multi.clearsFloor).toBe(engine.passed);
+    expect(engine.passed).toBe(false); // the strict band fails it; the total-SF band would have cleared it
   });
 
   it('a one-building Deal whose saved input has no largest-building SF prices like the engine: strictest band (refute wf_3b4097ae-24d)', () => {
     // The drawer never reads the total as a building, even with buildings === 1: the caller resolves maxBuildingSf.
-    const drawer = replacementCostAnalysis({ sf: 45_000, buildings: 1, maxBuildingSf: null, estPrice: 3_150_000, market: 'Columbus OH', yearBuilt: 1980, constructionType: 'pemb' })!;
-    expect(drawer.multiplier).toBe(0.88);
-    const engine = basisFloor({ constructionType: 'pemb', maxBuildingSf: null, totalSf: 45_000, isPortfolio: false, allInBasis: 3_150_000 * 1.02 });
-    expect(engine.detail).toMatch(/PEMB ×0\.88/);
+    // just inside the strict-band boundary, where any drawer/engine split on the band would show as a different verdict
+    const estPrice = Math.round((boundaryAllIn(45_000, SCHED.pemb.under20k) * 0.999) / 1.02);
+    const drawer = replacementCostAnalysis({ sf: 45_000, buildings: 1, maxBuildingSf: null, estPrice, market: 'Columbus OH', yearBuilt: 1980, constructionType: 'pemb' })!;
+    expect(drawer.multiplier).toBe(SCHED.pemb.under20k);
+    const engine = basisFloor({ constructionType: 'pemb', maxBuildingSf: null, totalSf: 45_000, isPortfolio: false, allInBasis: estPrice * 1.02 });
+    expect(engine.detail).toMatch(labelRe('PEMB', SCHED.pemb.under20k));
     expect(drawer.clearsFloor).toBe(engine.passed);
   });
 
   it('a saved input whose market has no RCT row is priced on the engine\'s strictest fallback, never the Deal\'s row (refute wf_a7d3a06f-2a8)', () => {
+    // just inside the fallback-row boundary, so the verdict is sensitive to which LOW each side divides by
+    const allIn = Math.round(boundaryAllIn(20_000, 1, 2000, RCT.psf.low) * 0.995);
     for (const market of [null, 'Other', 'Unknown', 'Toledo OH'] as const) {
       const drawer = replacementCostAnalysis({
-        sf: 20_000, maxBuildingSf: 20_000, estPrice: 1_710_000 / 1.02, market, yearBuilt: 2000, constructionType: 'tilt-precast', engineFallback: true,
+        sf: 20_000, maxBuildingSf: 20_000, estPrice: allIn / 1.02, market, yearBuilt: 2000, constructionType: 'tilt-precast', engineFallback: true,
       })!;
       expect(drawer.onFallback, String(market)).toBe(true);
       expect(drawer.marketCovered).toBe(true);
       expect(drawer.basis).toMatch(/strictest firm-wide fallback/);
-      const engine = basisFloor({ market, maxBuildingSf: 20_000, totalSf: 20_000, yearBuilt: 2000, allInBasis: 1_710_000, constructionType: 'tilt-precast' });
+      const engine = basisFloor({ market, maxBuildingSf: 20_000, totalSf: 20_000, yearBuilt: 2000, allInBasis: allIn, constructionType: 'tilt-precast' });
       expect(drawer.floorPsf! / (1 - drawer.vintageFloorPct!)).toBeCloseTo(RCT.psf.low, 9);
       expect(drawer.clearsFloor).toBe(engine.passed);
     }
@@ -356,7 +394,7 @@ describe('drawer: true all-in walk and construction multiplier', () => {
     expect(bare.onFallback).toBe(false);
     // a covered market never takes the fallback
     expect(replacementCostAnalysis({ sf: 20_000, estPrice: 1_000_000, market: 'Columbus OH', engineFallback: true })!.onFallback).toBe(false);
-    expect(RCT_FALLBACK).toMatchObject({ low: 225.59, point: 250.66, high: 275.73 });
+    expect(RCT_FALLBACK).toMatchObject({ low: CHICAGO.low, point: CHICAGO.point, high: CHICAGO.high });
     expect(fallbackFromConfig({ ...rctJson, ratification: 'proposed' })).toBeNull();
   });
 

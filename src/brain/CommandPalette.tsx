@@ -7,6 +7,7 @@ import { useBrain } from '@/data/brain-context';
 import { MODULES } from '@/shell/modules';
 import { applyTheme } from '@/lib/theme';
 import { downloadCsv } from '@/lib/export';
+import { governorFieldValue } from '@analytics/governor-inputs'; // blank workbook cell exports empty, never 0 (audit 2026-11-12 HIGH #2)
 import { useUi } from './ui-context';
 import { buildEntityItems, type EntityItem } from './searchIndex';
 
@@ -115,7 +116,7 @@ export function CommandPalette() {
                       <Command.Item
                         value="export properties csv portfolio"
                         onSelect={() => {
-                          downloadCsv('ora-properties.csv', data.snapshot.properties.map((p) => ({ name: p.name, market: p.market, type: p.type, sf: p.sf, occPct: p.occPct, noi: p.noi, capRate: p.capRate, dscr: p.dscr, oxfordValue: p.oxfordValue, loanBalance: p.loanBalance, ltv: p.ltv, lender: p.lender })));
+                          downloadCsv('ora-properties.csv', data.snapshot.properties.map((p) => ({ name: p.name, market: p.market, type: p.type, sf: p.sf, occPct: p.occPct, noi: governorFieldValue(p, 'noi'), capRate: p.capRate, dscr: p.dscr, oxfordValue: p.oxfordValue, loanBalance: governorFieldValue(p, 'loanBalance'), ltv: p.ltv, lender: p.lender })));
                           ui.closePalette();
                         }}
                       >

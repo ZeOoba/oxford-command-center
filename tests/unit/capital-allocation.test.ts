@@ -42,10 +42,11 @@ import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import { _projectUnleveredReturn, PROJECTION_ASSUMPTIONS } from '../../server/warehouse/capital-allocation';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { loadTestRct } from '../support/rct';
 
 const mockGetMacro = vi.mocked(getMacro);
 const mockScoreProperties = vi.mocked(scoreProperties);
@@ -480,7 +481,7 @@ describe('buildPortfolioAllocation', () => {
 describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202-de8)', () => {
   const ratifiedJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'));
   const RULESET = parseRuleset(ratifiedJson);
-  const RCT = loadRatifiedRct();
+  const RCT = loadTestRct();
   // Strong deal: DSCR proxy = 0.12 / (0.40 x 0.085) = 3.53 -> clears dscr_floor 1.25, fails 4.0.
   const STRONG = AcquisitionInput.parse({
     dealId: 'stale-strong', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
@@ -666,7 +667,7 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
     mutateLatestScore(db, 'cand-lowcomp', { regime: OLD_REGIME, composite: 50 });
     const result = await buildPortfolioAllocation(db, '2026-10-13');
     expect(result.actionCounts.buy).toBe(0);
-    expect(result.dataQuality).toEqual([]);
+    expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
   });
 
   it('a stale top-ranked candidate is skipped for the next fresh one, and the portfolio dataQuality discloses the exclusion (real scores)', async () => {
@@ -686,6 +687,32 @@ describe('buildPortfolioAllocation — stale governor regime (refute wf_f5f45202
     expect(flag?.severity).toBe('warn');
     expect(flag?.issue).toMatch(/cand-a-top-stale/);
     expect(flag?.issue).not.toMatch(/cand-b-next-fresh/);
+  });
+
+  // Audit 2026-11-12 #7 — Gabriel ruling 2026-11-13 (Option 1): a verdict resting on an UNRATIFIED
+  // constant ships advisoryOnly=true until ratified. Values unchanged.
+  it('discloses at portfolio level that every BUY-eligibility label rests on the unratified composite floor (refute wf_62322d75-6f9)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-floor-disclosed');
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    expect(result.pipeline.length).toBeGreaterThan(0);
+    const flag = result.dataQuality.find((f) => f.field === 'buyCompositeFloor');
+    expect(flag?.severity).toBe('info');
+    expect(flag?.issue).toMatch(/composite floor 70.*unratified/i);
+  });
+
+  it('BUY is advisoryOnly while BUY_COMPOSITE_FLOOR is unratified, and says why (real score)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    await scoreReal(db, 'cand-advisory-buy');
+    const result = await buildPortfolioAllocation(db, '2026-10-13');
+    const buy = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buy).toBeDefined();
+    expect(buy.advisoryOnly).toBe(true);
+    expect(buy.reasons.some((r) => /advisoryOnly: .*BUY composite floor.*unratified/i.test(r))).toBe(true);
+    // The hurdle stays ratified, so the portfolio-level flag (hurdle-only) is untouched.
+    expect(result.advisoryOnly).toBe(false);
   });
 });
 
@@ -775,7 +802,9 @@ describe('buildPortfolioAllocation — expectedReturnPct wiring (C-4)', () => {
     // test's own subject is expectedReturnPct, so exclude the unrelated 'debtBook' flag rather
     // than asserting only on the one field — a stray THIRD, unrelated dataQuality entry (a future
     // regression) would otherwise go unnoticed (round 19f tightening).
-    expect(v.dataQuality.filter((f) => f.field !== 'debtBook')).toHaveLength(0);
+    // Ruling 2026-11-13 (audit #12): a drivable returnAboveHurdle now carries exactly one advisory
+    // disclosure (PROJECTION_ASSUMPTIONS unratified) — still no stray third flag.
+    expect(v.dataQuality.filter((f) => f.field !== 'debtBook').map((f) => f.field)).toEqual(['returnAboveHurdle']);
   });
 
   it('C4-8: latest FULL-YEAR period is used, not a more-recent YTD partial (basis-consistency with scores.ts)', async () => {
@@ -900,6 +929,78 @@ describe('buildPortfolioAllocation — improve action / capexIrr proxy', () => {
     expect(v.timelineMonths).toBe(12); // spec TIMELINE table: improve = 12
   });
 
+  it('C5-improve-advisory: improve rests on the unratified $10/SF capex proxy → advisoryOnly=true; a hold on the same run stays decision-grade (ruling 2026-11-13)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold', healthBand: 'good' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold', healthBand: 'good' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest', healthBand: 'watch' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 50_000, noiPerSf: 5 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).toBe('improve');
+    expect(v.advisoryOnly).toBe(true);
+    expect(v.reasons.some((r) => /advisoryOnly: .*capex proxy \(\$10\/SF\).*unratified/i.test(r))).toBe(true);
+    const hold = result.verdicts.find((r) => r.propertyId === 'prop-a')!;
+    expect(hold.action).toBe('hold');
+    expect(hold.advisoryOnly).toBe(false);
+  });
+
+  it('C5-return-above-hurdle-disclosed: a drivable returnAboveHurdle is disclosed as resting on the unratified projection assumptions (ruling 2026-11-13)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([makePropertyScore({ propertyId: 'prop-h', capitalAction: 'hold' })]);
+    mockScoreDebt.mockReturnValue([makeDebtScore({ propertyId: 'prop-h', signal: 'hold' })]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-h', rentableSf: 10_000, noi: 90_000, noiPerSf: 9, oxfordNoi: 90_000 }),
+    ]);
+    const snapshot = makeSnapshot([makeProperty({ id: 'prop-h', oxfordValue: 1_000_000 })]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21', undefined, snapshot);
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-h')!;
+    expect(v.returnAboveHurdle).not.toBeNull();
+    const flag = v.dataQuality.find((f) => f.field === 'returnAboveHurdle');
+    expect(flag?.issue).toMatch(/PROJECTION_ASSUMPTIONS.*not ratified/i);
+  });
+
+  it('C5-hold-by-proxy-advisory: a hold the capex proxy chose (proxy below hurdle) is advisory too (refute wf_c69b93c5-c15)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // noiPerSf 15 / 10 / 9.7 → median 10, gap 0.3, capexIrr 3% < 8%: the proxy, not data, chose hold.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 97_000, noiPerSf: 9.7 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).toBe('hold');
+    expect(v.advisoryOnly).toBe(true);
+    expect(v.reasons.some((r) => /advisoryOnly: .*capex proxy \(\$10\/SF\).*unratified/i.test(r))).toBe(true);
+    // A plain hold (no invest signal, proxy not consulted) stays decision-grade.
+    expect(result.verdicts.find((r) => r.propertyId === 'prop-a')!.advisoryOnly).toBe(false);
+  });
+
   it('C5-improve-neg-hurdle: proxy gap too small to clear hurdle → stays hold', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
@@ -923,6 +1024,8 @@ describe('buildPortfolioAllocation — improve action / capexIrr proxy', () => {
     const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
     expect(v.action).not.toBe('improve');
     expect(v.action).toBe('hold');
+    // Proxy-decided hold (drivable capexIrr below hurdle): advisory while ASSUMED_CAPEX_PSF is unratified.
+    expect(v.advisoryOnly).toBe(true);
   });
 
   it('C5-improve-neg-thin-cohort: fewer than 3 properties have noiPerSf → median null → improve never fires', async () => {
@@ -970,6 +1073,8 @@ describe('buildPortfolioAllocation — improve action / capexIrr proxy', () => {
     const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
     expect(v.action).not.toBe('improve');
     expect(v.action).toBe('hold');
+    // Ruling 2026-11-13: the proxy was undrivable, so it decided nothing; this hold is decision-grade.
+    expect(v.advisoryOnly).toBe(false);
   });
 
   it('C5-improve-neg-above-median: capitalAction=invest but noiPerSf already at/above median → stays hold', async () => {

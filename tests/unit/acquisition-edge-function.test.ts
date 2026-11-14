@@ -19,9 +19,19 @@ type Json = Record<string, unknown>;
 const ratifiedRulesetObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 ) as Json;
-const rctObj = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
+// The ratified RCT is local-only (docs/ops/rct-runtime-config.md). The bundled import resolves to the committed
+// synthetic stand-in under vitest (vitest.config.ts alias), and the edge refuses that stand-in at module init. These
+// tests therefore bundle a COPY with the synthetic marker removed: invented figures standing in for a ratified table.
+vi.mock('../../config/replacement-cost.v3.json', async () => {
+  const { readFileSync: read } = await import('node:fs');
+  const raw = JSON.parse(read(`${process.cwd()}/fixtures/synthetic/config/replacement-cost.v3.json`, 'utf8')) as Record<string, unknown>;
+  delete raw._synthetic;
+  return { default: raw };
+});
+const syntheticRaw = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8'),
 ) as Json;
+const rctObj: Json = (() => { const j = structuredClone(syntheticRaw); delete j._synthetic; return j; })();
 
 /** Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`). */
 function ruleVariant(mutate: (j: Json) => void): Json {
@@ -60,7 +70,7 @@ function postCtx(body: unknown): { request: Request } {
 const stripScoredAt = (s: Record<string, unknown>): Record<string, unknown> => ({ ...s, scoredAt: undefined });
 
 describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConfig)', () => {
-  it('accepts the real ratified config', () => {
+  it('accepts a ratified, signed, plausible config', () => {
     const cfg = resolveAcquisitionConfig(ratifiedRulesetObj, rctObj);
     expect(cfg.ruleset.ratification).toBe('ratified');
   });
@@ -80,6 +90,30 @@ describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConf
   });
   it('THROWS on a non-ratified RCT', () => {
     expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, { ...rctObj, ratification: 'proposed' })).toThrow(/not 'ratified'/);
+  });
+  it('THROWS on the synthetic test stand-in (a bundle built without the local ratified table never scores)', () => {
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, syntheticRaw)).toThrow(/synthetic/);
+  });
+  it('THROWS on an implausible RCT (a $/SF typed in thousands)', () => {
+    const j = structuredClone(rctObj);
+    (j.psf as Json).low = 0.25;
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/plausible/);
+  });
+  // The canonical-raw gate: the edge drawer/form read the RAW bundled JSON, so a field zod defaults or strips would let
+  // the parsed (pinned) table and the read table diverge. Both cases parse cleanly; only assertRawIsCanonical rejects.
+  it('THROWS on an RCT market row missing `proxy` (zod would default it to false)', () => {
+    const j = structuredClone(rctObj);
+    const row = (j.markets as Record<string, Json>)['Columbus OH']!;
+    delete row.proxy;
+    expect(() => ReplacementCostTable.parse(j)).not.toThrow();
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/drops or defaults/);
+  });
+  it('THROWS on an RCT market row carrying an unknown extra field (zod would strip it)', () => {
+    const j = structuredClone(rctObj);
+    const row = (j.markets as Record<string, Json>)['Columbus OH']!;
+    row.unexpectedField = 1;
+    expect(() => ReplacementCostTable.parse(j)).not.toThrow();
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, j)).toThrow(/drops or defaults/);
   });
 });
 
@@ -151,6 +185,29 @@ describe('acquisition edge Function — fail-closed 503 WIRING (config init fail
       expect(body.detail).toBeUndefined(); // parity with the Brain Server routes: no raw config error
     } finally {
       vi.doUnmock(rulesetPath);
+      vi.resetModules();
+    }
+  });
+
+  // Merge gate round 3, H2: every other test here bundles the stand-in with its synthetic marker REMOVED (the file-level
+  // vi.mock above), so nothing proved that a bundle carrying the RAW stand-in, which is what a checkout without the
+  // local-only table bundles, makes the deployed Function refuse at module init. build:mirror's check:rct-pin also
+  // refuses that stand-in before anything is bundled; this pins the runtime half.
+  it('onRequestPost returns 503 with no score when the bundled RCT is the synthetic stand-in', async () => {
+    vi.resetModules();
+    const rctPath = '../../config/replacement-cost.v3.json';
+    vi.doMock(rctPath, () => ({ default: structuredClone(syntheticRaw) }));
+    try {
+      const mod = await import('../../functions/api/warehouse/acquisition/score');
+      const res = await mod.onRequestPost(postCtx(STRONG_BASE));
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error?: string; score?: unknown; detail?: unknown };
+      expect(body.error).toMatch(/unavailable/);
+      expect(body.score).toBeUndefined();
+      expect(body.detail).toBeUndefined();
+    } finally {
+      // Restore the file-level de-synthesized bundle for anything that re-imports later.
+      vi.doMock(rctPath, () => ({ default: structuredClone(rctObj) }));
       vi.resetModules();
     }
   });

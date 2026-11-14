@@ -32,6 +32,7 @@ import {
   assertProductionRct,
   scoreAcquisition,
 } from '../../../../server/warehouse/acquisition';
+import { assertPlausibleRct, assertRawIsCanonical, isSyntheticRct } from '../../../../server/warehouse/rct-pin';
 import { AcquisitionInput, ReplacementCostTable } from '../../../../src/contracts/acquisition';
 import type { AcquisitionRuleset } from '../../../../src/contracts/acquisition';
 // Shared governor proxy + ratified default governors — pure/edge-portable (types-only + a const),
@@ -52,8 +53,16 @@ export interface EdgeAcquisitionConfig {
 export function resolveAcquisitionConfig(rulesetRaw: unknown, rctRaw: unknown): EdgeAcquisitionConfig {
   const ruleset = parseRuleset(rulesetRaw);
   assertProductionRuleset(ruleset);
+  // The RCT is local-only (docs/ops/rct-runtime-config.md): a bundle built on a checkout without the real table
+  // carries the synthetic stand-in, which must never score. The keyed-HMAC pin is checked at mirror build time
+  // (scripts/check-rct-pin.ts, in build:mirror) against the very file bundled here; the edge has no key.
+  if (isSyntheticRct(rctRaw)) {
+    throw new Error('bundled replacement-cost table is the synthetic test stand-in, not the ratified table — fail-closed');
+  }
   const rct = ReplacementCostTable.parse(rctRaw);
+  assertRawIsCanonical(rctRaw, rct);
   assertProductionRct(rct);
+  assertPlausibleRct(rct);
   return { ruleset, rct };
 }
 

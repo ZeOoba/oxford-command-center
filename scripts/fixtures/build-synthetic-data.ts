@@ -2707,7 +2707,9 @@ export async function build(
   // Hand-written static stand-ins (no transform of the real file): the lease-term roster and the PCA
   // overlay tables. Their committed fixtures are emitted unchanged; the real roster's tenant labels are
   // registered so the leak check hunts them in every fixture.
-  const STATIC_STANDINS = ['config/local/lease-term-seeds.json', 'config/local/pca-overlay.json'];
+  // Hand-written stand-ins, emitted unchanged. The RCT stand-in's figures are invented (never derived from the real
+  // table: docs/ops/rct-runtime-config.md), so there is nothing to transform.
+  const STATIC_STANDINS = ['config/local/lease-term-seeds.json', 'config/local/pca-overlay.json', 'config/replacement-cost.v3.json'];
   for (const rel of STATIC_STANDINS) {
     if (!have(rel)) continue;
     const fixed = readFileSync(join(OUT_ROOT, rel), 'utf8');

@@ -428,6 +428,20 @@ describe('CapitalModule / AllocationCard — round 8 fresh-sweep: debt-book trus
     return renderModule('/capital', qc);
   }
 
+  it('marks the hurdle arrow "projected, advisory" only when the returnAboveHurdle projection rests on unratified assumptions (ruling 2026-11-13)', () => {
+    const base = allocationResponse();
+    const v0 = base.portfolio.verdicts[0]!;
+    const projected = {
+      ...v0, propertyId: 'prop-p', propertyName: 'Prop Projected', expectedReturnPct: 0.1, returnAboveHurdle: true,
+      dataQuality: [{ entity: 'prop-p', field: 'returnAboveHurdle', issue: 'projection rests on unratified assumptions', severity: 'info' as const }],
+    };
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], { ...base, portfolio: { ...base.portfolio, verdicts: [projected] } });
+    qc.setQueryData(['warehouse', 'capital-allocation', 'report'], capitalAllocationReport());
+    renderModule('/capital', qc);
+    expect(screen.getAllByText(/projected, advisory/)).toHaveLength(1);
+  });
+
   it('shows a "book not trusted" badge and the debtBook dataQuality text for a degraded verdict', () => {
     renderWithTrustIssues();
     expect(screen.getByText('book not trusted')).toBeTruthy();
@@ -499,6 +513,28 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     expect(screen.getByText('500 Commerce Dr')).toBeTruthy();
     expect(screen.getByText('1 candidates')).toBeTruthy();
     expect(screen.queryByText('Market Cap-Rate Positioning')).toBeNull();
+  });
+
+  it('labels BUY eligibility advisory while the composite floor is unratified, and counts advisory verdicts in the header (refute wf_62322d75-6f9)', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    const v0 = base.portfolio.verdicts[0]!;
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        verdicts: [{ ...v0, action: 'improve', advisoryOnly: true }],
+        actionCounts: { buy: 0, hold: 0, sell: 0, refinance: 0, improve: 1 },
+        pipeline: [
+          { candidateId: 'cand-f', address: '7 Floor Way', market: null, composite: 72, tier: 'T1', unleveredIrr10yr: 0.15, basisDiscountPct: 0.7, verdict: 'PURSUE', buyEligible: true },
+        ],
+        dataQuality: [{ entity: 'portfolio', field: 'buyCompositeFloor', issue: 'floor unratified', severity: 'info' }],
+      },
+    });
+    renderModule('/capital', qc);
+    expect(screen.getByText(/Improve 1 \(1 advisory\)/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Pipeline' }));
+    expect(screen.getByText('BUY-eligible (advisory)')).toBeTruthy();
   });
 
   it('Buy Pipeline shows the verdict and BUY eligibility next to the tier (refute H3)', () => {

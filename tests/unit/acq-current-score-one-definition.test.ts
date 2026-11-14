@@ -22,13 +22,14 @@ import { buildBrainReport } from '../../server/warehouse/brain-report';
 import { logAcqOutcome, persistAndLogScore } from '../../server/warehouse/acq-engine';
 import { buildPortfolioAllocation } from '../../server/warehouse/capital-allocation';
 import { CURRENT_SCORE_WITH_INPUTS_SQL, classifyLatestScore } from '../../server/warehouse/acq-score-freshness';
-import { loadRatifiedRct, parseRuleset } from '../../server/warehouse/acquisition';
+import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET = parseRuleset(
   JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')),
 );
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 
 // leveredIrr null => the IRR floor is indeterminate, so EVERY row of this candidate is
 // floor_indeterminate=1 and brain-report lists whichever row is current (it names the row id).

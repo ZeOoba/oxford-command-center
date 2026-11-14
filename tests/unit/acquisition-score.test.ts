@@ -108,7 +108,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
   // Review N1: a KILL already determined by the answers given must never be dropped because another use box is blank.
   // Full 4x4x4 matrix of (unset | yes | no | '') answers, scored by the real engine on an otherwise PURSUE-grade deal.
   describe('use answers x engine verdict — every combination (review N1)', () => {
-    const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+    const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')));
     const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
     const BASE: Record<string, unknown> = {
       dealId: 'm', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000, productType: 'shallow-bay-multi', officePct: 0.1,
@@ -208,7 +208,7 @@ describe('RCT v03 hygiene — the Workbench form must not present the retired fl
 // deal scored on the strictest firm-wide fallback (the cheapest-market LOW: Kansas City then, Chicago Cook County IL since RCT v3.2) while the deal drawer priced the deal by
 // its own market. The form now carries the market, so the engine and the drawer use the same denominator.
 describe('market plumbing: the deal form carries the market to the engine (OI-356)', () => {
-  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')));
   const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
   const deal = (market: string | null) => ({ sf: 60_000, estPrice: 3_000_000, irr: null, holdYrs: null, market } as never);
   const scoreFor = (market: string | null) =>
@@ -276,7 +276,7 @@ describe('market plumbing: the deal form carries the market to the engine (OI-35
 // that does not exist. A pipeline Deal carries only total SF and a building count, never per-building SF, so the largest
 // building is KNOWN only for a single-building deal. Mechanism only: the ratified 50K gate value is unchanged.
 describe('dealToForm: per-building SF, never total SF, feeds the size gate (audit 2026-11-08)', () => {
-  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8')));
   const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
   const gateMax = ruleset.gates.sizePrice.maxSfPerBuilding;
   const base = { estPrice: 9_000_000, irr: null, holdYrs: null, market: null } as const;

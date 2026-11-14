@@ -314,6 +314,23 @@ describe('syncCapitalActionsToNotion — 5-way allocation vocabulary (audit 2026
     expect(new Set(names).size).toBe(names.length); // no duplicate option names
   });
 
+  // Refute wf_c69b93c5-c15 (ruling 2026-11-13): an advisory verdict (e.g. improve on the unratified
+  // capex proxy) must never land in the operational register as a bare, final Capital Action.
+  it('writes an advisory verdict as "<action> (advisory)", never the bare action, and declares those options', async () => {
+    const calls: RecordedCall[] = [];
+    await syncCapitalActionsToNotion([{ ...entry({ allocationAction: 'improve' }), advisory: true }], 'tok', {
+      databaseId: DB, asOf: '2026-11-13', fetchImpl: mockNotion([notionPage('page-1', '123 Main St')], { calls }),
+    });
+    const pagePatch = calls.find((c) => c.method === 'PATCH' && /\/pages\//.test(c.url))!;
+    const props = (pagePatch.body as { properties: Record<string, unknown> }).properties;
+    expect(props['Capital Action']).toEqual({ select: { name: 'improve (advisory)' } });
+    const dbPatch = calls.find((c) => c.method === 'PATCH' && /\/databases\/[^/]+$/.test(c.url))!;
+    const names = (dbPatch.body as { properties: Record<string, { select: { options: Array<{ name: string }> } }> })
+      .properties['Capital Action']!.select.options.map((o) => o.name);
+    for (const n of ['buy', 'hold', 'sell', 'refinance', 'improve']) expect(names).toContain(`${n} (advisory)`);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   it('a property with no allocation verdict (null action) is skipped — never written with a guessed value', async () => {
     const calls: RecordedCall[] = [];
     const result = await syncCapitalActionsToNotion([entry({ allocationAction: null })], 'tok', {
@@ -339,8 +356,8 @@ describe('syncCapitalActionsToNotion — 5-way allocation vocabulary (audit 2026
 });
 
 describe('buildCapitalWritebackEntries — joins the 5-way verdict to the report (audit 2026-10-13 G5)', () => {
-  const verdict = (propertyId: string, action: AllocationVerdict['action']) =>
-    ({ propertyId, propertyName: propertyId, action } as unknown as AllocationVerdict);
+  const verdict = (propertyId: string, action: AllocationVerdict['action'], advisoryOnly = false) =>
+    ({ propertyId, propertyName: propertyId, action, advisoryOnly } as unknown as AllocationVerdict);
   const reportEntry = (propertyId: string, capitalAction: CapitalAllocationEntry['capitalAction'], priorityScore: number) =>
     ({ propertyId, propertyName: `Name ${propertyId}`, capitalAction, priorityScore } as unknown as CapitalAllocationEntry);
 
@@ -354,10 +371,15 @@ describe('buildCapitalWritebackEntries — joins the 5-way verdict to the report
       reportEntry('p3', 'monitor', 12),                  // no allocation verdict
     ]);
     expect(out).toEqual([
-      { propertyName: 'Name p1', allocationAction: 'hold', priorityScore: 71.4 },
-      { propertyName: 'Name p2', allocationAction: 'sell', priorityScore: 40 },
-      { propertyName: 'Name p3', allocationAction: null, priorityScore: 12 },
+      { propertyName: 'Name p1', allocationAction: 'hold', priorityScore: 71.4, advisory: false },
+      { propertyName: 'Name p2', allocationAction: 'sell', priorityScore: 40, advisory: false },
+      { propertyName: 'Name p3', allocationAction: null, priorityScore: 12, advisory: false },
     ]);
+  });
+
+  it('carries the verdict advisoryOnly flag into the writeback entry (ruling 2026-11-13)', () => {
+    const portfolio = { verdicts: [verdict('p1', 'improve', true)] } as unknown as PortfolioAllocation;
+    expect(buildCapitalWritebackEntries(portfolio, [reportEntry('p1', 'invest', 50)])[0]!.advisory).toBe(true);
   });
 
   it('never writes the portfolio-level pipeline buy verdict onto an owned property', () => {

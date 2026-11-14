@@ -24,9 +24,10 @@ import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const RATIFIED_RULESET: AcquisitionRuleset = parseRuleset(ratifiedJson);
-const RCT: ReplacementCostTable = loadRatifiedRct();
+const RCT: ReplacementCostTable = loadTestRct();
 
 /** A proposed (non-ratified) variant of the ruleset. */
 function proposedRuleset(): AcquisitionRuleset {
