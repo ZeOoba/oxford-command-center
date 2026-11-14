@@ -18,7 +18,7 @@
 // .git/hooks with no npm context and must survive a missing/wiped node_modules).
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { renameSyncWithRetry } from '../server/lib/rename-retry';
+import { renameSyncWithRetry as renameSyncWithRetryImpl } from '../server/lib/rename-retry';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
 import { PY_SCANNER_SHA256, scannerDigest } from './prepush-confidential-scan.mjs';
@@ -204,7 +204,13 @@ exit 0
  * Windows can refuse the rename while another process has `dest` open; renameSyncWithRetry retries
  * those transient codes. A rename that still fails leaves `dest` as it was and removes the temp file.
  */
-export function writeFileAtomic(dest: string, contents: string, mode?: number): void {
+export function writeFileAtomic(
+  dest: string,
+  contents: string,
+  mode?: number,
+  /** Test seam: lets a test check `dest` (still the old file) and the temp file at the moment of the rename. */
+  renameSyncWithRetry: (from: string, to: string) => void = renameSyncWithRetryImpl,
+): void {
   const tmp = `${dest}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     writeFileSync(tmp, contents, 'utf8');

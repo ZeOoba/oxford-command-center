@@ -1266,6 +1266,15 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
         });
       }
       expect(calls).toBe(0);
+      // Merge gate PR 577 round 3: a scanner path that exists but cannot be read (here a directory, so
+      // the read throws EISDIR) must fail closed too, without running Python.
+      const dirScanner = join(home, 'dir-scanner.py');
+      mkdirSync(dirScanner, { recursive: true });
+      expect(runTermScan('', [], { scanner: dirScanner, python: 'py', run })).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('could not be read'),
+      });
+      expect(calls).toBe(0);
       // CRLF (a Windows checkout with core.autocrlf) hashes the same as the committed LF bytes.
       writeFileSync(py, text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
       expect(runTermScan('', [], { scanner: py, python: 'py', run })).toEqual({ ok: true });

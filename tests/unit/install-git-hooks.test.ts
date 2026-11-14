@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK, writeFileAtomic, replaceOrWarn } from '../../scripts/install-git-hooks';
 import { PY_SCANNER_SHA256, scannerDigest } from '../../scripts/prepush-confidential-scan.mjs';
+import { renameSyncWithRetry } from '../../server/lib/rename-retry';
 
 /** Stand-ins for the Python term scanner copy beside the hook (the wrapper runs it for a stub JS
  * scanner that lacks runTermScan, i.e. a tree that predates it). */
@@ -412,6 +413,15 @@ describe('install-git-hooks installer — runs only as a script, never on import
       expect(readFileSync(join(hooks, PY_SCAN_FALLBACK), 'utf8')).toBe(lf);
       expect(scannerDigest(readFileSync(join(hooks, PY_SCAN_FALLBACK)))).toBe(PY_SCANNER_SHA256);
       expect(readdirSync(hooks).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+      // Merge gate PR 577 round 3: nothing checked that the HOOK itself is replaced by rename (only the
+      // writer was tested directly). A stale hook is rewritten by the real installer as a new file.
+      writeFileSync(join(hooks, 'pre-push'), '#!/bin/sh\nexit 0\n');
+      const staleId = statSync(join(hooks, 'pre-push'), { bigint: true }).ino;
+      const again = spawnSync(process.execPath, [tsxCli, installer], { cwd: dir, encoding: 'utf8' });
+      expect(again.status, again.stderr).toBe(0);
+      expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe(WRAPPER);
+      expect(statSync(join(hooks, 'pre-push'), { bigint: true }).ino).not.toBe(staleId);
+      if (process.platform !== 'win32') expect(statSync(join(hooks, 'pre-push')).mode & 0o111).toBe(0o111);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -435,6 +445,22 @@ describe('install-git-hooks installer — runs only as a script, never on import
       writeFileAtomic(dest, 'new\n');
       expect(readFileSync(dest, 'utf8')).toBe('new\n');
       expect(statSync(dest, { bigint: true }).ino).not.toBe(before);
+      // Merge gate PR 577 round 3: a delete-then-rename (or delete-then-write) also changes the file id,
+      // but leaves a moment with no hook at all, and git runs no hook then. At the moment of the rename,
+      // dest must still be the previous complete file and the temp file the complete new one, already
+      // with its mode where modes exist.
+      let atRename: { dest: string; tmp: string; tmpExec: number } | null = null;
+      const id2 = statSync(dest, { bigint: true }).ino;
+      writeFileAtomic(dest, 'newer\n', 0o755, (from, to) => {
+        atRename = { dest: readFileSync(to, 'utf8'), tmp: readFileSync(from, 'utf8'), tmpExec: statSync(from).mode & 0o111 };
+        renameSyncWithRetry(from, to);
+      });
+      expect(atRename).not.toBeNull();
+      expect(atRename!.dest).toBe('new\n');
+      expect(atRename!.tmp).toBe('newer\n');
+      if (process.platform !== 'win32') expect(atRename!.tmpExec).toBe(0o111);
+      expect(readFileSync(dest, 'utf8')).toBe('newer\n');
+      expect(statSync(dest, { bigint: true }).ino).not.toBe(id2);
       writeFileAtomic(join(dir, 'g.py'), 'fresh\n');
       expect(readdirSync(dir).sort()).toEqual(['f.py', 'g.py']);
     } finally {
@@ -482,6 +508,11 @@ describe('install-git-hooks installer — runs only as a script, never on import
       expect(() => replaceOrWarn(dest, 'new\n', 0o755, busy('ENOSPC'))).toThrow(/ENOSPC/);
       expect(replaceOrWarn(dest, 'new\n')).toBe(true);
       expect(readFileSync(dest, 'utf8')).toBe('new\n');
+      // Merge gate PR 577 round 3: the mode must reach the writer (dropping it renames the hook in
+      // without its executable bit).
+      const modes: (number | undefined)[] = [];
+      expect(replaceOrWarn(dest, 'x\n', 0o755, (_d, _c, m) => void modes.push(m))).toBe(true);
+      expect(modes).toEqual([0o755]);
     } finally {
       console.warn = warn;
       rmSync(dir, { recursive: true, force: true });

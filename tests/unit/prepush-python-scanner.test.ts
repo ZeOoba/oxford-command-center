@@ -27,14 +27,14 @@ function findPython(): string | null {
   return null;
 }
 
-// Blob ids (`git hash-object`, LF-normalized) of the shared files as carried by ZeOoba/ora-skills#249
-// (branch fix/prepush-context-and-urlencode, f4ff604; ora-skills main still has the older scanner
-// until that PR merges, so do NOT re-vendor from main before then) and ZeOoba/ora-pm#92 (8a951c4):
-// tools/prepush_confidential_scan.py, tools/test_prepush_confidential_scan.py and tools/hooks/pre-push. Re-vendor all three together and
-// update these ids in the same commit; an edit made only here would fork the shared scanner.
+// Blob ids (`git hash-object`, LF-normalized) of the shared files as on ora-skills main 7b0ebcc
+// (ZeOoba/ora-skills#257: duplicate roster keys fail closed; ora-pm main carries the same blobs via
+// ZeOoba/ora-pm#102): tools/prepush_confidential_scan.py, tools/test_prepush_confidential_scan.py and
+// tools/hooks/pre-push. Re-vendor all three together from ora-skills main and update these ids AND
+// PY_SCANNER_SHA256 in the same commit; an edit made only here would fork the shared scanner.
 const VENDORED = {
-  'scripts/prepush_confidential_scan.py': '71e19a76a6f1102f9b62bc2de490c4d5fb17037b',
-  'scripts/test_prepush_confidential_scan.py': 'e7e0ddb230f8a23e278efe1ebf1c63dacbc56034',
+  'scripts/prepush_confidential_scan.py': 'e019a7882ad37961eba008d269ebf6302330eaee',
+  'scripts/test_prepush_confidential_scan.py': '73063717f9a4235cda60b9def136abc73aac14ac',
   'scripts/hooks/pre-push': 'a18f2cd38a45000ea7f6f9fb016487a488310893',
 } as const;
 

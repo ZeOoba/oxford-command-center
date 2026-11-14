@@ -803,7 +803,7 @@ export const PY_SCANNER = join(dirname(fileURLToPath(import.meta.url)), 'prepush
  * pass every push unscanned (merge gate PR 577 rounds 1 and 2). Re-vendor the scanner and update this
  * pin together; tests/unit/prepush-python-scanner.test.ts checks the two agree.
  */
-export const PY_SCANNER_SHA256 = 'fceb0876489e117f22df0ff492f922632acea557f8c402250d2804d524aa5b8d';
+export const PY_SCANNER_SHA256 = '37f4328f5fffbb71c751115d76583d060c87ae7515e76a956ce1b46305534f64';
 
 /**
  * SHA-256 of `bytes` with CRLF folded to LF, so a Windows checkout (core.autocrlf) hashes the same as
