@@ -191,3 +191,7 @@ Copy of *
 /tests/fixtures/property-financials/**/* (??)*
 /tests/fixtures/property-financials/**/reference-artifact[ _(.~-]*
 /tests/fixtures/property-financials[ _(.~-]*/
+
+# Python bytecode (the vendored pre-push scanner and its suite)
+__pycache__/
+*.py[cod]
