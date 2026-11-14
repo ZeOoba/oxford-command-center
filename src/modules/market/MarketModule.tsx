@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { useMacro, useAnalytics } from '@/data/queries';
-import { fmtPct, fmtDate } from '@analytics/index';
+import { fmtDate, noiGapNames } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
@@ -16,6 +16,7 @@ import { MarketScorecard } from './MarketScorecard';
 import { CompsView } from './CompsView';
 import { MARKET_TABS, MARKET_TAB_KEYS, type MarketTab } from './tabs';
 import { isLiveMacro } from './macro-badge';
+import { acquisitionLens } from './acquisition-lens';
 
 const ProspectDemandModule = lazy(() => import('../intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 
@@ -78,8 +79,8 @@ function MacroView() {
   const dgs10Value = macro.indicators.find((i) => i.id === 'DGS10')?.value;
   const tenY = dgs10Value != null && Number.isFinite(dgs10Value) && dgs10Value > 0 ? dgs10Value : null;
   const wtdCap = analytics?.kpis.weightedCapRate.value ?? null;
-  const spreadPp = tenY !== null && wtdCap !== null ? wtdCap * 100 - tenY : null;
-  const spreadBps = spreadPp !== null ? Math.round(spreadPp * 100) : null;
+  // A blank workbook NOI leaves the weighted cap incomplete: the spread is withheld (follow-up to audit HIGH #2).
+  const lens = acquisitionLens(wtdCap, tenY, analytics ? noiGapNames(analytics.kpis) : []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,9 +125,14 @@ function MacroView() {
         <Card>
           <CardHeader title="Acquisition Lens" />
           <div className="flex flex-col gap-3 p-4">
-            <Row label="Portfolio weighted cap" value={wtdCap !== null ? fmtPct(wtdCap, 2) : '—'} />
+            <Row label="Portfolio weighted cap" value={lens.capText} />
             <Row label="10Y Treasury" value={tenY !== null ? `${tenY.toFixed(2)}%` : '—'} />
-            <Row label="Cap-rate spread" value={spreadBps !== null ? `${spreadBps} bps` : '—'} accent />
+            <Row label="Cap-rate spread" value={lens.spreadText} accent />
+            {lens.note && (
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+                {lens.note}
+              </p>
+            )}
             <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
               Spread of in-place cap rate over the risk-free 10Y — a quick read on relative value for new acquisitions.
             </p>

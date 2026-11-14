@@ -2,6 +2,7 @@ import type { PortfolioSnapshot, Lease } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
 import { slug } from '../contracts/common';
 import { isInvestmentProperty } from '../analytics/property-basis';
+import { incompleteGovernorRows } from '../analytics/governor-inputs';
 import { DAY_MS } from '@/lib/time-constants';
 
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -27,6 +28,10 @@ export interface TenantScorecard {
   sf: number;
   annualRent: number;
   pctNoi: number; // 0..1 — tenant share of INVESTMENT NOI (pro-rata within each investment property; 0 for leases on a non-investment property; rent-share fallback for unlinked leases), normalized so the column sums to 100%
+  /** Investment properties whose blank workbook NOI is summed as $0 in the basis (id order). Non-empty
+   *  ⇒ every pctNoi is incomplete: the blank row's tenants read 0% and the rest are re-normalized
+   *  without it. Empty when complete (follow-up to audit 2026-11-12 HIGH #2). */
+  pctNoiIncomplete: string[];
   nextExpiry: string | null; // soonest leaseEnd ISO
   daysToExpiry: number | null;
   renewalStage: RenewalStage | null; // most-advanced stage across the tenant's leases
@@ -55,6 +60,12 @@ interface Accum {
  *   defect means callers should pass the real run date (see portfolioCriticalDates for the
  *   established convention).
  */
+/** "12.3%", or "12.3% (incomplete)" when a blank workbook NOI is left out of the basis. */
+export function pctNoiText(t: Pick<TenantScorecard, 'pctNoi' | 'pctNoiIncomplete'>): string {
+  const pct = `${(t.pctNoi * 100).toFixed(1)}%`;
+  return t.pctNoiIncomplete.length > 0 ? `${pct} (incomplete)` : pct;
+}
+
 export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): TenantScorecard[] {
   // Basis (ratified 2026-09-23): pctNoi is each tenant's share of INVESTMENT NOI — the same basis as
   // portfolioKpis. Three lease classes, decided by the property the lease links to:
@@ -68,6 +79,7 @@ export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): 
   const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
   const linksToNonInvestment = (l: Lease): boolean => l.propertyId !== null && nonInvestmentIds.has(l.propertyId);
   const portfolioNoi = sum(investment.map((p) => p.noi));
+  const pctNoiIncomplete = incompleteGovernorRows(investment, ['noi']).map((r) => r.name);
   const totalRent = sum(s.leases.filter((l) => !linksToNonInvestment(l)).map((l) => l.annualRent));
   const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // investment NOI per $ of investment/unlinked rent (fallback weight)
 
@@ -128,6 +140,7 @@ export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): 
     sf: a.sf,
     annualRent: a.annualRent,
     pctNoi: totalAllocNoi > 0 ? a.allocNoi / totalAllocNoi : 0,
+    pctNoiIncomplete,
     nextExpiry: a.nextExpiry,
     daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, referenceDate ?? s.meta.asOf) : null,
     renewalStage: a.stageRank >= 0 ? RENEWAL_STAGES[a.stageRank]! : null,
