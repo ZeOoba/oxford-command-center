@@ -7,6 +7,7 @@
 // the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
 import type { RankedCandidate } from '@contracts/acquisition';
 import { rankedSortValue } from './ranked-sort';
+import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useSetCandidateStatus } from './hooks';
@@ -21,13 +22,14 @@ const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> 
 };
 
 const UNSCORED_STYLE = { label: '—', bg: 'var(--surface-overlay)', color: 'var(--text-tertiary)' };
-const TIER_FOR_VERDICT: Record<string, string> = { PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', KILLED: 'KILLED' };
 
 // Keyed on the VERDICT, the same field the sort ranks by (ranked-sort.ts): a legacy governor-demoted row
-// persisted tier T1 with verdict PASS, and must read PASS, not "T1 · PURSUE". No score ⇒ "—", not a fake PASS.
-function TierBadge({ tier, verdict }: { tier: string | null; verdict: string | null }) {
-  const key = (verdict ? TIER_FOR_VERDICT[verdict] : undefined) ?? tier;
+// persisted tier T1 with verdict PASS, and must read PASS, not "T1 · PURSUE", with a "was T1" marker so the
+// demotion stays visible. No score ⇒ "—", not a fake PASS.
+function TierBadge({ score }: { score: RankedCandidate['latestScore'] }) {
+  const key = effectiveTier(score);
   const style = key ? (TIER_STYLES[key] ?? TIER_STYLES['PASS']!) : UNSCORED_STYLE;
+  const demoted = governorDemotedLabel(score);
   return (
     <span style={{
       display: 'inline-block',
@@ -39,7 +41,7 @@ function TierBadge({ tier, verdict }: { tier: string | null; verdict: string | n
       background: style.bg,
       color: style.color,
     }}>
-      {style.label}
+      {demoted ? `${style.label} · ${demoted}` : style.label}
     </span>
   );
 }
@@ -109,10 +111,7 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled, edgeEn
       header: 'Tier',
       render: (item) => (
         <>
-          <TierBadge
-            tier={item.latestScore?.tier ?? null}
-            verdict={item.latestScore?.verdict ?? null}
-          />
+          <TierBadge score={item.latestScore} />
           {/* Audit 2026-10-13 G3: a score made under a superseded regime, or one that no longer
               parses, is flagged — it is excluded from the capital BUY verdict until re-scored. */}
           {(item.scoreState === 'stale' || item.scoreState === 'unparseable') && (

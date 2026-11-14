@@ -31,6 +31,7 @@ import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
@@ -494,7 +495,15 @@ export function CapitalModule() {
                   <div style={{ fontWeight: 600 }}>{c.address ?? c.candidateId}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{c.market ?? '—'}</div>
                 </div>
-                {c.tier && <Badge tone={c.tier === 'T1' ? 'green' : 'neutral'}>{c.tier}</Badge>}
+                {/* Tier shown is the verdict's tier (a legacy T1 beside a demoted PASS reads PASS).
+                    Green only on an explicit PURSUE: a T1 with no verdict (older producer, or a
+                    non-canonical verdict column) stays neutral rather than failing open. */}
+                {effectiveTier(c) && (
+                  <Badge tone={effectiveTier(c) === 'T1' && c.verdict === 'PURSUE' && !governorDemotedLabel(c) ? 'green' : 'neutral'}>
+                    {effectiveTier(c)}
+                  </Badge>
+                )}
+                {governorDemotedLabel(c) && <Badge tone="red">{governorDemotedLabel(c)}</Badge>}
                 {/* Refute H3: persisted verdict + BUY eligibility next to the tier (a legacy row can
                     read T1 beside a governor-demoted PASS). Absent buyEligible = not eligible. */}
                 {c.verdict && <Badge tone="neutral">{c.verdict}</Badge>}

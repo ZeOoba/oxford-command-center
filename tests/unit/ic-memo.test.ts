@@ -503,3 +503,40 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
     expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
   });
 });
+
+describe('buildIcMemoHtml — governor-demoted pipeline marker', () => {
+  it('marks a T1 row whose verdict was demoted to PASS, and leaves a clean T1 unmarked', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-ok', address: '1 Good Way', market: null, composite: 80.6, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PURSUE', buyEligible: true },
+        { candidateId: 'c-legacy', address: '2 Legacy Rd', market: null, composite: 92, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false },
+      ],
+    }));
+    const rowOf = (addr: string) => html.slice(html.indexOf(addr), html.indexOf('</tr>', html.indexOf(addr)));
+    expect(rowOf('2 Legacy Rd')).toContain('Governor-demoted (was T1)');
+    // Tier column shows the verdict's tier, not the stale persisted T1.
+    expect(rowOf('2 Legacy Rd')).toContain('<td class="ic-r">PASS</td>');
+    expect(rowOf('2 Legacy Rd')).not.toContain('<td class="ic-r">T1</td>');
+    expect(rowOf('1 Good Way')).not.toContain('Governor-demoted');
+  });
+
+  it('marks a current-engine demotion (tier PASS) via the server governorDemoted flag', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-engine', address: '5 Engine Way', market: null, composite: 88, tier: 'PASS', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false, governorDemoted: true },
+      ],
+    }));
+    const row = html.slice(html.indexOf('5 Engine Way'), html.indexOf('</tr>', html.indexOf('5 Engine Way')));
+    expect(row).toContain('Governor-demoted');
+    expect(row).not.toContain('(was');
+  });
+
+  it('does not mark a row whose tier is already PASS', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-pass', address: '4 Pass Ct', market: null, composite: 40, tier: 'PASS', unleveredIrr10yr: null, basisDiscountPct: null, verdict: 'PASS', buyEligible: false },
+      ],
+    }));
+    expect(html).not.toContain('Governor-demoted');
+  });
+});

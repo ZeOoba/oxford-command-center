@@ -271,4 +271,71 @@ describe('PipelineTierBoard', () => {
     // Unscored candidate (latestScore: null) has no tier to bucket into — omitted entirely.
     expect(screen.queryByText('500 Unscored Way')).toBeNull();
   });
+
+  it('places a legacy governor-demoted row (tier T1, verdict PASS) in Pass with a was-T1 marker', async () => {
+    const base = makeIntelResponse();
+    const withDemoted: AcqIntelResponse = {
+      ...base,
+      rankedCandidates: [
+        ...base.rankedCandidates,
+        {
+          candidate: makeCandidate({ id: 'c-demoted', address: '600 Demoted Way', market: 'established' }),
+          latestScore: makeScore({ tier: 'T1', verdict: 'PASS', composite: 91 }),
+          governorDscrCleared: false,
+          governorLtvCleared: null,
+          calibrationHitRate: null,
+          scoredAt: '2026-06-14T00:00:00Z',
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (typeof url === 'string' && url.includes('/acq/intel')) {
+        return new Response(JSON.stringify(withDemoted), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response('{}', { status: 500 });
+    }));
+    renderWithClient(<PipelineTierBoard />);
+
+    await waitFor(() => expect(screen.getByText('600 Demoted Way')).toBeTruthy());
+    const board = screen.getByRole('list', { name: /tier board/i });
+    const [t1, , pass] = Array.from(board.children) as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+
+    expect(within(t1).queryByText('600 Demoted Way')).toBeNull();
+    expect(within(t1).getByText('100 T1 Ave')).toBeTruthy(); // a clean T1 stays put
+    expect(within(t1).queryByText(/Governor-demoted/)).toBeNull();
+    expect(within(pass).getByText('600 Demoted Way')).toBeTruthy();
+    expect(within(pass).getByText(/Governor-demoted \(was T1\)/)).toBeTruthy();
+  });
+
+  it('marks a current-engine demotion (tier PASS, verdict PASS, Governor demotion reason) in Pass', async () => {
+    const base = makeIntelResponse();
+    const withDemoted: AcqIntelResponse = {
+      ...base,
+      rankedCandidates: [
+        ...base.rankedCandidates,
+        {
+          candidate: makeCandidate({ id: 'c-engine-demoted', address: '700 Engine Way', market: 'established' }),
+          latestScore: makeScore({ tier: 'PASS', verdict: 'PASS', composite: 88, reasons: ['Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.'] }),
+          governorDscrCleared: false,
+          governorLtvCleared: null,
+          calibrationHitRate: null,
+          scoredAt: '2026-06-14T00:00:00Z',
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (typeof url === 'string' && url.includes('/acq/intel')) {
+        return new Response(JSON.stringify(withDemoted), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response('{}', { status: 500 });
+    }));
+    renderWithClient(<PipelineTierBoard />);
+
+    await waitFor(() => expect(screen.getByText('700 Engine Way')).toBeTruthy());
+    const board = screen.getByRole('list', { name: /tier board/i });
+    const [t1, , pass] = Array.from(board.children) as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+    expect(within(t1).queryByText('700 Engine Way')).toBeNull();
+    expect(within(pass).getByText('700 Engine Way')).toBeTruthy();
+    expect(within(pass).getByText(/Governor-demoted \(was T1\)/)).toBeTruthy();
+  });
 });

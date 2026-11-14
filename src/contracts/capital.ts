@@ -93,6 +93,10 @@ export const PortfolioAllocation = z.object({
      *  producers still parse; consumers treat absent buyEligible as NOT eligible. */
     verdict: Verdict.nullable().optional(),
     buyEligible: z.boolean().optional(),
+    /** Display only: the persisted verdict is a governor-demoted PASS (the engine's "Governor
+     *  demotion:" reason, or the legacy tier T1/T2 beside a PASS). Never an input to the BUY gate.
+     *  Optional so older producers still parse; absent means "not known to be demoted". */
+    governorDemoted: z.boolean().optional(),
     /** Refute round 2 T2: the engine's downgrade-only cap reasons for this score (unconfirmed
      *  Stage-0 gate input, unresolved DD-critical items, Q3 guard …). Policy (Gabriel, pending):
      *  such a candidate stays BUY-eligible, but the open items must be visible, never silent. */
