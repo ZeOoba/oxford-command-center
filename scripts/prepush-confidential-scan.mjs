@@ -27,6 +27,7 @@
 // Node built-ins only (runs in a git hook with no install step).
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -796,6 +797,25 @@ export function shouldBlockOnDiffError(diffErrors, env) {
 /** The shared Python term scanner, from the same tree as this file (vendored from ora-skills). */
 export const PY_SCANNER = join(dirname(fileURLToPath(import.meta.url)), 'prepush_confidential_scan.py');
 
+/**
+ * SHA-256 of the vendored scanner's committed bytes (LF line endings, as git stores them). The term
+ * scan runs only a scanner that matches it: an empty or cut-short file exits 0 under Python and would
+ * pass every push unscanned (merge gate PR 577 rounds 1 and 2). Re-vendor the scanner and update this
+ * pin together; tests/unit/prepush-python-scanner.test.ts checks the two agree.
+ */
+export const PY_SCANNER_SHA256 = 'fceb0876489e117f22df0ff492f922632acea557f8c402250d2804d524aa5b8d';
+
+/**
+ * SHA-256 of `bytes` with CRLF folded to LF, so a Windows checkout (core.autocrlf) hashes the same as
+ * the committed blob.
+ * @param {Buffer} bytes
+ * @returns {string} lowercase hex
+ */
+export function scannerDigest(bytes) {
+  const lf = Buffer.from(bytes.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
+  return createHash('sha256').update(lf).digest('hex');
+}
+
 /** Interpreter names probed in order. Each must actually RUN Python 3.8+ (the Windows Store
  * 'python' stub exists on PATH but fails the probe). */
 export const PYTHON_CANDIDATES = ['python', 'python3', 'py'];
@@ -888,23 +908,38 @@ export function resolveOnPath(name, opts = {}) {
 
 /**
  * Run the Python term scanner over the push: the buffered ref lines on its stdin, git's remote name
- * and push URL as argv. `-I` (isolated mode): no PYTHONPATH / PYTHONSTARTUP / PYTHONINSPECT, no user
+ * and push URL as argv. The scanner file must match PY_SCANNER_SHA256 first. `-I` (isolated mode): no PYTHONPATH / PYTHONSTARTUP / PYTHONINSPECT, no user
  * site-packages, and the script's directory is not on sys.path, so nothing beside it can shadow a
  * stdlib module. Its stderr (block lines, never a term) passes through. Fails closed on everything:
- * no scanner, no usable Python, a spawn error, a signal, any non-zero exit.
+ * no scanner, a scanner that does not match the pin, no usable Python, a spawn error, a signal, any
+ * non-zero exit.
  *
  * @param {string | Buffer} stdinInput - git's ref lines. Pass the RAW bytes (readPushStdin().bytes): a ref
  *   name that is not valid UTF-8 (cp1252, raw bytes on Linux or under reftable) would otherwise reach the
  *   scanner with U+FFFD in place of the term it spells (merge gate PR 577, round 1).
  * @param {(string | undefined)[]} argv - [remote, url]; trailing undefined entries are dropped.
- * @param {{scanner?: string, python?: string | null, run?: typeof spawnSync}} [deps] - test seams.
+ * @param {{scanner?: string, sha256?: string, python?: string | null, run?: typeof spawnSync}} [deps] - test
+ *   seams. `sha256` replaces the pin for a stub scanner; there is no environment or CLI way to skip the check.
  * @returns {{ok: true} | {ok: false, message: string}}
  */
 export function runTermScan(stdinInput, argv, deps = {}) {
   const scanner = deps.scanner ?? PY_SCANNER;
   const run = deps.run ?? spawnSync;
+  const want = deps.sha256 ?? PY_SCANNER_SHA256;
   if (!existsSync(scanner)) {
     return { ok: false, message: `confidentiality term scanner not found (${scanner}); fail closed (Invariant 3).` };
+  }
+  let got;
+  try {
+    got = scannerDigest(readFileSync(scanner));
+  } catch (err) {
+    return { ok: false, message: `confidentiality term scanner could not be read (${errorLine(err)}); fail closed (Invariant 3).` };
+  }
+  if (got !== want) {
+    return {
+      ok: false,
+      message: `confidentiality term scanner ${scanner} does not match its pinned SHA-256 (damaged, truncated or re-vendored without updating PY_SCANNER_SHA256); fail closed (Invariant 3).`,
+    };
   }
   const python = deps.python !== undefined ? deps.python : findPython(run);
   if (!python) {

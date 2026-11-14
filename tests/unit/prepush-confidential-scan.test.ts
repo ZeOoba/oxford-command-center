@@ -58,6 +58,9 @@ import {
   FINGERPRINT_BLOCK_MIN_SYNTHETIC,
   readPushStdin,
   runTermScan,
+  scannerDigest,
+  PY_SCANNER,
+  PY_SCANNER_SHA256,
   findPython,
   scanAddedLinesForWatermarks,
   WATERMARKS,
@@ -1233,27 +1236,56 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       expect(runTermScan('', [], { scanner: join(home, 'absent.py') })).toMatchObject({ ok: false });
       const py = join(home, 'stub.py');
       writeFileSync(py, 'print(1)\n');
-      expect(runTermScan('', [], { scanner: py, python: null })).toMatchObject({ ok: false, message: expect.stringContaining('no Python 3.8+') });
+      const sha256 = scannerDigest(Buffer.from('print(1)\n'));
+      expect(runTermScan('', [], { scanner: py, sha256, python: null })).toMatchObject({ ok: false, message: expect.stringContaining('no Python 3.8+') });
       const fake = (status: number | null, error?: Error) => () => ({ status, error, signal: status === null ? 'SIGKILL' : null }) as never;
-      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(1) })).toMatchObject({ ok: false });
-      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(null) })).toMatchObject({ ok: false });
-      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(0, new Error('ENOENT')) })).toMatchObject({ ok: false });
-      expect(runTermScan('', [], { scanner: py, python: 'python', run: fake(0) })).toEqual({ ok: true });
+      expect(runTermScan('', [], { scanner: py, sha256, python: 'python', run: fake(1) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, sha256, python: 'python', run: fake(null) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, sha256, python: 'python', run: fake(0, new Error('ENOENT')) })).toMatchObject({ ok: false });
+      expect(runTermScan('', [], { scanner: py, sha256, python: 'python', run: fake(0) })).toEqual({ ok: true });
+    });
+
+    // Merge gate PR 577 round 2 (MEDIUM): only existsSync was checked, so an empty or cut-short scanner
+    // in a current tree ran, exited 0 and passed the push unscanned. It must now hash to the pin.
+    it('runTermScan fails closed, without running Python, on a scanner that does not match the pin', () => {
+      const real = readFileSync(PY_SCANNER);
+      expect(scannerDigest(real)).toBe(PY_SCANNER_SHA256);
+      const text = real.toString('utf8');
+      const main = text.lastIndexOf('if __name__ == "__main__":');
+      let calls = 0;
+      const run = (() => {
+        calls += 1;
+        return { status: 0 };
+      }) as never;
+      const py = join(home, 'damaged.py');
+      for (const broken of ['', text.slice(0, main), text.slice(0, text.indexOf('sys', main) + 3), `${text}\nx = 1\n`]) {
+        writeFileSync(py, broken);
+        expect(runTermScan('', [], { scanner: py, python: 'py', run })).toMatchObject({
+          ok: false,
+          message: expect.stringContaining('does not match its pinned SHA-256'),
+        });
+      }
+      expect(calls).toBe(0);
+      // CRLF (a Windows checkout with core.autocrlf) hashes the same as the committed LF bytes.
+      writeFileSync(py, text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+      expect(runTermScan('', [], { scanner: py, python: 'py', run })).toEqual({ ok: true });
+      expect(calls).toBe(1);
     });
 
     it('runTermScan runs Python isolated (-I) with git\'s argv and the ref lines on stdin', () => {
       const py = join(home, 'stub.py');
       writeFileSync(py, '');
+      const sha256 = scannerDigest(Buffer.alloc(0));
       /** @type {unknown[]} */
       const calls: unknown[][] = [];
       const run = ((cmd: string, args: string[], opts: { input?: string }) => {
         calls.push([cmd, args, opts.input]);
         return { status: 0 };
       }) as never;
-      expect(runTermScan('refs\n', ['origin', 'https://x.invalid/r.git'], { scanner: py, python: 'py', run })).toEqual({ ok: true });
+      expect(runTermScan('refs\n', ['origin', 'https://x.invalid/r.git'], { scanner: py, sha256, python: 'py', run })).toEqual({ ok: true });
       expect(calls).toEqual([['py', ['-I', py, 'origin', 'https://x.invalid/r.git'], 'refs\n']]);
       calls.length = 0;
-      runTermScan('', [undefined, undefined], { scanner: py, python: 'py', run });
+      runTermScan('', [undefined, undefined], { scanner: py, sha256, python: 'py', run });
       expect(calls[0]?.[1]).toEqual(['-I', py]);
     });
 
@@ -1272,7 +1304,7 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
         seen = opts.input;
         return { status: 0 };
       }) as never;
-      runTermScan(r.bytes, [], { scanner: py, python: 'py', run });
+      runTermScan(r.bytes, [], { scanner: py, sha256: scannerDigest(Buffer.alloc(0)), python: 'py', run });
       expect(Buffer.isBuffer(seen) && (seen as Buffer).equals(raw)).toBe(true);
       const src = readFileSync(join(process.cwd(), 'scripts', 'prepush-confidential-scan.mjs'), 'utf8');
       expect(src).toMatch(/runTermScan\(stdin\.bytes, \[remote, url\]\)/);

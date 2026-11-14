@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { PY_SCANNER_SHA256, scannerDigest } from '../../scripts/prepush-confidential-scan.mjs';
+import { WRAPPER } from '../../scripts/install-git-hooks';
 
 // scripts/prepush_confidential_scan.py is the shared, refute-hardened confidential-TERM scanner that
 // the installed pre-push hook runs first (scripts/install-git-hooks.ts). It is VENDORED byte-identical
@@ -39,6 +43,13 @@ describe('vendored Python confidential-term scanner', () => {
     for (const [path, blob] of Object.entries(VENDORED)) {
       expect(execFileSync('git', ['hash-object', join(ROOT, path)], { cwd: ROOT, encoding: 'utf8' }).trim(), path).toBe(blob);
     }
+  });
+
+  // The hook runs only a scanner whose SHA-256 is PY_SCANNER_SHA256 (merge gate PR 577 round 2), so a
+  // re-vendor must update that pin in the same commit as the blob id above.
+  it('matches the SHA-256 pin the hook checks before running it', () => {
+    expect(scannerDigest(readFileSync(join(ROOT, 'scripts', 'prepush_confidential_scan.py')))).toBe(PY_SCANNER_SHA256);
+    expect(WRAPPER).toContain(`"${PY_SCANNER_SHA256}"`);
   });
 
   it(

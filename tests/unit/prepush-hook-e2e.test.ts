@@ -167,6 +167,27 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     expect(sb.remoteHas(sha)).toBe(true);
   });
 
+  // Merge gate PR 577 round 2 (MEDIUM): a current tree whose Python scanner was emptied or cut short
+  // ran it, exited 0 and let a term through. Every damaged form now fails the SHA-256 pin.
+  it('BLOCKS a term when the tree\'s own scanner is empty or cut short, before or inside __main__', () => {
+    const text = readFileSync(join(SRC, 'scripts', 'prepush_confidential_scan.py'), 'utf8');
+    const main = text.lastIndexOf('if __name__ == "__main__":');
+    expect(main).toBeGreaterThan(0);
+    for (const broken of ['', text.slice(0, main), text.slice(0, text.indexOf('sys', main) + 3)]) {
+      const s = new Sandbox();
+      try {
+        writeFileSync(join(s.work, 'scripts', 'prepush_confidential_scan.py'), broken);
+        const leak = s.commit('notes.md', `memo about ${TERM}\n`);
+        const r = s.push('origin', 'main');
+        expectBlocked(r);
+        expect(r.stderr).toContain('does not match its pinned SHA-256');
+        expect(s.remoteHas(leak)).toBe(false);
+      } finally {
+        s.close();
+      }
+    }
+  });
+
   it('BLOCKS a term in a .md hidden by a committed `* -diff` attribute', () => {
     sb.commit('.gitattributes', '* -diff\n', 'attrs');
     const leak = sb.commit('notes.md', `memo about ${TERM}\n`);
@@ -299,11 +320,14 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
         return null;
       }
     })();
-    it.skipIf(legacyJs === null)('origin/main\'s real scanner still BLOCKS a confidential:true payload pushed to a remote named --staged', () => {
+    // The flag record's key is built at runtime: this file is not on the scanner's EXCLUDE_PATHS, so a
+    // literal record here blocks a push of it from any clone not registered as a confidential repo
+    // (merge gate PR 577 round 2).
+    it.skipIf(legacyJs === null)('origin/main\'s real scanner still BLOCKS a confidential-flag payload pushed to a remote named --staged', () => {
       const old = new Sandbox({ oldTree: true, copyBesideHook: true, oldJs: legacyJs ?? '' });
       try {
         old.git(old.work, 'remote', 'add', '--', '--staged', old.remote);
-        old.commit('deal.json', '{"name": "x", "confidential": true}\n');
+        old.commit('deal.json', `{"name": "x", "${'confidential'}": true}\n`);
         expectBlocked(old.push('--', '--staged', 'main'));
       } finally {
         old.close();

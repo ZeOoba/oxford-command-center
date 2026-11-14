@@ -21,6 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
+import { PY_SCANNER_SHA256, scannerDigest } from './prepush-confidential-scan.mjs';
 
 function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
@@ -42,8 +43,8 @@ export const WRAPPER = `#!/bin/sh
 #    buffered ref lines. .git/hooks is shared by every worktree, so both version skews are covered:
 #    an older wrapper still reaches the term scan through the new scanner, and a worktree whose tree
 #    predates runTermScan (its JS matches terms on the endpoint diff only) gets the Python term scan
-#    here first, from the copy the installer places beside this hook. No usable Python 3.8+ or no
-#    scanner copy => BLOCKED. Each candidate python is probed by running it (the Windows Store stub
+#    here first, from the copy the installer places beside this hook. No usable Python 3.8+, no
+#    scanner copy, or a copy whose SHA-256 is not the pin below => BLOCKED. Each candidate python is probed by running it (the Windows Store stub
 #    fails); it runs isolated (-I).
 # 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
@@ -132,16 +133,16 @@ stdin_fail() {
 { :; } 2>/dev/null 3<&0 || stdin_fail
 refs="$("$node_bin" -e 'const c=[];process.stdin.on("data",(b)=>c.push(b)).on("end",()=>process.stdout.write(Buffer.concat(c))).on("error",()=>process.exit(1));')" || stdin_fail
 if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
-  scan_py="$root/scripts/prepush_confidential_scan.py"
-  [ -f "$scan_py" ] || scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
+  scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
   if [ ! -f "$scan_py" ]; then
     echo "pre-push BLOCKED (fail-closed): this tree predates the Python term scan and no scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
     exit 1
   fi
-  # An empty or cut-short scanner exits 0 under Python and would skip the term scan. The installer
-  # replaces the copy atomically, but a file truncated any other way must still block.
-  if ! grep -q '^if __name__ == "__main__":' "$scan_py" 2>/dev/null; then
-    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py is empty or incomplete (run npm run hooks:install from an up-to-date tree)." >&2
+  # An empty, cut-short or otherwise damaged scanner can exit 0 under Python and skip the term scan,
+  # so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF).
+  got="$("$node_bin" -e 'const b=require("fs").readFileSync(process.argv[1]).toString("latin1").replace(/\\r\\n/g,"\\n");process.stdout.write(require("crypto").createHash("sha256").update(Buffer.from(b,"latin1")).digest("hex"));' "$scan_py" 2>/dev/null)" || got=
+  if [ "$got" != "${PY_SCANNER_SHA256}" ]; then
+    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py does not match its pinned SHA-256 (run npm run hooks:install from an up-to-date tree)." >&2
     exit 1
   fi
   py=
@@ -198,17 +199,58 @@ exit 0
  * an empty or partial file: write a uniquely named temp file beside it, then rename it over `dest`.
  * A plain writeFileSync truncates first, and a push from another worktree in that window ran the
  * EMPTY Python copy, which exits 0 and skipped the term scan (merge gate PR 577 round 1, HIGH).
+ * `mode` is set on the temp file BEFORE the rename, so the hook is never in place without its
+ * executable bit (git on Linux/macOS skips a non-executable hook; merge gate round 2).
  * Windows can refuse the rename while another process has `dest` open; renameSyncWithRetry retries
  * those transient codes. A rename that still fails leaves `dest` as it was and removes the temp file.
  */
-export function writeFileAtomic(dest: string, contents: string): void {
+export function writeFileAtomic(dest: string, contents: string, mode?: number): void {
   const tmp = `${dest}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  writeFileSync(tmp, contents, 'utf8');
   try {
+    writeFileSync(tmp, contents, 'utf8');
+    if (mode !== undefined) {
+      try {
+        chmodSync(tmp, mode);
+      } catch (err) {
+        // A no-op or refused on some Windows filesystems; Git for Windows runs the sh wrapper anyway.
+        console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
+      }
+    }
     renameSyncWithRetry(tmp, dest);
   } catch (err) {
     rmSync(tmp, { force: true });
     throw err;
+  }
+}
+
+/** Error codes Windows gives a rename over a file another process has open. */
+const IN_USE = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+/**
+ * writeFileAtomic, except that an EXISTING `dest` held open by another process (a push running the
+ * hook from another worktree) is left as it was with a warning, instead of failing `npm ci` /
+ * `prepare` (merge gate PR 577 round 2). The old file is still a complete gate, and a wrapper whose
+ * pin does not match the copy beside it blocks old-tree pushes until the install is rerun. A missing
+ * `dest` is never skipped: that would leave no gate at all.
+ * @param write - test seam; defaults to writeFileAtomic.
+ * @returns whether `dest` now holds `contents`
+ */
+export function replaceOrWarn(
+  dest: string,
+  contents: string,
+  mode?: number,
+  write: (dest: string, contents: string, mode?: number) => void = writeFileAtomic,
+): boolean {
+  try {
+    write(dest, contents, mode);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code ?? '';
+    if (!IN_USE.has(code) || !existsSync(dest)) throw err;
+    console.warn(
+      `[install-git-hooks] WARNING: could not replace ${dest} (${code}: in use, probably by a running push); the previous file stays in place. Rerun npm run hooks:install when no push is running.`,
+    );
+    return false;
   }
 }
 
@@ -219,7 +261,7 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
   if (existing === contents) {
     console.log(`[install-git-hooks] ${hookName} hook already up to date: ${hookPath}`);
   } else {
-    writeFileAtomic(hookPath, contents);
+    if (!replaceOrWarn(hookPath, contents, 0o755)) return;
     console.log(
       existing === null
         ? `[install-git-hooks] installed ${hookName} hook: ${hookPath}`
@@ -239,7 +281,9 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
 /**
  * Copy scripts/prepush_confidential_scan.py beside the hooks (as PY_SCAN_FALLBACK, LF line endings)
  * so a push from a worktree whose tree predates runTermScan still gets the Python term scan.
- * A tree without the scanner leaves any existing copy alone (and the wrapper blocks if none exists).
+ * Only a scanner matching PY_SCANNER_SHA256 is copied. A tree without the scanner, or with one that
+ * does not match, leaves any existing copy alone; the wrapper blocks if that copy is missing or does
+ * not match either.
  */
 function installPythonScanFallback(hooksDir: string, toplevel: string): void {
   const src = join(toplevel, 'scripts', 'prepush_confidential_scan.py');
@@ -247,11 +291,17 @@ function installPythonScanFallback(hooksDir: string, toplevel: string): void {
     console.warn(`[install-git-hooks] ${src} not found; Python term-scan copy beside the hook not refreshed.`);
     return;
   }
-  const contents = readFileSync(src, 'utf8').replace(/\r\n/g, '\n');
+  const raw = readFileSync(src);
+  if (scannerDigest(raw) !== PY_SCANNER_SHA256) {
+    console.warn(
+      `[install-git-hooks] WARNING: ${src} does not match its pinned SHA-256; Python term-scan copy beside the hook not refreshed (pushes from old trees stay blocked until it is).`,
+    );
+    return;
+  }
+  const contents = raw.toString('utf8').replace(/\r\n/g, '\n');
   const dst = join(hooksDir, PY_SCAN_FALLBACK);
   if (existsSync(dst) && readFileSync(dst, 'utf8') === contents) return;
-  writeFileAtomic(dst, contents);
-  console.log(`[install-git-hooks] installed Python term-scan copy: ${dst}`);
+  if (replaceOrWarn(dst, contents)) console.log(`[install-git-hooks] installed Python term-scan copy: ${dst}`);
 }
 
 function main(): void {
@@ -273,9 +323,10 @@ function main(): void {
     console.log(`[install-git-hooks] created hooks dir: ${hooksDir}`);
   }
 
+  // The copy first, so a new wrapper (new pin) does not meet the previous copy.
+  installPythonScanFallback(hooksDir, toplevel);
   installHook(hooksDir, 'pre-push', WRAPPER);
   installHook(hooksDir, 'commit-msg', COMMIT_MSG_WRAPPER);
-  installPythonScanFallback(hooksDir, toplevel);
 }
 
 // Only install when run as a script (`npm run hooks:install`, `prepare`). This module is also

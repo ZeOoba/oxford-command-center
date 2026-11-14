@@ -1,16 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
-import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
-import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK, writeFileAtomic } from '../../scripts/install-git-hooks';
+import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK, writeFileAtomic, replaceOrWarn } from '../../scripts/install-git-hooks';
+import { PY_SCANNER_SHA256, scannerDigest } from '../../scripts/prepush-confidential-scan.mjs';
 
-/** Stand-ins for the Python term scanner in fixture repos (the wrapper runs it for a stub scanner
- * that lacks runTermScan, i.e. a tree that predates it). */
+/** Stand-ins for the Python term scanner copy beside the hook (the wrapper runs it for a stub JS
+ * scanner that lacks runTermScan, i.e. a tree that predates it). */
 const PY_PASS = 'import sys\nif __name__ == "__main__":\n    sys.exit(0)\n';
 const PY_FAIL = 'import sys\nif __name__ == "__main__":\n    sys.stderr.write("pre-push BLOCKED: stub term hit\\n")\n    sys.exit(1)\n';
+
+/** WRAPPER with its scanner pin swapped for `py`'s digest, so a stub copy beside the hook can run.
+ * Only the pin changes; every other line is the real template. */
+function wrapperPinnedTo(py: string): string {
+  expect(WRAPPER.split(PY_SCANNER_SHA256).length).toBe(2);
+  return WRAPPER.replace(PY_SCANNER_SHA256, scannerDigest(Buffer.from(py, 'utf8')));
+}
+
+/** The real vendored scanner (as checked out), for tests that run the unmodified WRAPPER pin. */
+const REAL_PY = readFileSync(join(__dirname, '../../scripts/prepush_confidential_scan.py'));
 
 /** process.env minus `name` in EVERY casing: Windows env names are case-insensitive, and inside vitest
  * the key can be stored as NODEFAULTCURRENTDIRECTORYINEXEPATH, so a plain delete removed nothing and
@@ -79,6 +90,10 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeGreaterThan(-1);
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeLessThan(WRAPPER.indexOf('root="$(git rev-parse'));
     expect(WRAPPER).toMatch(/no scanner copy sits beside the hook[^\n]*\n\s*exit 1/);
+    // Merge gate PR 577 round 2: the copy must hash to the pin, checked before Python runs it.
+    expect(WRAPPER).toContain(`if [ "$got" != "${PY_SCANNER_SHA256}" ]; then`);
+    expect(WRAPPER).toMatch(/does not match its pinned SHA-256[^\n]*\n\s*exit 1/);
+    expect(WRAPPER.indexOf('[ "$got" != ')).toBeLessThan(WRAPPER.indexOf('"$py" -I "$scan_py"'));
     expect(WRAPPER).toMatch(/no Python 3\.8\+ found[^\n]*\n\s*exit 1/);
     expect(WRAPPER.indexOf('"$py" -I "$scan_py"')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
     expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$node_bin" "\$scan_js" "\$@" \|\| exit 1/);
@@ -96,11 +111,16 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     // WRAPPER resolves $root via `git rev-parse --show-toplevel`, so the fixture must itself
     // be a git repo for that to resolve to `dir` rather than erroring out.
     execSync('git init -q', { cwd: dir });
-    // The stub scanners below lack runTermScan, so the wrapper runs this Python stage first.
-    writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_PASS);
+    // The stub scanners below lack runTermScan, so the wrapper runs the Python copy beside it first.
     const hookPath = join(dir, 'pre-push');
-    writeFileSync(hookPath, WRAPPER, { mode: 0o755 });
+    placeCopy(hookPath, PY_PASS);
     return hookPath;
+  }
+
+  /** Place `py` beside the hook and reinstall the hook pinned to it. */
+  function placeCopy(hookPath: string, py: string) {
+    writeFileSync(join(dir, PY_SCAN_FALLBACK), py);
+    writeFileSync(hookPath, wrapperPinnedTo(py), { mode: 0o755 });
   }
 
   function runHook(hookPath: string): number {
@@ -258,7 +278,7 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
   it('a tree that predates runTermScan: the wrapper runs the Python term scan first and blocks on it', () => {
     const hookPath = setupFixtureRepo();
     try {
-      writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_FAIL);
+      placeCopy(hookPath, PY_FAIL);
       writeFileSync(
         join(scriptsDir, 'prepush-confidential-scan.mjs'),
         `(await import('node:fs')).writeFileSync(${JSON.stringify(join(dir, 'js-ran'))}, 'x'); process.exit(0);\n`,
@@ -272,28 +292,63 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     }
   });
 
-  it('a tree with no Python scanner uses the copy beside the hook, and BLOCKS when there is none', () => {
+  it('an old tree runs only the copy beside the hook, and BLOCKS when there is none', () => {
     const hookPath = setupFixtureRepo();
     try {
-      rmSync(join(scriptsDir, 'prepush_confidential_scan.py'));
       writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      // The tree's own scanner file is not used (it could be any version); only the pinned copy is.
+      writeFileSync(join(scriptsDir, 'prepush_confidential_scan.py'), PY_FAIL);
+      expect(spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' }).status).toBe(0);
+      rmSync(join(dir, PY_SCAN_FALLBACK));
       const none = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
       expect(none.status).not.toBe(0);
       expect(none.stderr).toContain('no scanner copy sits beside the hook');
-      writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_FAIL);
+      placeCopy(hookPath, PY_FAIL);
       const viaCopy = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
       expect(viaCopy.status).not.toBe(0);
       expect(viaCopy.stderr).toContain('stub term hit');
-      writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_PASS);
-      expect(spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' }).status).toBe(0);
-      // Merge gate PR 577 round 1 (HIGH): an EMPTY copy (the state a non-atomic install left mid-write)
-      // ran under Python, exited 0 and skipped the term scan. Empty or cut-short copies now block.
-      for (const broken of ['', 'import sys\n', PY_PASS.slice(0, PY_PASS.indexOf('if __name__'))]) {
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Merge gate PR 577 rounds 1 and 2: an empty or cut-short copy (round 1: left mid-write by a
+  // non-atomic install; round 2: cut inside its __main__ block) ran under Python, exited 0 and skipped
+  // the term scan. The copy must now hash to the wrapper's pin; CRLF line endings still match.
+  it('BLOCKS a copy beside the hook that does not hash to the pin (empty, cut short, appended to)', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const cutInMain = PY_PASS.slice(0, PY_PASS.indexOf('sys.exit(0)') + 'sys'.length);
+      for (const broken of ['', 'import sys\n', PY_PASS.slice(0, PY_PASS.indexOf('if __name__')), cutInMain, `${PY_PASS}x = 1\n`]) {
         writeFileSync(join(dir, PY_SCAN_FALLBACK), broken);
         const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
         expect(r.status, JSON.stringify(broken)).not.toBe(0);
-        expect(r.stderr).toContain('empty or incomplete');
+        expect(r.stderr).toContain('does not match its pinned SHA-256');
       }
+      writeFileSync(join(dir, PY_SCAN_FALLBACK), PY_PASS.replace(/\n/g, '\r\n'));
+      const crlf = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(crlf.status, crlf.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the unmodified WRAPPER accepts the real vendored scanner and BLOCKS it cut inside __main__', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(hookPath, WRAPPER, { mode: 0o755 });
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const text = REAL_PY.toString('utf8');
+      const main = text.lastIndexOf('if __name__ == "__main__":');
+      expect(main).toBeGreaterThan(0);
+      writeFileSync(join(dir, PY_SCAN_FALLBACK), text.slice(0, text.indexOf('sys', main) + 'sys'.length));
+      const cut = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(cut.status).not.toBe(0);
+      expect(cut.stderr).toContain('does not match its pinned SHA-256');
+      writeFileSync(join(dir, PY_SCAN_FALLBACK), REAL_PY);
+      const whole = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(whole.stderr).not.toContain('does not match its pinned SHA-256');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -342,11 +397,20 @@ describe('install-git-hooks installer — runs only as a script, never on import
       expect(imp.status, imp.stderr).toBe(0);
       expect(existsSync(join(hooks, 'pre-push'))).toBe(false);
       mkdirSync(join(dir, 'scripts'));
+      // A scanner that does not match the pin is never copied beside the hook.
       writeFileSync(join(dir, 'scripts', 'prepush_confidential_scan.py'), 'print("scanner")\r\n');
+      const bad = spawnSync(process.execPath, [tsxCli, installer], { cwd: dir, encoding: 'utf8' });
+      expect(bad.status, bad.stderr).toBe(0);
+      expect(bad.stderr).toContain('does not match its pinned SHA-256');
+      expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe(WRAPPER);
+      expect(existsSync(join(hooks, PY_SCAN_FALLBACK))).toBe(false);
+      // The real scanner (CRLF, as a Windows checkout has it) is copied with LF line endings.
+      const lf = REAL_PY.toString('utf8').replace(/\r\n/g, '\n');
+      writeFileSync(join(dir, 'scripts', 'prepush_confidential_scan.py'), lf.replace(/\n/g, '\r\n'));
       const run = spawnSync(process.execPath, [tsxCli, installer], { cwd: dir, encoding: 'utf8' });
       expect(run.status, run.stderr).toBe(0);
-      expect(readFileSync(join(hooks, 'pre-push'), 'utf8')).toBe(WRAPPER);
-      expect(readFileSync(join(hooks, PY_SCAN_FALLBACK), 'utf8')).toBe('print("scanner")\n');
+      expect(readFileSync(join(hooks, PY_SCAN_FALLBACK), 'utf8')).toBe(lf);
+      expect(scannerDigest(readFileSync(join(hooks, PY_SCAN_FALLBACK)))).toBe(PY_SCANNER_SHA256);
       expect(readdirSync(hooks).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -359,16 +423,67 @@ describe('install-git-hooks installer — runs only as a script, never on import
     const src = readFileSync(installer, 'utf8');
     const body = src.slice(src.indexOf('function installHook'), src.indexOf('function main'));
     expect(body).not.toMatch(/writeFileSync\(/);
-    expect(body.match(/writeFileAtomic\(/g)?.length).toBe(2);
+    expect(body.match(/replaceOrWarn\(/g)?.length).toBe(2);
     const dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-atomic-'));
     try {
       const dest = join(dir, 'f.py');
       writeFileSync(dest, 'old\n');
+      // Merge gate PR 577 round 2: the content check alone passed an in-place write. A rename puts a
+      // NEW file at dest, so its file id changes; an in-place rewrite keeps it.
+      const before = statSync(dest, { bigint: true }).ino;
+      expect(before).not.toBe(0n);
       writeFileAtomic(dest, 'new\n');
       expect(readFileSync(dest, 'utf8')).toBe('new\n');
+      expect(statSync(dest, { bigint: true }).ino).not.toBe(before);
       writeFileAtomic(join(dir, 'g.py'), 'fresh\n');
       expect(readdirSync(dir).sort()).toEqual(['f.py', 'g.py']);
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Merge gate PR 577 round 2: chmod after the rename left a window where the new hook was in place
+  // without its executable bit, and git on Linux/macOS skips a non-executable hook.
+  it('sets the hook\'s mode on the temp file, before the rename', () => {
+    const src = readFileSync(installer, 'utf8');
+    const fn = src.slice(src.indexOf('export function writeFileAtomic'), src.indexOf('const IN_USE'));
+    // Guarded by `mode` alone (a stray extra condition would skip it); the behavioural check below
+    // runs where file modes exist (the Linux CI runner).
+    expect(fn).toMatch(/if \(mode !== undefined\) \{\s*try \{\s*chmodSync\(tmp, mode\);/);
+    expect(fn.indexOf('chmodSync(tmp, mode)')).toBeLessThan(fn.indexOf('renameSyncWithRetry(tmp, dest)'));
+    expect(src).toContain("replaceOrWarn(hookPath, contents, 0o755)");
+    if (process.platform !== 'win32') {
+      const dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-mode-'));
+      try {
+        writeFileAtomic(join(dir, 'h'), '#!/bin/sh\n', 0o755);
+        expect(statSync(join(dir, 'h')).mode & 0o111).toBe(0o111);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  // Merge gate PR 577 round 2: a push holding the hook open made npm ci / prepare fail with EPERM.
+  it('leaves an in-use EXISTING file in place with a warning, but never skips a missing one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-inuse-'));
+    const warn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (m: string) => warnings.push(m);
+    try {
+      const busy = (code: string) => () => {
+        throw Object.assign(new Error(`${code}: in use`), { code });
+      };
+      const dest = join(dir, 'pre-push');
+      writeFileSync(dest, 'old\n');
+      for (const code of ['EPERM', 'EBUSY', 'EACCES']) expect(replaceOrWarn(dest, 'new\n', 0o755, busy(code))).toBe(false);
+      expect(readFileSync(dest, 'utf8')).toBe('old\n');
+      expect(warnings.join('\n')).toContain('Rerun npm run hooks:install');
+      expect(() => replaceOrWarn(join(dir, 'absent'), 'new\n', 0o755, busy('EPERM'))).toThrow(/EPERM/);
+      expect(() => replaceOrWarn(dest, 'new\n', 0o755, busy('ENOSPC'))).toThrow(/ENOSPC/);
+      expect(replaceOrWarn(dest, 'new\n')).toBe(true);
+      expect(readFileSync(dest, 'utf8')).toBe('new\n');
+    } finally {
+      console.warn = warn;
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -394,8 +509,8 @@ describe('install-git-hooks WRAPPER — refute-trailer stage', () => {
         writeFileSync(join(dir, '.git', 'shallow'), `${execSync('git rev-parse HEAD', { cwd: dir, encoding: 'utf8' }).trim()}\n`);
       }
     }
-    writeFileSync(join(dir, 'scripts', 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
-    writeFileSync(join(dir, 'scripts', 'prepush_confidential_scan.py'), PY_PASS);
+    // A current-tree stub (it names runTermScan), so the wrapper hands the push straight to it.
+    writeFileSync(join(dir, 'scripts', 'prepush-confidential-scan.mjs'), '// runTermScan (stub)\nprocess.exit(0);\n');
     writeFileSync(join(dir, 'scripts', 'prepush-refute-check.mjs'), REFUTE_SCRIPT);
     writeFileSync(join(dir, 'scripts', 'check-refute-required.ts'), '// stub\n');
     if (opts.withTsx !== false) {
@@ -547,7 +662,8 @@ process.exit(${opts.tsxExit ?? 0});
     try {
       writeFileSync(
         join(dir, 'scripts', 'prepush-confidential-scan.mjs'),
-        `import { readFileSync, writeFileSync } from 'node:fs';
+        `// runTermScan (stub)
+import { readFileSync, writeFileSync } from 'node:fs';
 writeFileSync(${JSON.stringify(join(dir, 'scan-stdin.txt'))}, readFileSync(0, 'utf8'));
 `,
       );
