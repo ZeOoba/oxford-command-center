@@ -6,6 +6,12 @@
 // same data; see that file's header). Unscored candidates (no latestScore yet) have no tier to
 // bucket into and are omitted from the board — they still show up in the plain candidate list.
 //
+// The column is the VERDICT's tier (effectiveTier), matching the ranked list, the /acq/intel sort
+// and the capital BUY gate: a legacy row persisted tier T1/T2 next to a governor-demoted PASS lands
+// in Pass, so the T1/T2 columns only hold governor-cleared deals. Every governor-demoted PASS (that
+// legacy shape, or the current engine's tier PASS + "Governor demotion:" reason) is marked
+// "Governor-demoted (was T1)" (src/analytics/acq-governor-demotion.ts).
+//
 // Detail navigation reuses the existing `ui.openEntity({ type: 'deal', ... })` mechanism already
 // used by AcquisitionsModule.tsx's Active Deals table (onRowClick) — the only "open a detail view"
 // pattern this module has. It only applies once a candidate is synced to a Notion pipeline deal
@@ -13,6 +19,7 @@
 import { useUi } from '@/brain/ui-context';
 import { TierBoard, type Tier, type TierItem } from '@/primitives/TierBoard';
 import type { RankedCandidate } from '@contracts/acquisition';
+import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { useAcqIntel } from './grader-hooks';
 
 const TIER_DEFS: ReadonlyArray<{ key: 'T1' | 'T2' | 'PASS' | 'KILLED'; title: string; tone: Tier['tone'] }> = [
@@ -35,11 +42,13 @@ function toTierItem(ranked: RankedCandidate, onOpenDeal: (dealId: string) => voi
   const market = candidate.market ? (MARKET_LABEL[candidate.market] ?? candidate.market) : undefined;
   const sf = candidate.rentableSf !== null ? `${candidate.rentableSf.toLocaleString()} SF` : null;
   const dealId = candidate.notionDealId;
+  const demoted = governorDemotedLabel(latestScore);
   return {
     id: candidate.id,
     title: candidate.address ?? `${market ?? 'Unknown market'} candidate`,
     category: market,
     detail: [`${latestScore?.composite ?? '—'}/100`, latestScore?.verdict ?? '—', sf].filter(Boolean).join(' · '),
+    chips: demoted ? [demoted] : undefined,
     action: dealId ? { label: 'Open in Workbench', onPress: () => onOpenDeal(dealId) } : undefined,
   };
 }
@@ -56,7 +65,7 @@ export function PipelineTierBoard() {
     title: def.title,
     tone: def.tone,
     items: candidates
-      .filter((c) => c.latestScore?.tier === def.key)
+      .filter((c) => effectiveTier(c.latestScore) === def.key)
       .map((c) => toTierItem(c, onOpenDeal)),
   }));
 
