@@ -5,7 +5,7 @@
 // the Brain Server and the pull queue from the warehouse. Each non-ok availability state replaces the
 // board, health and queue bodies; the pull queue degrades on its own (503) while board + health stay.
 import { fmtNum } from '@analytics/index';
-import { SERIES_UNITS, type EdgeCoverageRow, type EdgeMarketsResponse, type EdgeUnit } from '@contracts/edge';
+import { SERIES_UNITS, type EdgeCoverageRow, type EdgeMarketsResponse, type EdgeNewsResponse, type EdgeUnit } from '@contracts/edge';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
@@ -14,7 +14,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { EdgeRankingBoard } from './EdgeRankingBoard';
 import { EdgePullQueue } from './EdgePullQueue';
-import { EDGE_PULL_SERIES, filterEdgeMarkets, useEdgeMarkets, useEdgePullQueue, type EdgeBoardState } from './edge-hooks';
+import { EDGE_PULL_SERIES, filterEdgeMarkets, useEdgeMarkets, useEdgeNews, useEdgePullQueue, type EdgeBoardState } from './edge-hooks';
 
 const HEADING = { fontFamily: 'var(--font-display)', fontSize: '1.125rem', color: 'var(--text-primary)' } as const;
 const NOTE = { color: 'var(--text-tertiary)', fontSize: '0.875rem' } as const;
@@ -105,6 +105,32 @@ function EdgeFreshnessBanner({ data }: { data: EdgeMarketsResponse }) {
   );
 }
 
+function EdgeNewsBanner({ news }: { news: EdgeNewsResponse | null }) {
+  if (!news || news.availability === 'missing') return null;
+  if (news.availability !== 'ok') {
+    return (
+      <p role="status" className="text-xs" style={{ color: 'var(--text-warn)' }}>
+        {`News overlay ${news.availability}: ${news.issues[0] ?? 'unknown error'}. Market signals are hidden.`}
+      </p>
+    );
+  }
+  return (
+    <div role="status" className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-2">
+        {news.stale ? <Badge tone="amber">NEWS STALE</Badge> : <Badge tone="neutral">{`News as of ${news.asOf}`}</Badge>}
+        {news.stale && (
+          <span className="text-xs" style={{ color: 'var(--text-warn)' }}>
+            {news.ageDays === 0
+              ? `News overlay is dated ${news.asOf}, which is after today. Signals are shown for reference only, never as current.`
+              : `News overlay as of ${news.asOf} — ${news.ageDays} days old. Signals are shown for reference only, never as current.`}
+          </span>
+        )}
+      </div>
+      {news.headline && <p className="text-2xs" style={NOTE}>{news.headline}</p>}
+    </div>
+  );
+}
+
 function CoverageBars({ byYear, markets }: { byYear: number[]; markets: number }) {
   return (
     <span className="inline-flex items-end gap-0.5" aria-hidden style={{ height: 16 }}>
@@ -179,9 +205,10 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
 }
 
 function EdgeBody({
-  data, openPulls, queueState, board, onBoardChange,
+  data, news, openPulls, queueState, board, onBoardChange,
 }: {
   data: EdgeMarketsResponse;
+  news: EdgeNewsResponse | null;
   openPulls: number | null;
   queueState: 'loading' | 'error' | 'ready';
   board: EdgeBoardState;
@@ -213,6 +240,7 @@ function EdgeBody({
   return (
     <>
       <EdgeFreshnessBanner data={data} />
+      <EdgeNewsBanner news={news} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiStat label="Markets loaded" value={data.marketCount} format={fmtNum} accentColor="var(--accent)" />
         <KpiStat label="Buy-box markets" value={buyBox} format={fmtNum} accentColor="var(--color-info)" />
@@ -235,7 +263,7 @@ function EdgeBody({
           ))}
         </div>
       )}
-      <EdgeRankingBoard data={data} board={board} onBoardChange={onBoardChange} />
+      <EdgeRankingBoard data={data} news={news} board={board} onBoardChange={onBoardChange} />
       <EdgeDataHealth data={data} />
       <EdgePullQueue />
     </>
@@ -245,6 +273,7 @@ function EdgeBody({
 export function EdgeView({ board, onBoardChange }: { board: EdgeBoardState; onBoardChange: (next: EdgeBoardState) => void }) {
   const { data, isLoading, error } = useEdgeMarkets();
   const queue = useEdgePullQueue();
+  const news = useEdgeNews();
   const openPulls = queue.data ? queue.data.items.reduce((sum, item) => sum + item.counts.open, 0) : null;
   const queueState = queue.data ? 'ready' : queue.error ? 'error' : 'loading';
 
@@ -258,7 +287,7 @@ export function EdgeView({ board, onBoardChange }: { board: EdgeBoardState; onBo
       ) : error || !data ? (
         <p role="alert" style={NOTE}>Edge market data could not be loaded. Try again shortly.</p>
       ) : (
-        <EdgeBody data={data} openPulls={openPulls} queueState={queueState} board={board} onBoardChange={onBoardChange} />
+        <EdgeBody data={data} news={news.data ?? null} openPulls={openPulls} queueState={queueState} board={board} onBoardChange={onBoardChange} />
       )}
     </section>
   );
