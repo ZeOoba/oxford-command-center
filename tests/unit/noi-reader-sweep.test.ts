@@ -119,7 +119,7 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     const insights = evaluateConditions(snap([...rows, blankRow], leases));
     const inc = insights.find((i) => i.id === 'concentration::incomplete')!;
     expect(inc.severity).toBe('info');
-    expect(inc.detail).toBe("Blank NOI on Row X is left out of the basis, so every tenant's share of portfolio NOI is incomplete. Not screened (every lease is on a blank-NOI property): Big Tenant.");
+    expect(inc.detail).toBe("Blank NOI on Row X is left out of the basis, so every tenant's share of portfolio NOI is incomplete. Not screened (share reads 0%: every lease is on a blank-NOI or non-investment property): Big Tenant.");
     expect(inc.metric).toBe('1 blank NOI row');
     // A tenant named "Incomplete" cannot collide with the screen insight's id.
     expect(evaluateConditions(snap([alpha, bravo], [lease('l9', 'a', 'Incomplete', 120_000)])).filter((i) => i.id.startsWith('concentration')).map((i) => i.id).sort())
@@ -132,6 +132,27 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     expect(insights.find((i) => i.id === 'concentration-mixed-co')!.metric).toBe('100.0% (incomplete)');
     const inc = insights.find((i) => i.id === 'concentration::incomplete')!;
     expect(inc.detail).toMatch(/Partly screened \(share excludes its blank-NOI property\): Mixed Co\.$/);
+    expect(inc.detail).not.toMatch(/Not screened/);
+  });
+
+  it('a tenant whose only non-blank lease is on the residence reads 0% and is "not screened", never "partly" (sweep review L1)', () => {
+    const residence = { ...prop('res', 'Residence', 'Test Market', 0), type: 'Residence' } as Property;
+    const s = snap([alpha, bravo, residence], [
+      lease('k1', 'a', 'Known Co', 120_000),
+      lease('h1', 'res', 'Home Co', 50_000), lease('h2', 'b', 'Home Co', 120_000),
+    ]);
+    expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Home Co')!.pctNoi).toBe(0);
+    const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
+    expect(inc.detail).toMatch(/Not screened \(share reads 0%: every lease is on a blank-NOI or non-investment property\): Home Co\.$/);
+    expect(inc.detail).not.toMatch(/Partly screened/);
+  });
+
+  it('an unlinked lease carries a rent-share fallback, so its tenant is "partly screened" (sweep review L1)', () => {
+    const unlinked = { ...lease('u1', 'a', 'Loose Co', 60_000), propertyId: null } as unknown as Lease;
+    const s = snap([alpha, bravo], [lease('k1', 'a', 'Known Co', 120_000), unlinked, lease('u2', 'b', 'Loose Co', 120_000)]);
+    expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Loose Co')!.pctNoi).toBeGreaterThan(0);
+    const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
+    expect(inc.detail).toMatch(/Partly screened \(share excludes its blank-NOI property\): Loose Co\.$/);
     expect(inc.detail).not.toMatch(/Not screened/);
   });
 
@@ -155,7 +176,14 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
   it('filter-bar readout marks the summed NOI incomplete when a matched row is blank', () => {
     const slice = buildFilterSlice([alpha, bravo, charlie], [alpha, bravo])!;
     expect(slice.noiBlank).toEqual(['Bravo']);
-    expect(filterSliceText(slice)).toBe('2 of 3 assets · $0.3M workbook NOI (incomplete: blank NOI on 1 row)');
+    expect(filterSliceText(slice)).toBe('2 of 3 assets · $0.3M workbook NOI (incomplete: blank NOI on Bravo)');
+    // Sweep review L2: names, not a count; capped at two for the space-limited bar, rest counted.
+    expect(filterSliceText(buildFilterSlice([alpha, bravo, delta], [alpha, bravo, delta])!))
+      .toBe('3 of 3 assets · $0.3M workbook NOI (incomplete: blank NOI on Bravo, Delta)');
+    // Id order, not name order: 'Zulu' has id 'a0', so it is named first (reviewer low).
+    const zulu = prop('a0', 'Zulu', 'Madison WI', 0, true);
+    expect(filterSliceText(buildFilterSlice([alpha, bravo, delta, zulu], [bravo, delta, zulu])!))
+      .toBe('3 of 4 assets · $0.0M workbook NOI (incomplete: blank NOI on Zulu, Bravo, +1 more)');
     expect(filterSliceText(buildFilterSlice([alpha, bravo, charlie], [alpha, charlie])!)).toBe('2 of 3 assets · $0.4M workbook NOI');
     expect(buildFilterSlice([], [])).toBeUndefined();
   });

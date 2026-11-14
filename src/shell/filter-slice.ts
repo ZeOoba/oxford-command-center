@@ -26,11 +26,15 @@ export function buildFilterSlice(properties: readonly Property[], matched: reado
   };
 }
 
+/** The bar is space-limited: name this many blank rows, count the rest (sweep review L2). */
+const MAX_NAMED_BLANK = 2;
+
 export function filterSliceText(slice: FilterSlice): string {
-  const n = slice.noiBlank?.length ?? 0;
+  const blank = slice.noiBlank ?? [];
+  const named = blank.slice(0, MAX_NAMED_BLANK).join(', ') + (blank.length > MAX_NAMED_BLANK ? `, +${blank.length - MAX_NAMED_BLANK} more` : '');
   const noi =
     slice.noiUsd != null
-      ? ` · $${(slice.noiUsd / 1_000_000).toFixed(1)}M workbook NOI${n > 0 ? ` (incomplete: blank NOI on ${n} row${n === 1 ? '' : 's'})` : ''}`
+      ? ` · $${(slice.noiUsd / 1_000_000).toFixed(1)}M workbook NOI${blank.length > 0 ? ` (incomplete: blank NOI on ${named})` : ''}`
       : '';
   return `${slice.shown} of ${slice.total} assets${noi}`;
 }
