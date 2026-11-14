@@ -248,3 +248,34 @@ export const RecordPullRequest = z
   })
   .strict();
 export type RecordPullRequest = z.infer<typeof RecordPullRequest>;
+
+// ── News overlay ──────────────────────────────────────────────────────────────────────────────
+// A dated, hand-reviewed annotation layer read from news_overlay.json beside markets.json. It
+// annotates markets; it never changes a series value, a rank or a score (spec §2 non-goals).
+
+export const EdgeNewsSignal = z.enum(['up', 'down', 'mixed', 'none']);
+export type EdgeNewsSignal = z.infer<typeof EdgeNewsSignal>;
+
+export const EdgeNewsEntry = z.object({
+  marketId: z.string().min(1),
+  signal: EdgeNewsSignal,
+  /** BLS payroll jobs, % change over the year to the overlay's reference month; null where BLS does not report the metro. */
+  jobsYoy: z.number().finite().nullable(),
+  note: z.string(),
+});
+export type EdgeNewsEntry = z.infer<typeof EdgeNewsEntry>;
+
+export const EdgeNewsResponse = z.object({
+  availability: EdgeAvailability,
+  asOf: z.string().nullable(),
+  /** Whole days since asOf, clamped to >= 0; null when no overlay loaded. */
+  ageDays: z.number().int().nonnegative().nullable(),
+  staleAfterDays: z.number().int().positive(),
+  /** True when the overlay is older than staleAfterDays, has a future or invalid asOf, or is not loaded. */
+  stale: z.boolean(),
+  headline: z.string().nullable(),
+  entries: z.array(EdgeNewsEntry),
+  /** missing: []; unreadable/invalid: sanitized reasons (errno code, Zod path + code). */
+  issues: z.array(z.string()),
+});
+export type EdgeNewsResponse = z.infer<typeof EdgeNewsResponse>;

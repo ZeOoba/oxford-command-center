@@ -89,7 +89,7 @@
   },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
-    "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
+    "phase": "Property Condition ledger Phases 1-3: Phase 3 alerts (server/warehouse/property-condition-conditions.ts merged in server/brief/run.ts; new 'capex' InsightCategory + ALERT_THRESHOLDS entries in src/analytics/{types,conditions}.ts and src/modules/insights/insights.logic.ts); Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,
@@ -984,6 +984,15 @@
     "review_needed": false,
     "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/034_edge_pull_log.sql (renumbered from 033 after PR 425 took 033; one isolated append-only table edge_pull_log; no existing table touched); (3) package.json: NOT touched by this PR (the branch's own one-line gate:ci governance change was dropped when main's PR 433 landed the same step; merge took main's file verbatim). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Architect ack: Gabriel, in-session 2026-10-02 (AskUserQuestion: Acknowledge and proceed; sentinel placed by Gabriel).",
     "last_updated": "2026-10-03T21:50:00Z"
+  },
+  "edge-news-overlay": {
+    "agent_role": "Integration Agent (server/edge/news.ts) + UX Agent (src/modules/acquisitions/Edge*, edge-hooks.ts) - Claude Code session",
+    "phase": "Oxford Edge news overlay: dated per-market news signals (Improving / Weakening / Mixed) beside markets.json, display only. Plan docs/superpowers/plans/2026-10-08-edge-news-overlay.md. Ported 2026-11-13 onto the rewritten main as branch port/feat-edge-news-overlay (draft PR), not merged.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Architect-owned touch: src/contracts/edge.ts, ADDITIVE ONLY (EdgeNewsSignal, EdgeNewsEntry, EdgeNewsResponse appended; no existing schema changed). Not touched: migrations, server/index.ts, sub-routers.ts (the /news route lives inside the existing edgeApi router), scoring, governors. edge.ts stays out of FINANCIAL_CONTRACT_PATHS. Architect ack: Gabriel, in-session 2026-10-08 (AskUserQuestion: Acknowledged).",
+    "last_updated": "2026-11-13T00:00:00Z"
   },
   "trends-wave3b": {
     "agent_role": "Integration Agent + UX Agent — Claude Code",
