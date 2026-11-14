@@ -119,7 +119,7 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     const insights = evaluateConditions(snap([...rows, blankRow], leases));
     const inc = insights.find((i) => i.id === 'concentration::incomplete')!;
     expect(inc.severity).toBe('info');
-    expect(inc.detail).toBe("Blank NOI on Row X is left out of the basis, so every tenant's share of portfolio NOI is incomplete. Not screened (share reads 0%: every lease is on a blank-NOI or non-investment property): Big Tenant.");
+    expect(inc.detail).toBe("Blank NOI on Row X is left out of the basis, so every tenant's share of portfolio NOI is incomplete. Not screened (share outside the blank-NOI rows reads 0.0% or below, so the screen cannot flag it on the known rows): Big Tenant.");
     expect(inc.metric).toBe('1 blank NOI row');
     // A tenant named "Incomplete" cannot collide with the screen insight's id.
     expect(evaluateConditions(snap([alpha, bravo], [lease('l9', 'a', 'Incomplete', 120_000)])).filter((i) => i.id.startsWith('concentration')).map((i) => i.id).sort())
@@ -131,7 +131,7 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     const insights = evaluateConditions(s);
     expect(insights.find((i) => i.id === 'concentration-mixed-co')!.metric).toBe('100.0% (incomplete)');
     const inc = insights.find((i) => i.id === 'concentration::incomplete')!;
-    expect(inc.detail).toMatch(/Partly screened \(share excludes its blank-NOI property\): Mixed Co\.$/);
+    expect(inc.detail).toMatch(/Partly screened \(share excludes the blank-NOI rows\): Mixed Co\.$/);
     expect(inc.detail).not.toMatch(/Not screened/);
   });
 
@@ -143,8 +143,86 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     ]);
     expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Home Co')!.pctNoi).toBe(0);
     const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
-    expect(inc.detail).toMatch(/Not screened \(share reads 0%: every lease is on a blank-NOI or non-investment property\): Home Co\.$/);
+    expect(inc.detail).toMatch(/Not screened \(share outside the blank-NOI rows reads 0\.0% or below, so the screen cannot flag it on the known rows\): Home Co\.$/);
     expect(inc.detail).not.toMatch(/Partly screened/);
+  });
+
+  it('a tenant whose only known row has $0 NOI reads 0% and is "not screened", never "partly" (follow-up to #583)', () => {
+    const zeroNoi = prop('z', 'Zero Row', 'Columbus OH', 0); // a KNOWN $0 NOI, not a blank cell
+    const s = snap([alpha, bravo, zeroNoi], [
+      lease('k1', 'a', 'Known Co', 120_000),
+      lease('z1', 'z', 'Zero Co', 60_000), lease('z2', 'b', 'Zero Co', 120_000),
+    ]);
+    expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Zero Co')!.pctNoi).toBe(0);
+    const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
+    expect(inc.detail).toMatch(/Not screened \(share outside the blank-NOI rows reads 0\.0% or below, so the screen cannot flag it on the known rows\): Zero Co\.$/);
+    expect(inc.detail).not.toMatch(/Partly screened/);
+  });
+
+  it('a tenant whose known row has negative NOI reads below 0% and is "not screened" (follow-up to #583)', () => {
+    const negative = prop('n', 'Neg Row', 'Columbus OH', -50_000);
+    const s = snap([alpha, bravo, negative], [
+      lease('k1', 'a', 'Known Co', 120_000),
+      lease('n1', 'n', 'Neg Co', 60_000), lease('n2', 'b', 'Neg Co', 120_000),
+    ]);
+    expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Neg Co')!.pctNoi).toBeLessThan(0);
+    const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
+    expect(inc.detail).toMatch(/Not screened \(share outside the blank-NOI rows reads 0\.0% or below, so the screen cannot flag it on the known rows\): Neg Co\.$/);
+    expect(inc.detail).not.toMatch(/Partly screened/);
+  });
+
+  it('a share that cancels to zero gives the same label in every lease order (refute wf_70b387e9-d2c)', () => {
+    const p1 = prop('p1', 'P One', 'Columbus OH', 1000.01);
+    const p2 = prop('p2', 'P Two', 'Columbus OH', 2000.15);
+    const p3 = prop('p3', 'P Three', 'Columbus OH', -3000.16);
+    const mix = { p1: lease('m1', 'p1', 'Mix Co', 100), p2: lease('m2', 'p2', 'Mix Co', 100), p3: lease('m3', 'p3', 'Mix Co', 100) };
+    const orders: (keyof typeof mix)[][] = [['p1', 'p2', 'p3'], ['p1', 'p3', 'p2'], ['p2', 'p1', 'p3'], ['p2', 'p3', 'p1'], ['p3', 'p1', 'p2'], ['p3', 'p2', 'p1']];
+    const details = orders.map((o) => {
+      const s = snap([alpha, bravo, p1, p2, p3], [lease('k1', 'a', 'Known Co', 120_000), lease('mb', 'b', 'Mix Co', 50_000), ...o.map((k) => mix[k])]);
+      return evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!.detail;
+    });
+    expect(new Set(details).size).toBe(1);
+    expect(details[0]).toMatch(/Not screened \(share outside the blank-NOI rows reads 0\.0% or below, so the screen cannot flag it on the known rows\): Mix Co\.$/);
+  });
+
+  it('a share on the 0.05 pp display boundary reads, and is labelled, the same in every lease order (refute wf_73fe7a17-a86)', () => {
+    const a1999 = prop('a', 'Alpha', 'Columbus OH', 1999);
+    const p1 = prop('p1', 'P One', 'Columbus OH', 17792.10);
+    const p2 = prop('p2', 'P Two', 'Columbus OH', 25152.26);
+    const p3 = prop('p3', 'P Three', 'Columbus OH', -42943.36);
+    const mix = { p1: lease('m1', 'p1', 'Mix Co', 100), p2: lease('m2', 'p2', 'Mix Co', 100), p3: lease('m3', 'p3', 'Mix Co', 100) };
+    const orders: (keyof typeof mix)[][] = [['p1', 'p2', 'p3'], ['p1', 'p3', 'p2'], ['p2', 'p1', 'p3'], ['p2', 'p3', 'p1'], ['p3', 'p1', 'p2'], ['p3', 'p2', 'p1']];
+    const runs = orders.map((o) => {
+      const s = snap([a1999, bravo, p1, p2, p3], [lease('k1', 'a', 'Known Co', 120_000), lease('mb', 'b', 'Mix Co', 50_000), ...o.map((k) => mix[k])]);
+      const card = tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Mix Co')!;
+      return `${pctNoiText(card)} | ${evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!.detail}`;
+    });
+    expect(new Set(runs).size).toBe(1);
+  });
+
+  it('duplicate lease ids each keep their own NOI allocation, in either order (refute wf_90ccebf7-bea)', () => {
+    const one = lease('x', 'a', 'One Co', 100_000);
+    const two = lease('x', 'a', 'Two Co', 200_000);
+    for (const leases of [[one, two], [two, one]]) {
+      const cards = tenantScorecards(snap([alpha], leases), '2026-11-01');
+      expect(cards.find((t) => t.name === 'One Co')!.pctNoi).toBeCloseTo(1 / 3, 12);
+      expect(cards.find((t) => t.name === 'Two Co')!.pctNoi).toBeCloseTo(2 / 3, 12);
+    }
+  });
+
+  it('several leases on one property, plus an unlinked lease, give the same shares in every order (independent review)', () => {
+    // Pins the totalRent and per-property linked-rent sums (sumSorted), which the boundary tests above
+    // do not reach: three tenants share one property and a fourth lease falls back to rent share.
+    const unlinked = { ...lease('u1', 'a', 'Loose Co', 0.3), propertyId: null } as unknown as Lease;
+    const rows = [lease('r1', 'a', 'One Co', 0.1), lease('r2', 'a', 'Two Co', 0.2), lease('r3', 'a', 'Three Co', 0.7), unlinked];
+    const perms = (xs: Lease[]): Lease[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map((r) => [x, ...r])));
+    const runs = perms(rows).map((ls) => {
+      const s = snap([alpha, bravo], [...ls, lease('b1', 'b', 'Blank Co', 120_000)]);
+      const shares = tenantScorecards(s, '2026-11-01').map((t) => `${t.name}=${t.pctNoi}`).sort().join(';');
+      return `${shares} | ${evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!.detail}`;
+    });
+    expect(runs).toHaveLength(24);
+    expect(new Set(runs).size).toBe(1);
   });
 
   it('an unlinked lease carries a rent-share fallback, so its tenant is "partly screened" (sweep review L1)', () => {
@@ -152,7 +230,7 @@ describe('NOI-reader sweep: a blank NOI is named, never a silent $0 (follow-up t
     const s = snap([alpha, bravo], [lease('k1', 'a', 'Known Co', 120_000), unlinked, lease('u2', 'b', 'Loose Co', 120_000)]);
     expect(tenantScorecards(s, '2026-11-01').find((t) => t.name === 'Loose Co')!.pctNoi).toBeGreaterThan(0);
     const inc = evaluateConditions(s).find((i) => i.id === 'concentration::incomplete')!;
-    expect(inc.detail).toMatch(/Partly screened \(share excludes its blank-NOI property\): Loose Co\.$/);
+    expect(inc.detail).toMatch(/Partly screened \(share excludes the blank-NOI rows\): Loose Co\.$/);
     expect(inc.detail).not.toMatch(/Not screened/);
   });
 

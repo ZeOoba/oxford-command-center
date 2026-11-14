@@ -2,7 +2,7 @@ import type { PortfolioSnapshot, MacroSnapshot } from '@contracts/index';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
-import { tenantScorecards } from '@/brain/tenants';
+import { tenantScorecards, pctNoiReadsPositive } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { contractAnnualRent } from './lease-rent';
@@ -761,26 +761,24 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   if (blankNoiIds.size > 0 && scorecards.length > 0) {
     const gap = scorecards[0]!.pctNoiIncomplete;
     const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-    const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
     const onBlank = (l: { propertyId: string | null }): boolean => l.propertyId !== null && blankNoiIds.has(l.propertyId);
-    // Same basis as tenantScorecards' pctNoi: a lease carries a share when it sits on a known-NOI
-    // investment row or is unlinked (rent-share fallback). A blank-NOI row and a non-investment row
-    // (the residence) both carry 0 (sweep review L1).
-    const carriesShare = (l: { propertyId: string | null }): boolean =>
-      !onBlank(l) && !(l.propertyId !== null && nonInvestmentIds.has(l.propertyId));
     const touched = scorecards.filter((t) => t.leases.some(onBlank));
-    // No lease carries a share → the tenant reads 0% and is not screened at all. Some do → it IS
-    // screened, on those rows only (refute wf_7b3fb3d6-d93).
-    const unscreened = touched.filter((t) => !t.leases.some(carriesShare)).map((t) => t.name).sort(byName);
-    const partly = touched.filter((t) => t.leases.some(carriesShare)).map((t) => t.name).sort(byName);
+    // Split on the share the screen tests, as displayed, not on lease structure: a tenant whose share
+    // reads 0.0% or below (every other lease on the residence, a known $0 or negative NOI row, no
+    // other lease, or a portfolio basis that clamps every share to 0) cannot be flagged on the known rows.
+    // Keyed to the displayed figure, so the label always agrees with the % shown; tenantScorecards sums
+    // by value, so neither the share nor the label depends on lease row order (refute wf_7b3fb3d6-d93,
+    // wf_70b387e9-d2c, wf_73fe7a17-a86, wf_90ccebf7-bea; follow-up to #583).
+    const unscreened = touched.filter((t) => !pctNoiReadsPositive(t)).map((t) => t.name).sort(byName);
+    const partly = touched.filter((t) => pctNoiReadsPositive(t)).map((t) => t.name).sort(byName);
     out.push({
       // Outside the per-tenant `concentration-${slug}` namespace, so no tenant name can collide with it.
       id: 'concentration::incomplete', severity: 'info', category: 'concentration',
       title: 'Tenant concentration screen incomplete',
       detail:
         `Blank NOI on ${gap.join(', ')} is left out of the basis, so every tenant's share of portfolio NOI is incomplete.` +
-        (unscreened.length > 0 ? ` Not screened (share reads 0%: every lease is on a blank-NOI or non-investment property): ${unscreened.join(', ')}.` : '') +
-        (partly.length > 0 ? ` Partly screened (share excludes its blank-NOI property): ${partly.join(', ')}.` : ''),
+        (unscreened.length > 0 ? ` Not screened (share outside the blank-NOI rows reads 0.0% or below, so the screen cannot flag it on the known rows): ${unscreened.join(', ')}.` : '') +
+        (partly.length > 0 ? ` Partly screened (share excludes the blank-NOI rows): ${partly.join(', ')}.` : ''),
       metric: `${gap.length} blank NOI row${gap.length === 1 ? '' : 's'}`,
       impactAnnualUsd: null, spine: 'A', provenance: 'absent',
     });
