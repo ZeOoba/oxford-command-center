@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { closeSync, lstatSync, mkdtempSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdtempSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -1283,19 +1283,35 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
 
     it('runTermScan runs Python isolated (-I) with git\'s argv and the ref lines on stdin', () => {
       const py = join(home, 'stub.py');
-      writeFileSync(py, '');
-      const sha256 = scannerDigest(Buffer.alloc(0));
+      const SRC = 'print("stub")\r\n';
+      writeFileSync(py, SRC);
+      const sha256 = scannerDigest(Buffer.from(SRC));
       /** @type {unknown[]} */
       const calls: unknown[][] = [];
-      const run = ((cmd: string, args: string[], opts: { input?: string }) => {
-        calls.push([cmd, args, opts.input]);
+      // Merge gate PR 577 round 4: Python runs a private temp copy of the VERIFIED bytes (LF), so the
+      // scanner file replaced after the hash check is not what runs; the copy is removed afterwards.
+      // The child also gets NoDefaultCurrentDirectoryInExePath=1.
+      const run = ((cmd: string, args: string[], opts: { input?: string; env?: Record<string, string | undefined> }) => {
+        writeFileSync(py, 'import sys; sys.exit(0)  # swapped in after the check\n');
+        calls.push([cmd, args, opts.input, readFileSync(args[1] ?? '', 'utf8'), opts.env?.['NoDefaultCurrentDirectoryInExePath']]);
+        writeFileSync(py, SRC);
         return { status: 0 };
       }) as never;
       expect(runTermScan('refs\n', ['origin', 'https://x.invalid/r.git'], { scanner: py, sha256, python: 'py', run })).toEqual({ ok: true });
-      expect(calls).toEqual([['py', ['-I', py, 'origin', 'https://x.invalid/r.git'], 'refs\n']]);
+      expect(calls).toHaveLength(1);
+      const [cmd, args, input, ranBytes, noCwd] = calls[0] as [string, string[], string, string, string];
+      expect(cmd).toBe('py');
+      expect(args[0]).toBe('-I');
+      expect(args[1]).not.toBe(py);
+      expect(args[1]).toMatch(/ora-prepush-scan-[^/\\]+[/\\]scan\.py$/);
+      expect(args.slice(2)).toEqual(['origin', 'https://x.invalid/r.git']);
+      expect(input).toBe('refs\n');
+      expect(ranBytes).toBe('print("stub")\n');
+      expect(noCwd).toBe('1');
+      expect(existsSync(args[1] ?? '')).toBe(false);
       calls.length = 0;
       runTermScan('', [undefined, undefined], { scanner: py, sha256, python: 'py', run });
-      expect(calls[0]?.[1]).toEqual(['-I', py]);
+      expect((calls[0]?.[1] as string[]).slice(2)).toEqual([]);
     });
 
     // Merge gate PR 577 round 1: the ref list used to be decoded as UTF-8 before it reached Python, so

@@ -139,10 +139,17 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
     exit 1
   fi
   # An empty, cut-short or otherwise damaged scanner can exit 0 under Python and skip the term scan,
-  # so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF).
-  got="$("$node_bin" -e 'const b=require("fs").readFileSync(process.argv[1]).toString("latin1").replace(/\\r\\n/g,"\\n");process.stdout.write(require("crypto").createHash("sha256").update(Buffer.from(b,"latin1")).digest("hex"));' "$scan_py" 2>/dev/null)" || got=
-  if [ "$got" != "${PY_SCANNER_SHA256}" ]; then
-    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py does not match its pinned SHA-256 (run npm run hooks:install from an up-to-date tree)." >&2
+  # so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF). node reads
+  # it ONCE, checks the hash and writes those same verified bytes into a new private temp directory;
+  # Python runs that file. A copy replaced after the check (another worktree's install) is never the
+  # one that runs (merge gate PR 577 round 4). node prints the directory with forward slashes.
+  scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");const b=Buffer.from(fs.readFileSync(process.argv[1]).toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);const d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"});process.stdout.write(d.replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_dir=
+  case "$scan_dir" in
+    */ora-prepush-scan-*) trap 'rm -rf -- "$scan_dir"' EXIT ;;
+    *) scan_dir= ;;
+  esac
+  if [ -z "$scan_dir" ] || [ ! -f "$scan_dir/scan.py" ]; then
+    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py does not match its pinned SHA-256 or could not be read (run npm run hooks:install from an up-to-date tree)." >&2
     exit 1
   fi
   py=
@@ -159,7 +166,7 @@ if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
     echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
     exit 1
   fi
-  printf '%s\\n' "$refs" | "$py" -I "$scan_py" "$@" || exit 1
+  printf '%s\\n' "$refs" | "$py" -I "$scan_dir/scan.py" "$@" || exit 1
   # Legacy call shape (no argv): an older scanner treats ANY '--staged' argument, e.g. a remote
   # named --staged, as its manual mode and skips the payload checks.
   printf '%s\\n' "$refs" | "$node_bin" "$scan_js" || exit 1

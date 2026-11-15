@@ -25,10 +25,10 @@
 // cannot show this scan a different object from the one pack-objects sends.
 //
 // Node built-ins only (runs in a git hook with no install step).
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -812,8 +812,12 @@ export const PY_SCANNER_SHA256 = '37f4328f5fffbb71c751115d76583d060c87ae7515e76a
  * @returns {string} lowercase hex
  */
 export function scannerDigest(bytes) {
-  const lf = Buffer.from(bytes.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
-  return createHash('sha256').update(lf).digest('hex');
+  return createHash('sha256').update(toLf(bytes)).digest('hex');
+}
+
+/** `bytes` with every CRLF folded to LF (byte-exact otherwise). @param {Buffer} bytes @returns {Buffer} */
+function toLf(bytes) {
+  return Buffer.from(bytes.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
 }
 
 /** Interpreter names probed in order. Each must actually RUN Python 3.8+ (the Windows Store
@@ -929,12 +933,15 @@ export function runTermScan(stdinInput, argv, deps = {}) {
   if (!existsSync(scanner)) {
     return { ok: false, message: `confidentiality term scanner not found (${scanner}); fail closed (Invariant 3).` };
   }
-  let got;
+  // Read ONCE: the bytes that are hashed are the bytes Python runs (from a private temp copy below),
+  // so a scanner file replaced after the check is never the one that runs (merge gate PR 577 round 4).
+  let lf;
   try {
-    got = scannerDigest(readFileSync(scanner));
+    lf = toLf(readFileSync(scanner));
   } catch (err) {
     return { ok: false, message: `confidentiality term scanner could not be read (${errorLine(err)}); fail closed (Invariant 3).` };
   }
+  const got = createHash('sha256').update(lf).digest('hex');
   if (got !== want) {
     return {
       ok: false,
@@ -950,14 +957,25 @@ export function runTermScan(stdinInput, argv, deps = {}) {
   }
   const args = [...argv];
   while (args.length && args[args.length - 1] === undefined) args.pop();
-  const r = run(python, ['-I', scanner, ...args.map((a) => a ?? '')], {
-    input: stdinInput,
-    stdio: ['pipe', 'inherit', 'inherit'],
-    windowsHide: true,
-    maxBuffer: Infinity,
-    // The scanner's own git calls must not resolve a git.exe from the worktree root either.
-    env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' },
-  });
+  let dir;
+  let r;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'ora-prepush-scan-'));
+    const verified = join(dir, 'scan.py');
+    writeFileSync(verified, lf, { mode: 0o600, flag: 'wx' });
+    r = run(python, ['-I', verified, ...args.map((a) => a ?? '')], {
+      input: stdinInput,
+      stdio: ['pipe', 'inherit', 'inherit'],
+      windowsHide: true,
+      maxBuffer: Infinity,
+      // The scanner's own git calls must not resolve a git.exe from the worktree root either.
+      env: { ...process.env, NoDefaultCurrentDirectoryInExePath: '1' },
+    });
+  } catch (err) {
+    return { ok: false, message: `confidentiality term scan could not be prepared (${errorLine(err)}); fail closed (Invariant 3).` };
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
   if (r.error) return { ok: false, message: `confidentiality term scan could not run (${errorLine(r.error)}); fail closed (Invariant 3).` };
   if (r.status !== 0) {
     return {

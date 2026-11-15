@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { execSync, spawnSync } from 'node:child_process';
 import { closeSync, mkdtempSync, mkdirSync, openSync, writeFileSync, rmSync, readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -8,6 +8,22 @@ import { pathToFileURL } from 'node:url';
 import { WRAPPER, COMMIT_MSG_WRAPPER, PY_SCAN_FALLBACK, writeFileAtomic, replaceOrWarn } from '../../scripts/install-git-hooks';
 import { PY_SCANNER_SHA256, scannerDigest } from '../../scripts/prepush-confidential-scan.mjs';
 import { renameSyncWithRetry } from '../../server/lib/rename-retry';
+import type * as RenameRetry from '../../server/lib/rename-retry';
+
+// Merge gate PR 577 round 4: writeFileAtomic's DEFAULT rename path (the one production uses) was never
+// observed by a test; every check passed its own seam. The module is wrapped so a test can look at the
+// destination at the moment the real default rename runs.
+const renameProbe = vi.hoisted(() => ({ at: null as null | ((from: string, to: string) => void) }));
+vi.mock('../../server/lib/rename-retry', async (importOriginal) => {
+  const real = await importOriginal<typeof RenameRetry>();
+  return {
+    ...real,
+    renameSyncWithRetry: (from: string, to: string) => {
+      renameProbe.at?.(from, to);
+      real.renameSyncWithRetry(from, to);
+    },
+  };
+});
 
 /** Stand-ins for the Python term scanner copy beside the hook (the wrapper runs it for a stub JS
  * scanner that lacks runTermScan, i.e. a tree that predates it). */
@@ -72,7 +88,7 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
   // JS scanner runs the term scan itself, and the wrapper runs it for a tree whose JS predates that.
   it('runs the Python term scan itself only for a tree whose scanner lacks runTermScan, isolated, fail closed', () => {
     expect(WRAPPER).toContain(`if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then`);
-    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$py" -I "\$scan_py" "\$@" \|\| exit 1/);
+    expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$py" -I "\$scan_dir\/scan\.py" "\$@" \|\| exit 1/);
     expect(WRAPPER).toContain(`/${PY_SCAN_FALLBACK}"`);
     expect(WRAPPER).toContain('"$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"');
     // wf_954ebd83-729: interpreters come from safe_exe (absolute PATH entries outside the worktree),
@@ -91,12 +107,14 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeGreaterThan(-1);
     expect(WRAPPER.indexOf('export NoDefaultCurrentDirectoryInExePath')).toBeLessThan(WRAPPER.indexOf('root="$(git rev-parse'));
     expect(WRAPPER).toMatch(/no scanner copy sits beside the hook[^\n]*\n\s*exit 1/);
-    // Merge gate PR 577 round 2: the copy must hash to the pin, checked before Python runs it.
-    expect(WRAPPER).toContain(`if [ "$got" != "${PY_SCANNER_SHA256}" ]; then`);
+    // Merge gate PR 577 rounds 2 and 4: the copy must hash to the pin, and ONE node call reads it,
+    // checks the hash and writes the verified bytes that Python then runs (never "$scan_py" itself).
+    expect(WRAPPER).toContain(`"$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_dir=`);
     expect(WRAPPER).toMatch(/does not match its pinned SHA-256[^\n]*\n\s*exit 1/);
-    expect(WRAPPER.indexOf('[ "$got" != ')).toBeLessThan(WRAPPER.indexOf('"$py" -I "$scan_py"'));
+    expect(WRAPPER).not.toMatch(/"\$py" -I "\$scan_py"/);
+    expect(WRAPPER.indexOf('|| scan_dir=')).toBeLessThan(WRAPPER.indexOf('"$py" -I "$scan_dir/scan.py"'));
     expect(WRAPPER).toMatch(/no Python 3\.8\+ found[^\n]*\n\s*exit 1/);
-    expect(WRAPPER.indexOf('"$py" -I "$scan_py"')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
+    expect(WRAPPER.indexOf('"$py" -I "$scan_dir/scan.py"')).toBeLessThan(WRAPPER.indexOf('"$node_bin" "$scan_js"'));
     expect(WRAPPER).toMatch(/printf '%s\\n' "\$refs" \| "\$node_bin" "\$scan_js" "\$@" \|\| exit 1/);
   });
 });
@@ -335,6 +353,26 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     }
   });
 
+  // Merge gate PR 577 round 4: the wrapper hashed the copy, then Python reopened it by path, so an
+  // install that swapped the copy in between ran an unchecked scanner. Python must run a private temp
+  // copy of the verified bytes, and that copy must be gone after the hook.
+  it('runs a private temp copy of the verified bytes, never the copy beside the hook, and removes it', () => {
+    const PY_WHERE = 'import sys\nif __name__ == "__main__":\n    sys.stderr.write("RAN " + __file__ + "\\n")\n    sys.exit(0)\n';
+    const hookPath = setupFixtureRepo();
+    try {
+      placeCopy(hookPath, PY_WHERE);
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(0);
+      const ran = /RAN (.+)/.exec(r.stderr)?.[1]?.trim() ?? '';
+      expect(ran).toMatch(/ora-prepush-scan-[^/\\]+[/\\]scan\.py$/);
+      expect(ran.replace(/\\/g, '/')).not.toContain(PY_SCAN_FALLBACK);
+      expect(existsSync(ran)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('the unmodified WRAPPER accepts the real vendored scanner and BLOCKS it cut inside __main__', () => {
     const hookPath = setupFixtureRepo();
     try {
@@ -461,6 +499,25 @@ describe('install-git-hooks installer — runs only as a script, never on import
       if (process.platform !== 'win32') expect(atRename!.tmpExec).toBe(0o111);
       expect(readFileSync(dest, 'utf8')).toBe('newer\n');
       expect(statSync(dest, { bigint: true }).ino).not.toBe(id2);
+      // Round 4: the same must hold on the DEFAULT rename path (no seam), the one the installer uses.
+      let atDefault: string | null = null;
+      renameProbe.at = (_from, to) => {
+        atDefault = readFileSync(to, 'utf8');
+      };
+      try {
+        writeFileAtomic(dest, 'newest\n', 0o755);
+      } finally {
+        renameProbe.at = null;
+      }
+      expect(atDefault).toBe('newer\n');
+      expect(readFileSync(dest, 'utf8')).toBe('newest\n');
+      // Round 4: a rename that fails leaves dest as it was and no temp file behind.
+      expect(() =>
+        writeFileAtomic(dest, 'lost\n', 0o755, () => {
+          throw Object.assign(new Error('EPERM: in use'), { code: 'EPERM' });
+        }),
+      ).toThrow(/EPERM/);
+      expect(readFileSync(dest, 'utf8')).toBe('newest\n');
       writeFileAtomic(join(dir, 'g.py'), 'fresh\n');
       expect(readdirSync(dir).sort()).toEqual(['f.py', 'g.py']);
     } finally {
