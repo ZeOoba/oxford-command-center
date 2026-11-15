@@ -39,7 +39,11 @@ export const WRAPPER = `#!/bin/sh
 # The whole hook is ONE brace group, closed on its last line: the shell parses all of it before it
 # runs any of it. An older tree's installer rewrites this file IN PLACE when its content differs; a
 # shell that reads the script as it goes then hit end-of-file mid-hook and exited 0 with nothing
-# scanned (merge gate PR 577, R6-1). A truncated group is a syntax error, which also blocks.
+# scanned (merge gate PR 577, R6-1). A rewrite after the shell's first read, or a group read only in
+# part, now runs the hook it parsed or is a syntax error (blocks). Known residual (R7-1, OI-403): if
+# that installer empties the file between git starting the hook and the shell's first read, the
+# shell runs an empty script and exits 0. Nothing in this file can prevent that; it ends once no
+# tree runs an in-place installer.
 # Managed by scripts/install-git-hooks.ts.
 # 1) Confidentiality scanner (scripts/prepush-confidential-scan.mjs, Hard Invariant 3) — fail-closed.
 #    It runs the shared Python term scanner (scripts/prepush_confidential_scan.py, vendored from
