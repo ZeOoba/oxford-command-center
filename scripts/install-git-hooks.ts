@@ -35,6 +35,11 @@ export const PY_SCAN_FALLBACK = 'ora_prepush_confidential_scan.py';
 // literal template — this is what tests/unit/prepush-noi-crosscheck.test.ts guards against
 // regressing back into a blocking 'exec' of the advisory-only stage.
 export const WRAPPER = `#!/bin/sh
+{
+# The whole hook is ONE brace group, closed on its last line: the shell parses all of it before it
+# runs any of it. An older tree's installer rewrites this file IN PLACE when its content differs; a
+# shell that reads the script as it goes then hit end-of-file mid-hook and exited 0 with nothing
+# scanned (merge gate PR 577, R6-1). A truncated group is a syntax error, which also blocks.
 # Managed by scripts/install-git-hooks.ts.
 # 1) Confidentiality scanner (scripts/prepush-confidential-scan.mjs, Hard Invariant 3) — fail-closed.
 #    It runs the shared Python term scanner (scripts/prepush_confidential_scan.py, vendored from
@@ -151,7 +156,7 @@ fi
 # one that runs (merge gate PR 577 round 4). node prints the directory with forward slashes. Its
 # exit status says what failed: 3 pin mismatch, 4 unreadable copy, 5 no private temp copy.
 scan_rc=0
-scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");let r;try{r=fs.readFileSync(process.argv[1])}catch{process.exit(4)}const b=Buffer.from(r.toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);let d;try{d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"})}catch{if(d)fs.rmSync(d,{recursive:true,force:true});process.exit(5)}process.stdout.write(d.replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_rc=$?
+scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");let r;try{r=fs.readFileSync(process.argv[1])}catch{process.exit(4)}const b=Buffer.from(r.toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);let d;try{d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"})}catch{if(d)fs.rmSync(d,{recursive:true,force:true});process.exit(5)}process.stdout.write(path.resolve(d).replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_rc=$?
 case "$scan_dir" in
   */ora-prepush-scan-*) trap 'rm -rf -- "$scan_dir"' EXIT ;;
   *) scan_dir= ;;
@@ -195,6 +200,7 @@ if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
   "$node_bin" "$root/scripts/prepush-noi-crosscheck.mjs" || true
 fi
 exit 0
+}
 `;
 
 // Exported for the same reason as WRAPPER (see above) -- installs the commit-msg trailer guard

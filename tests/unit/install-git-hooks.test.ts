@@ -66,7 +66,22 @@ describe('install-git-hooks WRAPPER template — structural invariants', () => {
   });
 
   it('ends on an unconditional exit 0, not the NOI stage\'s own exit code', () => {
-    expect(WRAPPER.trim().split('\n').pop()?.trim()).toBe('exit 0');
+    expect(WRAPPER.trim().split('\n').slice(-2)).toEqual(['exit 0', '}']);
+  });
+
+  // Merge gate PR 577 R6-1: an older tree's installer rewrites the hook IN PLACE; a shell reading the
+  // script as it goes hit end-of-file mid-hook and exited 0 unscanned. One brace group, opened right
+  // after the shebang and closed on the last line, makes the shell parse the whole hook first.
+  it('is one brace group from the line after the shebang to the last line', () => {
+    const lines = WRAPPER.split('\n');
+    expect(lines[0]).toBe('#!/bin/sh');
+    expect(lines[1]).toBe('{');
+    expect(WRAPPER.endsWith('\n}\n')).toBe(true);
+    // No other column-0 lone brace closes the group early (function bodies close with "}" too, but
+    // each opens with "name() {" on the same logical block; count opens vs closes).
+    const opens = lines.filter((l) => /(^\{$)|(\(\) \{$)/.test(l)).length;
+    const closes = lines.filter((l) => l === '}').length;
+    expect(closes).toBe(opens);
   });
 
   it('still fails closed on the confidentiality scanner', () => {
@@ -491,6 +506,54 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(preDir, { recursive: true, force: true });
+    }
+  });
+
+  // R6-1: main's installer rewrites the hook IN PLACE (writeFileSync on the same file) when it
+  // differs. Mid-push, the shell used to read past the new, shorter content, hit end-of-file and exit
+  // 0 with nothing scanned (9 of 20 real pushes in the gate's race). A preload in the wrapper's node
+  // one-liner does that rewrite while the shell is mid-hook; the scan must still run and block.
+  it('still scans and blocks when the hook file is rewritten in place mid-push', () => {
+    const hookPath = setupFixtureRepo();
+    const preDir = mkdtempSync(join(tmpdir(), 'install-git-hooks-preload-'));
+    try {
+      placeCopy(hookPath, PY_FAIL);
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const shortHook = '#!/bin/sh\n# legacy\n';
+      const pre = join(preDir, 'rewrite.cjs');
+      writeFileSync(
+        pre,
+        // Every node call the hook makes is mid-hook (the first is the refs read); rewrite once.
+        `const fs = require('fs');\nconst h = ${JSON.stringify(hookPath)};\nif (fs.readFileSync(h, 'utf8') !== ${JSON.stringify(shortHook)}) fs.writeFileSync(h, ${JSON.stringify(shortHook)});\n`,
+      );
+      const env = { ...process.env, NODE_OPTIONS: `--require "${pre.replace(/\\/g, '/')}"` };
+      const r = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8', env });
+      expect(readFileSync(hookPath, 'utf8')).toBe(shortHook); // the in-place rewrite happened mid-hook
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('stub term hit');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(preDir, { recursive: true, force: true });
+    }
+  });
+
+  // L-601: with TEMP="." node's mkdtemp returned a RELATIVE name with no "/", the case guard missed
+  // it, the EXIT trap was never set, the push blocked with "exit 0" as its reason and a scanner copy
+  // was left in the worktree root on every push. The one-liner now prints an absolute path.
+  it('a relative temp directory still runs the scan, and leaves nothing behind', () => {
+    const hookPath = setupFixtureRepo();
+    try {
+      writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(0);\n');
+      const env = { ...process.env, TMPDIR: '.', TEMP: '.', TMP: '.' };
+      const ok = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8', env });
+      expect(ok.status, ok.stderr).toBe(0);
+      placeCopy(hookPath, PY_FAIL);
+      const blocked = spawnSync('sh', [hookPath], { cwd: dir, input: '', encoding: 'utf8', env });
+      expect(blocked.status).not.toBe(0);
+      expect(blocked.stderr).toContain('stub term hit');
+      expect(readdirSync(dir).filter((n) => n.startsWith('ora-prepush-scan-'))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
