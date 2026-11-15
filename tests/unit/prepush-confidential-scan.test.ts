@@ -66,6 +66,7 @@ import {
   WATERMARKS,
   resolveOnPath,
   isExecutableEntry,
+  parsePushRefLine,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // Every value below is SYNTHETIC. Never put a real deal name, figure or address in this file.
@@ -805,6 +806,52 @@ describe('prepush-confidential-scan / real-data paths (ruling 2026-11-10)', () =
     expect(shouldBlockOnDiffError(err.diffErrors, {})).toBe(true);
   });
 
+  // Merge gate PR 577 round 5 (K-502): ref lines were split on /\s+/ from the LEFT, so a push source
+  // typed with spaces (`HEAD^{/add main data}`) shifted every field and the payload checks scanned the
+  // wrong range; a ref name holding U+2028 or U+00A0 was split too. Lines now split from the right on
+  // single ASCII spaces, as the Python scanner's parse_pushrefs does, and both shas must be hex.
+  it('parsePushRefLine splits from the right and keeps spaces and Unicode in the local ref', () => {
+    const a = 'a'.repeat(40);
+    const z = '0'.repeat(40);
+    expect(parsePushRefLine(`HEAD^{/add main data} ${a} refs/heads/x ${z}`)).toEqual({
+      localRef: 'HEAD^{/add main data}',
+      localSha: a,
+      remoteRef: 'refs/heads/x',
+      remoteSha: z,
+    });
+    for (const odd of ['\u2028', '\u00a0', '\u0085', '\u3000']) {
+      expect(parsePushRefLine(`refs/heads/f${odd}x ${a} refs/heads/f${odd}x ${z}`)?.localSha).toBe(a);
+    }
+    expect(parsePushRefLine(`refs/heads/x ${'b'.repeat(64)} refs/heads/x ${'c'.repeat(64)}`)?.remoteSha).toBe('c'.repeat(64));
+    for (const bad of ['', `refs/heads/x ${a} refs/heads/x`, `refs/heads/x zz refs/heads/x ${z}`, `refs/heads/x ${a} refs/heads/x ${a.slice(1)}`, ` ${a} refs/heads/x ${z}`, `refs/heads/x ${a}  ${z}`, `refs/heads/x\t${a}\trefs/heads/x\t${z}`]) {
+      expect(parsePushRefLine(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('collectRefScan scans the right sha for a spaced push source and fails closed on a malformed line', () => {
+    const sha = 'd'.repeat(40);
+    const seen: string[] = [];
+    const deps = {
+      peeledType: () => 'commit',
+      destinationBound: () => [] as string[],
+      diffFor: (_r: string, local: string) => {
+        seen.push(local);
+        return '';
+      },
+      binaryPathsFor: () => ['data/ar/export.bin'],
+    };
+    const ok = collectRefScan(`HEAD^{/add main data} ${sha} refs/heads/main ${'0'.repeat(40)}\n`, undefined, deps);
+    expect(seen).toEqual([sha]);
+    expect(ok.binaryHits).toEqual(['data/ar/export.bin']);
+    expect(ok.diffErrors).toEqual([]);
+    // A U+2028 branch is not split into a fake line (it used to produce a false block).
+    const uni = collectRefScan(`refs/heads/f\u2028x ${sha} refs/heads/f\u2028x ${'0'.repeat(40)}\n`, undefined, deps);
+    expect(uni.diffErrors).toEqual([]);
+    const bad = collectRefScan(`refs/heads/x ${sha} refs/heads/x\n`, undefined, deps);
+    expect(bad.diffErrors).toHaveLength(1);
+    expect(shouldBlockOnDiffError(bad.diffErrors, {})).toBe(true);
+  });
+
   describe('against a real git repo', () => {
     const git = (cwd: string, ...args: string[]) =>
       execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
@@ -1312,6 +1359,31 @@ describe('prepush-confidential-scan / per-commit payload scan and pinned git out
       calls.length = 0;
       runTermScan('', [undefined, undefined], { scanner: py, sha256, python: 'py', run });
       expect((calls[0]?.[1] as string[]).slice(2)).toEqual([]);
+    });
+
+    // Merge gate PR 577 round 5 (K-503): the read-once property was untested -- re-reading the scanner
+    // path for the temp copy passed every test. Here the file is swapped BETWEEN the hash check and
+    // the temp-copy write (during the Python probe, which runs in between), and the bytes Python is
+    // handed must still be the ones that were hashed.
+    it('runTermScan writes the bytes it hashed into the temp copy, not a re-read of the scanner file', () => {
+      const py = join(home, 'stub-reread.py');
+      const SRC = 'print("verified")\n';
+      writeFileSync(py, SRC);
+      const sha256 = scannerDigest(Buffer.from(SRC));
+      let ran = '';
+      let probes = 0;
+      const run = ((_cmd: string, args: string[]) => {
+        if (args[1] === '-c') {
+          probes += 1;
+          writeFileSync(py, 'import sys; sys.exit(0)  # swapped in between the check and the copy\n');
+          return { status: 0 };
+        }
+        ran = readFileSync(args[1] ?? '', 'utf8');
+        return { status: 0 };
+      }) as never;
+      expect(runTermScan('', [], { scanner: py, sha256, run })).toEqual({ ok: true });
+      expect(probes).toBeGreaterThan(0);
+      expect(ran).toBe(SRC);
     });
 
     // Merge gate PR 577 round 1: the ref list used to be decoded as UTF-8 before it reached Python, so

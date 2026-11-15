@@ -51,9 +51,17 @@ function wrapperOf(src: string): string {
   if (src === process.cwd()) return WRAPPER;
   // Read the template literal out of the other tree's source instead of importing it: importing an
   // older install-git-hooks.ts would run its installer against the shared hooks directory.
-  const text = readFileSync(join(src, 'scripts', 'install-git-hooks.ts'), 'utf8');
+  // The literal is evaluated as JS would (escapes such as \${ and \\, and ${CONST} interpolations of
+  // that tree's own string constants), so the hook installed is the one that tree would install.
+  const text = readFileSync(join(src, 'scripts', 'install-git-hooks.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const scanJs = join(src, 'scripts', 'prepush-confidential-scan.mjs');
+  const consts: Record<string, string> = {};
+  for (const t of [existsSync(scanJs) ? readFileSync(scanJs, 'utf8') : '', text]) {
+    for (const m of t.matchAll(/^export const ([A-Z_0-9]+) = '([^'\\]*)';$/gm)) consts[m[1]!] = m[2]!;
+  }
   const start = text.indexOf('export const WRAPPER = `') + 'export const WRAPPER = `'.length;
-  return text.slice(start, text.indexOf('`;', start)).replace(/\\\\/g, '\\');
+  const body = text.slice(start, text.indexOf('`;', start));
+  return new Function(...Object.keys(consts), 'return `' + body + '`;')(...Object.values(consts)) as string;
 }
 
 class Sandbox {
@@ -67,11 +75,12 @@ class Sandbox {
    * @param opts.wrapper - pre-push template to install (default: the tree under test's WRAPPER).
    * @param opts.oldTree - the pushing tree predates runTermScan: its JS scanner is a term-blind stub
    *   (exit 0) and it has no Python scanner, so only the wrapper's own Python stage can catch a term.
-   * @param opts.copyBesideHook - place the Python scanner beside the hook, as the installer does.
+   * @param opts.copyBesideHook - place the Python scanner beside the hook, as the installer does
+   *   (default true: the wrapper runs that copy on every push and blocks without it).
    * @param opts.oldJs - the old tree's JS scanner source (default: a term-blind `process.exit(0)` stub).
    */
   constructor(opts: { wrapper?: string; oldTree?: boolean; copyBesideHook?: boolean; oldJs?: string } = {}) {
-    const { wrapper, oldTree = false, copyBesideHook = false, oldJs = 'process.exit(0);\n' } = opts;
+    const { wrapper, oldTree = false, copyBesideHook = true, oldJs = 'process.exit(0);\n' } = opts;
     mkdirSync(join(this.home, '.claude', 'hooks'), { recursive: true });
     writeFileSync(
       join(this.home, '.claude', 'hooks', 'confidential-terms.json'),
@@ -174,7 +183,9 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
     const main = text.lastIndexOf('if __name__ == "__main__":');
     expect(main).toBeGreaterThan(0);
     for (const broken of ['', text.slice(0, main), text.slice(0, text.indexOf('sys', main) + 3)]) {
-      const s = new Sandbox();
+      // Through the LEGACY wrapper (no Python stage of its own), so the JS's pin is the only defence:
+      // the new wrapper's own pinned copy would block the term first (merge gate PR 577 round 5).
+      const s = new Sandbox({ wrapper: LEGACY_WRAPPER });
       try {
         writeFileSync(join(s.work, 'scripts', 'prepush_confidential_scan.py'), broken);
         const leak = s.commit('notes.md', `memo about ${TERM}\n`);
@@ -343,7 +354,7 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
       } finally {
         ok.close();
       }
-      const bare = new Sandbox({ oldTree: true });
+      const bare = new Sandbox({ oldTree: true, copyBesideHook: false });
       try {
         bare.commit('notes.md', 'nothing to see\n');
         expectBlocked(bare.push('origin', 'main'));
@@ -505,6 +516,31 @@ describe('installed pre-push hook end to end (Python term scan + JS payload scan
   it('BLOCKS a binary under data/ (the JS payload stage) even with no term anywhere', () => {
     sb.commit('data/ar/export.bin', Buffer.from([0, 1, 2, 3, 4]));
     const r = sb.push('origin', 'main');
+    expectBlocked(r);
+    expect(r.stderr).toContain('data/ar/export.bin');
+  });
+
+  // Merge gate PR 577 round 5 (K-501): the wrapper used to skip its own Python stage whenever grep
+  // found runTermScan in the tree's JS, and node then loaded that JS again. A checkout of an older
+  // commit in between ran a term-blind JS (3/30 real pushes leaked). Modelled here deterministically:
+  // a JS that names runTermScan (what the grep saw) but scans nothing (what node then ran).
+  it('BLOCKS a term when the tree\'s JS names runTermScan but scans nothing (checkout race stand-in)', () => {
+    const swapped = new Sandbox({ oldTree: true, oldJs: '// runTermScan\nprocess.exit(0);\n' });
+    try {
+      const leak = swapped.commit('notes.md', `memo about ${TERM}\n`);
+      expectBlocked(swapped.push('origin', 'main'));
+      expect(swapped.remoteHas(leak)).toBe(false);
+    } finally {
+      swapped.close();
+    }
+  });
+
+  // Merge gate PR 577 round 5 (K-502): a push source typed with spaces shifted the JS's ref-line fields,
+  // so the payload checks scanned the wrong range and passed a data/ binary.
+  it('BLOCKS a binary under data/ pushed from a source typed with spaces', () => {
+    sb.commit('data/ar/export.bin', Buffer.from([0, 1, 2, 3, 4]), 'add main data');
+    sb.commit('README.md', 'later\n', 'later');
+    const r = sb.push('origin', 'HEAD^{/add main data}:refs/heads/side');
     expectBlocked(r);
     expect(r.stderr).toContain('data/ar/export.bin');
   });

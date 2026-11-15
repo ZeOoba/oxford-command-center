@@ -27,8 +27,8 @@ function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
-/** File name of the Python term scanner's copy beside the installed pre-push hook (for trees that
- * predate runTermScan; see WRAPPER). */
+/** File name of the Python term scanner's copy beside the installed pre-push hook (the wrapper runs it
+ * on every push; see WRAPPER). */
 export const PY_SCAN_FALLBACK = 'ora_prepush_confidential_scan.py';
 
 // Exported (not just a local const) so tests/unit/install-git-hooks.test.ts can assert on the
@@ -41,11 +41,12 @@ export const WRAPPER = `#!/bin/sh
 #    ora-skills) ITSELF, then the OCC payload checks (data/ binaries, real-data manifest paths, real
 #    amounts, confidential:true). It gets git's argv ("$@": remote name and push URL) and the
 #    buffered ref lines. .git/hooks is shared by every worktree, so both version skews are covered:
-#    an older wrapper still reaches the term scan through the new scanner, and a worktree whose tree
-#    predates runTermScan (its JS matches terms on the endpoint diff only) gets the Python term scan
-#    here first, from the copy the installer places beside this hook. No usable Python 3.8+, no
-#    scanner copy, or a copy whose SHA-256 is not the pin below => BLOCKED. Each candidate python is probed by running it (the Windows Store stub
-#    fails); it runs isolated (-I).
+#    an older wrapper still reaches the term scan through the new scanner, and this wrapper runs the
+#    Python term scan itself first on EVERY push, from the copy the installer places beside this
+#    hook, so a tree that predates runTermScan (its JS matches terms on the endpoint diff only), or
+#    one checked out mid-push, is still scanned. No usable Python 3.8+, no scanner copy, or a copy
+#    whose SHA-256 is not the pin below => BLOCKED. Each candidate python is probed by running it
+#    (the Windows Store stub fails); it runs isolated (-I).
 # 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
 #    .git/hooks is the common dir shared by every worktree; a checkout that predates this file
@@ -132,46 +133,60 @@ stdin_fail() {
 }
 { :; } 2>/dev/null 3<&0 || stdin_fail
 refs="$("$node_bin" -e 'const c=[];process.stdin.on("data",(b)=>c.push(b)).on("end",()=>process.stdout.write(Buffer.concat(c))).on("error",()=>process.exit(1));')" || stdin_fail
-if ! grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
-  scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
-  if [ ! -f "$scan_py" ]; then
-    echo "pre-push BLOCKED (fail-closed): this tree predates the Python term scan and no scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
-    exit 1
-  fi
-  # An empty, cut-short or otherwise damaged scanner can exit 0 under Python and skip the term scan,
-  # so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF). node reads
-  # it ONCE, checks the hash and writes those same verified bytes into a new private temp directory;
-  # Python runs that file. A copy replaced after the check (another worktree's install) is never the
-  # one that runs (merge gate PR 577 round 4). node prints the directory with forward slashes.
-  scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");const b=Buffer.from(fs.readFileSync(process.argv[1]).toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);const d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"});process.stdout.write(d.replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_dir=
-  case "$scan_dir" in
-    */ora-prepush-scan-*) trap 'rm -rf -- "$scan_dir"' EXIT ;;
-    *) scan_dir= ;;
+# The Python term scan runs HERE on every push, from the copy the installer places beside this hook,
+# whatever the tree holds. It used to run here only when grep found no runTermScan in the tree's JS,
+# and node then loaded that file again: a checkout of an older commit in between (another session in
+# the same worktree) ran a term-blind JS with no Python stage (merge gate PR 577 round 5, K-501). A
+# current tree's JS runs the term scan again from its own scanner; the grep below now only picks the
+# JS call shape.
+scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
+if [ ! -e "$scan_py" ]; then
+  echo "pre-push BLOCKED (fail-closed): no Python term scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
+  exit 1
+fi
+# An empty, cut-short or otherwise damaged scanner can exit 0 under Python and skip the term scan,
+# so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF). node reads
+# it ONCE, checks the hash and writes those same verified bytes into a new private temp directory;
+# Python runs that file. A copy replaced after the check (another worktree's install) is never the
+# one that runs (merge gate PR 577 round 4). node prints the directory with forward slashes. Its
+# exit status says what failed: 3 pin mismatch, 4 unreadable copy, 5 no private temp copy.
+scan_rc=0
+scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");let r;try{r=fs.readFileSync(process.argv[1])}catch{process.exit(4)}const b=Buffer.from(r.toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);let d;try{d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"})}catch{if(d)fs.rmSync(d,{recursive:true,force:true});process.exit(5)}process.stdout.write(d.replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_rc=$?
+case "$scan_dir" in
+  */ora-prepush-scan-*) trap 'rm -rf -- "$scan_dir"' EXIT ;;
+  *) scan_dir= ;;
+esac
+if [ "$scan_rc" -ne 0 ] || [ -z "$scan_dir" ] || [ ! -f "$scan_dir/scan.py" ]; then
+  case "$scan_rc" in
+    3) why="does not match its pinned SHA-256 (run npm run hooks:install from an up-to-date tree)" ;;
+    4) why="could not be read (run npm run hooks:install from an up-to-date tree)" ;;
+    5) why="could not be copied into a private temp directory (check that TMPDIR/TEMP exists and is writable)" ;;
+    *) why="could not be prepared by node (exit $scan_rc)" ;;
   esac
-  if [ -z "$scan_dir" ] || [ ! -f "$scan_dir/scan.py" ]; then
-    echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py does not match its pinned SHA-256 or could not be read (run npm run hooks:install from an up-to-date tree)." >&2
-    exit 1
-  fi
-  py=
-  for c in python python3 py; do
-    py="$(safe_exe "$c" | while IFS= read -r cand; do
-      if "$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
-        printf '%s' "$cand"
-        break
-      fi
-    done)"
-    [ -n "$py" ] && break
-  done
-  if [ -z "$py" ]; then
-    echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
-    exit 1
-  fi
-  printf '%s\\n' "$refs" | "$py" -I "$scan_dir/scan.py" "$@" || exit 1
+  echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py $why." >&2
+  exit 1
+fi
+py=
+for c in python python3 py; do
+  py="$(safe_exe "$c" | while IFS= read -r cand; do
+    if "$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
+      printf '%s' "$cand"
+      break
+    fi
+  done)"
+  [ -n "$py" ] && break
+done
+if [ -z "$py" ]; then
+  echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
+  exit 1
+fi
+printf '%s\\n' "$refs" | "$py" -I "$scan_dir/scan.py" "$@" || exit 1
+if grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
+  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" "$@" || exit 1
+else
   # Legacy call shape (no argv): an older scanner treats ANY '--staged' argument, e.g. a remote
   # named --staged, as its manual mode and skips the payload checks.
   printf '%s\\n' "$refs" | "$node_bin" "$scan_js" || exit 1
-else
-  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" "$@" || exit 1
 fi
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
   printf '%s\\n' "$refs" | "$node_bin" "$root/scripts/prepush-refute-check.mjs" || exit 1
@@ -293,7 +308,8 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
 
 /**
  * Copy scripts/prepush_confidential_scan.py beside the hooks (as PY_SCAN_FALLBACK, LF line endings)
- * so a push from a worktree whose tree predates runTermScan still gets the Python term scan.
+ * for the wrapper's own Python term scan, which runs on every push (and is the only one a tree that
+ * predates runTermScan gets).
  * Only a scanner matching PY_SCANNER_SHA256 is copied. A tree without the scanner, or with one that
  * does not match, leaves any existing copy alone; the wrapper blocks if that copy is missing or does
  * not match either.
@@ -307,7 +323,7 @@ function installPythonScanFallback(hooksDir: string, toplevel: string): void {
   const raw = readFileSync(src);
   if (scannerDigest(raw) !== PY_SCANNER_SHA256) {
     console.warn(
-      `[install-git-hooks] WARNING: ${src} does not match its pinned SHA-256; Python term-scan copy beside the hook not refreshed (pushes from old trees stay blocked until it is).`,
+      `[install-git-hooks] WARNING: ${src} does not match its pinned SHA-256; Python term-scan copy beside the hook not refreshed (pushes stay blocked until it is, if the copy beside the hook does not match the wrapper's pin).`,
     );
     return;
   }

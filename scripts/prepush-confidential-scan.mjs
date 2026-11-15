@@ -1017,6 +1017,30 @@ function blockOnHits(hits, header, formatHit, trailer) {
   process.exit(1);
 }
 
+const PUSH_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
+/**
+ * One pre-push stdin line, '<local ref> <local sha> <remote ref> <remote sha>', fields separated by
+ * single ASCII spaces. The local ref is the push source AS TYPED and may hold spaces
+ * (`HEAD^{/add main data}`); the other three fields cannot, so the line is split from the RIGHT, as
+ * the shared Python scanner's parse_pushrefs does. Never split on /\s+/ or trim(): that also breaks on
+ * U+00A0, U+2028 and other characters a ref name may hold (merge gate PR 577 round 5, K-502).
+ *
+ * @param {string} line - one line, without its "\n"
+ * @returns {{localRef: string, localSha: string, remoteRef: string, remoteSha: string} | null} null
+ *   when the line does not parse (the caller fails closed)
+ */
+export function parsePushRefLine(line) {
+  const parts = String(line).split(' ');
+  if (parts.length < 4) return null;
+  const remoteSha = /** @type {string} */ (parts.pop());
+  const remoteRef = /** @type {string} */ (parts.pop());
+  const localSha = /** @type {string} */ (parts.pop());
+  const localRef = parts.join(' ');
+  if (!localRef || !remoteRef || !PUSH_SHA.test(localSha) || !PUSH_SHA.test(remoteSha)) return null;
+  return { localRef, localSha, remoteRef, remoteSha };
+}
+
 /** First line of an error's code or message, for a one-line diffErrors entry. @param {unknown} err */
 function errorLine(err) {
   const e = /** @type {{code?: string, message?: string}} */ (err);
@@ -1059,10 +1083,15 @@ export function collectRefScan(stdinText, cwd, deps) {
   // Asked once per push, and only if some ref needs it (rangeFor ignores it for a known remote sha).
   const boundOnce = () => (bound ??= getBound(deps?.remote, deps?.url, cwd));
   for (const rawLine of String(stdinText ?? '').split('\n')) {
-    const line = rawLine.trim();
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (!line) continue;
-    const [, localSha, , remoteSha] = line.split(/\s+/);
-    if (!localSha || ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
+    const ref = parsePushRefLine(line);
+    if (!ref) {
+      diffErrors.push({ localSha: '(unparsed ref line)', message: "pre-push stdin line is not '<ref> <sha> <ref> <sha>'" });
+      continue;
+    }
+    const { localSha, remoteSha } = ref;
+    if (ZERO_SHA.test(localSha)) continue; // branch deletion — nothing to scan
     try {
       const type = getType(localSha, cwd);
       if (type !== 'commit') {
