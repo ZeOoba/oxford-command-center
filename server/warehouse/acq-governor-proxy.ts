@@ -53,6 +53,7 @@
 // (a hard gate/floor rejection) to PASS, so verdict-filtered ranked lists stay correct.
 import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
+import { GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
 
 /** Refi rate spread over the 10-yr UST (SKILL.md v4.37: "10-yr U.S. Treasury + 200 bps, always"). */
 export const REFI_UST_SPREAD = 0.02;
@@ -164,8 +165,9 @@ export function applyGovernorProxy(
   return { verdict, governorDscrCleared, governorLtvCleared, dscrAtRefiLtv: dscr };
 }
 
-/** Prefix of a non-demoting governor disclosure; capital-allocation's capReasonsOf lists each as an open item. */
-export const GOVERNOR_OPEN_ITEM_PREFIX = 'Governor open item: ';
+/** Prefix of a non-demoting governor disclosure; capital-allocation's capReasonsOf lists each as an open item. Defined
+ *  once in the shared analytics module so the deal drawer can recognise it too (OI-404 follow-up). */
+export { GOVERNOR_OPEN_ITEM_PREFIX };
 
 /** The reason text for an indeterminate DSCR floor, naming exactly what is missing. */
 export function dscrIndeterminateReason(input: GovernorProxyInput): string {

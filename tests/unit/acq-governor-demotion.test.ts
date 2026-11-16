@@ -3,7 +3,8 @@
 // Display rule for a governor-demoted acquisition score (src/analytics/acq-governor-demotion.ts):
 // the persisted VERDICT decides where a row displays; a T1/T2 tier beside a PASS verdict is marked.
 import { describe, expect, it } from 'vitest';
-import { effectiveTier, governorDemotedLabel, isGovernorDemoted, preDemotionTier } from '../../src/analytics/acq-governor-demotion';
+import { drawerReasons, effectiveTier, GOVERNOR_OPEN_ITEM_PREFIX, governorDemotedLabel, isGovernorDemoted, preDemotionTier } from '../../src/analytics/acq-governor-demotion';
+import { GOVERNOR_OPEN_ITEM_PREFIX as SERVER_PREFIX } from '../../server/warehouse/acq-governor-proxy';
 
 // The exact reason shape applyGovernorProxyToScore appends (server/warehouse/acq-governor-proxy.ts).
 const DEMOTION_T1 = 'Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.';
@@ -79,5 +80,29 @@ describe('server-computed governorDemoted flag (pipeline items, no reasons)', ()
     expect(governorDemotedLabel({ tier: 'T1', verdict: 'PASS', governorDemoted: true })).toBe('Governor-demoted (was T1)');
     expect(isGovernorDemoted({ tier: 'PASS', verdict: 'PASS', governorDemoted: false })).toBe(false);
     expect(isGovernorDemoted({ tier: 'PASS', verdict: 'PASS' })).toBe(false);
+  });
+});
+
+// OI-404 follow-up (refute wf_cd52ae40-b3f, low): the deal drawer showed only the first 3 score reasons, and the DSCR
+// governor open item is appended LAST, so a score with 3+ engine reasons hid it there.
+describe('drawerReasons', () => {
+  const dscr = `${GOVERNOR_OPEN_ITEM_PREFIX}DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered`;
+
+  it('the server appends the same prefix the client looks for (one definition)', () => {
+    expect(SERVER_PREFIX).toBe(GOVERNOR_OPEN_ITEM_PREFIX);
+  });
+
+  it('keeps the first 3 reasons and adds a governor open item that fell beyond them, in order', () => {
+    expect(drawerReasons(['a', 'b', 'c', 'd', dscr])).toEqual(['a', 'b', 'c', dscr]);
+  });
+
+  it('never drops a governor open item, and never duplicates one already in the first 3', () => {
+    expect(drawerReasons(['a', dscr, 'b', 'c'])).toEqual(['a', dscr, 'b']);
+    expect(drawerReasons(['a', 'b'])).toEqual(['a', 'b']);
+    expect(drawerReasons([])).toEqual([]);
+  });
+
+  it('caps ordinary reasons at 3 exactly as before', () => {
+    expect(drawerReasons(['a', 'b', 'c', 'd', 'e'])).toEqual(['a', 'b', 'c']);
   });
 });

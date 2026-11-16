@@ -260,6 +260,13 @@ describe('DealDrawer — Underwriting panel with a governor-demoted score', () =
     expect(await screen.findByText('Governor-demoted (was T1)')).toBeTruthy();
   });
 
+  it('shows a governor open item even when 3+ engine reasons precede it (OI-404 follow-up)', async () => {
+    const dscr = 'Governor open item: DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered';
+    renderFor(candidateWith('T2', 'WATCH', null, ['Composite 80.1/100 -> T1.', 'Capped T1 -> T2: a Stage-0 gate input is unconfirmed.', 'Notes: DD-critical unresolved: roof.', 'Fourth engine reason', dscr]));
+    expect(await screen.findByText(`· ${dscr}`)).toBeTruthy();
+    expect(screen.queryByText('· Fourth engine reason')).toBeNull();
+  });
+
   it('does not mark a native PASS', async () => {
     renderFor(candidateWith('PASS', 'PASS', true, ['Composite below T2']));
     await waitFor(() => expect(screen.getAllByText('PASS').length).toBeGreaterThan(0));

@@ -5,7 +5,7 @@ import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-rea
 import type { PortfolioSnapshot, Deal, DealStage, CompSet, AcquisitionInput, AcquisitionScore, RankedCandidate } from '@contracts/index';
 import type { DraftRequest } from './draft';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
-import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
+import { drawerReasons, effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
 import { rcDealFor, replacementCostAnalysis } from './replacement-cost';
@@ -436,7 +436,8 @@ function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | n
               {demoted && <Badge tone="red">{demoted}</Badge>}
               {score.reasons.length > 0 && (
                 <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--text-secondary)' }}>
-                  {score.reasons.slice(0, 3).map((r, i) => (
+                  {/* First 3 reasons + any governor open item beyond them (OI-404 follow-up: the DSCR item is appended last). */}
+                  {drawerReasons(score.reasons).map((r, i) => (
                     <li key={i}>· {r}</li>
                   ))}
                 </ul>
