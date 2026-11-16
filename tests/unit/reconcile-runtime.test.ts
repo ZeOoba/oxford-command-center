@@ -597,6 +597,30 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     );
   });
 
+  it('names a blank Loan Balance cell as blank, never as $0 (audit 2026-11-12 HIGH #2)', () => {
+    const blank = { ...EASTON, loanBalance: 0, flags: [{ entity: 'p-easton', field: 'governorInputBlank', issue: 'blank', rawValue: 'loanBalance', severity: 'warn' }] };
+    const flags = checkDebtBasis(debtSnap([blank as P], [EASTON_LOAN]));
+    expect(flags[0]!.issue).toMatch(/^29000 Information Lane, Easton MD: Property NOI sheet loan balance blank vs loan schedule \$2,456,789/);
+  });
+
+  it('the residual guard says the property-row total is incomplete when a Loan Balance is blank, never a bare total (refute wf_da5abccb-d31)', () => {
+    const beta: P = { id: 'p-beta', name: 'Beta Flex', type: 'Flex', lender: 'Bank B', loanBalance: 200_999 };
+    const betaLoan: L = { id: 'b-beta', name: 'Beta Loan', direction: 'borrower', absBalance: 200_000, lender: 'Bank B', counterparty: 'Bank B', collateralProperty: 'Beta Flex' };
+    const blank = { id: 'p-blank', name: 'Charlie Flex', type: 'Flex', lender: 'Bank C', loanBalance: 0, flags: [{ entity: 'p-blank', field: 'governorInputBlank', issue: 'blank', rawValue: 'loanBalance', severity: 'warn' }] };
+    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_457_788.12 }, beta, blank as P], [EASTON_LOAN, betaLoan]));
+    const root = flags.find((f) => f.field === 'debt.basis')!;
+    expect(root.issue).toMatch(/^Overview Total Debt \(Σ investment-row loan balances, Property NOI sheet\) \$2,658,787 \(incomplete: blank Loan Balance on Charlie Flex\) vs /);
+  });
+
+  it('the affiliate-notes flag names a blank affiliate balance instead of printing it as $0 (refute wf_da5abccb-d31)', () => {
+    const blankRarig = { ...RARIG, loanBalance: 0, flags: [{ entity: 'p-rarig', field: 'governorInputBlank', issue: 'blank', rawValue: 'loanBalance', severity: 'warn' }] };
+    const flags = checkDebtBasis(debtSnap([blankRarig as P], [LOAN_3883]));
+    expect(flags.map((f) => f.field)).toEqual(['debt.basis.affiliate']);
+    expect(flags[0]!.issue).toBe(
+      'Affiliate notes: Property NOI sheet $0 (incomplete: balance blank on 1100 Rarig Ave, Columbus OH) (rows with an Oxford-affiliate lender) vs loan schedule $333,333 (affiliate borrower loans) — gap $333,333',
+    );
+  });
+
   it('a property row with a balance but no attributed loan is listed', () => {
     const flags = checkDebtBasis(debtSnap([{ id: 'p-a', name: 'Alpha Flex', type: 'Flex', lender: 'Lender 08', loanBalance: 1_000_000 }], []));
     expect(flags.map((f) => f.field)).toEqual(['debt.basis.property.p-a']);

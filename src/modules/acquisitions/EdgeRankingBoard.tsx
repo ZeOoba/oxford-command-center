@@ -11,15 +11,15 @@
 // expandable rows, so a row click opens the detail panel directly beneath the table; its headers are
 // plain strings, so header tooltips are replaced by the always-visible "Column definitions" list.
 import { useId, useState } from 'react';
-import { EDGE_OBSERVED_STATUSES, SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeSeriesKey, type EdgeUnit } from '@contracts/edge';
+import { EDGE_OBSERVED_STATUSES, SERIES_UNITS, type EdgeMarket, type EdgeMarketsResponse, type EdgeNewsEntry, type EdgeNewsResponse, type EdgeSeriesKey, type EdgeUnit } from '@contracts/edge';
 import { Card, CardHeader } from '@/primitives/Card';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge } from '@/primitives/Badge';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { Sparkline } from '@/charts/Sparkline';
 import {
-  EDGE_BOARD_COLUMNS, EDGE_PICKER_SERIES, edgeCellDisplay, edgeSeriesHeader, edgeStatusLabel, filterEdgeMarkets,
-  formatEdgeValue, isBuyBox, sortEdgeMarkets,
+  EDGE_BOARD_COLUMNS, EDGE_PICKER_SERIES, edgeCellDisplay, edgeNewsLabel, edgeSeriesHeader, edgeStatusLabel, filterEdgeMarkets,
+  formatEdgeValue, formatJobsYoy, indexEdgeNews, isBuyBox, sortEdgeMarkets,
   type EdgeBoardSortKey, type EdgeBoardState, type EdgeSetFilter,
 } from './edge-hooks';
 
@@ -58,6 +58,7 @@ function StatusMarker({ label }: { label: string | null }) {
 
 interface Props {
   data: EdgeMarketsResponse;
+  news?: EdgeNewsResponse | null;
   board: EdgeBoardState;
   onBoardChange: (next: EdgeBoardState) => void;
 }
@@ -94,7 +95,7 @@ function sparklineLabel(points: readonly number[], unit: EdgeUnit): string {
   return `Trend: ${formatEdgeValue(first, unit) ?? '—'} to ${formatEdgeValue(last, unit) ?? '—'} over ${points.length} observed years`;
 }
 
-function EdgeMarketDetail({ id, market, data, onClose }: { id: string; market: EdgeMarket; data: EdgeMarketsResponse; onClose: () => void }) {
+function EdgeMarketDetail({ id, market, data, newsEntry, newsStale, onClose }: { id: string; market: EdgeMarket; data: EdgeMarketsResponse; newsEntry: EdgeNewsEntry | null; newsStale: boolean; onClose: () => void }) {
   return (
     <div
       id={id}
@@ -109,6 +110,13 @@ function EdgeMarketDetail({ id, market, data, onClose }: { id: string; market: E
         </h3>
         <button type="button" onClick={onClose} style={CONTROL_STYLE}>Close</button>
       </div>
+      {newsEntry && newsEntry.signal !== 'none' && (
+        <p className="mb-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
+          <span style={{ fontWeight: 600 }}>{`News signal: ${edgeNewsLabel(newsEntry.signal).text}${newsStale ? ' (stale)' : ''}.`}</span>
+          {newsEntry.jobsYoy !== null && ` ${formatJobsYoy(newsEntry.jobsYoy)} year over year (BLS).`}
+          {newsEntry.note && ` ${newsEntry.note}`}
+        </p>
+      )}
       {market.subs.length === 0 ? (
         <p className="text-2xs" style={MUTED}>CoStar publishes no submarket breakdown for this metro.</p>
       ) : (
@@ -171,7 +179,10 @@ function EdgeMarketDetail({ id, market, data, onClose }: { id: string; market: E
   );
 }
 
-export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
+export function EdgeRankingBoard({ data, news = null, board, onBoardChange }: Props) {
+  const newsIndex = indexEdgeNews(news);
+  const newsShown = newsIndex.size > 0;
+  const newsStale = news?.stale ?? false;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailId = useId();
   const patch = (next: Partial<EdgeBoardState>) => onBoardChange({ ...board, ...next });
@@ -224,6 +235,23 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
         </div>
       ),
     },
+    ...(newsShown
+      ? [{
+          key: 'news',
+          header: 'News signal',
+          render: (m: EdgeMarket) => {
+            const e = newsIndex.get(m.id);
+            if (!e || e.signal === 'none') return <span style={MUTED}>—</span>;
+            const label = edgeNewsLabel(e.signal);
+            return (
+              <span className="inline-flex items-center gap-1.5" title={e.note || undefined}>
+                <Badge tone={newsStale ? 'neutral' : label.tone}>{newsStale ? `${label.text} (stale)` : label.text}</Badge>
+                {e.jobsYoy !== null && <span className="num text-2xs" style={MUTED}>{formatJobsYoy(e.jobsYoy)}</span>}
+              </span>
+            );
+          },
+        } satisfies Column<EdgeMarket>]
+      : []),
     ...seriesColumns.map(
       ({ field, header }): Column<EdgeMarket> => ({
         key: field,
@@ -308,7 +336,7 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
           minWidth={900}
         />
       </div>
-      {selected && <EdgeMarketDetail id={detailId} market={selected} data={data} onClose={() => setSelectedId(null)} />}
+      {selected && <EdgeMarketDetail id={detailId} market={selected} data={data} newsEntry={newsIndex.get(selected.id) ?? null} newsStale={newsStale} onClose={() => setSelectedId(null)} />}
       <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 px-3 pb-2 text-2xs md:grid-cols-2" style={MUTED}>
         {EDGE_BOARD_COLUMNS.map(({ field, header }) => (
           <div key={field} className="flex gap-1.5">

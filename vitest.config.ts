@@ -13,11 +13,18 @@ const ciMaxWorkers = ((): number | undefined => {
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-      '@contracts': fileURLToPath(new URL('./src/contracts', import.meta.url)),
-      '@analytics': fileURLToPath(new URL('./src/analytics', import.meta.url)),
-    },
+    alias: [
+      // The ratified RCT is local-only (docs/ops/rct-runtime-config.md). Every bundled import of it (the drawer, the
+      // edge Function) resolves to the committed synthetic stand-in under test, so tests never depend on, or print,
+      // the real table, whether or not this checkout holds it.
+      {
+        find: /^(?:.*[\\/])?config[\\/]replacement-cost\.v3\.json$/,
+        replacement: fileURLToPath(new URL('./fixtures/synthetic/config/replacement-cost.v3.json', import.meta.url)),
+      },
+      { find: '@contracts', replacement: fileURLToPath(new URL('./src/contracts', import.meta.url)) },
+      { find: '@analytics', replacement: fileURLToPath(new URL('./src/analytics', import.meta.url)) },
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+    ],
   },
   test: {
     environment: 'jsdom',

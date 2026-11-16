@@ -22,8 +22,60 @@ export function externalDebtSentence(d: DebtSummary): string {
   return `External debt ${fmtUsdCompact(d.externalDebt)} at ${rate} weighted (loan schedule, third-party borrower loans).${aff}`;
 }
 
+/** Names of the rows whose blank Loan Balance makes aggregate LTV incomplete (structural, never parsed
+ *  from prose — a name may itself contain a dash). Empty when complete. */
+export function ltvIncompleteNames(k: Pick<PortfolioKpis, 'ltvIncomplete'>): string[] {
+  return (k.ltvIncomplete ?? []).map((r) => r.name);
+}
+
+/** Names of the rows whose blank NOI is left out of Σ NOI. Empty when complete. */
+export function noiIncompleteNames(k: Pick<PortfolioKpis, 'noiIncomplete'>): string[] {
+  return (k.noiIncomplete ?? []).map((r) => r.name);
+}
+
+/** "$X", or "$X (incomplete: excludes blank NOI on …)". No "at least": unlike a loan balance, a
+ *  blank NOI may be negative (a vacant row with carrying costs), so no bound direction is claimed. */
+export function portfolioNoiText(k: PortfolioKpis): string {
+  const gap = noiIncompleteNames(k);
+  return gap.length > 0 ? `${fmtUsdCompact(k.noi.value)} (incomplete: excludes blank NOI on ${gap.join(', ')})` : fmtUsdCompact(k.noi.value);
+}
+
+/** Names of the affiliate-lender rows whose blank balance leaves affiliateDebt incomplete. */
+export function affiliateIncompleteNames(k: Pick<PortfolioKpis, 'affiliateIncomplete'>): string[] {
+  return (k.affiliateIncomplete ?? []).map((r) => r.name);
+}
+
+/** The affiliate-notes amount for a text surface: "$X", "$X (incomplete: balance blank on …)",
+ *  "balance blank on …" when the only affiliate note is blank, or null when there is none
+ *  (refute wf_da5abccb-d31: a blank affiliate balance used to drop the disclosure entirely). */
+export function affiliateNotesAmountText(k: Pick<PortfolioKpis, 'affiliateDebt' | 'affiliateIncomplete'>): string | null {
+  const blank = affiliateIncompleteNames(k);
+  const v = k.affiliateDebt.value;
+  if (v) return blank.length > 0 ? `${fmtUsdCompact(v)} (incomplete: balance blank on ${blank.join(', ')})` : fmtUsdCompact(v);
+  return blank.length > 0 ? `balance blank on ${blank.join(', ')}` : null;
+}
+
+/** Overview debt bullet: a lower bound is never printed as a total. */
+export function portfolioDebtLine(k: PortfolioKpis): string {
+  const blankAff = affiliateIncompleteNames(k);
+  const aff = k.affiliateDebt.value
+    ? ` · +${fmtUsdCompact(k.affiliateDebt.value)} affiliate notes excluded${blankAff.length > 0 ? ` (incomplete: balance blank on ${blankAff.join(', ')})` : ''}`
+    : blankAff.length > 0 ? ` · affiliate notes excluded (balance blank on ${blankAff.join(', ')})` : '';
+  const gap = ltvIncompleteNames(k);
+  return gap.length > 0
+    ? `• Debt at least ${fmtUsdCompact(k.totalDebt.value)} (property loan balances; LTV incomplete — blank Loan Balance on ${gap.join(', ')})${aff}.`
+    : `• Debt ${fmtUsdCompact(k.totalDebt.value)} (property loan balances; LTV ${fmtPct(k.ltv.value)})${aff}.`;
+}
+
 export function portfolioLtvSentence(k: PortfolioKpis): string {
-  const aff = k.affiliateDebt.value ? `; ${fmtUsdCompact(k.affiliateDebt.value)} of affiliate notes excluded` : '';
+  const blankAff = affiliateIncompleteNames(k);
+  const aff = k.affiliateDebt.value
+    ? `; ${fmtUsdCompact(k.affiliateDebt.value)} of affiliate notes excluded${blankAff.length > 0 ? ` (incomplete: balance blank on ${blankAff.join(', ')})` : ''}`
+    : blankAff.length > 0 ? `; affiliate notes excluded (balance blank on ${blankAff.join(', ')})` : '';
+  // Audit 2026-11-12 HIGH #2: a blank Loan Balance makes the aggregate incomplete. Say so, and name
+  // the debt as a lower bound, rather than printing a bare dash beside an understated total.
+  const gap = ltvIncompleteNames(k);
+  if (gap.length > 0) return `Portfolio LTV incomplete (blank Loan Balance on ${gap.join(', ')}); property loan balances of at least ${fmtUsdCompact(k.totalDebt.value)} ÷ investment value${aff}.`;
   return `Portfolio LTV ${fmtPct(k.ltv.value)} (property loan balances ${fmtUsdCompact(k.totalDebt.value)} ÷ investment value${aff}).`;
 }
 

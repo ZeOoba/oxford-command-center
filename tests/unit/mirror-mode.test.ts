@@ -115,7 +115,10 @@ describe('the manual deploy path and the template', () => {
 
   it('deploy:mirror prechecks REDACTED-only before it builds, and build:mirror scans dist/ after the build', () => {
     expect(pkg.scripts['deploy:mirror']).toMatch(/^tsx scripts\/scan-mirror-dist\.ts --precheck-redacted-only && npm run build:mirror && /);
-    expect(pkg.scripts['build:mirror']).toBe('npm run bake && npm run build && tsx scripts/scan-mirror-dist.ts');
+    // check:rct-pin runs after bake and before build. The bundled RCT must be the pinned ratified table before vite and
+    // wrangler bundle it. bake reads no RCT, and it runs the Daily Brief, which must not stop because RCT_PIN_KEY is missing
+    // (merge gate G3; docs/ops/rct-runtime-config.md).
+    expect(pkg.scripts['build:mirror']).toBe('npm run bake && npm run check:rct-pin && npm run build && tsx scripts/scan-mirror-dist.ts');
   });
 
   it('env.example no longer offers MIRROR_INCLUDE_CONFIDENTIAL as a .env setting', () => {

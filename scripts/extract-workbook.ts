@@ -2,6 +2,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
+import { noiTotalSummary } from '../src/analytics/noi-incomplete';
+import { incompleteGovernorRows } from '../src/analytics/governor-inputs';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
@@ -143,7 +145,8 @@ async function main() {
   console.log(`Properties:        ${p.length}`);
   console.log(`  Total SF:        ${sfTotal.toLocaleString()}`);
   console.log(`  Oxford value:    $${Math.round(valTotal).toLocaleString()}`);
-  console.log(`  NOI (Oxford):    $${Math.round(noiTotal).toLocaleString()}`);
+  // A blank workbook NOI is summed as $0: name it, never a confident total (NOI-reader sweep).
+  console.log(`  NOI (Oxford):    ${noiTotalSummary(noiTotal, incompleteGovernorRows(p, ['noi']).map((r) => r.name))}`);
   console.log(`Leases:            ${snapshot.leases.length}`);
   console.log(`  Annual rent:     $${Math.round(annualRent).toLocaleString()}`);
   console.log(`Loans:             ${snapshot.loans.length} (${balloons.length} balloon: ${balloons.join(', ') || '—'})`);

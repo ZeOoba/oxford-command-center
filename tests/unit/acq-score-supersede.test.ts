@@ -23,12 +23,13 @@ import { persistAndLogScore, logAcqOutcome } from '../../server/warehouse/acq-en
 import { buildBrainReport } from '../../server/warehouse/brain-report';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { acquisitionDealCounts, calibrationLog, calibrationReport, computeInputsVersion, logVerdicts, resolveManualOutcome } from '../../server/warehouse/calibration';
-import { parseRuleset, loadRatifiedRct, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { classifyLatestScore, liveScoringRegime } from '../../server/warehouse/acq-score-freshness';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 
 const STRONG_RAW: Record<string, unknown> = {
   dealId: 'supersede-strong',

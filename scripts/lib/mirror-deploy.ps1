@@ -79,7 +79,8 @@ function Invoke-MirrorWranglerDeploy {
 function Assert-MirrorPreDeployAccessGate {
   <#
     Probe the LIVE production target BEFORE any FULL bake: the root, every baked JSON the deploy
-    publishes (the floor list, plus warehouse.json with -IncludeWarehouse) and every Function route
+    publishes (the floor list, plus warehouse.json with -IncludeWarehouse or whenever it is staged in
+    -StagedDir, e.g. a daily bake carried forward) and every Function route
     in -FunctionsDirs, on the production URL only (there is no new per-deployment alias yet). Throws
     GATE CHECK FAILED (exposure observed now, on what is live) or GATE CHECK INCONCLUSIVE, with a
     PRE-DEPLOY context, exactly like the post-deploy check. Returns the probe results on a pass.

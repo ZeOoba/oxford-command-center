@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, MacroSnapshot } from '../../src/contracts/index';
+import type { PortfolioSnapshot, MacroSnapshot, Property } from '../../src/contracts/index';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/conditions';
@@ -9,7 +9,12 @@ import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouseReadOnly } from '../warehouse/db';
 import { insuranceConditions, insuranceWarehouseDriftConditions, fetchCurrentInsuranceRows } from '../warehouse/insurance-conditions';
+import { propertyConditionConditions } from '../warehouse/property-condition-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
+import { dscrIncompleteRows, GOVERNOR_INPUT_FIELDS, GOVERNOR_INPUT_LABEL } from '../../src/analytics/governor-inputs';
+import { portfolioNoiText } from '../ai/debt-basis-copy';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
+import { pfCrosscheckInsights } from '../property-financials/crosscheck-insights';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
 
 /** Workbook DATA month as "Mon YYYY" (e.g. "Jun 2026"), for the brief header freshness label. */
@@ -24,6 +29,17 @@ const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const DASHBOARD_URL = process.env.BRIEF_DASHBOARD_URL ?? 'https://ora-command-center.pages.dev';
 // Resolved per write (not at import) so a test or caller can redirect it after the module loads.
 const healthPath = (): string => process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
+
+/** Daily-brief DSCR line: the lowest workbook DSCR, plus the rows whose blank NOI / Debt Service leave
+ *  the DSCR picture incomplete (audit 2026-11-12 HIGH #2: a nulled 0x cell must not vanish silently). */
+export function briefDscrSummary(properties: readonly Property[]): string {
+  const dscrs = properties.map((p) => p.dscr).filter((d): d is number => d !== null);
+  const base = dscrs.length ? `min ${Math.min(...dscrs).toFixed(2)}x` : '—';
+  const gaps = dscrIncompleteRows(properties.filter(isInvestmentProperty));
+  if (gaps.length === 0) return base;
+  const fields = GOVERNOR_INPUT_FIELDS.filter((f) => gaps.some((r) => r.fields.includes(f))).map((f) => GOVERNOR_INPUT_LABEL[f]).join('/');
+  return `${base} · incomplete: blank ${fields} on ${gaps.length} row${gaps.length === 1 ? '' : 's'}`;
+}
 
 export interface RunDeps {
   statePath?: string;
@@ -124,6 +140,43 @@ export async function runBrief(
     });
   }
 
+  // ── Property Financials cross-checks (tax timing, insurance tracker vs ledger) ─────────────────────
+  // Fail-open and fail-loud inside pfCrosscheckInsights: a stale/unreadable dataset yields one warning,
+  // never findings. All warning/info, so nothing here reaches the per-critical alert email below.
+  insights.push(...(await pfCrosscheckInsights(snapshot, now)));
+
+  // ── Warehouse-backed Property Condition conditions (Phase 3) ───────────────
+  // Its OWN guarded block, deliberately separate from the insurance block above: a failure here must
+  // never drop the insurance-expiry criticals (the email path), and vice versa. Severity ceiling is
+  // warning/info, so nothing here emails — it rides the digest / Ops Hub path. A warehouse without
+  // migration 035 yields no insights (propertyConditionConditions returns [] when pca_reports is
+  // absent: not deployed there, not a failure); any other read error is surfaced, not swallowed.
+  try {
+    const warehousePath =
+      process.env['WAREHOUSE_DB'] ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    if (existsSync(warehousePath)) {
+      const wdb = openWarehouseReadOnly(warehousePath);
+      try {
+        insights.push(...propertyConditionConditions(wdb, refDate));
+      } finally {
+        wdb.close();
+      }
+    }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`brief: property condition conditions unavailable — ${reason}`);
+    insights.push({
+      id: 'brief-property-condition-conditions-unavailable',
+      severity: 'warning',
+      category: 'data',
+      title: 'Property condition alerts unavailable this run',
+      detail: `The warehouse could not be read for property condition conditions (${reason}). Warranty and dated-PCA alerts were not evaluated this run.`,
+      impactAnnualUsd: null,
+      spine: 'B',
+      provenance: 'absent',
+    });
+  }
+
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
   const { toAlert, nextAlerted, nextClearStreaks } = diffCriticalAlerts(criticalIds, state);
 
@@ -157,7 +210,6 @@ export async function runBrief(
   let briefSent = false;
   if (shouldSendBrief(state, nowEt)) {
     const a = buildAnalytics(snapshot, 'Base', refDate);
-    const dscrs = snapshot.properties.map((p) => p.dscr).filter((d): d is number => d !== null);
     const dealCounts = countByStage(snapshot);
     const criticalDates = upcomingDates(snapshot, a.criticalDates, refDate);
 
@@ -178,11 +230,11 @@ export async function runBrief(
         criticalDates,
         dealCounts,
         kpis: {
-          noi: fmtUsdCompact(a.kpis.noi.value),
+          noi: portfolioNoiText(a.kpis),
           value: fmtUsdCompact(a.kpis.value.value) + otherHoldings,
           occupancy: fmtPct(a.kpis.occupancy.value),
           cash: fmtUsdCompact(snapshot.cash.totalCash),
-          dscrSummary: dscrs.length ? `min ${Math.min(...dscrs).toFixed(2)}x` : '—',
+          dscrSummary: briefDscrSummary(snapshot.properties),
         },
         tasks: snapshot.tasks
           .filter((t) => t.status === 'overdue' || t.status === 'pending')

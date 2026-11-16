@@ -9,8 +9,8 @@
 // WarehouseUnavailableError and the UI says "Edge is local-only".
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  EDGE_OBSERVED_STATUSES, EDGE_SERIES, SERIES_UNITS, EdgeMarketsResponse, EdgePullItem, EdgePullQueueResponse,
-  type EdgeMarket, type EdgeSeriesCell, type EdgeSeriesKey, type EdgeStatus, type EdgeUnit, type RecordPullRequest,
+  EDGE_OBSERVED_STATUSES, EDGE_SERIES, SERIES_UNITS, EdgeMarketsResponse, EdgeNewsResponse, EdgePullItem, EdgePullQueueResponse,
+  type EdgeMarket, type EdgeNewsEntry, type EdgeNewsSignal, type EdgeSeriesCell, type EdgeSeriesKey, type EdgeStatus, type EdgeUnit, type RecordPullRequest,
 } from '@contracts/edge';
 import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import type { Deal, Market } from '@contracts/index';
@@ -21,6 +21,7 @@ import { fetchJson, isWarehouseUnavailable, QUERY_OPTS } from '../intel/hooks';
 export const EDGE_KEYS = {
   markets: ['warehouse', 'edge', 'markets'] as const,
   pullQueue: ['warehouse', 'edge', 'pull-queue'] as const,
+  news: ['warehouse', 'edge', 'news'] as const,
 };
 
 /** One retry for a real failure; none when the Brain Server is absent (mirror / server down). */
@@ -36,6 +37,37 @@ export function useEdgeMarkets(opts: { enabled?: boolean } = {}) {
     retry: retryUnlessUnavailable,
     enabled: opts.enabled ?? true,
   });
+}
+
+/** News overlay annotations. Optional by design: a failure here never blocks the board. */
+export function useEdgeNews() {
+  return useQuery({
+    queryKey: EDGE_KEYS.news,
+    queryFn: async () => EdgeNewsResponse.parse(await fetchJson<unknown>('/api/warehouse/edge/news')),
+    staleTime: 5 * 60_000,
+    retry: retryUnlessUnavailable,
+  });
+}
+
+/** Display wording for a news signal. Single-sourced so the board, detail panel and tests agree. */
+export function edgeNewsLabel(signal: EdgeNewsSignal): { text: string; tone: 'green' | 'red' | 'amber' | 'neutral' } {
+  switch (signal) {
+    case 'up': return { text: 'Improving', tone: 'green' };
+    case 'down': return { text: 'Weakening', tone: 'red' };
+    case 'mixed': return { text: 'Mixed', tone: 'amber' };
+    default: return { text: 'No new item', tone: 'neutral' };
+  }
+}
+
+/** marketId to entry for the loaded overlay; empty unless the overlay loaded (availability 'ok'). */
+export function indexEdgeNews(news: EdgeNewsResponse | null | undefined): Map<string, EdgeNewsEntry> {
+  return new Map(news && news.availability === 'ok' ? news.entries.map((e) => [e.marketId, e] as const) : []);
+}
+
+export function formatJobsYoy(v: number | null): string {
+  if (v === null) return '—';
+  const r = Number(v.toFixed(1)) || 0; // round first so the sign matches the shown digits; -0 becomes 0
+  return `${r > 0 ? '+' : ''}${r.toFixed(1)}% jobs`;
 }
 
 export function useEdgePullQueue() {

@@ -9,8 +9,9 @@ import {
 } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
 import { isInvestmentProperty, landlordCostsNotSourced } from '../../src/analytics/property-basis';
+import { BLANK_IN_WORKBOOK, blankGovernorInputs } from '../../src/analytics/governor-inputs';
 import { isAffiliateNoteProperty, propertyLtvLabel } from '../../src/analytics/debt-basis';
-import { TOTAL_DEBT_BASIS, EXTERNAL_DEBT_BASIS, debtBasisIssues } from './debt-basis-copy';
+import { TOTAL_DEBT_BASIS, EXTERNAL_DEBT_BASIS, affiliateIncompleteNames, affiliateNotesAmountText, debtBasisIssues, ltvIncompleteNames, noiIncompleteNames, portfolioNoiText } from './debt-basis-copy';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { referenceDate } from '../config';
@@ -214,18 +215,31 @@ const EXECUTORS: Record<ToolName, Exec> = {
         tenants: k.tenantCount.value,
         totalSf: k.totalSf.value,
         value: fmtUsdCompact(k.value.value),
-        noi: fmtUsdCompact(k.noi.value),
-        weightedCapRate: fmtPct(k.weightedCapRate.value),
+        noi: portfolioNoiText(k),
+        weightedCapRate: noiIncompleteNames(k).length > 0 ? `incomplete: ${fmtPct(k.weightedCapRate.value)}` : fmtPct(k.weightedCapRate.value),
+        ...(noiIncompleteNames(k).length > 0 ? { noiIncomplete: noiIncompleteNames(k) } : {}),
         occupancy: fmtPct(k.occupancy.value),
         ltv: fmtPct(k.ltv.value),
-        totalDebt: fmtUsdCompact(k.totalDebt.value),
+        // Audit 2026-11-12 HIGH #2: a blank Loan Balance makes LTV incomplete and totalDebt a lower bound.
+        totalDebt: ltvIncompleteNames(k).length > 0 ? `at least ${fmtUsdCompact(k.totalDebt.value)} (lower bound)` : fmtUsdCompact(k.totalDebt.value),
+        ...(ltvIncompleteNames(k).length > 0 ? { ltvIncomplete: ltvIncompleteNames(k) } : {}),
         totalDebtBasis: TOTAL_DEBT_BASIS,
-        ...(k.affiliateDebt.value ? { affiliateNotesExcluded: fmtUsdCompact(k.affiliateDebt.value) } : {}),
+        ...(affiliateNotesAmountText(k) !== null ? { affiliateNotesExcluded: affiliateNotesAmountText(k) } : {}),
+        ...(affiliateIncompleteNames(k).length > 0 ? { affiliateIncomplete: affiliateIncompleteNames(k) } : {}),
         ...(debtBasisIssues(s.dataQuality ?? []).length ? { debtBasisFlags: debtBasisIssues(s.dataQuality ?? []) } : {}),
         totalCash: fmtUsdCompact(k.totalCash.value),
         waltYears: k.walt.value,
         valueByMarket: marketAllocation(investment, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
-        noiByMarket: marketAllocation(investment, 'noi').map((m) => ({ market: m.market, noi: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
+        noiByMarket: marketAllocation(investment, 'noi').map((m) => ({
+          market: m.market,
+          noi: fmtUsdCompact(m.value),
+          pct: fmtPct(m.pct),
+          ...(m.incomplete ? { incomplete: m.incomplete } : {}),
+        })),
+        // Every market's pct shares the incomplete total, not only the market holding the blank row.
+        ...(noiIncompleteNames(k).length > 0
+          ? { noiByMarketNote: `incomplete: blank NOI on ${noiIncompleteNames(k).join(', ')} is summed as $0, so every market's NOI share is incomplete` }
+          : {}),
         ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
         note:
           'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.' +
@@ -247,7 +261,10 @@ const EXECUTORS: Record<ToolName, Exec> = {
     return {
       data: matches.map((p) => ({
         name: p.name, market: p.market, type: p.type, sf: p.sf, occupancy: fmtPct(p.occPct),
-        noi: fmtUsdCompact(p.noi), capRate: fmtPct(p.capRate), dscr: p.dscr, ltv: propertyLtvLabel(p), affiliateNote: isAffiliateNoteProperty(p),
+        // Audit 2026-11-12 HIGH #2: a blank workbook NOI is unknown, never "$0".
+        noi: blankGovernorInputs(p).includes('noi') ? BLANK_IN_WORKBOOK : fmtUsdCompact(p.noi),
+        capRate: fmtPct(p.capRate), dscr: p.dscr, ltv: propertyLtvLabel(p), affiliateNote: isAffiliateNoteProperty(p),
+        ...(blankGovernorInputs(p).length > 0 ? { governorInputsBlank: blankGovernorInputs(p) } : {}),
         value: fmtUsdCompact(p.oxfordValue), lender: p.lender, tenants: p.tenantCount,
         ...(landlordCostsNotSourced(p)
           ? { noiCaveat: 'NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced, so NOI and cap rate are overstated by them' }
@@ -421,9 +438,11 @@ const EXECUTORS: Record<ToolName, Exec> = {
       data: {
         scenario,
         value: fmtUsdCompact(k.value.value),
-        noi: fmtUsdCompact(k.noi.value),
-        weightedCapRate: fmtPct(k.weightedCapRate.value),
+        noi: portfolioNoiText(k),
+        weightedCapRate: noiIncompleteNames(k).length > 0 ? `incomplete: ${fmtPct(k.weightedCapRate.value)}` : fmtPct(k.weightedCapRate.value),
+        ...(noiIncompleteNames(k).length > 0 ? { noiIncomplete: noiIncompleteNames(k) } : {}),
         ltv: fmtPct(k.ltv.value),
+        ...(ltvIncompleteNames(k).length > 0 ? { ltvIncomplete: ltvIncompleteNames(k) } : {}),
         ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
         note:
           (scenario === 'Base' ? 'Workbook figures.' : 'Modeled — derived from scenario factors.') +

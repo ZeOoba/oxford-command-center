@@ -1,9 +1,7 @@
 // tests/unit/acquisition-contract.test.ts
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { stableStringify } from '../../server/warehouse/stable-stringify';
 import {
   AcquisitionInput,
   AcquisitionRuleset,
@@ -16,7 +14,7 @@ const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const rctJson = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8'),
 );
 
 describe('acquisition ruleset contract (ratified v1)', () => {
@@ -68,62 +66,29 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(() => AcquisitionRuleset.parse(broken)).toThrow(/unique/);
   });
 
-  it('parses the ratified per-market Replacement-Cost Table (RCT v03)', () => {
+  // The ratified RCT is local-only (docs/ops/rct-runtime-config.md); these tests run on the committed synthetic stand-in,
+  // whose figures are invented. What used to be the value pins here (every market row, the fallback, the construction
+  // schedule) is now the keyed-HMAC pin in server/warehouse/rct-pin.ts, which every production load checks; the local
+  // ratified table is checked against it in tests/unit/rct-runtime-config.test.ts when present.
+  it('parses the per-market Replacement-Cost Table shape (synthetic stand-in)', () => {
     const rct = ReplacementCostTable.parse(rctJson);
     expect(rct.rctVersion).toBe(RCT_VERSION);
     expect(rct.ratification).toBe('ratified');
-    // Per-market, not flat. The old flat $125/$137.50/$150 had no market variation at all and sat
-    // at roughly HALF true all-in shallow-bay replacement cost — which made ORA too STRICT.
+    // Per-market, not flat: the old flat v1 table had no market variation at all.
     expect(Object.keys(rct.markets).length).toBeGreaterThanOrEqual(10);
-    expect(rct.markets['Columbus OH']!.low).toBeCloseTo(229.65, 2);
-    expect(rct.markets['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
+    expect(new Set(Object.values(rct.markets).map((m) => m.low)).size).toBeGreaterThan(1);
   });
 
-  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill v4.45, most recently 2026-11-12 — Chicago Cook County IL) — drift detector', () => {
-    // AUTHORITATIVE COPY: "Replacement Cost Table (RCT v03)" in the acquisition-underwriting skill.
-    // If this test fails, either the skill table was re-ratified (update these pins deliberately,
-    // with the new ratification) or this config drifted (the config is the bug — fix the config).
-    // The parse test above pins only two LOWs; this pins all 40 dollar values + proxy flags, so a
-    // partial edit of the Basis denominator can never slip through relational checks alone.
+  it('the synthetic stand-in carries a full construction schedule: tilt-up is the ×1.00 baseline, PEMB tilts up with SF, the unknown cap sits inside the PEMB range', () => {
     const rct = ReplacementCostTable.parse(rctJson);
-    expect(rct.ratifiedBy).toBe('Gabriel Goldberg');
-    expect(rct.ratifiedDate).toBe('2026-11-12'); // v3.2: Chicago row + construction schedule (table itself ratified 2026-07-14)
-    const ratifiedTable: Record<string, { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean }> = {
-      'Columbus OH':     { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
-      'Cincinnati OH':   { low: 251.46, point: 279.40, high: 307.34, cwHardPsf: 143.15, proxy: false },
-      'Kansas City MO':  { low: 227.90, point: 253.22, high: 278.54, cwHardPsf: 129.94, proxy: false },
-      'Indianapolis IN': { low: 253.83, point: 282.03, high: 310.24, cwHardPsf: 143.46, proxy: false },
-      'Mid-Atlantic':    { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: false }, // skill: "Maryland / Baltimore–DC"
-      'Madison WI':      { low: 229.08, point: 254.53, high: 279.98, cwHardPsf: 130.05, proxy: true },  // PROXY: Milwaukee
-      'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },  // PROXY: Detroit (weakest)
-      'Richmond VA':     { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: true },  // PROXY: Baltimore
-      'Des Moines IA':   { low: 231.66, point: 257.40, high: 283.14, cwHardPsf: 131.46, proxy: true },  // PROXY: Minneapolis
-      'Louisville KY':   { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false }, // SOURCED (skill correction 2026-08-11) — added here 2026-09-28, OI-354
-      'Chicago Cook County IL': { low: 225.59, point: 250.66, high: 275.73, cwHardPsf: 127.79, proxy: false }, // SOURCED (C&W 2025 small tier); ratified by Gabriel in-turn 2026-11-12
-    };
-    expect(Object.keys(rct.markets).sort()).toEqual(Object.keys(ratifiedTable).sort());
-    for (const [name, want] of Object.entries(ratifiedTable)) {
-      const got = rct.markets[name]!;
-      expect(got.low, `${name} LOW`).toBeCloseTo(want.low, 2);
-      expect(got.point, `${name} POINT`).toBeCloseTo(want.point, 2);
-      expect(got.high, `${name} HIGH`).toBeCloseTo(want.high, 2);
-      expect(got.cwHardPsf, `${name} C&W hard`).toBeCloseTo(want.cwHardPsf, 2);
-      expect(got.proxy, `${name} proxy flag`).toBe(want.proxy);
-    }
-    // Fallback must be exactly the cheapest row — Chicago Cook County IL since v3.2 (Kansas City before) ⇒ strictest floor.
-    expect(rct.psf).toEqual({ low: 225.59, mid: 250.66, high: 275.73 });
-  });
-
-  it('pins the Construction-Type Multiplier Schedule and the adder schedule to SKILL.md v4.37 / v4.45', () => {
-    const rct = ReplacementCostTable.parse(rctJson);
-    expect(rct.constructionMultipliers).toEqual({
-      'tilt-precast': 1, cmu: 0.97, brick: 1.1, hybrid: 0.93,
-      pemb: { under20k: 0.88, under40k: 0.9, upTo50k: 0.92, above50k: 0.92 },
-      unknownCap: 0.9,
-    });
-    expect(rct.adders).toEqual({
-      'heavy-office': 15, 'climate-controlled': 12, cranes: 18, esfr: 4, 'excess-site-work': 8, 'paving-lighting': 8,
-    });
+    const m = rct.constructionMultipliers;
+    expect(m['tilt-precast']).toBe(1);
+    expect(m.pemb.under20k).toBeLessThan(m.pemb.under40k);
+    expect(m.pemb.under40k).toBeLessThan(m.pemb.upTo50k);
+    expect(m.pemb.above50k).toBeGreaterThanOrEqual(m.pemb.upTo50k);
+    expect(m.unknownCap).toBeGreaterThanOrEqual(m.pemb.under20k);
+    expect(m.unknownCap).toBeLessThan(m.pemb.upTo50k);
+    expect(Object.keys(rct.adders).sort()).toEqual(['climate-controlled', 'cranes', 'esfr', 'excess-site-work', 'heavy-office', 'paving-lighting']);
   });
 
   it('refuses an RCT config without the construction schedule (fail closed, never a silent ×1.00)', () => {
@@ -165,19 +130,8 @@ describe('acquisition ruleset contract (ratified v1)', () => {
   });
 });
 
-// computeInputsVersion folds only the rctVersion STRING, not the table content, so editing a row without
-// bumping RCT_VERSION leaves every cached score keyed to the old denominator (found by the OI-354 refute:
-// Louisville KY was added to the table while the version stayed put). This pins content -> version.
-describe('RCT version pin: table content and RCT_VERSION must move together', () => {
-  // v3.2 widened the hash to the construction multipliers and adders: they move the denominator too.
-  const EXPECTED = { version: 'replacement-cost.v3.2', contentHash: '510201d2f896d463' };
-  it('the markets + fallback + construction schedule content hash matches the value recorded for this RCT_VERSION', () => {
-    const hash = createHash('sha256').update(stableStringify({
-      markets: rctJson.markets, psf: rctJson.psf, constructionMultipliers: rctJson.constructionMultipliers, adders: rctJson.adders,
-    })).digest('hex').slice(0, 16);
-    expect(
-      { version: RCT_VERSION, contentHash: hash },
-      'RCT table content changed: bump RCT_VERSION (src/contracts/acquisition.ts AND config rctVersion) so cached scores re-key, then update EXPECTED here',
-    ).toEqual(EXPECTED);
-  });
-});
+// computeInputsVersion folds only the rctVersion STRING, not the table content, so editing a row without bumping
+// RCT_VERSION would leave every cached score keyed to the old denominator (OI-354). That content -> version pin used to
+// be a plain SHA-256 here; in a public repo a plain hash confirms the values already in git history, so it is now the
+// keyed HMAC RATIFIED_RCT_HMAC (server/warehouse/rct-pin.ts), checked on every production load: a content change without
+// a new pin (and, by the re-ratification procedure, a new RCT_VERSION) fails closed. See rct-runtime-config.test.ts.

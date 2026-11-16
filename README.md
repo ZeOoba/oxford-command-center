@@ -128,7 +128,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 
 | Layer | Technology |
 |---|---|
-| Language | TypeScript (strict, `noUncheckedIndexedAccess`), Node >= 20 (CI on Node 24) |
+| Language | TypeScript (strict, `noUncheckedIndexedAccess`), Node >= 20 (CI on Node 24); Python >= 3.8 for the pre-push confidentiality scanner |
 | Client | React 19, Vite 6, TanStack Query + React Virtual, react-router-dom, React Aria Components, Tailwind CSS 4, visx, framer-motion, cmdk, PWA via `vite-plugin-pwa` |
 | Server | Hono on `@hono/node-server`, chokidar file watching, Server-Sent Events |
 | Data | ExcelJS (workbook + P&L parsing), better-sqlite3 (WAL) warehouse, sqlite-vec + `@huggingface/transformers` local embeddings for document search, pdf-parse / mammoth |
@@ -147,7 +147,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 | [`functions/`](functions/) | Cloudflare Pages Functions: `api/ai.ts`, `api/whoami.ts`, `api/warehouse/acquisition/score.ts`, shared Access JWT verification in `_shared/` |
 | [`scripts/`](scripts/) | Extraction, reconciliation, warehouse backfill/verify/drift/backup, importers, mirror bake and deploy, governance and drift gates, git-hook installers, Windows scheduled-task registration and their PowerShell smoke tests |
 | [`architecture/`](architecture/) | Architecture-lock docs plus `ownership.json` / `status.json`, enforced by `scripts/governance-check.ts` |
-| [`config/`](config/) | Ratified, versioned rule files (acquisition ruleset, replacement cost, liquidity policy, lease-market) |
+| [`config/`](config/) | Ratified, versioned rule files (acquisition ruleset, liquidity policy, lease-market). The replacement-cost table (`replacement-cost.v3.json`) is local-only and gitignored, pinned by keyed HMAC: [docs/ops/rct-runtime-config.md](docs/ops/rct-runtime-config.md) |
 | [`tests/`](tests/) | `unit/` (580+ Vitest test files), `e2e/` (Playwright smoke + axe a11y), `py/`, `fixtures/`, `support/` |
 | [`docs/`](docs/) | `adr/`, `constitution/`, `diagrams/`, `ops/` runbooks, `roadmap/`, `scheduled-tasks/`, `superpowers/` specs and plans, design notes |
 | [`.claude/`](.claude/) | Agent guardrails: PreToolUse hooks (see [`.claude/hooks/README.md`](.claude/hooks/README.md)) and the `refute-financial-change` workflow |
@@ -161,6 +161,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 ### Prerequisites
 
 - Node.js 20 or newer (CI uses 24) and npm
+- Python 3.8 or newer on PATH (`python`, `python3` or `py`): the pre-push confidentiality hook and `npm test` run the shared Python term scanner
 - Access to the master workbook (`.xlsx`) and the operator's local data files for live data; a fresh
   clone runs on synthetic stand-ins (see [Data and confidentiality model](#data-and-confidentiality-model))
 - Optional: Playwright Chromium (`npx playwright install chromium`) for end-to-end tests
@@ -236,6 +237,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | `check:schema-drift` | Cross-checks migration columns, Zod write schemas and bound INSERT/UPDATE arguments |
 | `check:bundle` | Bundle budget: entry < 250 kB gzip, lazy chunks < 60 kB gzip |
 | `check:refute` | Financial-decision commits must carry a `Refute-Reviewed:` / `Refute-Skip:` trailer (`--strict` in CI) |
+| `check:rct-pin` | The local replacement-cost table is the pinned ratified table (needs `RCT_PIN_KEY`); `-- --print` prints the pin for re-ratification |
 | `generate:confidential-scan-types` | Generates the gitignored `.d.mts` for the pre-push confidentiality scan |
 | `hooks:install` | Installs the `pre-push` and `commit-msg` git hooks (also run by `prepare`) |
 
@@ -278,7 +280,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 | Script | Purpose |
 |---|---|
 | `bake` | Bake `public/snapshot.json` + `public/macro.json` (redacted by default) |
-| `build:mirror` | `bake`, `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
+| `build:mirror` | `bake`, `check:rct-pin` (before anything is bundled), `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
 | `deploy:mirror` | Manual, REDACTED-only `wrangler pages deploy`: refuses if a FULL-mode variable is set; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
 | `worktree -- <add\|remove\|prune>` | Junction-safe worktree management (`scripts/safe-worktree.ts`) |
 
@@ -336,8 +338,9 @@ trailers. Doctrine: [`architecture/coding-standards.md`](architecture/coding-sta
 
 Installed by `npm install` (`prepare`) or `npm run hooks:install`:
 
-- **pre-push** — confidentiality scan of every pushed ref (fail-closed), a refute-trailer check, and
-  an advisory, never-blocking NOI cross-check.
+- **pre-push** — confidentiality scan of every pushed ref (fail-closed; confidential terms via the
+  shared Python scanner, then OCC payload checks), a refute-trailer check, and an advisory,
+  never-blocking NOI cross-check.
 - **commit-msg** — rejects malformed AI `Co-Authored-By:` trailers against an explicit allowlist.
 
 ## Data and confidentiality model

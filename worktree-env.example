@@ -25,6 +25,7 @@ WAREHOUSE_DB=./data/warehouse/finance.sqlite
 # Do NOT copy real secrets into a per-worktree .env that could be committed.
 # ANTHROPIC_API_KEY=
 # FRED_API_KEY=
+# RCT_PIN_KEY=   (only to score on the real, local-only RCT in a worktree; docs/ops/rct-runtime-config.md)
 
 # Notion Acq Pipeline sync (server/warehouse/acq-notion-sync.ts, POST /acq/sync/notion).
 # Notion internal integration token with read access to the Acquisition Pipeline Tracker DB.

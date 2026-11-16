@@ -45,9 +45,9 @@ function snapshot(properties: Property[], oxfordCash: number | null, totalCash: 
   } as unknown as PortfolioSnapshot;
 }
 
-function renderStrip(s: PortfolioSnapshot) {
-  const def = OVERVIEW_WIDGETS.find((w) => w.id === 'kpis');
-  if (!def) throw new Error('widget not registered: kpis');
+function renderStrip(s: PortfolioSnapshot, widgetId = 'kpis') {
+  const def = OVERVIEW_WIDGETS.find((w) => w.id === widgetId);
+  if (!def) throw new Error(`widget not registered: ${widgetId}`);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
   qc.setQueryData(SNAPSHOT_KEY, { snapshot: s, state: { status: 'fresh', source: 'workbook', lastUpdated: ASOF, lastError: null, workbookPath: 'test.xlsx', flagCount: 0 } });
   const Component = def.Component;
@@ -121,6 +121,68 @@ describe('Overview KpiStripWidget — governor bullet tiles', () => {
     cleanup();
     renderStrip(snapshot([{ ...levered, debtService: 0, dscr: null, loanBalance: 0, ltv: null, lender: null } as Property], 2_000_000));
     expect(screen.getByRole('img', { name: /DSCR not available — no levered properties/ })).toBeTruthy();
+  });
+
+  it('shows DSCR and LTV as incomplete (unknown, never ok or breach) when a levered row has a blank governor input (audit HIGH #2)', () => {
+    const blank = (field: string) => ({ entity: 'p2', field: 'governorInputBlank', issue: 'blank', rawValue: field, severity: 'warn' as const });
+    // Blank NOI parsed as $0 would read DSCR 0.00x → a false breach. Blank loan would drop $700K of debt → a false clear.
+    renderStrip(snapshot([levered, { ...thin, noi: 0, noiScenarioAdj: 0, loanBalance: 0, ltv: null, dscr: null, flags: [blank('noi'), blank('loanBalance')] } as Property], 2_000_000));
+    expect(tile('DSCR vs governor').getAttribute('data-state')).toBe('unknown');
+    expect(tile('LTV vs governor').getAttribute('data-state')).toBe('unknown');
+    expect(screen.getByRole('img', { name: /DSCR incomplete — blank NOI on Bravo Flex/ })).toBeTruthy();
+    expect(screen.getByRole('img', { name: /LTV incomplete — blank Loan Balance on Bravo Flex/ })).toBeTruthy();
+    expect(screen.getAllByText(/incomplete · blank .* on 1 levered row/).length).toBe(2);
+  });
+
+  it('still shows an LTV breach when the known debt alone exceeds the ceiling, despite a blank loan (refute wf_fe0c7b48-326)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'loanBalance', severity: 'warn' as const };
+    // Known third-party debt 2.4M / Σ value 5.0M = 48% ≥ lower bound > 40%, whatever the blank holds.
+    const heavy = { ...levered, id: 'p1', loanBalance: 2_400_000, oxfordValue: 4_000_000, ltv: 0.6 } as Property;
+    const unknownLoan = { ...levered, id: 'p3', index: 3, name: 'Charlie Flex', oxfordValue: 1_000_000, loanBalance: 0, ltv: null, flags: [blank] } as Property;
+    renderStrip(snapshot([heavy, unknownLoan], 2_000_000));
+    expect(tile('LTV vs governor').getAttribute('data-state')).toBe('breach');
+    expect(screen.getByRole('img', { name: /LTV at least 48\.0% against the 40\.0% ceiling, above ceiling \(incomplete — blank Loan Balance on Charlie Flex/ })).toBeTruthy();
+  });
+
+  it('withholds the lower-bound LTV breach when the blank-loan row also has no value (refute wf_6550093a-baa)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'loanBalance', severity: 'warn' as const };
+    const heavy = { ...levered, id: 'p1', loanBalance: 2_400_000, oxfordValue: 4_000_000, ltv: 0.6 } as Property;
+    const noValue = { ...levered, id: 'p3', index: 3, name: 'Charlie Flex', oxfordValue: 0, loanBalance: 0, ltv: null, flags: [blank] } as Property;
+    renderStrip(snapshot([heavy, noValue], 2_000_000));
+    expect(tile('LTV vs governor').getAttribute('data-state')).toBe('unknown');
+  });
+
+  it('keeps DSCR "watch" when the aggregate is incomplete but a known property is below the floor (refute wf_fe0c7b48-326)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'debtService', severity: 'warn' as const };
+    const unknownDs = { ...levered, id: 'p3', index: 3, name: 'Charlie Flex', debtService: 0, dscr: null, flags: [blank] } as Property;
+    renderStrip(snapshot([levered, thin, unknownDs], 2_000_000));
+    expect(tile('DSCR vs governor').getAttribute('data-state')).toBe('watch');
+    expect(screen.getByRole('img', { name: /DSCR incomplete — blank Debt Service on Charlie Flex/ })).toBeTruthy();
+  });
+
+  it('counts the landlord-cost caveat over the same levered set as the DSCR basis, unknown-DS rows included (refute wf_da5abccb-d31)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'debtService', severity: 'warn' as const };
+    const ll = { entity: 'p3', field: 'landlordCosts', issue: 'NNN, not absolute', severity: 'info' as const };
+    const unknownDs = { ...levered, id: 'p3', index: 3, name: 'Charlie Flex', debtService: 0, dscr: null, flags: [blank, ll] } as Property;
+    renderStrip(snapshot([levered, unknownDs], 2_000_000));
+    expect(screen.getByText(/LL costs not sourced on 1 of 2 levered/)).toBeTruthy();
+  });
+
+  it('marks the headline NOI tile incomplete (no wtd cap figure) when a row has a blank NOI (NOI-reader sweep)', () => {
+    const blank = { entity: 'p2', field: 'governorInputBlank', issue: 'blank', rawValue: 'noi', severity: 'warn' as const };
+    renderStrip(snapshot([levered, { ...thin, noi: 0, noiScenarioAdj: 0, dscr: null, flags: [blank] } as Property], 2_000_000));
+    expect(screen.getByText('Oxford share · workbook · incomplete — blank NOI on Bravo Flex')).toBeTruthy();
+    expect(screen.queryByText(/wtd cap$/)).toBeNull();
+  });
+
+  it('NOI by Market keeps a market whose only row has a blank NOI, labelled incomplete, with a footnote (refute wf_325f62d5-344)', () => {
+    const blank = { entity: 'p3', field: 'governorInputBlank', issue: 'blank', rawValue: 'noi', severity: 'warn' as const };
+    // BarChart measures its container; jsdom has no ResizeObserver (unstubbed in afterEach).
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    const madison = { ...thin, id: 'p3', index: 3, name: 'Charlie Flex', market: 'Madison WI', noi: 0, noiScenarioAdj: 0, dscr: null, flags: [blank] } as Property;
+    renderStrip(snapshot([levered, madison], 2_000_000), 'noi-market');
+    expect(screen.getByText('Incomplete: blank NOI on Charlie Flex (left out of its market).')).toBeTruthy();
+    expect(screen.getByText('2 markets')).toBeTruthy();
   });
 
   it('treats an empty Cash Balances feed as unknown: never a breach, never OK', () => {

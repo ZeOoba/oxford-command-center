@@ -27,10 +27,11 @@ import {
   governorFingerprint,
   refiDebtConstant,
 } from '../../server/warehouse/acq-governor-proxy';
-import { parseRuleset, loadRatifiedRct, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
+import { loadTestRct } from '../support/rct';
 
 const GOV = { dscrFloor: 1.25, ltvCeiling: 0.40 };
 const UST = 0.043; // 4.30%: refi rate 6.30%
@@ -170,7 +171,7 @@ describe('applyGovernorProxy — KILLED monotonicity', () => {
 // the score-level wrapper every surface uses so tier and verdict can never diverge.
 describe('applyGovernorProxyToScore — tier follows the governor-demoted verdict (audit 2026-10-13 G1)', () => {
   const RULESET = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-  const RCT = loadRatifiedRct();
+  const RCT = loadTestRct();
   const STRONG = AcquisitionInput.parse({
     dealId: 'proxy-strong',
     price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,

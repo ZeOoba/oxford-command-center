@@ -16,37 +16,195 @@
 // present — unlike the two scripts it installs as hooks, which stay plain .mjs on purpose (see
 // their own headers: "Node built-ins only, no install step" — they run from the raw shared
 // .git/hooks with no npm context and must survive a missing/wiped node_modules).
-import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { renameSyncWithRetry as renameSyncWithRetryImpl } from '../server/lib/rename-retry';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
+import { PY_SCANNER_SHA256, scannerDigest } from './prepush-confidential-scan.mjs';
 
 function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
+/** File name of the Python term scanner's copy beside the installed pre-push hook (the wrapper runs it
+ * on every push; see WRAPPER). */
+export const PY_SCAN_FALLBACK = 'ora_prepush_confidential_scan.py';
+
 // Exported (not just a local const) so tests/unit/install-git-hooks.test.ts can assert on the
 // literal template — this is what tests/unit/prepush-noi-crosscheck.test.ts guards against
 // regressing back into a blocking 'exec' of the advisory-only stage.
 export const WRAPPER = `#!/bin/sh
+{
+# The whole hook is ONE brace group, closed on its last line: the shell parses all of it before it
+# runs any of it. An older tree's installer rewrites this file IN PLACE when its content differs; a
+# shell that reads the script as it goes then hit end-of-file mid-hook and exited 0 with nothing
+# scanned (merge gate PR 577, R6-1). A rewrite after the shell's first read, or a group read only in
+# part, now runs the hook it parsed or is a syntax error (blocks). Known residual (R7-1, OI-403): if
+# that installer empties the file between git starting the hook and the shell's first read, the
+# shell runs an empty script and exits 0. Nothing in this file can prevent that; it ends once no
+# tree runs an in-place installer.
 # Managed by scripts/install-git-hooks.ts.
-# 1) pre-push confidentiality scanner (audit H1) — fail-closed: a non-zero exit blocks the push.
+# 1) Confidentiality scanner (scripts/prepush-confidential-scan.mjs, Hard Invariant 3) — fail-closed.
+#    It runs the shared Python term scanner (scripts/prepush_confidential_scan.py, vendored from
+#    ora-skills) ITSELF, then the OCC payload checks (data/ binaries, real-data manifest paths, real
+#    amounts, confidential:true). It gets git's argv ("$@": remote name and push URL) and the
+#    buffered ref lines. .git/hooks is shared by every worktree, so both version skews are covered:
+#    an older wrapper still reaches the term scan through the new scanner, and this wrapper runs the
+#    Python term scan itself first on EVERY push, from the copy the installer places beside this
+#    hook, so a tree that predates runTermScan (its JS matches terms on the endpoint diff only), or
+#    one checked out mid-push, is still scanned. No usable Python 3.8+, no scanner copy, or a copy
+#    whose SHA-256 is not the pin below => BLOCKED. Each candidate python is probed by running it
+#    (the Windows Store stub fails); it runs isolated (-I).
 # 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
 #    .git/hooks is the common dir shared by every worktree; a checkout that predates this file
 #    (or lacks it for any other reason) must still push cleanly, hence the -f guard and '|| true'.
 # 3) Refute-trailer gate (stricter than CI's refute-required job) — fail-closed on an unattested-
 #    commits verdict only, fail-open on any tooling gap (see scripts/prepush-refute-check.mjs). Git's pre-push stdin is
-#    buffered once so the scanner and this stage each read the full ref list.
+#    buffered once so the scanner and this stage each read the full ref list. A failed read
+#    blocks the push: an empty ref list would otherwise let every stage pass with nothing scanned.
+#    The read is done by node (see the comment at that line), never cat.
+# PATH is rebuilt FIRST, with shell built-ins only, before this hook runs any external command
+# (refute runs wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a). Kept: absolute entries with no
+# '.' or '..' segment that are neither the current directory (git runs this hook in the worktree
+# root) nor inside it. Each entry is resolved to its physical path (cd -P) before its parents are
+# compared with test -ef, so case variants, a link to the worktree and a link INTO one of its
+# subdirectories all count as inside. Dropped: empty, '.', relative and missing entries. So nothing untracked in the worktree (a planted
+# cat, head, grep, node, python, git) can stand in for a tool this hook or its children run.
+# Windows: children (node, python, git) must not search the current directory either.
+NoDefaultCurrentDirectoryInExePath=1
+export NoDefaultCurrentDirectoryInExePath
+here="$(pwd -P)"
+_safe=
+_ifs=$IFS
+IFS=:
+set -f
+for _d in $PATH; do
+  case "$_d" in /*) ;; *) continue ;; esac
+  case "$_d/" in */./*|*/../*) continue ;; esac
+  # Walk the entry's PHYSICAL path: a junction or symlink outside the worktree that points INTO a
+  # subdirectory of it has no string prefix equal to the worktree (refute run wf_39e200e8-462).
+  # cd is a built-in, so no fork; an entry that cannot be entered is dropped.
+  cd -P -- "$_d" 2>/dev/null || continue
+  _p=$PWD
+  cd -P -- "$here" || exit 1
+  _in=
+  while [ -n "$_p" ]; do
+    if [ "$_p" -ef "$here" ]; then _in=1; break; fi
+    _next=\${_p%/*}
+    [ "$_next" = "$_p" ] && break
+    _p=$_next
+  done
+  [ -n "$_in" ] && continue
+  _safe=\${_safe:+$_safe:}$_d
+done
+set +f
+IFS=$_ifs
+PATH=$_safe
+export PATH
+if [ -z "$PATH" ]; then
+  echo "pre-push BLOCKED (fail-closed): no usable PATH entry outside the worktree." >&2
+  exit 1
+fi
 root="$(git rev-parse --show-toplevel)"
-refs="$(cat)"
-printf '%s\\n' "$refs" | node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
+scan_js="$root/scripts/prepush-confidential-scan.mjs"
+# safe_exe NAME: every hit for NAME (or NAME.exe) on the rebuilt PATH, one per line, in PATH order
+# (built-ins only). All are listed so a failing first hit (the Windows Store stub) does not hide a
+# working interpreter later on PATH.
+safe_exe() {
+  _ifs=$IFS
+  IFS=:
+  set -f
+  for _d in $PATH; do
+    for _f in "$_d/$1" "$_d/$1.exe"; do
+      if { [ -f "$_f" ] || [ -L "$_f" ]; } && [ ! -d "$_f" ]; then
+        printf '%s\\n' "$_f"
+      fi
+    done
+  done
+  set +f
+  IFS=$_ifs
+}
+node_bin="$(safe_exe node | head -n 1)"
+if [ -z "$node_bin" ]; then
+  echo "pre-push BLOCKED (fail-closed): node not found on an absolute PATH entry outside the worktree." >&2
+  exit 1
+fi
+# Buffer git's ref list once. Read by node, not cat: whether cat reports an unreadable stdin
+# depends on which cat is installed (on the ubuntu-26.04 CI runner the hook passed a write-only
+# stdin through cat with status 0), while a node read error always exits non-zero. Node reopens a CLOSED fd 0 as
+# /dev/null at startup, so a closed stdin is caught first by duplicating fd 0 onto fd 3 in the
+# shell (onto ITSELF, bash skips the dup and reports success).
+stdin_fail() {
+  echo "pre-push: could not read push refs from stdin" >&2
+  exit 1
+}
+{ :; } 2>/dev/null 3<&0 || stdin_fail
+refs="$("$node_bin" -e 'const c=[];process.stdin.on("data",(b)=>c.push(b)).on("end",()=>process.stdout.write(Buffer.concat(c))).on("error",()=>process.exit(1));')" || stdin_fail
+# The Python term scan runs HERE on every push, from the copy the installer places beside this hook,
+# whatever the tree holds. It used to run here only when grep found no runTermScan in the tree's JS,
+# and node then loaded that file again: a checkout of an older commit in between (another session in
+# the same worktree) ran a term-blind JS with no Python stage (merge gate PR 577 round 5, K-501). A
+# current tree's JS runs the term scan again from its own scanner; the grep below now only picks the
+# JS call shape.
+scan_py="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/${PY_SCAN_FALLBACK}"
+if [ ! -e "$scan_py" ]; then
+  echo "pre-push BLOCKED (fail-closed): no Python term scanner copy sits beside the hook (run npm run hooks:install from an up-to-date tree)." >&2
+  exit 1
+fi
+# An empty, cut-short or otherwise damaged scanner can exit 0 under Python and skip the term scan,
+# so the copy must hash to the pin this wrapper was installed with (CRLF folded to LF). node reads
+# it ONCE, checks the hash and writes those same verified bytes into a new private temp directory;
+# Python runs that file. A copy replaced after the check (another worktree's install) is never the
+# one that runs (merge gate PR 577 round 4). node prints the directory with forward slashes. Its
+# exit status says what failed: 3 pin mismatch, 4 unreadable copy, 5 no private temp copy.
+scan_rc=0
+scan_dir="$("$node_bin" -e 'const fs=require("fs"),os=require("os"),path=require("path");let r;try{r=fs.readFileSync(process.argv[1])}catch{process.exit(4)}const b=Buffer.from(r.toString("latin1").replace(/\\r\\n/g,"\\n"),"latin1");if(require("crypto").createHash("sha256").update(b).digest("hex")!==process.argv[2])process.exit(3);let d;try{d=fs.mkdtempSync(path.join(os.tmpdir(),"ora-prepush-scan-"));fs.writeFileSync(path.join(d,"scan.py"),b,{mode:0o600,flag:"wx"})}catch{if(d)fs.rmSync(d,{recursive:true,force:true});process.exit(5)}process.stdout.write(path.resolve(d).replace(/\\\\/g,"/"));' "$scan_py" "${PY_SCANNER_SHA256}" 2>/dev/null)" || scan_rc=$?
+case "$scan_dir" in
+  */ora-prepush-scan-*) trap 'rm -rf -- "$scan_dir"' EXIT ;;
+  *) scan_dir= ;;
+esac
+if [ "$scan_rc" -ne 0 ] || [ -z "$scan_dir" ] || [ ! -f "$scan_dir/scan.py" ]; then
+  case "$scan_rc" in
+    3) why="does not match its pinned SHA-256 (run npm run hooks:install from an up-to-date tree)" ;;
+    4) why="could not be read (run npm run hooks:install from an up-to-date tree)" ;;
+    5) why="could not be copied into a private temp directory (check that TMPDIR/TEMP exists and is writable)" ;;
+    *) why="could not be prepared by node (exit $scan_rc)" ;;
+  esac
+  echo "pre-push BLOCKED (fail-closed): the Python term scanner at $scan_py $why." >&2
+  exit 1
+fi
+py=
+for c in python python3 py; do
+  py="$(safe_exe "$c" | while IFS= read -r cand; do
+    if "$cand" -I -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" </dev/null >/dev/null 2>&1; then
+      printf '%s' "$cand"
+      break
+    fi
+  done)"
+  [ -n "$py" ] && break
+done
+if [ -z "$py" ]; then
+  echo "pre-push BLOCKED (fail-closed): no Python 3.8+ found to run the confidentiality term scan." >&2
+  exit 1
+fi
+printf '%s\\n' "$refs" | "$py" -I "$scan_dir/scan.py" "$@" || exit 1
+if grep -q 'runTermScan' "$scan_js" 2>/dev/null; then
+  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" "$@" || exit 1
+else
+  # Legacy call shape (no argv): an older scanner treats ANY '--staged' argument, e.g. a remote
+  # named --staged, as its manual mode and skips the payload checks.
+  printf '%s\\n' "$refs" | "$node_bin" "$scan_js" || exit 1
+fi
 if [ -f "$root/scripts/prepush-refute-check.mjs" ]; then
-  printf '%s\\n' "$refs" | node "$root/scripts/prepush-refute-check.mjs" || exit 1
+  printf '%s\\n' "$refs" | "$node_bin" "$root/scripts/prepush-refute-check.mjs" || exit 1
 fi
 if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
-  node "$root/scripts/prepush-noi-crosscheck.mjs" || true
+  "$node_bin" "$root/scripts/prepush-noi-crosscheck.mjs" || true
 fi
 exit 0
+}
 `;
 
 // Exported for the same reason as WRAPPER (see above) -- installs the commit-msg trailer guard
@@ -68,6 +226,72 @@ fi
 exit 0
 `;
 
+/**
+ * Write `contents` to `dest` so a concurrent reader sees either the old file or the new one, never
+ * an empty or partial file: write a uniquely named temp file beside it, then rename it over `dest`.
+ * A plain writeFileSync truncates first, and a push from another worktree in that window ran the
+ * EMPTY Python copy, which exits 0 and skipped the term scan (merge gate PR 577 round 1, HIGH).
+ * `mode` is set on the temp file BEFORE the rename, so the hook is never in place without its
+ * executable bit (git on Linux/macOS skips a non-executable hook; merge gate round 2).
+ * Windows can refuse the rename while another process has `dest` open; renameSyncWithRetry retries
+ * those transient codes. A rename that still fails leaves `dest` as it was and removes the temp file.
+ */
+export function writeFileAtomic(
+  dest: string,
+  contents: string,
+  mode?: number,
+  /** Test seam: lets a test check `dest` (still the old file) and the temp file at the moment of the rename. */
+  renameSyncWithRetry: (from: string, to: string) => void = renameSyncWithRetryImpl,
+): void {
+  const tmp = `${dest}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    writeFileSync(tmp, contents, 'utf8');
+    if (mode !== undefined) {
+      try {
+        chmodSync(tmp, mode);
+      } catch (err) {
+        // A no-op or refused on some Windows filesystems; Git for Windows runs the sh wrapper anyway.
+        console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
+      }
+    }
+    renameSyncWithRetry(tmp, dest);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/** Error codes Windows gives a rename over a file another process has open. */
+const IN_USE = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+/**
+ * writeFileAtomic, except that an EXISTING `dest` held open by another process (a push running the
+ * hook from another worktree) is left as it was with a warning, instead of failing `npm ci` /
+ * `prepare` (merge gate PR 577 round 2). The old file is still a complete gate, and a wrapper whose
+ * pin does not match the copy beside it blocks old-tree pushes until the install is rerun. A missing
+ * `dest` is never skipped: that would leave no gate at all.
+ * @param write - test seam; defaults to writeFileAtomic.
+ * @returns whether `dest` now holds `contents`
+ */
+export function replaceOrWarn(
+  dest: string,
+  contents: string,
+  mode?: number,
+  write: (dest: string, contents: string, mode?: number) => void = writeFileAtomic,
+): boolean {
+  try {
+    write(dest, contents, mode);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code ?? '';
+    if (!IN_USE.has(code) || !existsSync(dest)) throw err;
+    console.warn(
+      `[install-git-hooks] WARNING: could not replace ${dest} (${code}: in use, probably by a running push); the previous file stays in place. Rerun npm run hooks:install when no push is running.`,
+    );
+    return false;
+  }
+}
+
 function installHook(hooksDir: string, hookName: string, contents: string): void {
   const hookPath = join(hooksDir, hookName);
   const existing = existsSync(hookPath) ? readFileSync(hookPath, 'utf8') : null;
@@ -75,7 +299,7 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
   if (existing === contents) {
     console.log(`[install-git-hooks] ${hookName} hook already up to date: ${hookPath}`);
   } else {
-    writeFileSync(hookPath, contents, 'utf8');
+    if (!replaceOrWarn(hookPath, contents, 0o755)) return;
     console.log(
       existing === null
         ? `[install-git-hooks] installed ${hookName} hook: ${hookPath}`
@@ -90,6 +314,33 @@ function installHook(hooksDir: string, hookName: string, contents: string): void
     // Git for Windows. Don't fail the install over it.
     console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
   }
+}
+
+/**
+ * Copy scripts/prepush_confidential_scan.py beside the hooks (as PY_SCAN_FALLBACK, LF line endings)
+ * for the wrapper's own Python term scan, which runs on every push (and is the only one a tree that
+ * predates runTermScan gets).
+ * Only a scanner matching PY_SCANNER_SHA256 is copied. A tree without the scanner, or with one that
+ * does not match, leaves any existing copy alone; the wrapper blocks if that copy is missing or does
+ * not match either.
+ */
+function installPythonScanFallback(hooksDir: string, toplevel: string): void {
+  const src = join(toplevel, 'scripts', 'prepush_confidential_scan.py');
+  if (!existsSync(src)) {
+    console.warn(`[install-git-hooks] ${src} not found; Python term-scan copy beside the hook not refreshed.`);
+    return;
+  }
+  const raw = readFileSync(src);
+  if (scannerDigest(raw) !== PY_SCANNER_SHA256) {
+    console.warn(
+      `[install-git-hooks] WARNING: ${src} does not match its pinned SHA-256; Python term-scan copy beside the hook not refreshed (pushes stay blocked until it is, if the copy beside the hook does not match the wrapper's pin).`,
+    );
+    return;
+  }
+  const contents = raw.toString('utf8').replace(/\r\n/g, '\n');
+  const dst = join(hooksDir, PY_SCAN_FALLBACK);
+  if (existsSync(dst) && readFileSync(dst, 'utf8') === contents) return;
+  if (replaceOrWarn(dst, contents)) console.log(`[install-git-hooks] installed Python term-scan copy: ${dst}`);
 }
 
 function main(): void {
@@ -111,8 +362,17 @@ function main(): void {
     console.log(`[install-git-hooks] created hooks dir: ${hooksDir}`);
   }
 
+  // The copy first, so a new wrapper (new pin) does not meet the previous copy.
+  installPythonScanFallback(hooksDir, toplevel);
   installHook(hooksDir, 'pre-push', WRAPPER);
   installHook(hooksDir, 'commit-msg', COMMIT_MSG_WRAPPER);
 }
 
-main();
+// Only install when run as a script (`npm run hooks:install`, `prepare`). This module is also
+// imported by tests/unit/install-git-hooks.test.ts for WRAPPER; an unconditional main() made every
+// vitest run rewrite the SHARED .git/hooks (the common dir of every worktree) with whatever template
+// the running checkout carried, so a test run in a feature worktree silently reinstalled that
+// branch's hook for every other session.
+if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('scripts/install-git-hooks.ts')) {
+  main();
+}

@@ -9,6 +9,7 @@
 // router never throws at mount and never crashes the server.
 import { parseLimitParam } from '../lib/query-params';
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { z } from 'zod';
 import { Classification, NumericMetricKey } from '../../src/contracts/warehouse';
 import {
@@ -27,8 +28,8 @@ import { GOVERNOR_DEFAULTS } from './governors';
 import { classifyPersistedScore, liveScoringRegime } from './acq-score-freshness';
 import type { LiveScoringRegime } from './acq-score-freshness';
 import { ingestParcelScreenBatch } from './acq-ingest';
-import { syncNotionPipeline } from './acq-notion-sync';
-import { syncHubSpotPipeline } from './acq-hubspot-sync';
+import { runAcqSync } from './acq-sync-runner';
+import type { AcqSyncSourceId } from './acq-sync-runner';
 import type { WarehouseDb } from './db';
 import { warehouseJsonError } from './json-errors';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
@@ -980,39 +981,24 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   );
 
   // POST /acq/sync/notion — pull the Notion Acquisition Pipeline and upsert into acq_candidates.
-  // Requires NOTION_TOKEN env var (never committed). Returns { inserted, updated, errors[] }.
-  // Read-only from Notion; writes only Spine-C acq_candidates. First-page failure → 502.
-  app.post('/acq/sync/notion', (c) =>
+  // POST /acq/sync/hubspot — pull the HubSpot "Acquisitions" pipeline (885606973) likewise.
+  // Requires NOTION_TOKEN / HUBSPOT_TOKEN env var (never committed) → 400 when unset. Returns
+  // { inserted, updated, errors[] }. Read-only from the source; writes only Spine-C acq_candidates.
+  // First-page failure → 502 (redacted status logged). The two feeds never collide (namespaced ids:
+  // 'deal:hubspot:<id>' vs 'deal:<notionPageId>'). Run/classify logic is shared with
+  // scripts/acq-sync.ts via acq-sync-runner.ts.
+  const acqSyncRoute = (id: AcqSyncSourceId) => (c: Context) =>
     withDb(async (db) => {
-      const token = process.env['NOTION_TOKEN'];
-      if (!token) return c.json({ error: 'NOTION_TOKEN not configured' }, 400);
-      try {
-        const result = await syncNotionPipeline(db, token);
-        return c.json(result, 200);
-      } catch (err) {
-        console.error('[warehouse-api] /acq/sync/notion error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'notion sync failed' }, 502);
+      const outcome = await runAcqSync(db, id);
+      if (outcome.status === 'not-configured') return c.json({ error: `${outcome.source.tokenVar} not configured` }, 400);
+      if (outcome.status === 'failed') {
+        console.error(`[warehouse-api] /acq/sync/${id} error:`, outcome.error);
+        return c.json({ error: `${id} sync failed` }, 502);
       }
-    }),
-  );
-
-  // POST /acq/sync/hubspot — pull the HubSpot "Acquisitions" pipeline (885606973) and upsert
-  // into acq_candidates. Requires HUBSPOT_TOKEN env var (never committed). Returns
-  // { inserted, updated, errors[] }. Read-only from HubSpot; writes only Spine-C acq_candidates.
-  // First-page failure → 502. Second, independent feed alongside /acq/sync/notion — the two
-  // never collide (namespaced ids: 'deal:hubspot:<id>' vs 'deal:<notionPageId>').
-  app.post('/acq/sync/hubspot', (c) =>
-    withDb(async (db) => {
-      const token = process.env['HUBSPOT_TOKEN'];
-      if (!token) return c.json({ error: 'HUBSPOT_TOKEN not configured' }, 400);
-      try {
-        const result = await syncHubSpotPipeline(db, token);
-        return c.json(result, 200);
-      } catch {
-        return c.json({ error: 'hubspot sync failed' }, 502);
-      }
-    }),
-  );
+      return c.json(outcome.result, 200);
+    });
+  app.post('/acq/sync/notion', acqSyncRoute('notion'));
+  app.post('/acq/sync/hubspot', acqSyncRoute('hubspot'));
 
   // ── GET /capital-allocation (Phase 5 — Capital Allocation Capstone) ───────────────────────
   //

@@ -9,6 +9,7 @@
 // (GovernorSet / LIQUIDITY_POLICY) are passed in, never restated here.
 import type { Property } from '@contracts/index';
 import { isInvestmentProperty } from './property-basis';
+import { dscrIncompleteRows, type IncompleteGovernorRow } from './governor-inputs';
 
 export interface DscrHeadroom {
   /** Σ NOI / Σ annual debt service over levered investment properties (Oxford share, workbook). */
@@ -20,8 +21,15 @@ export interface DscrHeadroom {
   weakest: { id: string; name: string; dscr: number } | null;
   floor: number;
   leveredCount: number;
+  /** Ids of the levered set `leveredCount` counts (levered + unknown-Debt-Service investment rows),
+   *  id-sorted, so a caveat over "the levered properties" counts the same rows (refute wf_da5abccb-d31). */
+  leveredIds: string[];
   breached: boolean;
   weakestBelowFloor: boolean;
+  /** Investment rows whose blank workbook NOI or Debt Service cell makes the aggregate uncomputable
+   *  (./governor-inputs dscrIncompleteRows). Non-empty ⇒ `portfolio` is null and `breached` false: the aggregate cannot be
+   *  computed, so the tile is incomplete — never a placeholder pass or breach (audit 2026-11-12 HIGH #2). */
+  incomplete: IncompleteGovernorRow[];
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -40,18 +48,28 @@ export function dscrHeadroom(properties: readonly Property[], floor: number): Ds
     .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   const noi = levered.reduce((s, p) => s + p.noi, 0);
   const ds = levered.reduce((s, p) => s + p.debtService, 0);
-  const portfolio = levered.length > 0 ? noi / ds : null;
+  const incomplete = dscrIncompleteRows(properties.filter(isInvestmentProperty));
+  const portfolio = incomplete.length === 0 && levered.length > 0 ? noi / ds : null;
+  // A row whose Debt Service is unknown is still levered, and a typed workbook DSCR on it is
+  // evidence: it counts and can be the weakest (refute wf_406ad3ef-7de: a known 1.10x row used to
+  // vanish from the tile, which then named the wrong weakest property and dropped 'watch').
+  const unknownDs = new Set(incomplete.filter((r) => r.fields.includes('debtService')).map((r) => r.id));
+  const candidates = properties
+    .filter((p) => isInvestmentProperty(p) && (levered.includes(p) || unknownDs.has(p.id)))
+    .sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   let weakest: DscrHeadroom['weakest'] = null;
-  for (const p of levered) {
+  for (const p of candidates) {
     if (finite(p.dscr) && (weakest === null || p.dscr < weakest.dscr)) weakest = { id: p.id, name: p.name, dscr: p.dscr };
   }
   return {
     portfolio,
     weakest,
     floor,
-    leveredCount: levered.length,
+    leveredCount: candidates.length,
+    leveredIds: candidates.map((p) => p.id),
     breached: portfolio !== null && portfolio < floor,
     weakestBelowFloor: weakest !== null && weakest.dscr < floor,
+    incomplete,
   };
 }
 

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
-import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum, propertyLtvLabel, investmentLtv } from '@analytics/index';
+import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum, propertyLtvLabel, investmentLtv, noiGapText } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
@@ -10,6 +10,7 @@ import { Badge } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import { investmentPropertiesSublabel } from '@/modules/overview/other-holdings';
 import { landlordCostsNotSourced } from '@analytics/property-basis';
+import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 import type { Property } from '@contracts/index';
 import { PropertyPageLink } from '@/modules/property/PropertyPageLink';
 import { Sparkline } from '@/charts/Sparkline';
@@ -89,7 +90,10 @@ export function PortfolioModule() {
       header: 'NOI · workbook',
       align: 'right',
       render: (p) =>
-        landlordCostsNotSourced(p) ? (
+        // Audit 2026-11-12 HIGH #2: a blank workbook NOI is unknown, never "$0".
+        hasBlankGovernorInput(p, 'noi') ? (
+          BLANK_IN_WORKBOOK
+        ) : landlordCostsNotSourced(p) ? (
           <span title="NNN, not absolute: landlord-paid roof, structure and paving costs are not sourced yet, so this NOI is overstated by them.">
             {fmtUsdCompact(p.noi)} <Badge tone="amber">LL costs not sourced</Badge>
           </span>
@@ -145,12 +149,12 @@ export function PortfolioModule() {
           value={k.noi.value}
           format={fmtUsdCompact}
           prov={k.noi.prov}
-          sublabel={<BasisSublabel basis="workbook">Oxford share</BasisSublabel>}
+          sublabel={<BasisSublabel basis="workbook">{noiGapText(k) ? `Oxford share · ${noiGapText(k)}` : 'Oxford share'}</BasisSublabel>}
           caveat={llCaveat ? <LandlordCostChip caveat={llCaveat} /> : undefined}
           accentColor="var(--color-pos)"
         />
         <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} accentColor="var(--color-info)" />
-        <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} sublabel={<BasisSublabel basis="workbook" />} caveat={llCapCaveat ? <LandlordCostChip caveat={llCapCaveat} /> : undefined} accentColor="var(--color-accent2)" />
+        <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} sublabel={noiGapText(k) ? <BasisSublabel basis="workbook">{noiGapText(k)}</BasisSublabel> : <BasisSublabel basis="workbook" />} caveat={llCapCaveat ? <LandlordCostChip caveat={llCapCaveat} /> : undefined} accentColor="var(--color-accent2)" />
       </div>
 
       <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>

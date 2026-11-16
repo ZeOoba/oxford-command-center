@@ -7,22 +7,22 @@ import {
   assertProductionRct,
   assertProductionRuleset,
   computeInputsVersion,
-  loadRatifiedRct,
   parseRuleset,
   replacementCostTotal,
   basisVintageFloor,
   scoreAcquisition,
 } from '../../server/warehouse/acquisition';
 import { RCT_V03, vintageFloor } from '../../src/brain/replacement-cost';
+import { loadTestRct } from '../support/rct';
 
 const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const rctJson = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'fixtures/synthetic/config/replacement-cost.v3.json'), 'utf8'),
 );
 const ratified = parseRuleset(ratifiedJson);
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 const NOW = '2026-06-13T00:00:00Z';
 
 /** A 'proposed', incomplete variant derived from the ratified config (clear-height bands nulled). */
@@ -35,8 +35,8 @@ function proposedIncomplete(): AcquisitionRuleset {
 const proposed = proposedIncomplete();
 
 /** A strong, fully-known PURSUE-grade deal — HONEST under RCT v03's conservative firm-wide fallback
- *  (no market supplied, $225.59/SF — Chicago Cook County IL since RCT v3.2, the cheapest market, per doctrine the
- *  strictest available floor; tilt-up ×1.00): 60k SF → $13.535M replacement; $1.2M all-in ≈ 91.1% discount → full Basis credit (full-credit
+ *  (no market supplied: the cheapest market's LOW, per doctrine the strictest available floor; tilt-up ×1.00; figures
+ *  from the synthetic test table): 60k SF at that LOW is well over 10x the $1.2M all-in → full Basis credit (full-credit
  *  threshold is 0.90 at the yearBuilt=2005 post-cutoff floor). RECALIBRATED 2026-07-14 (refute-fix):
  *  the prior $3.6M/~56% figure only reached full Basis credit because of the step-function bug the
  *  refute pass caught (basisFullCreditDiscount sat below the vintage floor); under the corrected
@@ -383,8 +383,8 @@ describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
 
 describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-14)', () => {
   it('Basis divides by the ratified RCT, not a caller scalar: an honest high basis is KILLED', () => {
-    // RCT v3.2: STRONG_BASE has no market ⇒ conservative fallback (Chicago Cook County IL, low=$225.59/SF).
-    // 60k SF × $225.59 = $13.535M replacement; $7M all-in ⇒ ~48.3% discount < 60% floor
+    // STRONG_BASE has no market ⇒ conservative fallback (the cheapest row's LOW; synthetic test table).
+    // 60k SF × that LOW leaves $7M all-in at a discount below the 60% floor
     // (built 2005, post-cutoff) ⇒ KILLED.
     const s = score(strongDeal({ allInBasis: 7_000_000 }));
     expect(s.verdict).toBe('KILLED');
@@ -492,7 +492,7 @@ describe('confirmatory refute fixes — RCT v03 refute pass (2026-07-14, 2/3 son
   // while the real engine verdict said it clears. Both fixed; these tests are the regression guard.
 
   it('Cat 1 Basis is a GRADUATED RAMP, not a step function: a marginal-clear deal scores less than an exceptional one', () => {
-    // Columbus OH, built 2005 (floor=0.60, RCT low=$229.65/SF). Discount just above the floor vs. deep.
+    // Columbus OH, built 2005 (floor=0.60; RCT LOW from the synthetic test table). Discount just above the floor vs. deep.
     const marginal = score(strongDeal({ market: 'Columbus OH', totalSf: 60_000, maxBuildingSf: 42_000, allInBasis: 5_600_000 })); // ~59.4% discount off point... use low-based calc below
     const exceptional = score(strongDeal({ market: 'Columbus OH', totalSf: 60_000, maxBuildingSf: 42_000, allInBasis: 1_500_000 }));
     const basisMarginal = marginal.subScores.find((x) => x.id === 'basis')!.points;
@@ -503,10 +503,10 @@ describe('confirmatory refute fixes — RCT v03 refute pass (2026-07-14, 2/3 son
     // step-function symptom). subScore id 'basis' AGGREGATES Cat 1 (Basis, 25pts) + Cat 2 (Yield,
     // 20pts) — isolate Cat 1's swing as a DIFFERENCE against `exceptional` above, since both share
     // STRONG_BASE's stabilizedYoc (0.12) unchanged, so Cat 2's contribution cancels out.
-    const atFloor = score(strongDeal({ market: 'Columbus OH', totalSf: 60_000, maxBuildingSf: 42_000, allInBasis: 229.65 * 60_000 * 0.40 })); // exactly the 60% floor
+    const atFloor = score(strongDeal({ market: 'Columbus OH', totalSf: 60_000, maxBuildingSf: 42_000, allInBasis: RCT.markets['Columbus OH']!.low * 60_000 * 0.40 })); // exactly the 60% floor
     const cat1Swing = exceptional.subScores.find((x) => x.id === 'basis')!.points - atFloor.subScores.find((x) => x.id === 'basis')!.points;
-    // exceptional's 89.1% discount doesn't quite clear the 90% full-credit threshold (~24.3/25), so
-    // this isn't exactly 25 — the point is that it's LARGE, proving graduation, not a step function
+    // exceptional's discount may not quite clear the full-credit threshold, so this need not be
+    // exactly 25 — the point is that it's LARGE, proving graduation, not a step function
     // (under the bug, atFloor and exceptional would both have scored identically at the cap).
     expect(cat1Swing).toBeGreaterThan(20);
   });
@@ -539,18 +539,19 @@ describe('confirmatory refute fixes — RCT v03 refute pass (2026-07-14, 2/3 son
     const serverRow = RCT.markets[market]!;
     const serverFloorPsf = serverRow.low * (1 - serverFloorDiscount);
     expect(clientFloorPsf).toBeCloseTo(serverFloorPsf, 6);
-    // And a live deal at $95/SF: both surfaces must agree it CLEARS (basis just under $102.06 the
-    // pre-fix server default would have produced, but comfortably under the now-shared $91.86 floor
-    // is the wrong test — use a value between the two historically-disagreeing thresholds to prove
-    // they no longer disagree: $95/SF fails against the old client-only floor ($91.86) but the server
-    // (post-fix) must now ALSO fail it, not silently pass via a looser `mid` divisor.
-    const basisPsf = 95;
+    // A live deal priced BETWEEN the two historically-disagreeing thresholds (the LOW-based floor and the
+    // looser POINT-based one the pre-fix server default used) proves they no longer disagree: it fails the
+    // LOW floor on the client, and the server (post-fix) must ALSO fail it, not silently pass via `mid`.
+    const midFloorPsf = serverRow.point * (1 - serverFloorDiscount);
+    // allInBasis below is basisPsf x SF / 1.02 (the original fixture's form), so clear the floor by more than 2%.
+    const basisPsf = clientFloorPsf * 1.02 + 1;
+    expect(midFloorPsf).toBeGreaterThan(basisPsf);
     const allInBasis = (basisPsf * sf) / 1.02;
     const s = score(strongDeal({ market, yearBuilt, totalSf: sf, maxBuildingSf: 42_000, allInBasis }));
     const serverClears = s.floors.find((f) => f.id === 'basis')?.passed;
     const clientClears = basisPsf <= clientFloorPsf;
     expect(serverClears).toBe(clientClears);
-    expect(serverClears).toBe(false); // $95/SF vs a ~$91.86 floor — fails on BOTH surfaces now
+    expect(serverClears).toBe(false); // just over the LOW floor — fails on BOTH surfaces now
   });
 });
 

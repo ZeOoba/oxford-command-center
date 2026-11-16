@@ -1,6 +1,7 @@
 import type { PortfolioSnapshot } from '@contracts/index';
 import { fmtUsdCompact, fmtSf, fmtPct } from '@analytics/index';
 import type { EntityRef } from './ui-context';
+import { hasBlankGovernorInput } from '@analytics/governor-inputs';
 
 export interface EntityItem {
   ref: EntityRef;
@@ -29,7 +30,8 @@ export function buildEntityItems(s: PortfolioSnapshot): EntityItem[] {
       ref: { type: 'property', id: p.id },
       group: 'Properties',
       title: p.name,
-      subtitle: `${p.type} · ${fmtSf(p.sf)} · ${fmtUsdCompact(p.noi)} NOI`,
+      // A blank workbook NOI is unknown, never "$0 NOI" (follow-up to audit 2026-11-12 HIGH #2).
+      subtitle: `${p.type} · ${fmtSf(p.sf)} · ${hasBlankGovernorInput(p, 'noi') ? 'NOI blank' : `${fmtUsdCompact(p.noi)} NOI`}`,
       value: `property ${p.name} ${p.market} ${p.type} ${p.lender ?? ''}`,
     });
   }

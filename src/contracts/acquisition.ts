@@ -111,7 +111,7 @@ export type ClusterTier = z.infer<typeof ClusterTier>;
 
 /**
  * Construction type (SKILL.md v4.37 Construction-Type Multiplier Schedule). Split 2026-11-12 from the pre-v4.37 lump
- * `block-tilt-brick`, which could not express the RCT multiplier: block ×0.97, tilt-up ×1.00 and brick ×1.10 differ.
+ * `block-tilt-brick`, which could not express the RCT multiplier: block, tilt-up and brick take different multipliers.
  * A stored or extracted legacy `block-tilt-brick` parses as `cmu` (Gabriel ruling 2026-11-12: the strictest of its
  * members short of PEMB). The Cat-3 construction score is unchanged by the split: tilt/CMU/brick take the
  * block-tilt-brick points, hybrid takes the mixed points.

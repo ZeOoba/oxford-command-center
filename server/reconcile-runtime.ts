@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
 import { isInvestmentProperty } from '../src/analytics/property-basis';
+import { hasBlankGovernorInput } from '../src/analytics/governor-inputs';
 import { findDuplicateDealRows, keyDigest } from './sources/deal-name';
 import { DEBT_BASIS_FIELD, investmentLoanBalance, isAffiliateBorrowerLoan, isAffiliateNoteProperty } from '../src/analytics/debt-basis';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
@@ -275,7 +276,8 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
       entity: 'debt',
       field: `${DEBT_BASIS_FIELD}.property.${p.id}`,
       issue:
-        `${p.name}: Property NOI sheet loan balance ${usd(propCents / 100)} vs loan schedule ${usd(schedCents / 100)} ` +
+        // A blank Loan Balance cell is named as blank, never as "$0" (audit 2026-11-12 HIGH #2).
+        `${p.name}: Property NOI sheet loan balance ${hasBlankGovernorInput(p, 'loanBalance') ? 'blank' : usd(propCents / 100)} vs loan schedule ${usd(schedCents / 100)} ` +
         `${names ? `(${names.join(', ')})` : '(no third-party loan attributed)'} — gap ${usd(Math.abs(gap) / 100)}`,
       severity: 'warn',
     });
@@ -296,12 +298,19 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   // row must not hide them — subtract the gaps already named per row and test what is left.
   const aggGap = sumPropCents - sumSchedCents;
   const residual = aggGap - flaggedGapCents;
+  // A blank Loan Balance is never printed inside a bare total (refute wf_da5abccb-d31).
+  const blankNames = (rows: readonly typeof investment[number][]): string =>
+    [...rows].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)).map((p) => p.name).join(', ');
+  const blankThirdParty = investment.filter((p) => !isAffiliateNoteProperty(p) && hasBlankGovernorInput(p, 'loanBalance'));
+  const propTotalText = blankThirdParty.length > 0
+    ? `${usd(sumPropCents / 100)} (incomplete: blank Loan Balance on ${blankNames(blankThirdParty)})`
+    : usd(sumPropCents / 100);
   if (Math.abs(residual) > tol) {
     flags.push({
       entity: 'debt',
       field: DEBT_BASIS_FIELD,
       issue:
-        `Overview Total Debt (Σ investment-row loan balances, Property NOI sheet) ${usd(sumPropCents / 100)} vs ` +
+        `Overview Total Debt (Σ investment-row loan balances, Property NOI sheet) ${propTotalText} vs ` +
         `Σ attributed third-party loans (loan schedule) ${usd(sumSchedCents / 100)} — ` +
         `residual gap across rows within tolerance ${usd(Math.abs(residual) / 100)} ` +
         `(each under the ${usd(DEBT_BASIS_TOLERANCE)} per-row tolerance; flagged rows excluded)`,
@@ -315,12 +324,16 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   let affLoanCents = 0;
   for (const l of allLoans) if (isAffiliateBorrowerLoan(l)) affLoanCents += cents(l.absBalance ?? 0);
   const affGap = affPropCents - affLoanCents;
+  const blankAffiliate = investment.filter((p) => isAffiliateNoteProperty(p) && hasBlankGovernorInput(p, 'loanBalance'));
+  const affPropText = blankAffiliate.length > 0
+    ? `${usd(affPropCents / 100)} (incomplete: balance blank on ${blankNames(blankAffiliate)})`
+    : usd(affPropCents / 100);
   if (Math.abs(affGap) > tol) {
     flags.push({
       entity: 'debt',
       field: `${DEBT_BASIS_FIELD}.affiliate`,
       issue:
-        `Affiliate notes: Property NOI sheet ${usd(affPropCents / 100)} (rows with an Oxford-affiliate lender) ` +
+        `Affiliate notes: Property NOI sheet ${affPropText} (rows with an Oxford-affiliate lender) ` +
         `vs loan schedule ${usd(affLoanCents / 100)} (affiliate borrower loans) — gap ${usd(Math.abs(affGap) / 100)}`,
       severity: 'warn',
     });

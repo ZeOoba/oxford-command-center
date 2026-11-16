@@ -5,6 +5,9 @@
 // Pushes per-property capital decisions (allocation action + priorityScore) back to the Notion
 // 🏢 Property Register so they surface in the operational workflow.
 //
+// ADVISORY (ruling 2026-11-13): an advisoryOnly verdict is written as "<action> (advisory)", never as
+// the bare action, so the register never shows a verdict resting on an unratified constant as final.
+//
 // VOCABULARY (audit 2026-10-13 G5): the action written is the 5-way allocation-engine verdict
 // (buildPortfolioAllocation → AllocationVerdict.action: buy | hold | sell | refinance | improve) —
 // the SAME source the Capital page and the IC memo render. It previously wrote the legacy 4-way
@@ -62,6 +65,10 @@ export interface CapitalActionInput {
   propertyName: string | null;
   allocationAction: AllocationAction | null;
   priorityScore: number;
+  /** The verdict is advisoryOnly (it rests on an unratified constant, or the hurdle is proposed).
+   *  Written as "<action> (advisory)" so the register never shows it as a final Capital Action
+   *  (ruling 2026-11-13; refute wf_c69b93c5-c15). Absent = false. */
+  advisory?: boolean;
 }
 
 /** 5-way allocation vocabulary (src/contracts/capital.ts AllocationAction) — what this writeback writes. */
@@ -72,6 +79,12 @@ const ALLOCATION_OPTIONS: ReadonlyArray<{ name: AllocationAction; color: string 
   { name: 'refinance', color: 'purple' },
   { name: 'improve', color: 'green' },
 ];
+/** Advisory twin of each 5-way value: what an advisoryOnly verdict is written as (ruling 2026-11-13). */
+const ADVISORY_SUFFIX = ' (advisory)';
+const ADVISORY_OPTIONS: ReadonlyArray<{ name: string; color: string }> = ALLOCATION_OPTIONS.map((o) => ({
+  name: `${o.name}${ADVISORY_SUFFIX}`,
+  color: 'yellow',
+}));
 /** Legacy 4-way values ('hold' is shared) — still DECLARED so existing rows keep a valid option until
  *  their next sync overwrites them. Never written by this module any more. */
 const LEGACY_OPTIONS: ReadonlyArray<{ name: string; color: string }> = [
@@ -87,19 +100,23 @@ const LEGACY_OPTIONS: ReadonlyArray<{ name: string; color: string }> = [
  * matches a report entry. A report entry with no allocation verdict gets allocationAction = null.
  */
 export function buildCapitalWritebackEntries(
-  portfolio: Pick<PortfolioAllocation, 'verdicts'>,
+  portfolio: { verdicts: ReadonlyArray<Pick<PortfolioAllocation['verdicts'][number], 'propertyId' | 'action' | 'advisoryOnly'>> },
   entries: ReadonlyArray<Pick<CapitalAllocationEntry, 'propertyId' | 'propertyName' | 'priorityScore'>>,
 ): CapitalActionInput[] {
-  const actionByProperty = new Map<string, AllocationAction>();
+  const byProperty = new Map<string, { action: AllocationAction; advisory: boolean }>();
   for (const v of portfolio.verdicts) {
     if (v.propertyId.startsWith('pipeline:')) continue;
-    actionByProperty.set(v.propertyId, v.action);
+    byProperty.set(v.propertyId, { action: v.action, advisory: v.advisoryOnly === true });
   }
-  return entries.map((e) => ({
-    propertyName: e.propertyName,
-    allocationAction: actionByProperty.get(e.propertyId) ?? null,
-    priorityScore: e.priorityScore,
-  }));
+  return entries.map((e) => {
+    const hit = byProperty.get(e.propertyId);
+    return {
+      propertyName: e.propertyName,
+      allocationAction: hit?.action ?? null,
+      priorityScore: e.priorityScore,
+      advisory: hit?.advisory ?? false,
+    };
+  });
 }
 
 export interface SyncResult {
@@ -187,7 +204,7 @@ async function ensureProperties(
           [ACTION_PROP]: {
             select: {
               // 5-way values first, then the legacy ones retained (see module header).
-              options: [...ALLOCATION_OPTIONS, ...LEGACY_OPTIONS],
+              options: [...ALLOCATION_OPTIONS, ...ADVISORY_OPTIONS, ...LEGACY_OPTIONS],
             },
           },
           [PRIORITY_PROP]: { number: { format: 'number' } },
@@ -246,7 +263,7 @@ async function writePage(
     headers: notionHeaders(token),
     body: JSON.stringify({
       properties: {
-        [ACTION_PROP]: { select: { name: entry.allocationAction } },
+        [ACTION_PROP]: { select: { name: entry.advisory ? `${entry.allocationAction}${ADVISORY_SUFFIX}` : entry.allocationAction } },
         [PRIORITY_PROP]: { number: Math.round(entry.priorityScore) },
       },
     }),

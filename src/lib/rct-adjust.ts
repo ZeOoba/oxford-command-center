@@ -12,7 +12,7 @@
  *
  * Step (3) is applied as `table LOW × multiplier + 0.90 × adders` (HIGH likewise at 1.10), not `0.90 × (POINT ×
  * multiplier + adders)`. The two are the same formula, but the ratified table rounds each column to the cent, so
- * `0.90 × POINT` can sit up to $0.01 off the ratified LOW (Columbus: 229.644 vs 229.65). Anchoring on the ratified LOW
+ * `0.90 × POINT` can sit up to $0.01 off the ratified LOW. Anchoring on the ratified LOW
  * keeps a tilt-up building with no adders priced on EXACTLY the ratified row.
  */
 
@@ -42,7 +42,7 @@ export interface ConstructionSchedule {
   brick: number;
   hybrid: number;
   pemb: PembSizeTilt;
-  /** Unknown type ⇒ the PEMB value for the subject's SF, capped at this (doctrine: 0.90). */
+  /** Unknown type ⇒ the PEMB value for the subject's SF, capped at this (value: the ratified RCT, local-only). */
   unknownCap: number;
 }
 
@@ -50,7 +50,7 @@ export type AdderSchedule = Record<RctAdderId, number>;
 
 export interface MultiplierResult {
   multiplier: number;
-  /** Screen citation, e.g. "PEMB ×0.90" — doctrine: report the multiplier beside the RCT citation. */
+  /** Screen citation, e.g. "PEMB ×<multiplier>" — doctrine: report the multiplier beside the RCT citation. */
   label: string;
   /** True when the type was not confirmed (unknown / null / mixed) and the strictest applicable multiplier was used. */
   assumed: boolean;
@@ -72,7 +72,7 @@ export function pembMultiplier(buildingSf: number | null, tilt: PembSizeTilt): {
  * The construction-type multiplier for a building.
  *
  * Unknown (null, 'unknown') ⇒ the strictest applicable multiplier: the PEMB value for the subject's SF, capped at
- * `unknownCap` (0.88 under ~20,000 SF, 0.90 otherwise), tagged [DATA-GAP: construction type]. An unchecked building
+ * `unknownCap` (so the smallest-SF band still applies below it), tagged [DATA-GAP: construction type]. An unchecked building
  * must never price better than a checked metal one.
  *
  * 'mixed' is a mixed façade, which doctrine weights by façade share. The engine carries no façade share, so it takes

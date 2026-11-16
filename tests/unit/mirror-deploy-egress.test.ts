@@ -86,7 +86,8 @@ describe('deploy-mirror.ps1 finding 4: probe before the FULL bake, contain on fa
     expect((code.match(/Remove-Item Env:\\MIRROR_ACCESS_PREPROBE/g) ?? []).length).toBe(2);
     expect((code.match(/Remove-Item Env:\\MIRROR_INCLUDE_CONFIDENTIAL/g) ?? []).length).toBe(2);
     const clear = code.indexOf('Remove-Item Env:\\MIRROR_ACCESS_PREPROBE');
-    expect(clear).toBeLessThan(code.indexOf('try {'));
+    // The MAIN try block (column 0); the 2026-11-13 priority raise above it has its own indented try.
+    expect(clear).toBeLessThan(code.search(/^try \{/m));
   });
 
   it('a GATE CHECK FAILED opens the latch before alerting, then runs the lockdown and alerts its outcome', () => {

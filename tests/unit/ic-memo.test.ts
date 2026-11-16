@@ -159,6 +159,84 @@ describe('buildIcMemoHtml — verdict table', () => {
     expect(html).toContain('Westport Flex');
   });
 
+  // Ruling 2026-11-13 (audit #7/#12): a verdict resting on an unratified constant (BUY floor,
+  // capex proxy) is advisoryOnly even when the portfolio-level hurdle is ratified — the printed
+  // memo must not present it as decision-grade.
+  it('marks a per-verdict advisory row (BUY / improve) even when the portfolio is not advisory', () => {
+    const html = buildIcMemoHtml(portfolio({
+      advisoryOnly: false,
+      verdicts: [
+        verdict({ propertyId: 'pipeline:c1', propertyName: 'Fixture Pipeline Bldg', action: 'buy', advisoryOnly: true, confidence01: 0.9 }),
+        verdict({ propertyId: 'p-hold', propertyName: 'Fixture Hold Bldg', action: 'hold', advisoryOnly: false, confidence01: 0.5 }),
+      ],
+    }));
+    // slice(1): chunk 0 is everything before the first row (the exec summary names the property too).
+    const rowOf = (name: string) => html.split('<tr class="ic-row">').slice(1).find((r) => r.includes(name))?.split('</tr>')[0] ?? '';
+    expect(rowOf('Fixture Pipeline Bldg')).toMatch(/Advisory/);
+    expect(rowOf('Fixture Hold Bldg')).not.toMatch(/Advisory/);
+    // The exec-summary headline must not cite an advisory verdict as a plain recommendation.
+    expect(html).toMatch(/Highest-confidence verdict: <strong>Fixture Pipeline Bldg<\/strong> — <strong>[^<]+<\/strong> \(advisory/);
+  });
+
+  it('qualifies the hurdle-clearance count and column when the projection rests on unratified assumptions (refute wf_c69b93c5-c15)', () => {
+    const flag = { entity: 'p1', field: 'returnAboveHurdle', issue: 'advisory projection', severity: 'info' as const };
+    const html = buildIcMemoHtml(portfolio({
+      advisoryOnly: false,
+      verdicts: [verdict({ propertyId: 'p1', propertyName: 'Fixture Projected Bldg', expectedReturnPct: 0.1, returnAboveHurdle: true, dataQuality: [flag] })],
+    }));
+    expect(html).toMatch(/clear the 8\.0% hurdle rate \(projected on unratified assumptions\)/);
+    const row = html.split('<tr class="ic-row">').slice(1).find((r) => r.includes('Fixture Projected Bldg'))!.split('</tr>')[0]!;
+    expect(row).toMatch(/&#10003;\*/);
+  });
+
+  it('labels pipeline BUY eligibility advisory while the composite floor is unratified (refute wf_62322d75-6f9)', () => {
+    const floorFlag = { entity: 'portfolio', field: 'buyCompositeFloor', issue: 'floor unratified', severity: 'info' as const };
+    const cand = { candidateId: 'c1', address: 'Fixture Cand Bldg', market: null, tier: 'T1', composite: 72, verdict: 'PURSUE', buyEligible: true,
+      unleveredIrr10yr: null, basisDiscountPct: null, openItems: [] };
+    const html = buildIcMemoHtml(portfolio({ advisoryOnly: false, pipeline: [cand, { ...cand, candidateId: 'c2', address: 'Fixture Cand Two', buyEligible: false }] as never, dataQuality: [floorFlag] }));
+    expect(html).toMatch(/Eligible \(advisory: composite floor unratified\)/);
+    expect(html).toMatch(/Not eligible \(advisory: composite floor unratified\)/);
+    const plain = buildIcMemoHtml(portfolio({ advisoryOnly: false, pipeline: [cand] as never, dataQuality: [] }));
+    expect(plain).not.toMatch(/composite floor unratified/);
+  });
+
+  it('explains "*" and the Advisory badge in the table legend, and claims unratified projections only when flagged (refute wf_8522c228-850)', () => {
+    const flag = { entity: 'p1', field: 'returnAboveHurdle', issue: 'advisory projection', severity: 'info' as const };
+    const flagged = buildIcMemoHtml(portfolio({
+      advisoryOnly: false,
+      verdicts: [verdict({ propertyId: 'p1', action: 'improve', advisoryOnly: true, expectedReturnPct: 0.1, returnAboveHurdle: true, dataQuality: [flag] })],
+    }));
+    expect(flagged).toMatch(/\* = projected on unratified assumptions/);
+    expect(flagged).toMatch(/Advisory = rests on an unratified constant/);
+    expect(flagged).toMatch(/the IRR projection assumptions are not/);
+    const plain = buildIcMemoHtml(portfolio({ advisoryOnly: false, verdicts: [verdict({ propertyId: 'p2', expectedReturnPct: 0.1, returnAboveHurdle: true, dataQuality: [] })] }));
+    expect(plain).not.toMatch(/projection assumptions are not/);
+    expect(plain).not.toMatch(/\* = projected/);
+  });
+
+  it('counts advisory verdicts in the Action Breakdown group header (refute wf_62322d75-6f9)', () => {
+    const html = buildIcMemoHtml(portfolio({
+      advisoryOnly: false,
+      verdicts: [
+        verdict({ propertyId: 'a', propertyName: 'Fixture A', action: 'improve', advisoryOnly: true }),
+        verdict({ propertyId: 'b', propertyName: 'Fixture B', action: 'improve', advisoryOnly: false }),
+      ],
+    }));
+    expect(html).toMatch(/<span class="ic-count">\(2, 1 advisory\)<\/span>/);
+  });
+
+  it('keeps confidence ties in engine emission order, so the headline never changes from main (independent review 2026-11-13)', () => {
+    const html = buildIcMemoHtml(portfolio({
+      verdicts: [
+        verdict({ propertyId: 'z-prop', propertyName: 'Fixture First Emitted', confidence01: 0.65 }),
+        verdict({ propertyId: 'a-prop', propertyName: 'Fixture Second Emitted', confidence01: 0.65 }),
+        verdict({ propertyId: 'pipeline:c1', propertyName: 'Fixture Pipeline', action: 'buy', advisoryOnly: true, confidence01: 0.65 }),
+      ],
+    }));
+    expect(html).toMatch(/Highest-confidence verdict: <strong>Fixture First Emitted<\/strong>/);
+    expect(html.indexOf('Fixture First Emitted')).toBeLessThan(html.indexOf('Fixture Second Emitted'));
+  });
+
   it('renders null / unavailable diagnostic fields as an em-dash, never as "null" or NaN', () => {
     const html = buildIcMemoHtml(portfolio());
     expect(html).toContain('—'); // em-dash appears in table note / methodology
@@ -423,5 +501,42 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
     }));
     const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
     expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
+  });
+});
+
+describe('buildIcMemoHtml — governor-demoted pipeline marker', () => {
+  it('marks a T1 row whose verdict was demoted to PASS, and leaves a clean T1 unmarked', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-ok', address: '1 Good Way', market: null, composite: 80.6, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PURSUE', buyEligible: true },
+        { candidateId: 'c-legacy', address: '2 Legacy Rd', market: null, composite: 92, tier: 'T1', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false },
+      ],
+    }));
+    const rowOf = (addr: string) => html.slice(html.indexOf(addr), html.indexOf('</tr>', html.indexOf(addr)));
+    expect(rowOf('2 Legacy Rd')).toContain('Governor-demoted (was T1)');
+    // Tier column shows the verdict's tier, not the stale persisted T1.
+    expect(rowOf('2 Legacy Rd')).toContain('<td class="ic-r">PASS</td>');
+    expect(rowOf('2 Legacy Rd')).not.toContain('<td class="ic-r">T1</td>');
+    expect(rowOf('1 Good Way')).not.toContain('Governor-demoted');
+  });
+
+  it('marks a current-engine demotion (tier PASS) via the server governorDemoted flag', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-engine', address: '5 Engine Way', market: null, composite: 88, tier: 'PASS', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'PASS', buyEligible: false, governorDemoted: true },
+      ],
+    }));
+    const row = html.slice(html.indexOf('5 Engine Way'), html.indexOf('</tr>', html.indexOf('5 Engine Way')));
+    expect(row).toContain('Governor-demoted');
+    expect(row).not.toContain('(was');
+  });
+
+  it('does not mark a row whose tier is already PASS', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-pass', address: '4 Pass Ct', market: null, composite: 40, tier: 'PASS', unleveredIrr10yr: null, basisDiscountPct: null, verdict: 'PASS', buyEligible: false },
+      ],
+    }));
+    expect(html).not.toContain('Governor-demoted');
   });
 });

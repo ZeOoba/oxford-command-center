@@ -1,4 +1,4 @@
-import { fmtUsdCompact } from '@analytics/index';
+import { fmtUsdCompact, noiGapText } from '@analytics/index';
 import type { Provenance } from '@contracts/index';
 import type { AnalyticsBundle } from '@analytics/index';
 import { otherHoldingsClause } from '@/modules/overview/other-holdings';
@@ -20,7 +20,8 @@ const pctFmt = (n: number | null): string => (n === null ? '—' : `${n.toFixed(
 export function principalKpis(analytics: AnalyticsBundle): PrincipalKpi[] {
   const k = analytics.kpis;
   return [
-    { label: 'NOI', value: k.noi.value, format: fmtUsdCompact, prov: k.noi.prov },
+    // A blank workbook NOI leaves Σ NOI incomplete: say so under the figure (follow-up to audit HIGH #2).
+    { label: 'NOI', value: k.noi.value, format: fmtUsdCompact, prov: k.noi.prov, ...(noiGapText(k) ? { sublabel: noiGapText(k)! } : {}) },
     {
       label: 'Portfolio value',
       value: k.value.value,

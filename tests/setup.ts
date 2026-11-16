@@ -2,6 +2,22 @@ import '@testing-library/jest-dom/vitest';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { vi } from 'vitest';
+import type * as AcquisitionModule from '../server/warehouse/acquisition';
+
+// ---- Replacement-Cost Table: synthetic in every test -------------------------------------------
+// The ratified RCT is local-only (docs/ops/rct-runtime-config.md). In production, loadRatifiedRct() with no
+// arguments refuses the synthetic stand-in and checks the keyed-HMAC pin, so the production callers
+// (server/warehouse/api.ts acqConfig, capital-allocation's live regime) would fail closed in every test. Here,
+// and only here, that no-argument call loads the committed synthetic stand-in instead, so the suite exercises
+// the real routes and the BUY gate on invented figures, never the real table. A call with an explicit path or
+// options (tests/unit/rct-runtime-config.test.ts) reaches the real loader unchanged, so its fail-closed paths
+// stay tested. The bundled imports are aliased to the same stand-in in vitest.config.ts.
+vi.mock('../server/warehouse/acquisition', async (importOriginal) => {
+  const actual = await importOriginal<typeof AcquisitionModule>();
+  const { syntheticRctLoader } = await import('./support/rct-loader');
+  return { ...actual, loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct) };
+});
 
 // server/briefing/confidential.ts fails loud when CONFIDENTIAL_TERMS_PATH is unreadable, by design
 // (a confidentiality gate must fail closed, not silently scan a placebo). Point the whole suite at a

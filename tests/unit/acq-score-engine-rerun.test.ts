@@ -20,8 +20,10 @@ import type * as AcquisitionModule from '../../server/warehouse/acquisition';
 const engineCalls = vi.hoisted(() => ({ n: 0 }));
 vi.mock('../../server/warehouse/acquisition', async (importOriginal) => {
   const actual = await importOriginal<typeof AcquisitionModule>();
+  const { syntheticRctLoader } = await import('../support/rct-loader');
   return {
     ...actual,
+    loadRatifiedRct: syntheticRctLoader(actual.loadRatifiedRct),
     scoreAcquisition: (...args: Parameters<typeof actual.scoreAcquisition>) => {
       engineCalls.n++;
       return actual.scoreAcquisition(...args);
@@ -47,15 +49,16 @@ import { openWarehouse } from '../../server/warehouse/db';
 import { getMacro } from '../../server/macro/getMacro';
 import { scoreProperties } from '../../server/warehouse/scores';
 import { persistAndLogScore } from '../../server/warehouse/acq-engine';
-import { parseRuleset, loadRatifiedRct, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { classifyLatestScore, liveScoringRegime, rescoreStaleCandidates } from '../../server/warehouse/acq-score-freshness';
 import { capReasonLine } from '../../server/warehouse/acq-score-compare';
 import { buildPortfolioAllocation, OPEN_ITEM_DISPLAY } from '../../server/warehouse/capital-allocation';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 const RULESET = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 
 const STRONG_RAW: Record<string, unknown> = {
   dealId: 'rerun-strong',

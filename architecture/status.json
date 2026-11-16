@@ -89,7 +89,7 @@
   },
   "pca-capex-ledger": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-07",
-    "phase": "Property Condition ledger Phases 1-2: Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
+    "phase": "Property Condition ledger Phases 1-3: Phase 3 alerts (server/warehouse/property-condition-conditions.ts merged in server/brief/run.ts; new 'capex' InsightCategory + ALERT_THRESHOLDS entries in src/analytics/{types,conditions}.ts and src/modules/insights/insights.logic.ts); Phase 1 ingest (migration 035_property_condition.sql, src/contracts/property-condition.ts + barrel export, scripts/import-pca-register.ts, package.json script) and Phase 2 read-only surface (server/warehouse/property-condition{,-api}.ts, one mount line in server/warehouse/sub-routers.ts, src/modules/property-condition/*, standalone destination registered in src/shell/{modules.tsx,module-order.ts,titles.ts}). Plan: docs/capital/2026-10-07-pca-capex-ledger-integration-plan.md. Later phases (alerts, capital-allocation wiring via refute-financial-change) separate.",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,
@@ -985,6 +985,15 @@
     "review_detail": "Architect-owned touches: (1) NEW src/contracts/edge.ts + src/contracts/index.ts (+1 line: export * from './edge'); (2) NEW server/warehouse/migrations/034_edge_pull_log.sql (renumbered from 033 after PR 425 took 033; one isolated append-only table edge_pull_log; no existing table touched); (3) package.json: NOT touched by this PR (the branch's own one-line gate:ci governance change was dropped when main's PR 433 landed the same step; merge took main's file verbatim). Shared single-writer surfaces claimed: server/warehouse/sub-routers.ts (+1 import, +1 literal entry { prefix: '/edge', factory: edgeApi }), .claude/launch.json (gitignored local file in the main checkout: +2 worktree preview entries edge-web/edge-server), env.example (+OXFORD_EDGE_DIR doc lines). NOT touched: server/index.ts, migrate.ts, db.ts, any governor/ruleset/scoring file. Architect ack: Gabriel, in-session 2026-10-02 (AskUserQuestion: Acknowledge and proceed; sentinel placed by Gabriel).",
     "last_updated": "2026-10-03T21:50:00Z"
   },
+  "edge-news-overlay": {
+    "agent_role": "Integration Agent (server/edge/news.ts) + UX Agent (src/modules/acquisitions/Edge*, edge-hooks.ts) - Claude Code session",
+    "phase": "Oxford Edge news overlay: dated per-market news signals (Improving / Weakening / Mixed) beside markets.json, display only. Plan docs/superpowers/plans/2026-10-08-edge-news-overlay.md. Ported 2026-11-13 onto the rewritten main as branch port/feat-edge-news-overlay (draft PR), not merged.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Architect-owned touch: src/contracts/edge.ts, ADDITIVE ONLY (EdgeNewsSignal, EdgeNewsEntry, EdgeNewsResponse appended; no existing schema changed). Not touched: migrations, server/index.ts, sub-routers.ts (the /news route lives inside the existing edgeApi router), scoring, governors. edge.ts stays out of FINANCIAL_CONTRACT_PATHS. Architect ack: Gabriel, in-session 2026-10-08 (AskUserQuestion: Acknowledged).",
+    "last_updated": "2026-11-13T00:00:00Z"
+  },
   "trends-wave3b": {
     "agent_role": "Integration Agent + UX Agent — Claude Code",
     "phase": "Portfolio Trends Wave 3B: Expenses tab (stacked monthly opex, heatmap, small-multiples, movers) + health alerts, built against a typed contract (plan: docs/superpowers/plans/2026-10-02-portfolio-trends-wave3b-expense-ui-alerts.md). Data feed is Wave 3A.",
@@ -1091,5 +1100,32 @@
     "detail": "Branch chore/decouple-real-data-2026-11-10, worktree claude-worktrees/occ-decouple. Not pushed. Three refute rounds (round 3: wf_a08c1d58-e1b): seeded random synthetic money (HMAC secret retired), real amounts and names swept from tracked files, operator tables in config/local/, golden value locks, fail-closed seeding and deploy, synthetic-data guards on every CLI manifest writer and the warehouse backfill, move-aside pull runbook.",
     "review_detail": "Architect-owned / shared-infra edits across the branch: CLAUDE.md (section 9 real-data bullet + quick-reference rows), architecture/coding-standards.md, package.json (postinstall, data:synthetic, golden:ratify), .gitignore, .github/workflows/ci.yml (comment only), scripts/governance-check.ts and scripts/prepush-confidential-scan.mjs (real-data path block, case-insensitive), scripts/deploy-mirror.ps1 and scripts/lib/deploy-buildroot.ps1 (Copy-RealDataIntoBuildRoot, fail closed on missing or synthetic), scripts/bake-mirror.ts, scripts/lease-snapshot-drift-check.ts and the manifest writers ar-import, ar-import-headless, calibration-promote, calibration-propose, extract-workbook, seed-ar-mappings, plus warehouse-backfill (refuseIfSynthetic), server/real-data-status.ts (new), server/startup.ts (banner), server/brain.ts (synthetic flags in refresh, the cold fallback and rederive), server/reconcile-runtime.ts (comment and message text), scripts/reconcile-snapshot.ts (banner), scripts/ensure-local-data.ts (new), scripts/fixtures/* (manifest, generator, seeded money), scripts/golden/compute-golden.ts and scripts/ratify-golden.ts (new), scripts/extract-local-tables.ts (new), server/warehouse/lease-terms.ts (roster from config/local/lease-term-seeds.json), src/modules/property-condition/pca-overlay.ts (tables from config/local/pca-overlay.json); test harness and helpers: tests/global-setup.ts (seeds via ensureLocalData), tests/setup.ts, scripts/deploy-buildroot.smoke-test.ps1, scripts/doc-search-golden.ts (reads config/local), tests/fixtures/refute-trailers-main.txt, env.example, public/_redirects (comment only). No migration, governor constant or tracked config/*.json change (config/local/ is gitignored operator data).",
     "last_updated": "2026-11-11T21:00:00Z"
+  },
+  "governor-integrity-2026-11-13": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-directed 2026-11-13",
+    "phase": "Audit 2026-11-12 governor integrity, HIGH #2 only: blank Spine-A governor inputs are flagged at parse (NOI on any row; Debt Service / Loan Balance on a row carrying debt figures) and the DSCR/LTV governor surfaces fail closed (values unchanged). MEDIUM #6 (65% + 8% hurdle relocation) is a separate follow-up stacked on PR-C.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "detail": "Branch fix/governor-integrity-2026-11-13, worktree claude-worktrees/occ-governor-integrity. Architect-owned files touched: src/analytics/engine.ts (applyScenario keeps the workbook DSCR/LTV cell on a blank input; portfolioKpis ltv null, totalDebt marked lower-bound, affiliateDebt and noi marked incomplete with no bound direction, ltvIncomplete/noiIncomplete/affiliateIncomplete carriers) and src/contracts/capital-allocation.ts (optional portfolioNoiIncomplete), plus this status.json entry. Capital-allocation report scores a blank NOI as unknown; per-property surfaces (drawer, Portfolio table, Property page, CSV, AI get_property, debt-basis reconcile text) show blank, never $0. No governor VALUE changed (Invariant 4). Gabriel merges.",
+    "last_updated": "2026-11-13T16:30:00Z"
+  },
+  "prepush-scan-per-commit": {
+    "agent_role": "Engineering (Claude Code) - confidentiality-gate fixes from the 2026-11-12 six-repo code review (Gabriel: 'Yes, fix gates', 'Delegate to Python scanner', 'Fix and re-refute')",
+    "phase": "Pre-push confidentiality gate: per-commit scan; vendored shared Python term scanner run from scripts/prepush-confidential-scan.mjs and, on every push before the JS, from the wrapper (a single brace group, so an in-place rewrite after the shell starts reading cannot cut it short; residual OI-403: an older installer emptying the file before the shell's first read passes unscanned); the wrapper rebuilds PATH with shell built-ins before any external command and the scanner resolves interpreters to absolute paths off the worktree (refute runs wf_72500728-83e, wf_0df7879e-d79, wf_e0d7368f-0b3, wf_df157e64-c52, wf_954ebd83-729, wf_a50bf4bb-d1a, wf_39e200e8-462; merge gate round 1 fixes: atomic hook writes, raw-byte ref relay, node stdin read; round 2 redesign: the scanner and the copy beside the hook must match a pinned SHA-256, mode set before rename, in-use install warns).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "last_updated": "2026-11-14T12:00:00Z",
+    "review_detail": "Architect-owned / shared-infra edits: architecture/coding-standards.md (pre-push hook section), README.md (prerequisites, tech stack, git hooks), .gitattributes (scripts/hooks/* eol=lf), .gitignore (__pycache__, *.py[cod]), scripts/install-git-hooks.ts (WRAPPER written into the common .git/hooks of every worktree, plus the ora_prepush_confidential_scan.py copy beside it), vendored scripts/prepush_confidential_scan.py, scripts/test_prepush_confidential_scan.py and scripts/hooks/pre-push. Squash-merge only: intermediate commits are not supported push sources."
+  },
+  "noi-reader-sweep-2026-11-13": {
+    "agent_role": "Engineering (Claude Code) - orchestrator-directed 2026-11-13",
+    "phase": "Follow-up to audit 2026-11-12 HIGH #2 (PR #579): NOI-reader sweep. Every Spine-A reader of a blank workbook NOI names the blank row and says incomplete, with no bound direction.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "detail": "Branch fix/noi-reader-sweep off main ca79d977 (PR #579 merged), worktree claude-worktrees/occ-noi-sweep-main. Also touches src/brain/tenants.ts, src/brain/searchIndex.ts, server/ai/tools.ts, scripts/extract-workbook.ts, new src/shell/filter-slice.ts and src/modules/market/acquisition-lens.ts, and UI tiles. Architect-owned files touched: src/analytics/engine.ts (marketAllocation NOI slices carry incomplete row names; ties break by market name), src/analytics/types.ts (optional MarketSlice.incomplete), src/analytics/conditions.ts (concentration alert marks incomplete; one concentration-incomplete info insight), src/analytics/index.ts and new src/analytics/noi-incomplete.ts, plus this status entry.",
+    "last_updated": "2026-11-14T01:00:00Z"
   }
 }

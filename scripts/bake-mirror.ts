@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { parseWarehouseMirror } from '../src/lib/warehouse-mirror';
 import { refuseIfSynthetic } from '../server/real-data-status';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
@@ -302,32 +303,67 @@ function listFilesRelative(dir: string, prefix = ''): string[] {
 }
 
 /**
- * Audit wf_9bf74429-aaf finding 30: a REDACTED ("public-safe") bake used to leave a stale FULL
- * public/warehouse.json behind -- it is gitignored, and the deploy build root's `git clean -fd`
- * (no -x) keeps it -- and vite copies public/ into dist/, so the "public-safe" artifact shipped the
- * last FULL warehouse payload. In REDACTED mode every optional output this run does not regenerate
- * is deleted; FULL mode leaves them (they are FULL-or-redacted, and FULL targets are Access-gated).
+ * The newest a carried-forward public/warehouse.json may be in a FULL run that does not re-bake it:
+ * the documented cadence is a daily -IncludeWarehouse bake that the hourly FULL runs carry forward
+ * (deploy-mirror.ps1 IncludeWarehouse; docs/diagrams/README.md), so one day plus slack.
+ */
+export const WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS = 26 * 60 * 60 * 1000;
+
+/**
+ * Whether a FULL run that does not re-bake the warehouse may keep `public/warehouse.json`: it must
+ * parse as a current-schema envelope (the same check the client applies) with a `bakedAt` no older
+ * than WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS and not in the future. Anything else is stale.
+ */
+export function isCarryForwardWarehouse(file: string, nowMs: number): boolean {
+  try {
+    const env = parseWarehouseMirror(JSON.parse(readFileSync(file, 'utf8')));
+    if (!env) return false;
+    const baked = Date.parse(env.bakedAt);
+    if (!Number.isFinite(baked)) return false;
+    const age = nowMs - baked;
+    return age >= -5 * 60 * 1000 && age <= WAREHOUSE_CARRY_FORWARD_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Removes stale bake outputs before this run writes anything. public/ outputs are gitignored, the
+ * deploy build root's `git clean -fd` (no -x) keeps them, and vite copies public/ into dist/, so
+ * whatever is left there ships.
+ *  - Copies of any baked output (any depth): always removed.
+ *  - public/warehouse.json: removed in REDACTED mode (audit wf_9bf74429-aaf finding 30: the
+ *    "public-safe" bake shipped the last FULL file); removed when this run re-bakes it (refute
+ *    wf_ec2162a9-34f: a run that stops before the rewrite must not leave the old file); and in a FULL
+ *    run that does not re-bake it, removed unless it is a recent current-schema bake
+ *    (isCarryForwardWarehouse). 2026-11-13: the hourly FULL deploy shipped a warehouse.json baked
+ *    2026-08-18; a daily bake carried forward by the hourly runs is kept.
  * Returns the names removed. Throws if one cannot be removed (a refusal: the bake must not finish).
  */
-export function removeStaleRedactedOutputs(
+export function removeStaleBakeOutputs(
   pub: string,
-  opts: { includeConfidential: boolean; bakeWarehouse: boolean },
+  opts: { includeConfidential: boolean; bakeWarehouse: boolean; nowMs?: number },
 ): string[] {
-  if (opts.includeConfidential) return [];
-  // Removed even when this run re-bakes the warehouse (refute wf_ec2162a9-34f): the redacted rewrite
-  // comes last, so a run that refuses or fails before it would otherwise leave the FULL file behind.
+  const nowMs = opts.nowMs ?? Date.now();
+  const names = new Set<string>();
+  for (const name of OPTIONAL_BAKE_OUTPUTS) {
+    const keep =
+      opts.includeConfidential && !opts.bakeWarehouse && isCarryForwardWarehouse(join(pub, name), nowMs);
+    if (!keep) names.add(name);
+  }
   // Copies of any baked output go too; snapshot.json / macro.json themselves are rewritten below.
-  const names = new Set<string>(OPTIONAL_BAKE_OUTPUTS);
   for (const rel of existsSync(pub) ? listFilesRelative(pub) : []) {
     const base = rel.slice(rel.lastIndexOf('/') + 1);
-    if (BAKE_OUTPUT_COPY.test(base) && !BAKE_OUTPUTS_REWRITTEN.has(rel)) names.add(rel);
+    // Top-level optional outputs are decided above (the copy pattern matches `warehouse.json` too).
+    const decidedAbove = (OPTIONAL_BAKE_OUTPUTS as readonly string[]).includes(rel);
+    if (BAKE_OUTPUT_COPY.test(base) && !BAKE_OUTPUTS_REWRITTEN.has(rel) && !decidedAbove) names.add(rel);
   }
   const removed: string[] = [];
   for (const name of [...names].sort()) {
     const p = join(pub, ...name.split('/'));
     if (existsSync(p)) {
       rmSync(p, { force: true });
-      if (existsSync(p)) throw new Error(`✗ bake-mirror: could not remove stale public/${name} before a REDACTED bake`);
+      if (existsSync(p)) throw new Error(`✗ bake-mirror: could not remove stale public/${name} before the bake`);
       removed.push(name);
     }
   }
@@ -349,11 +385,11 @@ export async function main() {
   }
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });
-  // Stale FULL outputs go FIRST, before any write or refusal below (finding 30), so a REDACTED run
-  // that stops part-way can never leave the last FULL warehouse.json in public/.
+  // Stale outputs go FIRST, before any write or refusal below (finding 30), so a run that stops
+  // part-way can never leave a FULL warehouse.json in a REDACTED public/, or a stale one anywhere.
   const bakeWarehouse = shouldBakeWarehouse(process.argv, process.env);
-  const staleRemoved = removeStaleRedactedOutputs(pub, { includeConfidential, bakeWarehouse });
-  if (staleRemoved.length) console.log(`  Removed ${staleRemoved.length} stale output(s) this REDACTED bake does not regenerate: ${staleRemoved.join(', ')}`);
+  const staleRemoved = removeStaleBakeOutputs(pub, { includeConfidential, bakeWarehouse });
+  if (staleRemoved.length) console.log(`  Removed ${staleRemoved.length} stale output(s) before the bake: ${staleRemoved.join(', ')}`);
 
   // Parse day-counts (lease monthsToExpiry) off the ET run date so the brief — and the mirror
   // this bake feeds — track the firm's timezone, not the process UTC date (a month-boundary

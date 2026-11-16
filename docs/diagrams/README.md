@@ -110,7 +110,7 @@ flowchart LR
         MET["metrics / growth / drivers /<br/>anomalies / benchmarks / scores"]
         DEBT["debt-scoring"]
         CAP["capital-allocation<br/>(5-way verdict; hurdle from capital_config)"]
-        ACQE["acq-engine + acquisition scoring<br/>(config/acquisition-ruleset.v1.json, replacement-cost.v3.json)"]
+        ACQE["acq-engine + acquisition scoring<br/>(config/acquisition-ruleset.v1.json, local-only replacement-cost.v3.json)"]
         INS["insurance / tax analysis"]
         LMC["lease-market compute"]
         CAL["calibration"]
@@ -142,11 +142,11 @@ flowchart LR
 
 ## Mirror deploy and daily brief
 
-The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Access probe of the live target, `build:mirror` (bake, brief + Outlook COM send, typecheck, vite build, dist roster scan in REDACTED mode), bounded wrangler deploy from the build root, post-deploy Access 302 probe, failure alert, and lockdown containment on a served exposure (audit wf_9bf74429-aaf findings 1/4/30/31, 2026-11-12).
+The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Access probe of the live target, `build:mirror` (bake, brief + Outlook COM send, `check:rct-pin`, typecheck, vite build, dist roster scan in REDACTED mode), bounded wrangler deploy from the build root, post-deploy Access 302 probe, failure alert, and lockdown containment on a served exposure (audit wf_9bf74429-aaf findings 1/4/30/31, 2026-11-12).
 
 <details><summary>Evidence</summary>
 
-- scripts/register-mirror-task.ps1:53-57; scripts/deploy-mirror.ps1:22,45-63,169,246,280-303,358;
+- scripts/register-mirror-task.ps1:58-62 ($hourly/$morning triggers, Register-ScheduledTask); scripts/deploy-mirror.ps1 (symbol anchors, line numbers drift: param() block, Sync-DeployBuildRoot, `npm run build:mirror`, Get-AccessGateProbePaths, Invoke-MirrorWranglerDeploy, Send-DeployRecoveryDigestIfSuppressed);
 - package.json build:mirror/build/prebuild; scripts/bake-mirror.ts:3,6,196,267-279;
 - server/workbook/parse.ts:23-24,1662,1671; server/brief/run.ts:26; server/brief/send.ts:8; server/index.ts:287-298
 
@@ -154,7 +154,7 @@ The off-fleet Windows task: gate-latch check, isolated build root, PRE-deploy Ac
 
 ```mermaid
 flowchart TB
-    TASK(["Windows Task 'ORA Command Center - Mirror Deploy'<br/>hourly + daily 06:45 local<br/>register-mirror-task.ps1:53-54"])
+    TASK(["Windows Task 'ORA Command Center - Mirror Deploy'<br/>hourly + daily 06:45 local<br/>register-mirror-task.ps1:58-59"])
     TASK --> DM["scripts/deploy-mirror.ps1"]
 
     subgraph S1["Step 1 - isolated build root"]
@@ -171,13 +171,14 @@ flowchart TB
         BAKE["bake-mirror.ts"]
         PW["parseWorkbook()<br/>ExcelJS + loadDeals() Notion + loadM365Tasks() Graph<br/>(network calls INSIDE the parser)"]
         MAC["getMacro() FRED (+ seeded fallback)"]
-        RED["confidential-deal redaction<br/>(FULL only with the flag + passed pre-probe, scripts/lib/mirror-mode.ts)<br/>REDACTED removes stale warehouse.json first"]
+        RED["confidential-deal redaction<br/>(FULL only with the flag + passed pre-probe, scripts/lib/mirror-mode.ts)<br/>stale outputs removed first: REDACTED always drops warehouse.json;<br/>FULL keeps it only if current-schema and baked under 26h"]
         BR["runBrief() server/brief/run.ts<br/>daily brief + critical alerts"]
         SEND["send.ts -> _shared/send-via-outlook.ps1<br/>(principal only)"]
         BH[("data/brief-health.json<br/>(primary checkout)")]
         PUB[("public/snapshot.json + macro.json")]
-        WHB["bake-warehouse.ts (OFF on hourly; daily, BAKE_WAREHOUSE=1)"] --> PUBW[("public/warehouse.json")]
-        TYPES["prebuild: generate confidential-scan types"] --> TSC["tsc --noEmit (full typecheck)"] --> VITE["vite build -> dist/"]
+        WHB["bake-warehouse.ts (OFF on hourly; daily, BAKE_WAREHOUSE=1)"] --> PUBW[("public/warehouse.json<br/>(carried forward up to 26h on hourly FULL runs)")]
+        PIN["check:rct-pin<br/>local-only RCT must match the keyed pin (RCT_PIN_KEY); else stop, nothing bundled"]
+        PIN --> TYPES["prebuild: generate confidential-scan types"] --> TSC["tsc --noEmit (full typecheck)"] --> VITE["vite build -> dist/"]
         VITE --> SCAN["scan-mirror-dist.ts<br/>REDACTED: roster-scan every dist/ text file"]
         BAKE --> PW
         BAKE --> MAC

@@ -11,12 +11,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AcquisitionInput, RULESET_VERSION } from '@contracts/acquisition';
-import { assertProductionRuleset, loadRatifiedRct, parseRuleset, parseUtcAnchoredDate, scoreAcquisition } from '../../server/warehouse/acquisition';
+import { assertProductionRuleset, parseRuleset, parseUtcAnchoredDate, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { buildInput } from '../../src/modules/acquisitions/acquisition-score';
+import { loadTestRct } from '../support/rct';
 
 const rawJson = JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')) as Record<string, unknown>;
 const ruleset = parseRuleset(rawJson);
-const RCT = loadRatifiedRct();
+const RCT = loadTestRct();
 const NOW = '2026-11-12T00:00:00Z';
 
 // No market => the firm-wide conservative RCT fallback LOW ($/SF) is the divisor. Read it, never hand-type it.
