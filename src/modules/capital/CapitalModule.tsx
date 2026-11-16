@@ -518,6 +518,13 @@ export function CapitalModule() {
                     {`BUY with open items: ${(c.openItems ?? []).join('; ')}`}
                   </span>
                 )}
+                {/* OI-404: a NOT eligible candidate discloses its open items too (a DSCR-indeterminate deal is never
+                    eligible, so gating them on eligibility hid why it is held out). Listed, not claimed as the cause. */}
+                {c.buyEligible !== true && (c.openItems?.length ?? 0) > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-warn)' }}>
+                    {`Open items: ${(c.openItems ?? []).join('; ')}`}
+                  </span>
+                )}
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                   Unlev. IRR (10y) {fmtPct(c.unleveredIrr10yr)}
                 </span>

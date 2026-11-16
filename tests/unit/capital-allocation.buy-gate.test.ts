@@ -366,6 +366,14 @@ describe('BUY gate — unevaluated DSCR governor / yield floor (refute H1)', () 
     const item = result.pipeline.find((p) => p.candidateId === 'cand-null-cap')!;
     expect(item.buyEligible).toBe(false);
     expect(item.openItems).toContain('DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered');
+    // ...and a screen shows it (OI-404: both renderers once dropped openItems on ineligible rows). The IC memo is the
+    // server-side renderer, so check the real pipeline row through it end to end.
+    const { buildIcMemoHtml } = await import('../../server/warehouse/ic-memo');
+    const html = buildIcMemoHtml(result);
+    const at = html.indexOf('DSCR floor indeterminate (exit cap unknown)');
+    expect(at).toBeGreaterThan(-1);
+    // The live composite floor is unratified, so the label may carry its advisory suffix; the items still follow it.
+    expect(html.slice(html.lastIndexOf('<tr', at), at)).toMatch(/Not eligible(?: \(advisory: [^)]*\))?; open items: $/);
   });
 
   it('a NULL governor_dscr_cleared alone blocks BUY even on an otherwise clean row', async () => {

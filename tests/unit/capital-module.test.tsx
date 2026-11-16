@@ -627,6 +627,27 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     expect(screen.getByText('BUY with open items: Stage-0 gate input unconfirmed — confirm before LOI')).toBeTruthy();
   });
 
+  it('Buy Pipeline discloses open items on a NOT BUY-eligible candidate too (OI-404)', () => {
+    const qc = seededClient();
+    const base = allocationResponse();
+    const dscr = 'DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered';
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-dscr', address: '8 Cap Ct', market: null, composite: 80.1, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', buyEligible: false, openItems: [dscr] },
+          // An older producer omits buyEligible entirely: absent reads as NOT eligible, so its open items show too.
+          { candidateId: 'cand-legacy', address: '9 Legacy Ct', market: null, composite: 80.1, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.7, verdict: 'WATCH', openItems: ['Legacy open item'] },
+        ],
+      },
+    });
+    renderModule('/capital?tab=pipeline', qc);
+    expect(screen.getByText(`Open items: ${dscr}`)).toBeTruthy();
+    expect(screen.getByText('Open items: Legacy open item')).toBeTruthy();
+    expect(screen.queryByText(/BUY with open items/)).toBeNull();
+  });
+
   it('deep-links the Pipeline tab via ?tab=', () => {
     renderModule('/capital?tab=pipeline', clientWithPipeline());
     expect(screen.getByRole('tab', { name: 'Pipeline' }).getAttribute('aria-selected')).toBe('true');
