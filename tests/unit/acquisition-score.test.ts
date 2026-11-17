@@ -38,6 +38,19 @@ describe('acquisition Workbench form mapping', () => {
     expect(round.ddKnown).toEqual({ flood: true, roof: true });
   });
 
+  // PR 585 merge gate F-007/F-008 (redesign, chosen by Gabriel 2026-11-17): pin the DSCR-floor inputs' field CONTRACT,
+  // not one value. A round-trip of 0.075 cannot tell 'pct' from 'num' unit handling or from 'frac01' (2-dp reload), so
+  // assert the kind directly and round-trip 3-decimal rates that only a 'pct' field (4-dp reload) carries exactly.
+  it('the DSCR-floor inputs (exit cap, 10-yr UST) are percent fields that keep 3-decimal rates through a reload', () => {
+    const spec = (key: string) => FIELD_GROUPS.flatMap((g) => g.fields).find((f) => f.key === key);
+    expect(spec('exitCapPct')?.kind).toBe('pct');
+    expect(spec('ust10yr')?.kind).toBe('pct');
+    const input = AcquisitionInput.parse({ dealId: 'd-rates', exitCapPct: 0.07125, ust10yr: 0.04125 });
+    const round = buildInput(inputToForm(input), 'd-rates');
+    expect(round.exitCapPct).toBeCloseTo(0.07125, 9);
+    expect(round.ust10yr).toBeCloseTo(0.04125, 9);
+  });
+
   it('an unset tri-state stays UNKNOWN through the round-trip (never coerced to false)', () => {
     const input = AcquisitionInput.parse({ dealId: 'd2' }); // everything null/unknown
     const round = buildInput(inputToForm(input), 'd2');
