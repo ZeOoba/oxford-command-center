@@ -412,6 +412,9 @@ describe('BUY gate — governor freshness: value-keyed key match AND version-key
     const flag = result.dataQuality.find((f) => f.field === 'governorRegime');
     expect(flag?.severity).toBe('warn');
     expect(flag?.issue).toMatch(/cand-unrelated/);
+    // PR 585 merge gate F-002: the regime names the DSCR-floor refi terms, not the retired screening constant.
+    expect(flag?.issue).toMatch(/\(capital_config version \/ DSCR-floor refi terms\)/);
+    expect(flag?.issue).not.toMatch(/screening constant/);
     // Re-score under the new version: a new governor-fingerprinted key, freshly stamped -> BUY returns.
     await persistAndLogScore(db, 'cand-unrelated', input({ dealId: 'cand-unrelated' }), RULESET, RCT);
     const after = await buy(db);

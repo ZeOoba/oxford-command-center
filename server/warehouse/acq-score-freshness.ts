@@ -12,7 +12,8 @@
 //                   regime (re-derived by recomputing the governor-fingerprinted inputs_version from
 //                   the stored input_json — the same key persistAndLogScore writes), and parseable,
 //                   AND its score_json.governorRegime stamp equals the LIVE capital_config version's
-//                   governorFingerprint (#463; version-keyed, so any capital_config write stales it).
+//                   governorFingerprint (#463; version-keyed, so any capital_config write stales it,
+//                   as does any change to the DSCR-floor refi terms the fingerprint carries).
 //   'stale'       — any regime component differs (or the live regime is unavailable: unverifiable
 //                   freshness fails closed). The score may still be readable; it must not drive BUY.
 //   'unparseable' — regime matches but score_json or input_json does not parse under the live
@@ -239,7 +240,8 @@ export function classifyPersistedScore(row: PersistedScoreRow | undefined, live:
       state: 'stale',
       staleReasons: [
         `governorRegime stamp ${stamp === null ? 'missing' : stamp} does not match the live governor regime ` +
-          `${live.currentGovernorRegime} (capital_config changed since this score) — re-score required`,
+          `${live.currentGovernorRegime} (capital_config version / DSCR-floor refi terms changed since this score) — ` +
+          're-score required',
       ],
       score,
     };

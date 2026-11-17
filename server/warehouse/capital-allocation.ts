@@ -197,7 +197,7 @@ function staleGovernorFlag(entity: string, ids: readonly string[]): DataQualityF
     field: 'governorRegime',
     issue:
       `${ids.length} active candidate(s) were scored under an older governor regime ` +
-      `(capital_config version / screening constant) and are withheld from BUY until re-scored: ${named}${more}.`,
+      `(capital_config version / DSCR-floor refi terms) and are withheld from BUY until re-scored: ${named}${more}.`,
     severity: 'warn',
   };
 }
@@ -791,9 +791,10 @@ function finiteOrNull(v: number | null | undefined): number | null {
 }
 
 /** DSCR governor: BUY requires it EVALUATED and cleared — exactly 1 (refute H1). NULL means the
- *  proxy never ran (no stabilizedYoc): the engine only caps such a deal at T2 WATCH, while the same
- *  deal with a known low YoC is KILLED, so admitting NULL rewarded missing data. 0 = failed; any
- *  other value is out of the column's domain — all fail closed. */
+ *  DSCR floor could not be evaluated (exit cap or 10-yr UST unknown or out of range): the engine never
+ *  demotes such a deal, while the same deal with a known cap that misses the floor is demoted to PASS
+ *  (a KILLED deal stays KILLED), so admitting NULL would reward missing data. 0 = failed; any other
+ *  value is out of the column's domain — all fail closed. */
 function dscrFlagAdmitsBuy(flag: number | null): boolean {
   return flag === 1;
 }
@@ -825,8 +826,8 @@ function isBuyEligible(row: AcqScoreRow | undefined): boolean {
 
 /**
  * True when the latest score's governor verdict was derived under the CURRENT governor regime.
- * acq-engine stamps `governorRegime` (governorFingerprint: capital_config version + values + screening
- * constant) into score_json. A missing, malformed, or different stamp is STALE — fail-closed: the
+ * acq-engine stamps `governorRegime` (governorFingerprint: capital_config version + values + DSCR-floor
+ * refi terms) into score_json. A missing, malformed, or different stamp is STALE — fail-closed: the
  * persisted governor_*_cleared flags describe a regime that is no longer in force (or, for legacy
  * rows scored before the stamp existed, an unknown one), so the row cannot support a BUY until
  * re-scored. Regime-based on purpose (not value-based): a values-identical reversion still re-scores

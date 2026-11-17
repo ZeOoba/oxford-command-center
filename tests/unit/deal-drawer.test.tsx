@@ -189,6 +189,8 @@ describe('DealDrawer — Underwriting panel with an input and a persisted score 
     stabilizedYoc: 0.072,
     leveredIrr: 0.155,
     underwriteHorizonYrs: 5,
+    exitCapPct: 0.081,
+    ust10yr: 0.043,
   });
   const FIXTURE_SCORE = makeScore();
   const FIXTURE_CANDIDATE: RankedCandidate = {
@@ -219,6 +221,9 @@ describe('DealDrawer — Underwriting panel with an input and a persisted score 
     expect(screen.getByText('7.2%')).toBeTruthy(); // stabilizedYoc
     expect(screen.getByText('15.5%')).toBeTruthy(); // leveredIrr
     expect(screen.getByText('5 yr')).toBeTruthy(); // underwriteHorizonYrs
+    // PR 585 merge gate F-005: the DSCR-floor inputs are shown, each under its own label.
+    expect(screen.getByText('Exit cap').nextElementSibling?.textContent).toBe('8.1%'); // exitCapPct
+    expect(screen.getByText('10-yr UST').nextElementSibling?.textContent).toBe('4.3%'); // ust10yr
 
     // Score — same numeric fields as FIXTURE_SCORE, not recomputed.
     await waitFor(() => expect(screen.getByText(String(Math.round(FIXTURE_SCORE.composite)))).toBeTruthy());

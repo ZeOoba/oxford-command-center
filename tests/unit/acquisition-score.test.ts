@@ -27,6 +27,10 @@ describe('acquisition Workbench form mapping', () => {
     expect(round.underwriteHorizonYrs).toBe(5);
     expect(round.stabilizedYoc).toBeCloseTo(0.12, 9);   // pct round-trip
     expect(round.sellerMotivationScore).toBeCloseTo(0.8, 9); // frac01 round-trip
+    // PR 585 merge gate F-001: the form is the Workbench's only exitCapPct producer for the DSCR floor; a dropped
+    // field would leave every Workbench-scored deal DSCR-indeterminate (not BUY-eligible) with no test failing.
+    expect(round.exitCapPct).toBeCloseTo(0.075, 9);
+    expect(round.ust10yr).toBeCloseTo(0.043, 9);
     expect(round.multiStory).toBe(false);  // tribool 'no' → false (preserves unknown-vs-false)
     expect(round.sfhaOnPad).toBe(false);
     expect(round.ddKnown).toEqual({ flood: true, roof: true });
