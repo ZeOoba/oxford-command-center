@@ -30,6 +30,7 @@ import {
 import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
+import { EXIT_CAP_MAX, UST10YR_MAX } from '../../src/contracts/acquisition-bounds';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
 import { loadTestRct } from '../support/rct';
 
@@ -69,6 +70,20 @@ describe('refi debt constant and the DSCR-at-65%-LTV floor (SKILL.md v4.37 / v4.
     for (const [cap, ust] of [[null, UST], [0.075, null], [undefined, UST], [0, UST], [-0.07, UST], [Number.NaN, UST], [0.075, -0.01]] as const) {
       expect(dscrAtRefiLtv(cap as number | null, ust as number | null), `${cap} ${ust}`).toBeNull();
     }
+  });
+
+  // PR 585 merge gate F-009/F-010: the governor must fail closed on a percent-scale input on its own, not rely on the
+  // contract alone — an exit cap of 7.5 (meaning 7.50%) would otherwise clear the floor at ~145x.
+  it('a percent-scale exit cap or UST (above the shared decimal bounds) is out of domain: null, never cleared', () => {
+    expect(dscrAtRefiLtv(7.5, UST)).toBeNull();
+    expect(dscrAtRefiLtv(EXIT_CAP_MAX + 1e-6, UST)).toBeNull();
+    expect(dscrAtRefiLtv(EXIT_CAP_MAX, UST)).not.toBeNull();
+    expect(dscrAtRefiLtv(0.075, 4.3)).toBeNull();
+    expect(dscrAtRefiLtv(0.075, UST10YR_MAX + 1e-6)).toBeNull();
+    expect(dscrAtRefiLtv(0.075, UST10YR_MAX)).not.toBeNull();
+    const out = applyGovernorProxy({ verdict: 'PURSUE' }, { exitCapPct: 7.5, ust10yr: UST }, GOV);
+    expect(out.governorDscrCleared).toBeNull(); // indeterminate => not BUY-eligible (the BUY gate admits only 1)
+    expect(out.verdict).toBe('PURSUE');
   });
 });
 

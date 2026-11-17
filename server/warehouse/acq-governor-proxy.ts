@@ -25,7 +25,8 @@
 //   Algebra: DSCR = NOI ÷ (0.65 × NOI/exitCap × k) = exitCap ÷ (0.65 × k), so the test is NOI-independent:
 //   it clears iff exitCap ≥ 0.65 × dscrFloor × k(UST + 200 bps, 25 yr). SKILL.md's own check: at a 5.2% UST
 //   (7.2% rate) k ≈ 8.6% and the threshold exit cap ≈ 7.0%.
-//   Unknown exit cap or UST ⇒ INDETERMINATE (null): no demotion, and not BUY-eligible (the BUY gate requires
+//   Unknown exit cap or UST, or one outside the contract's decimal bounds (acquisition-bounds.ts: a percent-scale
+//   value like 7.5) ⇒ INDETERMINATE (null): no demotion, and not BUY-eligible (the BUY gate requires
 //   governor_dscr_cleared = 1). Doctrine's UST fallback (the last cited value tagged [UST UNVERIFIED]) is the
 //   underwriter's to enter; with none it is a data gap, never a guessed rate.
 //   A miss DEMOTES to PASS (Ruling 5, flag-not-kill, is deferred by Gabriel; the demotion stays until he rules).
@@ -46,13 +47,14 @@
 //               correction, 2026-06-20.) A real LTV gate slots in here if a loan/LTV input is added.
 //
 // DISCLOSURE (refute wf_0a80ea57-515): an indeterminate DSCR floor on a valid governor set adds a
-// `Governor open item: ...` reason naming the missing input, which capital-allocation surfaces as an open item,
-// so a deal held out of BUY for a missing exit cap or UST always says why.
+// `Governor open item: ...` reason naming the missing input (or "out of range"), which capital-allocation surfaces
+// as an open item, so a deal held out of BUY for a missing or out-of-range exit cap or UST always says why.
 //
 // Either test FAILING (=== false) hard-demotes the verdict to 'PASS' — but NEVER upgrades KILLED
 // (a hard gate/floor rejection) to PASS, so verdict-filtered ranked lists stay correct.
 import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
+import { EXIT_CAP_MAX, UST10YR_MAX } from '../../src/contracts/acquisition-bounds';
 import { GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
 
 /** Refi rate spread over the 10-yr UST (SKILL.md v4.37: "10-yr U.S. Treasury + 200 bps, always"). */
@@ -70,15 +72,19 @@ export function refiDebtConstant(rate: number, amortYears: number = REFI_AMORT_Y
 
 /**
  * DSCR at a loan sized to `perPropertyLtv` of stabilized value, at UST + 200 bps over 25 years: exitCap ÷ (LTV × k).
- * Null when either input is unknown or out of domain (a data gap, never a guess).
+ * Null when either input is unknown or out of domain (a data gap, never a guess). The domain is the contract's
+ * decimal bounds (src/contracts/acquisition-bounds.ts), re-checked here so a percent-scale value (7.5 for 7.50%)
+ * fails closed even if a caller bypasses or loosens the contract — it would otherwise clear the floor at ~145x.
  */
 export function dscrAtRefiLtv(
   exitCapPct: number | null | undefined,
   ust10yr: number | null | undefined,
   perPropertyLtv: number = RATIFIED_GOVERNORS.perPropertyLtvCeiling,
 ): number | null {
-  if (exitCapPct === null || exitCapPct === undefined || !Number.isFinite(exitCapPct) || exitCapPct <= 0) return null;
-  if (ust10yr === null || ust10yr === undefined || !Number.isFinite(ust10yr) || ust10yr < 0) return null;
+  if (exitCapPct === null || exitCapPct === undefined || !Number.isFinite(exitCapPct)) return null;
+  if (exitCapPct <= 0 || exitCapPct > EXIT_CAP_MAX) return null;
+  if (ust10yr === null || ust10yr === undefined || !Number.isFinite(ust10yr)) return null;
+  if (ust10yr < 0 || ust10yr > UST10YR_MAX) return null;
   return exitCapPct / (perPropertyLtv * refiDebtConstant(ust10yr + REFI_UST_SPREAD));
 }
 
@@ -111,7 +117,7 @@ export type GovernorProxyInput = Pick<AcquisitionInput, 'exitCapPct' | 'ust10yr'
 export interface GovernorProxyOutcome {
   /** The verdict after governor demotion (may equal the input verdict). */
   verdict: Verdict;
-  /** true=cleared, false=failed, null=indeterminate (input absent). */
+  /** true=cleared, false=failed, null=indeterminate (input absent or out of domain). */
   governorDscrCleared: boolean | null;
   /** Always null at acquisition-screen time — see module header. */
   governorLtvCleared: boolean | null;
@@ -203,8 +209,8 @@ export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verd
 ): GovernorProxyScoreOutcome<S> {
   const outcome = applyGovernorProxy(score, input, governors);
   if (outcome.verdict === score.verdict) {
-    // Not demoted. An indeterminate DSCR floor (valid governors, missing exit cap / UST) is still disclosed, unless
-    // the score is KILLED (already out of every buy list for a harder reason).
+    // Not demoted. An indeterminate DSCR floor (valid governors, missing or out-of-range exit cap / UST) is still
+    // disclosed, unless the score is KILLED (already out of every buy list for a harder reason).
     const disclose = outcome.governorDscrCleared === null && score.verdict !== 'KILLED';
     return {
       score: disclose ? { ...score, reasons: [...score.reasons, dscrIndeterminateReason(input)] } : score,

@@ -166,6 +166,11 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   // the score/verdict/tier shapes the capital BUY verdict reads. coding-standards requires the refute
   // pass on the scorecard, yet a change here merged with no trailer demanded.
   'src/contracts/acquisition.ts',
+  // 2026-11-17 (PR 585, refute wf_4e534dab-dcd medium): acquisition-bounds.ts holds the DSCR-governor input domain
+  // (EXIT_CAP_MAX / UST10YR_MAX, decimal rates) read by BOTH the acquisition.ts zod bounds and the governor's fail-closed
+  // check in server/warehouse/acq-governor-proxy.ts — loosening it alone would let a percent-scale exit cap clear the
+  // DSCR floor. Moving the bounds out of acquisition.ts must not move them out of this gate.
+  'src/contracts/acquisition-bounds.ts',
   // governor-constants.ts holds THE literal ratified governors (DSCR floor 1.25, aggregate LTV
   // ceiling 0.40) that every other copy derives from (Hard Invariant 4), and liquidity-policy.ts the
   // ratified firm cash floor. Both were outside this gate: a one-token edit moved a governor with no

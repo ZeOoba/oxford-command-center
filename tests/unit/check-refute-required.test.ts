@@ -373,6 +373,12 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('src/contracts/governor-constants.ts')).toBe(true);
     expect(isFinancialSourcePath('src/contracts/liquidity-policy.ts')).toBe(true);
   });
+  // PR 585 (refute wf_4e534dab-dcd, medium): the DSCR-governor input bounds moved out of acquisition.ts into their own
+  // file, which drives BOTH the contract and the governor's fail-closed check — one edit there must demand a refute.
+  it('flags the DSCR-governor input bounds shared by the contract and the governor (2026-11-17)', () => {
+    expect(isFinancialSourcePath('src/contracts/acquisition-bounds.ts')).toBe(true);
+    expect(isFinancialSourcePath('SRC\\contracts\\Acquisition-Bounds.ts')).toBe(true);
+  });
   it('is case- and separator-insensitive for the 2026-11-08 additions, like every other entry', () => {
     expect(isFinancialSourcePath('src\\contracts\\Acquisition.ts')).toBe(true);
     expect(isFinancialSourcePath('SRC/modules/acquisitions/acquisition-score.ts')).toBe(true);

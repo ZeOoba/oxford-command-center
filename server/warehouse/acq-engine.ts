@@ -119,7 +119,8 @@ export { governorFingerprint };
  * Returns the AcquisitionScore (with verdict reflecting governor demotion) + calibration verdict id.
  *
  * GOVERNOR ENFORCEMENT (Invariant 4) — via the shared applyGovernorProxy (acq-governor-proxy.ts):
- *   - DSCR floor: exitCap ÷ (0.65 × k(UST + 200 bps, 25 yr)) ≥ dscrFloor. Exit cap or UST absent → NULL (no demotion).
+ *   - DSCR floor: exitCap ÷ (0.65 × k(UST + 200 bps, 25 yr)) ≥ dscrFloor. Exit cap or UST absent, or outside the
+ *     contract's decimal bounds (src/contracts/acquisition-bounds.ts) → NULL (no demotion, not BUY-eligible).
  *   - LTV proxy: INDETERMINATE at screen time → NULL (enforced at financing; see module header).
  *   - A FAILED governor hard-demotes verdict to 'PASS' (never upgrades KILLED).
  *   - Composite is preserved (analysts can see the underlying score).

@@ -9,6 +9,23 @@ import {
   ReplacementCostTable,
   RULESET_VERSION,
 } from '@contracts/acquisition';
+import { EXIT_CAP_MAX, UST10YR_MAX } from '@contracts/acquisition-bounds';
+
+// PR 585 merge gate F-009/F-010: the DSCR-floor inputs are decimal rates; the contract is the first unit guard and
+// shares its bounds with the governor (which independently fails closed — see acq-governor-proxy.test.ts).
+describe('DSCR-floor input scale (exit cap, 10-yr UST)', () => {
+  const ok = (o: Record<string, unknown>) => AcquisitionInput.safeParse({ dealId: 'scale', ...o }).success;
+  it('rejects a percent-scale value and accepts up to the shared decimal bound', () => {
+    expect(EXIT_CAP_MAX).toBe(0.25);
+    expect(UST10YR_MAX).toBe(0.2);
+    expect(ok({ exitCapPct: 7.5 })).toBe(false);
+    expect(ok({ exitCapPct: EXIT_CAP_MAX + 1e-6 })).toBe(false);
+    expect(ok({ exitCapPct: EXIT_CAP_MAX })).toBe(true);
+    expect(ok({ ust10yr: 4.3 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MAX + 1e-6 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MAX })).toBe(true);
+  });
+});
 
 const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
