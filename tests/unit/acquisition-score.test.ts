@@ -31,6 +31,8 @@ describe('acquisition Workbench form mapping', () => {
     // field would leave every Workbench-scored deal DSCR-indeterminate (not BUY-eligible) with no test failing.
     expect(round.exitCapPct).toBeCloseTo(0.075, 9);
     expect(round.ust10yr).toBeCloseTo(0.043, 9);
+    // PR 585 merge gate F-007: the field is a percent input, so a typed "7.5" must reach the engine as 0.075.
+    expect(buildInput({ ...inputToForm(input), exitCapPct: '7.5' }, 'd1').exitCapPct).toBeCloseTo(0.075, 9);
     expect(round.multiStory).toBe(false);  // tribool 'no' → false (preserves unknown-vs-false)
     expect(round.sfhaOnPad).toBe(false);
     expect(round.ddKnown).toEqual({ flood: true, roof: true });
