@@ -54,7 +54,7 @@
 // (a hard gate/floor rejection) to PASS, so verdict-filtered ranked lists stay correct.
 import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
-import { EXIT_CAP_MAX, UST10YR_MAX } from '../../src/contracts/acquisition-bounds';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '../../src/contracts/acquisition-bounds';
 import { GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
 
 /** Refi rate spread over the 10-yr UST (SKILL.md v4.37: "10-yr U.S. Treasury + 200 bps, always"). */
@@ -84,7 +84,7 @@ export function dscrAtRefiLtv(
   if (exitCapPct === null || exitCapPct === undefined || !Number.isFinite(exitCapPct)) return null;
   if (exitCapPct <= 0 || exitCapPct > EXIT_CAP_MAX) return null;
   if (ust10yr === null || ust10yr === undefined || !Number.isFinite(ust10yr)) return null;
-  if (ust10yr < 0 || ust10yr > UST10YR_MAX) return null;
+  if (ust10yr < UST10YR_MIN || ust10yr > UST10YR_MAX) return null;
   return exitCapPct / (perPropertyLtv * refiDebtConstant(ust10yr + REFI_UST_SPREAD));
 }
 

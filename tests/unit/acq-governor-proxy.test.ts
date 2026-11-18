@@ -30,7 +30,7 @@ import {
 import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
-import { EXIT_CAP_MAX, UST10YR_MAX } from '../../src/contracts/acquisition-bounds';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '../../src/contracts/acquisition-bounds';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
 import { loadTestRct } from '../support/rct';
 
@@ -84,6 +84,20 @@ describe('refi debt constant and the DSCR-at-65%-LTV floor (SKILL.md v4.37 / v4.
     const out = applyGovernorProxy({ verdict: 'PURSUE' }, { exitCapPct: 7.5, ust10yr: UST }, GOV);
     expect(out.governorDscrCleared).toBeNull(); // indeterminate => not BUY-eligible (the BUY gate admits only 1)
     expect(out.verdict).toBe('PURSUE');
+  });
+
+  // PR 585 merge gate F-012 (Gabriel 2026-11-18, "Add a 0.5% UST floor"): the other side of the unit — a decimal typed
+  // into the percent field arrives as 0.00043, cutting the refi rate to ~2% and overstating DSCR enough to clear.
+  it('an under-scale UST (below the 0.5% floor) is out of domain: null, never cleared', () => {
+    expect(UST10YR_MIN).toBe(0.005);
+    expect(dscrAtRefiLtv(0.06, 0.00043)).toBeNull();
+    expect(dscrAtRefiLtv(0.075, 0)).toBeNull();
+    expect(dscrAtRefiLtv(0.075, UST10YR_MIN - 1e-6)).toBeNull();
+    expect(dscrAtRefiLtv(0.075, UST10YR_MIN)).not.toBeNull();
+    // The failure mode: at the intended 4.30% UST a 6.0% exit cap misses the floor; under-scaled it must not clear.
+    expect(applyGovernorProxy({ verdict: 'PURSUE' }, { exitCapPct: 0.06, ust10yr: UST }, GOV).governorDscrCleared).toBe(false);
+    const out = applyGovernorProxy({ verdict: 'PURSUE' }, { exitCapPct: 0.06, ust10yr: 0.00043 }, GOV);
+    expect(out.governorDscrCleared).toBeNull();
   });
 });
 

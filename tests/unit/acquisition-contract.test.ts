@@ -9,7 +9,7 @@ import {
   ReplacementCostTable,
   RULESET_VERSION,
 } from '@contracts/acquisition';
-import { EXIT_CAP_MAX, UST10YR_MAX } from '@contracts/acquisition-bounds';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '@contracts/acquisition-bounds';
 
 // PR 585 merge gate F-009/F-010: the DSCR-floor inputs are decimal rates; the contract is the first unit guard and
 // shares its bounds with the governor (which independently fails closed — see acq-governor-proxy.test.ts).
@@ -24,6 +24,14 @@ describe('DSCR-floor input scale (exit cap, 10-yr UST)', () => {
     expect(ok({ ust10yr: 4.3 })).toBe(false);
     expect(ok({ ust10yr: UST10YR_MAX + 1e-6 })).toBe(false);
     expect(ok({ ust10yr: UST10YR_MAX })).toBe(true);
+  });
+  it('rejects an under-scale UST below the 0.5% floor (decimal typed into the percent field), accepts the floor', () => {
+    expect(UST10YR_MIN).toBe(0.005);
+    expect(ok({ ust10yr: 0.00043 })).toBe(false);
+    expect(ok({ ust10yr: 0 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MIN - 1e-6 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MIN })).toBe(true);
+    expect(ok({ ust10yr: null })).toBe(true); // unknown stays allowed (IRR floor flags [UST UNVERIFIED])
   });
 });
 

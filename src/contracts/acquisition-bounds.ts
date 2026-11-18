@@ -14,3 +14,11 @@ export const EXIT_CAP_MAX = 0.25;
 
 /** Highest 10-yr UST accepted, as a decimal (20%). */
 export const UST10YR_MAX = 0.2;
+
+/**
+ * Lowest 10-yr UST accepted, as a decimal (0.50%; the 2020 low was ~0.52%). The guard on the OTHER side of the unit:
+ * a decimal typed into the Workbench's percent field ("0.043" for 4.30%) is divided by 100 again and arrives as
+ * 0.00043, which cuts the refi rate to ~2% and overstates the DSCR ~56% (a 6.0% exit cap: ~1.81x vs ~1.16x at a
+ * 4.30% UST) — enough to clear a deal that fails at the intended UST. Ratified by Gabriel 2026-11-18 (PR 585 merge gate F-012, "Add a 0.5% UST floor").
+ */
+export const UST10YR_MIN = 0.005;

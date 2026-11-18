@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { RCT_ADDER_IDS, RCT_CONSTRUCTION_TYPES } from '../lib/rct-adjust';
-import { EXIT_CAP_MAX, UST10YR_MAX } from './acquisition-bounds';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from './acquisition-bounds';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
 export const RULESET_VERSION = '2.0.0' as const;
@@ -351,7 +351,7 @@ export const AcquisitionInput = z.object({
   // 4.30%), with its as-of date; null => the floor is tested at unleveredIrrFloorMin and flagged [UST UNVERIFIED].
   // vacantSfShareAtClose: share of SF vacant at close (0..1); null on a not-fully-vacant deal => no premium, flagged.
   unleveredIrr10yr: z.number().nullable().default(null),
-  ust10yr: z.number().min(0).max(UST10YR_MAX).nullable().default(null),
+  ust10yr: z.number().min(UST10YR_MIN).max(UST10YR_MAX).nullable().default(null), // bounds shared with the governor
   ustAsOf: z.string().nullable().default(null),
   vacantSfShareAtClose: z.number().min(0).max(1).nullable().default(null),
   // DSCR floor input (2026-11-12, PR-C): the market exit cap (SKILL.md UNDERWRITING CONVENTIONS exit-cap table, e.g.
