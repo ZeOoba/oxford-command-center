@@ -23,6 +23,18 @@ const TIER_FOR_VERDICT: Record<Verdict, Tier> = { PURSUE: 'T1', WATCH: 'T2', PAS
 /** Prefix of the reason applyGovernorProxyToScore appends on a demotion (acq-governor-proxy.ts). */
 export const GOVERNOR_DEMOTION_REASON_PREFIX = 'Governor demotion:';
 
+/** Prefix of a non-demoting governor disclosure (e.g. an indeterminate DSCR floor). Defined here so client surfaces can
+ *  recognise it; acq-governor-proxy.ts re-exports this exact constant, and capital-allocation's capReasonsOf lists each
+ *  such reason as an open item. */
+export const GOVERNOR_OPEN_ITEM_PREFIX = 'Governor open item: ';
+
+/** Score reasons a compact surface (the deal drawer) shows: the first `limit`, plus any governor open item they left
+ *  out, in original order. The governor appends its reason LAST, so a plain slice hid it behind 3+ engine reasons
+ *  (OI-404 follow-up). Ordinary reasons stay capped exactly as before. */
+export function drawerReasons(reasons: readonly string[], limit = 3): string[] {
+  return reasons.filter((r, i) => i < limit || r.startsWith(GOVERNOR_OPEN_ITEM_PREFIX));
+}
+
 export interface PersistedTierVerdict {
   tier?: Tier | null | undefined;
   verdict?: Verdict | null | undefined;

@@ -189,6 +189,8 @@ describe('DealDrawer — Underwriting panel with an input and a persisted score 
     stabilizedYoc: 0.072,
     leveredIrr: 0.155,
     underwriteHorizonYrs: 5,
+    exitCapPct: 0.081,
+    ust10yr: 0.043,
   });
   const FIXTURE_SCORE = makeScore();
   const FIXTURE_CANDIDATE: RankedCandidate = {
@@ -219,6 +221,9 @@ describe('DealDrawer — Underwriting panel with an input and a persisted score 
     expect(screen.getByText('7.2%')).toBeTruthy(); // stabilizedYoc
     expect(screen.getByText('15.5%')).toBeTruthy(); // leveredIrr
     expect(screen.getByText('5 yr')).toBeTruthy(); // underwriteHorizonYrs
+    // PR 585 merge gate F-005: the DSCR-floor inputs are shown, each under its own label.
+    expect(screen.getByText('Exit cap').nextElementSibling?.textContent).toBe('8.1%'); // exitCapPct
+    expect(screen.getByText('10-yr UST').nextElementSibling?.textContent).toBe('4.3%'); // ust10yr
 
     // Score — same numeric fields as FIXTURE_SCORE, not recomputed.
     await waitFor(() => expect(screen.getByText(String(Math.round(FIXTURE_SCORE.composite)))).toBeTruthy());
@@ -258,6 +263,13 @@ describe('DealDrawer — Underwriting panel with a governor-demoted score', () =
   it('marks a current-engine demotion (tier PASS + Governor demotion reason)', async () => {
     renderFor(candidateWith('PASS', 'PASS', false, ['Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.']));
     expect(await screen.findByText('Governor-demoted (was T1)')).toBeTruthy();
+  });
+
+  it('shows a governor open item even when 3+ engine reasons precede it (OI-404 follow-up)', async () => {
+    const dscr = 'Governor open item: DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered';
+    renderFor(candidateWith('T2', 'WATCH', null, ['Composite 80.1/100 -> T1.', 'Capped T1 -> T2: a Stage-0 gate input is unconfirmed.', 'Notes: DD-critical unresolved: roof.', 'Fourth engine reason', dscr]));
+    expect(await screen.findByText(`· ${dscr}`)).toBeTruthy();
+    expect(screen.queryByText('· Fourth engine reason')).toBeNull();
   });
 
   it('does not mark a native PASS', async () => {

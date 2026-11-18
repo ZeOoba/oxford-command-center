@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { RCT_ADDER_IDS, RCT_CONSTRUCTION_TYPES } from '../lib/rct-adjust';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from './acquisition-bounds';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
 export const RULESET_VERSION = '2.0.0' as const;
@@ -350,9 +351,13 @@ export const AcquisitionInput = z.object({
   // 4.30%), with its as-of date; null => the floor is tested at unleveredIrrFloorMin and flagged [UST UNVERIFIED].
   // vacantSfShareAtClose: share of SF vacant at close (0..1); null on a not-fully-vacant deal => no premium, flagged.
   unleveredIrr10yr: z.number().nullable().default(null),
-  ust10yr: z.number().min(0).max(0.2).nullable().default(null),
+  ust10yr: z.number().min(UST10YR_MIN).max(UST10YR_MAX).nullable().default(null), // bounds shared with the governor
   ustAsOf: z.string().nullable().default(null),
   vacantSfShareAtClose: z.number().min(0).max(1).nullable().default(null),
+  // DSCR floor input (2026-11-12, PR-C): the market exit cap (SKILL.md UNDERWRITING CONVENTIONS exit-cap table, e.g.
+  // Columbus 7.50%) as a decimal. The governor DSCR test sizes a 65%-LTV loan on stabilized value (NOI ÷ exit cap) at
+  // UST + 200 bps / 25 yr, reading ust10yr above; null => the DSCR floor is indeterminate (not BUY-eligible).
+  exitCapPct: z.number().gt(0).max(EXIT_CAP_MAX).nullable().default(null), // bounds shared with the governor
   // REPORTED ONLY since ruleset 2.0.0 — the levered IRR floor is retired (SKILL.md v4.33). No floor reads these.
   leveredIrr: z.number().nullable().default(null),
   underwriteHorizonYrs: z.union([z.literal(5), z.literal(10)]).nullable().default(null),

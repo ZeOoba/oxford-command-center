@@ -13,7 +13,7 @@ describe('acquisition Workbench form mapping', () => {
       dealId: 'd1', price: 4_800_000, totalSf: 60_000, maxBuildingSf: 42_000,
       productType: 'shallow-bay-multi', officePct: 0.1, clearHeightFt: 28,
       multiStory: false, hasDock: true, dockCount: 6, constructionType: 'tilt-precast',
-      sfhaOnPad: false, allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12,
+      sfhaOnPad: false, allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10',
       underwriteHorizonYrs: 5, clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
       ddKnown: { flood: true, roof: true },
@@ -27,9 +27,28 @@ describe('acquisition Workbench form mapping', () => {
     expect(round.underwriteHorizonYrs).toBe(5);
     expect(round.stabilizedYoc).toBeCloseTo(0.12, 9);   // pct round-trip
     expect(round.sellerMotivationScore).toBeCloseTo(0.8, 9); // frac01 round-trip
+    // PR 585 merge gate F-001: the form is the Workbench's only exitCapPct producer for the DSCR floor; a dropped
+    // field would leave every Workbench-scored deal DSCR-indeterminate (not BUY-eligible) with no test failing.
+    expect(round.exitCapPct).toBeCloseTo(0.075, 9);
+    expect(round.ust10yr).toBeCloseTo(0.043, 9);
+    // PR 585 merge gate F-007: the field is a percent input, so a typed "7.5" must reach the engine as 0.075.
+    expect(buildInput({ ...inputToForm(input), exitCapPct: '7.5' }, 'd1').exitCapPct).toBeCloseTo(0.075, 9);
     expect(round.multiStory).toBe(false);  // tribool 'no' → false (preserves unknown-vs-false)
     expect(round.sfhaOnPad).toBe(false);
     expect(round.ddKnown).toEqual({ flood: true, roof: true });
+  });
+
+  // PR 585 merge gate F-007/F-008 (redesign, chosen by Gabriel 2026-11-17): pin the DSCR-floor inputs' field CONTRACT,
+  // not one value. A round-trip of 0.075 cannot tell 'pct' from 'num' unit handling or from 'frac01' (2-dp reload), so
+  // assert the kind directly and round-trip 3-decimal rates that only a 'pct' field (4-dp reload) carries exactly.
+  it('the DSCR-floor inputs (exit cap, 10-yr UST) are percent fields that keep 3-decimal rates through a reload', () => {
+    const spec = (key: string) => FIELD_GROUPS.flatMap((g) => g.fields).find((f) => f.key === key);
+    expect(spec('exitCapPct')?.kind).toBe('pct');
+    expect(spec('ust10yr')?.kind).toBe('pct');
+    const input = AcquisitionInput.parse({ dealId: 'd-rates', exitCapPct: 0.07125, ust10yr: 0.04125 });
+    const round = buildInput(inputToForm(input), 'd-rates');
+    expect(round.exitCapPct).toBeCloseTo(0.07125, 9);
+    expect(round.ust10yr).toBeCloseTo(0.04125, 9);
   });
 
   it('an unset tri-state stays UNKNOWN through the round-trip (never coerced to false)', () => {
@@ -114,7 +133,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
       dealId: 'm', price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000, productType: 'shallow-bay-multi', officePct: 0.1,
       clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6, multiStory: false, truckCourtFt: 120,
       constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false, groundLeased: false, envRemediationPctOfPrice: 0,
-      allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
+      allInBasis: 1_200_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5, clusterTier: 'owned-submarket',
       sellerMotivationScore: 0.8, isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
       ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
     };

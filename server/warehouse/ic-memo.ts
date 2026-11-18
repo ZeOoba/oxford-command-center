@@ -354,12 +354,18 @@ function renderPipeline(portfolio: PortfolioAllocation): string {
         (p.verdict ? esc(p.verdict) : DASH) +
         (demoted ? ` <span class="ic-demoted">${esc(demoted)}</span>` : '');
       const open = p.openItems ?? [];
+      // OI-404: an ineligible row discloses its open items too (a DSCR-indeterminate deal is never eligible, so gating
+      // them on eligibility hid the reason). Neutral wording: an engine cap item is listed, not claimed as the cause; a
+      // governor item says itself what it blocks. The floor advisory qualifies the LABEL, before the items, so it never
+      // reads as qualifying a protected-governor item (refute wf_8343e911-cd9, low).
       const eligible =
-        (p.buyEligible !== true
-          ? 'Not eligible'
-          : open.length > 0
-            ? `BUY with open items: ${esc(open.join('; '))}` // refute round 2 T2 — never silent
-            : 'Eligible') + floorNote;
+        p.buyEligible !== true
+          ? open.length > 0
+            ? `Not eligible${floorNote}; open items: ${esc(open.join('; '))}`
+            : `Not eligible${floorNote}`
+          : (open.length > 0
+              ? `BUY with open items: ${esc(open.join('; '))}` // refute round 2 T2 — never silent
+              : 'Eligible') + floorNote;
       return `        <tr class="ic-row">
           <td class="ic-name">${addr}</td>
           <td>${mkt}</td>

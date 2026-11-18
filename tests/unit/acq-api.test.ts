@@ -445,7 +445,7 @@ describe('GET /acq/intel — score freshness state (audit 2026-10-13 G3)', () =>
     multiStory: false, truckCourtFt: 120,
     constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
     groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false }, // other-use gate confirmed (audit 2026-11-08)
-    allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
+    allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5,
     clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
     isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
     ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -496,7 +496,7 @@ describe('GET /acq/intel — score freshness state (audit 2026-10-13 G3)', () =>
     writeCapitalConfig(db, { dispositionCapRate: 0.06, effectiveFrom: '2026-10-13' }, { rationale: 'test: unrelated field' });
     const r = row(await intel(db), 'c-unrelated');
     expect(r.scoreState).toBe('stale');
-    expect(r.staleReasons!.join(' ')).toMatch(/governorRegime stamp 1:1\.25:0\.4:0\.085 does not match the live governor regime 2:/);
+    expect(r.staleReasons!.join(' ')).toMatch(/governorRegime stamp 1:1\.25:0\.4:refi0\.65\/ust\+0\.02\/25y does not match the live governor regime 2:/);
     // (The matching BUY withholding is asserted in capital-allocation.buy-gate.test.ts, refute H2 + #463.)
     await persistAndLogScore(db, 'c-unrelated', { ...STRONG, dealId: 'c-unrelated' }, RULESET, RCT);
     expect(row(await intel(db), 'c-unrelated').scoreState).toBe('current');

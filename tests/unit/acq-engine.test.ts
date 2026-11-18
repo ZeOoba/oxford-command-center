@@ -8,7 +8,7 @@
 // Test strategy:
 //   1. a non-ratified ruleset or RCT is REJECTED before any write (fail-closed, Invariant 4).
 //   2. LTV governor fail → stored verdict demoted to PASS; composite preserved.
-//   3. DSCR governor fail → stored verdict demoted to PASS.
+//   3. DSCR floor fail (65%-LTV refi) → stored verdict demoted to PASS.
 //   4. Both governors cleared + ratified ruleset → verdict matches scoreAcquisition output.
 //   5. Idempotent re-score → second call is a no-op (INSERT OR IGNORE skips; same calibration id).
 //   6. calibration_verdict row has correct kind/subjectKind/engine.
@@ -54,8 +54,8 @@ const STRONG_INPUT_RAW: Record<string, unknown> = {
   constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false }, // other-use gate confirmed (audit 2026-11-08)
   allInBasis: 3_600_000,
-  stabilizedYoc: 0.12,     // DSCR proxy: 0.12 / (0.40 × 0.085) = 3.53 ≥ 1.25 ✓
-  leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
+  stabilizedYoc: 0.12,
+  leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -159,26 +159,17 @@ describe('persistAndLogScore — LTV is indeterminate at screen time (ratified c
 });
 
 describe('persistAndLogScore — DSCR governor demotion', () => {
-  it('stores governor_dscr_cleared=0 and KILLED verdict when DSCR proxy < 1.25', async () => {
+  it('demotes a non-KILLED deal to PASS and stores governor_dscr_cleared=0 when DSCR at a 65%-LTV refi < 1.25', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-dscr-fail';
     seedCandidate(db, candidateId);
-
-    // DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) = 0.02 / (0.40 × 0.085) = 0.59 < 1.25 → governor fails.
-    // NOTE: stabilizedYocFloorPct = 8% in the ratified ruleset. stabilizedYoc=0.02 < 0.08 also
-    // fails the computable yield floor, so scoreAcquisition already returns KILLED. With the
-    // KILLED-monotonicity guard, the governor demotion cannot upgrade KILLED → PASS.
-    // The observable effect here is KILLED (from the yield floor); governor_dscr_cleared=0 is
-    // still stored correctly. A pure DSCR-only demotion is not achievable with the current
-    // ruleset (DSCR threshold 4.25% < yield floor 8%), which is a calibration note for Gabriel.
-    const input = strongInput({
-      stabilizedYoc: 0.02,
-      allInBasis: 100_000,
-      price: 10_000_000,
-    });
+    // DSCR floor (PR-C): exitCap ÷ (0.65 × k(UST + 200 bps, 25 yr)). A 5.0% exit cap at a 4.30% UST gives ~0.97x < 1.25x.
+    // Unlike the retired YoC proxy (inert inside the 8% yield kill zone), the doctrine test demotes a live deal.
+    const input = strongInput({ exitCapPct: 0.05 });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
-    expect(score.verdict).toBe('KILLED');
+    expect(score.verdict).toBe('PASS');
+    expect(score.tier).toBe('PASS');
   });
 
   it('stores governor_dscr_cleared=0 in acq_scores', async () => {
@@ -186,11 +177,7 @@ describe('persistAndLogScore — DSCR governor demotion', () => {
     const candidateId = 'test-deal-dscr-store';
     seedCandidate(db, candidateId);
 
-    const input = strongInput({
-      stabilizedYoc: 0.02,
-      allInBasis: 100_000,
-      price: 10_000_000,
-    });
+    const input = strongInput({ exitCapPct: 0.05 });
     await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
     const row = db.prepare(
@@ -252,7 +239,7 @@ describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
 
     // allInBasis/price = 3.6M/3.5M ≈ 1.03 > 0.40 → LTV fails — use a lower basis
     // allInBasis 1.4M / price 3.5M = 0.40 = ltvCeiling (passes at ≤)
-    // DSCR proxy: 0.12 / (0.40 × 0.085) = 3.53 ≥ 1.25 ✓
+    // DSCR floor: 7.50% exit cap at a 4.30% UST ⇒ ~1.45x ≥ 1.25 ✓
     const input = strongInput({ allInBasis: 1_400_000, price: 3_500_000, stabilizedYoc: 0.12 });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
@@ -475,13 +462,13 @@ describe('persistAndLogScore — KILLED verdict monotonicity', () => {
 });
 
 describe('persistAndLogScore — null governor inputs', () => {
-  it('stores NULL governor columns when stabilizedYoc/allInBasis/price are absent', async () => {
+  it('stores NULL governor columns when the exit cap (and price/basis/YoC) are absent', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-null-govs';
     seedCandidate(db, candidateId);
 
-    // No price, no allInBasis, no stabilizedYoc → both governors indeterminate (NULL).
-    const input = strongInput({ stabilizedYoc: null, allInBasis: null, price: null });
+    // No exit cap (and no price, allInBasis, stabilizedYoc) → both governors indeterminate (NULL).
+    const input = strongInput({ exitCapPct: null, stabilizedYoc: null, allInBasis: null, price: null });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
     // Verdict is NOT demoted (null = not evaluated, not failed).

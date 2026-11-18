@@ -39,7 +39,7 @@ const STRONG_RAW: Record<string, unknown> = {
   multiStory: false, truckCourtFt: 120,
   constructionType: 'tilt-precast', yearBuilt: 2005, sfhaOnPad: false,
   groundLeased: false, envRemediationPctOfPrice: 0, use: { automotive: false, childRelated: false, childSafetyReviewed: false }, // other-use gate confirmed (audit 2026-11-08)
-  allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5,
+  allInBasis: 3_600_000, stabilizedYoc: 0.12, leveredIrr: 0.18, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
@@ -857,8 +857,8 @@ describe('#463 governorRegime stamp — inserted / superseded / unchanged / rein
       db.prepare(`UPDATE acq_scores SET score_json = json_set(score_json, '$.governorRegime', ?) WHERE inputs_version = ?`).run(stamp, inputsVersion);
     }
   };
-  const LIVE = '1:1.25:0.4:0.085'; // governorFingerprint of the seeded capital_config v1
-  const OLD = '0:1.25:0.4:0.085';
+  const LIVE = '1:1.25:0.4:refi0.65/ust+0.02/25y'; // governorFingerprint of the seeded capital_config v1 (DSCR floor refi terms since PR-C)
+  const OLD = '0:1.25:0.4:refi0.65/ust+0.02/25y';
 
   it('inserted: the new row carries the live stamp and classifies current', async () => {
     const db = freshDb();

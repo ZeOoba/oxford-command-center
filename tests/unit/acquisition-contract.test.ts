@@ -9,6 +9,31 @@ import {
   ReplacementCostTable,
   RULESET_VERSION,
 } from '@contracts/acquisition';
+import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '@contracts/acquisition-bounds';
+
+// PR 585 merge gate F-009/F-010: the DSCR-floor inputs are decimal rates; the contract is the first unit guard and
+// shares its bounds with the governor (which independently fails closed — see acq-governor-proxy.test.ts).
+describe('DSCR-floor input scale (exit cap, 10-yr UST)', () => {
+  const ok = (o: Record<string, unknown>) => AcquisitionInput.safeParse({ dealId: 'scale', ...o }).success;
+  it('rejects a percent-scale value and accepts up to the shared decimal bound', () => {
+    expect(EXIT_CAP_MAX).toBe(0.25);
+    expect(UST10YR_MAX).toBe(0.2);
+    expect(ok({ exitCapPct: 7.5 })).toBe(false);
+    expect(ok({ exitCapPct: EXIT_CAP_MAX + 1e-6 })).toBe(false);
+    expect(ok({ exitCapPct: EXIT_CAP_MAX })).toBe(true);
+    expect(ok({ ust10yr: 4.3 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MAX + 1e-6 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MAX })).toBe(true);
+  });
+  it('rejects an under-scale UST below the 0.5% floor (decimal typed into the percent field), accepts the floor', () => {
+    expect(UST10YR_MIN).toBe(0.005);
+    expect(ok({ ust10yr: 0.00043 })).toBe(false);
+    expect(ok({ ust10yr: 0 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MIN - 1e-6 })).toBe(false);
+    expect(ok({ ust10yr: UST10YR_MIN })).toBe(true);
+    expect(ok({ ust10yr: null })).toBe(true); // unknown stays allowed (IRR floor flags [UST UNVERIFIED])
+  });
+});
 
 const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
@@ -121,7 +146,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       productType: 'shallow-bay-multi', clearHeightFt: 24, hasDriveIn: true, hasDock: true,
       dockCount: 4, driveInCount: 4, multiStory: false, constructionType: 'tilt-precast',
       yearBuilt: 1998, sfhaOnPad: false, allInBasis: 4_800_000, replacementCostTotal: 6_150_000,
-      stabilizedYoc: 0.095, leveredIrr: 0.16, unleveredIrr10yr: 0.12, underwriteHorizonYrs: 5, clusterTier: 'established',
+      stabilizedYoc: 0.095, leveredIrr: 0.16, unleveredIrr10yr: 0.12, exitCapPct: 0.075, ust10yr: 0.043, ustAsOf: '2026-11-10', underwriteHorizonYrs: 5, clusterTier: 'established',
       isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.8,
     });
     expect(input.dockCount).toBe(4);

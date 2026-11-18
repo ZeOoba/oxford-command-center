@@ -63,7 +63,7 @@ import { loadGovernors } from './governors';
 import { loadRatifiedRct, loadRatifiedRuleset } from './acquisition';
 import { classifyPersistedScore, CURRENT_SCORE_WITH_INPUTS_SQL, liveScoringRegime } from './acq-score-freshness';
 import type { LiveScoringRegime, PersistedScoreRow } from './acq-score-freshness';
-import { governorFingerprint } from './acq-governor-proxy';
+import { GOVERNOR_OPEN_ITEM_PREFIX, governorFingerprint } from './acq-governor-proxy';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
 import { hasBlankGovernorInput } from '../../src/analytics/governor-inputs';
@@ -197,7 +197,7 @@ function staleGovernorFlag(entity: string, ids: readonly string[]): DataQualityF
     field: 'governorRegime',
     issue:
       `${ids.length} active candidate(s) were scored under an older governor regime ` +
-      `(capital_config version / screening constant) and are withheld from BUY until re-scored: ${named}${more}.`,
+      `(capital_config version / DSCR-floor refi terms) and are withheld from BUY until re-scored: ${named}${more}.`,
     severity: 'warn',
   };
 }
@@ -762,17 +762,24 @@ export const OPEN_ITEM_DISPLAY: Readonly<Record<string, string>> = {
 
 function capReasonsOf(score: AcquisitionScore | null): string[] {
   if (score === null) return [];
+  const items: string[] = [];
   for (const r of score.reasons) {
     const m = /^(?:Capped T1 → T2|Notes): (.*?)\.?$/.exec(r);
     if (m && m[1]) {
-      return m[1]
+      items.push(...m[1]
         .split('; ')
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
-        .map((s) => OPEN_ITEM_DISPLAY[s] ?? s);
+        .map((s) => OPEN_ITEM_DISPLAY[s] ?? s));
+      break; // the engine emits at most one cap/notes line
     }
   }
-  return [];
+  // Governor disclosures (acq-governor-proxy GOVERNOR_OPEN_ITEM_PREFIX), e.g. an indeterminate DSCR floor: a deal held
+  // out of BUY for a missing exit cap or UST always shows why (refute wf_0a80ea57-515).
+  for (const r of score.reasons) {
+    if (r.startsWith(GOVERNOR_OPEN_ITEM_PREFIX)) items.push(r.slice(GOVERNOR_OPEN_ITEM_PREFIX.length));
+  }
+  return items;
 }
 
 function verdictOf(v: string | null): 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED' | null {
@@ -784,9 +791,10 @@ function finiteOrNull(v: number | null | undefined): number | null {
 }
 
 /** DSCR governor: BUY requires it EVALUATED and cleared — exactly 1 (refute H1). NULL means the
- *  proxy never ran (no stabilizedYoc): the engine only caps such a deal at T2 WATCH, while the same
- *  deal with a known low YoC is KILLED, so admitting NULL rewarded missing data. 0 = failed; any
- *  other value is out of the column's domain — all fail closed. */
+ *  DSCR floor could not be evaluated (exit cap or 10-yr UST unknown or out of range): the engine never
+ *  demotes such a deal, while the same deal with a known cap that misses the floor is demoted to PASS
+ *  (a KILLED deal stays KILLED), so admitting NULL would reward missing data. 0 = failed; any other
+ *  value is out of the column's domain — all fail closed. */
 function dscrFlagAdmitsBuy(flag: number | null): boolean {
   return flag === 1;
 }
@@ -818,8 +826,8 @@ function isBuyEligible(row: AcqScoreRow | undefined): boolean {
 
 /**
  * True when the latest score's governor verdict was derived under the CURRENT governor regime.
- * acq-engine stamps `governorRegime` (governorFingerprint: capital_config version + values + screening
- * constant) into score_json. A missing, malformed, or different stamp is STALE — fail-closed: the
+ * acq-engine stamps `governorRegime` (governorFingerprint: capital_config version + values + DSCR-floor
+ * refi terms) into score_json. A missing, malformed, or different stamp is STALE — fail-closed: the
  * persisted governor_*_cleared flags describe a regime that is no longer in force (or, for legacy
  * rows scored before the stamp existed, an unknown one), so the row cannot support a BUY until
  * re-scored. Regime-based on purpose (not value-based): a values-identical reversion still re-scores

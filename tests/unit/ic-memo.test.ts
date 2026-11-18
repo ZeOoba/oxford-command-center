@@ -196,6 +196,12 @@ describe('buildIcMemoHtml — verdict table', () => {
     const html = buildIcMemoHtml(portfolio({ advisoryOnly: false, pipeline: [cand, { ...cand, candidateId: 'c2', address: 'Fixture Cand Two', buyEligible: false }] as never, dataQuality: [floorFlag] }));
     expect(html).toMatch(/Eligible \(advisory: composite floor unratified\)/);
     expect(html).toMatch(/Not eligible \(advisory: composite floor unratified\)/);
+    // OI-404 refute wf_8343e911-cd9 (low): on an ineligible row WITH open items the advisory suffix qualifies the
+    // label, never the last open item (else a protected-governor DSCR block reads as advisory).
+    const dscr = 'DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered';
+    const withOpen = buildIcMemoHtml(portfolio({ advisoryOnly: false, pipeline: [{ ...cand, candidateId: 'c3', address: 'Fixture Cand Three', buyEligible: false, openItems: [dscr] }] as never, dataQuality: [floorFlag] }));
+    expect(withOpen).toContain(`Not eligible (advisory: composite floor unratified); open items: ${dscr}`);
+    expect(withOpen).not.toContain(`${dscr} (advisory`);
     const plain = buildIcMemoHtml(portfolio({ advisoryOnly: false, pipeline: [cand] as never, dataQuality: [] }));
     expect(plain).not.toMatch(/composite floor unratified/);
   });
@@ -501,6 +507,34 @@ describe('buildIcMemoHtml — pipeline verdict + BUY eligibility (refute H3)', (
     }));
     const row = html.slice(html.indexOf('3 Open Ln'), html.indexOf('</tr>', html.indexOf('3 Open Ln')));
     expect(row).toContain('BUY with open items: DD-critical unresolved: roof');
+  });
+
+  it('an INELIGIBLE row still discloses its open items; one without any reads a bare Not eligible (OI-404)', () => {
+    // A DSCR-indeterminate deal is never BUY-eligible, so rendering openItems only for eligible rows hid the reason.
+    const dscr = 'DSCR floor indeterminate (exit cap unknown) — not BUY-eligible until entered';
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-dscr', address: '4 Cap Ct', market: null, composite: 80.1, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: false, openItems: [dscr] },
+        { candidateId: 'c-bare', address: '5 Bare St', market: null, composite: 40, tier: 'PASS', unleveredIrr10yr: null, basisDiscountPct: null, verdict: 'PASS', buyEligible: false, openItems: [] },
+      ],
+    }));
+    const row = html.slice(html.indexOf('4 Cap Ct'), html.indexOf('</tr>', html.indexOf('4 Cap Ct')));
+    expect(row).toContain(`Not eligible; open items: ${dscr}`);
+    expect(row).not.toContain('BUY with open items');
+    const bare = html.slice(html.indexOf('5 Bare St'), html.indexOf('</tr>', html.indexOf('5 Bare St')));
+    expect(bare).toContain('Not eligible');
+    expect(bare).not.toContain('open items');
+  });
+
+  it('escapes the open items it discloses on an ineligible row (OI-404)', () => {
+    const html = buildIcMemoHtml(portfolio({
+      pipeline: [
+        { candidateId: 'c-esc', address: '6 Esc Rd', market: null, composite: 70, tier: 'T2', unleveredIrr10yr: 0.18, basisDiscountPct: 0.73, verdict: 'WATCH', buyEligible: false, openItems: ['DD-critical unresolved: <b>roof</b> & dock'] },
+      ],
+    }));
+    const row = html.slice(html.indexOf('6 Esc Rd'), html.indexOf('</tr>', html.indexOf('6 Esc Rd')));
+    expect(row).toContain('Not eligible; open items: DD-critical unresolved: &lt;b&gt;roof&lt;/b&gt; &amp; dock');
+    expect(row).not.toContain('<b>roof</b>');
   });
 });
 

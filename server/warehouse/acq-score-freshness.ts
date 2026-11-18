@@ -12,7 +12,8 @@
 //                   regime (re-derived by recomputing the governor-fingerprinted inputs_version from
 //                   the stored input_json — the same key persistAndLogScore writes), and parseable,
 //                   AND its score_json.governorRegime stamp equals the LIVE capital_config version's
-//                   governorFingerprint (#463; version-keyed, so any capital_config write stales it).
+//                   governorFingerprint (#463; version-keyed, so any capital_config write stales it,
+//                   as does any change to the DSCR-floor refi terms the fingerprint carries).
 //   'stale'       — any regime component differs (or the live regime is unavailable: unverifiable
 //                   freshness fails closed). The score may still be readable; it must not drive BUY.
 //   'unparseable' — regime matches but score_json or input_json does not parse under the live
@@ -43,7 +44,7 @@ export interface LiveScoringRegime {
   /**
    * Every governor fingerprint (governorFingerprint(), the inputs_version component) of a
    * capital_config version whose SCORING-RELEVANT values — dscrFloor and ltvCeiling, with the
-   * current SCREENING_DEBT_CONSTANT baked into the fingerprint — equal the live ones (refute H2).
+   * current DSCR-floor refi terms baked into the fingerprint — equal the live ones (refute H2).
    * The persisted dedup key leads with capital_config.version, so comparing against the LIVE
    * fingerprint alone made ANY capital_config write (e.g. dispositionCapRate) stale every score and
    * silently strip every BUY. A score whose key matches ANY same-valued version was produced by
@@ -239,7 +240,8 @@ export function classifyPersistedScore(row: PersistedScoreRow | undefined, live:
       state: 'stale',
       staleReasons: [
         `governorRegime stamp ${stamp === null ? 'missing' : stamp} does not match the live governor regime ` +
-          `${live.currentGovernorRegime} (capital_config changed since this score) — re-score required`,
+          `${live.currentGovernorRegime} (capital_config version / DSCR-floor refi terms changed since this score) — ` +
+          're-score required',
       ],
       score,
     };
@@ -258,7 +260,7 @@ export function classifyPersistedScore(row: PersistedScoreRow | undefined, live:
   if (!matches) {
     return {
       state: 'stale',
-      staleReasons: ['scored under different governor values (DSCR floor / LTV ceiling / screening debt constant) than the live capital_config'],
+      staleReasons: ['scored under different governor values (DSCR floor / LTV ceiling / DSCR-floor refi terms: 65% LTV, UST + 200 bps, 25-yr) than the live capital_config'],
       score,
     };
   }

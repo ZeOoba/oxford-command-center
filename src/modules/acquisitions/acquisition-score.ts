@@ -132,8 +132,9 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     { key: 'stabilizedYoc', label: 'Stabilized YoC', kind: 'pct', hint: '> 8% floor' },
     // IRR floor (ruleset 2.0.0): 10-yr UNLEVERED IRR >= MAX(10%, UST + 550 bps), +100 bps if > 50% vacant at close.
     { key: 'unleveredIrr10yr', label: 'Unlevered IRR (10-yr)', kind: 'pct', hint: '≥ MAX(10%, UST + 5.5%); +1% if > 50% vacant' },
-    { key: 'ust10yr', label: '10-yr UST (30-day avg)', kind: 'pct', hint: 'FRED DGS10; blank = tested at 10%' },
+    { key: 'ust10yr', label: '10-yr UST (30-day avg)', kind: 'pct', hint: 'FRED DGS10; blank = IRR floor at 10%, DSCR floor indeterminate' },
     { key: 'ustAsOf', label: 'UST as of', kind: 'date' },
+    { key: 'exitCapPct', label: 'Exit cap (market)', kind: 'pct', hint: 'DSCR floor at a 65%-LTV refi (UST + 2%, 25 yr); blank = not BUY-eligible' },
     { key: 'vacantSfShareAtClose', label: 'Vacant SF at close', kind: 'pct', hint: '> 50% adds 100 bps to the IRR floor' },
     { key: 'leveredIrr', label: 'Levered IRR', kind: 'pct', hint: 'reported only, not a floor' },
     { key: 'underwriteHorizonYrs', label: 'UW horizon', kind: 'numselect', options: [{ value: '5', label: '5-year' }, { value: '10', label: '10-year' }] },

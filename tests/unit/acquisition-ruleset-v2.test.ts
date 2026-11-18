@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AcquisitionInput, RULESET_VERSION } from '@contracts/acquisition';
+import { UST10YR_MIN } from '@contracts/acquisition-bounds';
 import { assertProductionRuleset, parseRuleset, parseUtcAnchoredDate, scoreAcquisition } from '../../server/warehouse/acquisition';
 import { buildInput } from '../../src/modules/acquisitions/acquisition-score';
 import { loadTestRct } from '../support/rct';
@@ -201,9 +202,11 @@ describe('IRR floor — exact-boundary entries through the Grader form path', ()
   it('UST 4.52% + majority vacant / IRR 11.02% passes', () => {
     expect(viaForm({ ust10yr: '4.52', unleveredIrr10yr: '11.02', ustAsOf: '2026-11-10', vacantSfShareAtClose: '60' }).passed).toBe(true);
   });
-  it('sweep: every 2-dp UST from 0.00% to 20.00%, with and without the premium, entered exactly at the floor, passes; one bp below fails', () => {
+  // Starts at the contract's UST floor (0.50%, PR 585 gate F-012): below it the input is rejected as an under-scale
+  // entry, so no IRR floor is computed from it.
+  it('sweep: every 2-dp UST from the 0.50% floor to 20.00%, with and without the premium, entered exactly at the floor, passes; one bp below fails', () => {
     const misses: string[] = [];
-    for (let bp = 0; bp <= 2000; bp++) {
+    for (let bp = Math.round(UST10YR_MIN * 10_000); bp <= 2000; bp++) {
       const ust = (bp / 100).toFixed(2);
       for (const share of ['0', '60']) {
         const reqPct = Math.max(10, bp / 100 + 5.5) + (share === '60' ? 1 : 0);
