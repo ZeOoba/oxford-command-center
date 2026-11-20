@@ -38,13 +38,15 @@ const TIER_BADGE_TONE: Record<AcquisitionScore['tier'], BadgeTone> = {
   T1: 'gold',
   T2: 'blue',
   PASS: 'neutral',
-  KILLED: 'red',
+  'FLOOR-FLAGGED': 'amber', // Ruling 5: a flag, not a kill
+  'GATE-FLAGGED': 'amber',
+  KILLED: 'red', // legacy rows only
 };
 
 function gaugeTone(tier: AcquisitionScore['tier']): NonNullable<GaugeRingProps['tone']> {
   if (tier === 'T1') return 'pos';
   if (tier === 'T2') return 'warn';
-  return 'neg'; // PASS | KILLED
+  return 'neg'; // PASS | GATE-/FLOOR-FLAGGED | legacy KILLED
 }
 
 export function GraderView() {
@@ -257,7 +259,7 @@ function BuyBoxPanel() {
           <KV label="Portfolio price max" value={`$${ruleset.gates.sizePrice.portfolioPriceMax.toLocaleString()}`} />
           <KV label="Max SF / building" value={`< ${ruleset.gates.sizePrice.maxSfPerBuilding.toLocaleString()}`} />
           <KV label="Min clear height" value={`${ruleset.gates.physical.minClearHeightFt} ft`} />
-          <KV label="SFHA on pad" value={ruleset.gates.flood.sfhaOnPadKills ? 'Kills' : 'Allowed'} />
+          <KV label="SFHA on pad" value={ruleset.gates.flood.sfhaOnPadKills ? 'Gate flag' : 'Allowed'} />
           <KV label="Min ground lease remaining" value={`${ruleset.gates.other.minGroundLeaseYearsRemaining} yrs`} />
           <KV label="Max env remediation" value={`${(ruleset.gates.other.maxEnvRemediationPctOfPrice * 100).toFixed(0)}% of price`} />
           <KV label="Established clusters" value={ruleset.gates.establishedClusters.join(', ')} />

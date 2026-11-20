@@ -86,7 +86,7 @@ describe('IRR floor — 10-yr unlevered, MAX(10%, UST + 550 bps)', () => {
     const f = irrFloor({ leveredIrr: 0.05, unleveredIrr10yr: 0.12 });
     expect(f.actual).toBe(0.12);
     expect(f.passed).toBe(true);
-    expect(score({ leveredIrr: 0.05, unleveredIrr10yr: 0.12 }).verdict).not.toBe('KILLED');
+    expect(score({ leveredIrr: 0.05, unleveredIrr10yr: 0.12 }).verdict).not.toMatch(/FLAGGED|KILLED/);
   });
   it('a strong levered IRR cannot stand in for a missing unlevered IRR (indeterminate, caps at T2)', () => {
     const s = score({ leveredIrr: 0.30, unleveredIrr10yr: null });
@@ -95,7 +95,7 @@ describe('IRR floor — 10-yr unlevered, MAX(10%, UST + 550 bps)', () => {
     expect(f.passed).toBe(false);
     expect(s.floorIndeterminate).toBe(true);
     expect(s.tier).not.toBe('T1');
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.dataQuality.map((d) => d.field)).toContain('unleveredIrr10yr');
   });
   it('required = 10.0% when UST + 550 bps is below 10%', () => {
@@ -122,11 +122,11 @@ describe('IRR floor — 10-yr unlevered, MAX(10%, UST + 550 bps)', () => {
   it('boundary: unlevered IRR exactly at the floor passes (>=)', () => {
     expect(irrFloor({ ust10yr: 0.05, unleveredIrr10yr: 0.105 }).passed).toBe(true);
   });
-  it('a computable unlevered IRR below the floor fails the floor (engine floor-miss semantics unchanged in 2.0.0)', () => {
+  it('a computable unlevered IRR below the floor fails the floor: FLOOR-FLAGGED (Ruling 5, 2026-11-20)', () => {
     const s = score({ unleveredIrr10yr: 0.0999 });
     expect(s.floors.find((f) => f.id === 'irr')!.passed).toBe(false);
     expect(s.floorsPassed).toBe(false);
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('FLOOR-FLAGGED');
   });
 });
 
@@ -230,7 +230,7 @@ describe('IRR floor — unknown vacant share decides the floor => indeterminate'
     expect(f.detail).toMatch(/10\.50%/);
     expect(f.detail).toMatch(/11\.00% if majority-vacant/);
     expect(s.floorIndeterminate).toBe(true);
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.tier).not.toBe('T1');
   });
   it('IRR clears even the premium floor: passes', () => {
@@ -238,12 +238,12 @@ describe('IRR floor — unknown vacant share decides the floor => indeterminate'
     expect(f.passed).toBe(true);
     expect(f.actual).toBe(0.11);
   });
-  it('IRR below the no-premium floor: a decided miss, still KILLED', () => {
-    expect(score({ ...unknown, unleveredIrr10yr: 0.0999 }).verdict).toBe('KILLED');
+  it('IRR below the no-premium floor: a decided miss, FLOOR-FLAGGED', () => {
+    expect(score({ ...unknown, unleveredIrr10yr: 0.0999 }).verdict).toBe('FLOOR-FLAGGED');
   });
   it('a known share or isVacant never produces the indeterminate case', () => {
     expect(irrFloor({ vacantSfShareAtClose: 0.2, ust10yr: 0.04, unleveredIrr10yr: 0.105 }).passed).toBe(true);
-    expect(score({ isVacant: true, vacantSfShareAtClose: null, ust10yr: 0.04, unleveredIrr10yr: 0.105 }).verdict).toBe('KILLED');
+    expect(score({ isVacant: true, vacantSfShareAtClose: null, ust10yr: 0.04, unleveredIrr10yr: 0.105 }).verdict).toBe('FLOOR-FLAGGED');
   });
 });
 

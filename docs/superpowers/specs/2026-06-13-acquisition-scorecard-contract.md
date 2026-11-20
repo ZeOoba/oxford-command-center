@@ -19,6 +19,17 @@
 
 The SKILL.md was LOCATED and READ — this extraction is **VERIFIED**, not inferred from description metadata.
 
+> **AMENDMENT 2026-11-20 — Ruling 5 (flag, never kill), ratified for the engine by Gabriel in-turn ("Align to Ruling 5").**
+> Where this document says a gate or floor failure is `KILLED` (§1.1, §1.4 bands, §2 precedence, the Tier/Verdict enums),
+> read it as follows. A computable STAGE 0 gate miss yields tier and verdict **`GATE-FLAGGED`**. A computable STAGE 1 floor
+> miss, including the DSCR governor floor at a 65%-LTV refi, yields **`FLOOR-FLAGGED`**. The gate label wins when both
+> apply, and every breach is still named. Scoring does not stop: the composite is computed, reported and ranked after
+> every clean verdict. A flagged deal is never BUY-eligible, and only Gabriel kills a deal.
+> The Tier/Verdict enums are now `T1|T2|PASS|GATE-FLAGGED|FLOOR-FLAGGED|KILLED` and `PURSUE|WATCH|PASS|GATE-FLAGGED|FLOOR-FLAGGED|KILLED`.
+> `KILLED` is legacy only: rows persisted before 2026-11-20 keep it until re-scored, and the engine never emits it.
+> Migration 007's column comments predate this (migrations are immutable). `acq_scores.tier` / `verdict` carry no CHECK constraint.
+> Engine label change only: no ruleset field moved, so the ruleset stays 2.0.0. See `config/acquisition-ruleset.v1.json` `_floors_note_irr_v2`.
+
 ---
 
 ## 1. Extraction — the ratified ruleset, verbatim

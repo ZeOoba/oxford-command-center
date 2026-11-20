@@ -4,7 +4,7 @@
 // TEST-ONLY: no production edits. Pins behaviour that later initiatives (A1/A3/A5, R-HASH) must change
 // DELIBERATELY, never by accident:
 //   1. computeInputsVersion for a frozen, ratified input set (legacy keyspace AND governor-folded keyspace).
-//   2. Floor semantics not already pinned elsewhere: computable basis below the vintage floor => KILLED;
+//   2. Floor semantics not already pinned elsewhere: computable basis below the vintage floor => FLOOR-FLAGGED (Ruling 5, 2026-11-20);
 //      IRR floor = 10-yr unlevered, horizon-independent (ruleset 2.0.0); floors[id=basis|irr].actual populated (the contract the capital
 //      BUY gate must read). The indeterminate-floor T2 cap is already pinned in acquisition.test.ts (B5) —
 //      referenced there, not duplicated here.
@@ -99,11 +99,11 @@ describe('golden: inputs_version pin (R-HASH)', () => {
 });
 
 describe('golden: floor-to-tier semantics (ratified ruleset)', () => {
-  it('a computable basis below the vintage floor hard-fails the basis floor and KILLS', () => {
+  it('a computable basis below the vintage floor hard-fails the basis floor and is FLOOR-FLAGGED (Ruling 5)', () => {
     const s = score(deal({ allInBasis: 13_000_000 })); // ~4% discount vs ~$13.54M replacement (RCT v3.2 fallback)
     const basis = s.floors.find((f) => f.id === 'basis');
     expect(basis?.passed).toBe(false);
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('FLOOR-FLAGGED');
     expect(s.floorIndeterminate).toBe(false);
   });
   it('populates floors[id=basis].actual and floors[id=irr].actual (contract read by the capital BUY gate)', () => {

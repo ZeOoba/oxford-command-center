@@ -125,7 +125,8 @@ describe('POST /acq/score/:candidateId', () => {
     const res = await postScore(app, id, { dealId: 'x' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { score: { verdict: string } };
-    expect(['PURSUE', 'WATCH', 'PASS', 'KILLED']).toContain(body.score.verdict);
+    // Every verdict the engine can emit (Ruling 5: flag labels; legacy KILLED is never emitted).
+    expect(['PURSUE', 'WATCH', 'PASS', 'GATE-FLAGGED', 'FLOOR-FLAGGED']).toContain(body.score.verdict);
     expect(body.score.verdict).not.toBe('PURSUE');
     expect(count(db, 'acq_scores')).toBe(1);
   });

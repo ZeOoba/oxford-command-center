@@ -121,37 +121,37 @@ describe('determinism', () => {
   });
 });
 
-describe('STAGE 0 gates KILL', () => {
+describe('STAGE 0 gates FLAG (Ruling 5: GATE-FLAGGED, never a kill)', () => {
   it('kills on building SF ≥ 50,000', () => {
-    expect(score(strongDeal({ maxBuildingSf: 55_000 })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ maxBuildingSf: 55_000 })).verdict).toBe('GATE-FLAGGED');
   });
   it('kills on clear height < 12 ft', () => {
-    expect(score(strongDeal({ clearHeightFt: 10 })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ clearHeightFt: 10 })).verdict).toBe('GATE-FLAGGED');
   });
   it('kills on SFHA on the pad, automotive use, office-only product, and satellite > 30 min', () => {
-    expect(score(strongDeal({ sfhaOnPad: true })).verdict).toBe('KILLED');
-    expect(score(strongDeal({ use: { automotive: true, childRelated: false, childSafetyReviewed: false } })).verdict).toBe('KILLED');
-    expect(score(strongDeal({ productType: 'office-only' })).verdict).toBe('KILLED');
-    expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: 45 })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ sfhaOnPad: true })).verdict).toBe('GATE-FLAGGED');
+    expect(score(strongDeal({ use: { automotive: true, childRelated: false, childSafetyReviewed: false } })).verdict).toBe('GATE-FLAGGED');
+    expect(score(strongDeal({ productType: 'office-only' })).verdict).toBe('GATE-FLAGGED');
+    expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: 45 })).verdict).toBe('GATE-FLAGGED');
   });
   it('kills on retail-only product type (L14)', () => {
-    expect(score(strongDeal({ productType: 'retail-only' })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ productType: 'retail-only' })).verdict).toBe('GATE-FLAGGED');
   });
   it('kills a short ground lease (other-use gate, threshold from the ruleset)', () => {
     const s = score(strongDeal({ groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
     expect(s.gates.find((g) => g.id === 'other-use')!.passed).toBe(false);
   });
   it('kills excessive environmental remediation (other-use gate, threshold from the ruleset)', () => {
     const s = score(strongDeal({ envRemediationPctOfPrice: ratified.gates.other.maxEnvRemediationPctOfPrice + 0.01 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
     expect(s.gates.find((g) => g.id === 'other-use')!.passed).toBe(false);
   });
   it('kills child-related use without safety review; the gate passes once reviewed', () => {
-    expect(score(strongDeal({ use: { automotive: false, childRelated: true, childSafetyReviewed: false } })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ use: { automotive: false, childRelated: true, childSafetyReviewed: false } })).verdict).toBe('GATE-FLAGGED');
     const reviewed = score(strongDeal({ use: { automotive: false, childRelated: true, childSafetyReviewed: true } }));
     expect(reviewed.gates.find((g) => g.id === 'other-use')!.passed).toBe(true);
-    expect(reviewed.verdict).not.toBe('KILLED');
+    expect(reviewed.verdict).not.toMatch(/FLAGGED|KILLED/);
   });
   it('SFHA on excess land only (pad clear) passes the flood gate — value land at $0, proceed', () => {
     // STRONG_BASE sets sfhaOnPad: false — the pad-KILL branch (line above) must not fire; the
@@ -160,7 +160,7 @@ describe('STAGE 0 gates KILL', () => {
     const flood = s.gates.find((g) => g.id === 'flood')!;
     expect(flood.passed).toBe(true);
     expect(flood.detail).toBe('SFHA on excess land only — value land at $0, proceed');
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
   });
   it('null SF deal cannot reach PURSUE (basis indeterminate, size box unconfirmed) (L15)', () => {
     const s = score(strongDeal({ totalSf: null, maxBuildingSf: null }));
@@ -168,14 +168,14 @@ describe('STAGE 0 gates KILL', () => {
   });
   it('kills when door COUNTS show no ground-level access (0 docks AND 0 drive-ins), counts authoritative', () => {
     const s = score(strongDeal({ dockCount: 0, driveInCount: 0 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
     expect(s.gates.find((g) => g.id === 'physical')?.passed).toBe(false);
   });
 });
 
-describe('STAGE 1 floors KILL', () => {
+describe('STAGE 1 floors FLAG (Ruling 5: FLOOR-FLAGGED, never a kill)', () => {
   it('kills when stabilized YoC is below the 8% floor', () => {
-    expect(score(strongDeal({ stabilizedYoc: 0.06 })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ stabilizedYoc: 0.06 })).verdict).toBe('FLOOR-FLAGGED');
   });
 });
 
@@ -282,7 +282,7 @@ describe('caps: incomplete/advisory, DD, unknown gates', () => {
   });
   it('unknown cluster tier demotes via gateIndeterminate (T2 cap), never a hard KILL', () => {
     const s = score(strongDeal({ clusterTier: null }));
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.cappedAtT2).toBe(true);
     const market = s.gates.find((g) => g.id === 'market')!;
     expect(market.passed).toBe(true);
@@ -344,19 +344,19 @@ describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
 
   it('a short ground-lease term still KILLS even when tenure is otherwise unknown (KILL beats the cap)', () => {
     const s = score(strongDeal({ groundLeased: null, groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
   });
 
   it('groundLeased=false with a supplied term is flagged as contradictory and the term is still tested', () => {
     const s = score(strongDeal({ groundLeased: false, groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
     expect(flagged(s, 'groundLeased')).toBe(true);
   });
 
   it('an unscreened deal (all three other-use inputs absent, the pre-fix default) cannot reach PURSUE', () => {
     const s = score(strongDeal({ use: null, envRemediationPctOfPrice: null, groundLeased: null }));
     expect(s.verdict).not.toBe('PURSUE');
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.cappedAtT2).toBe(true);
   });
 
@@ -377,17 +377,17 @@ describe('other-use gate: unknown inputs cap at T2 (audit 2026-11-08)', () => {
 
   it('a known disqualifier still KILLS with the other inputs unknown', () => {
     const s = score(strongDeal({ use: { automotive: true, childRelated: false, childSafetyReviewed: false }, envRemediationPctOfPrice: null, groundLeased: null }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
   });
 });
 
 describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-14)', () => {
-  it('Basis divides by the ratified RCT, not a caller scalar: an honest high basis is KILLED', () => {
+  it('Basis divides by the ratified RCT, not a caller scalar: an honest high basis is FLOOR-FLAGGED', () => {
     // STRONG_BASE has no market ⇒ conservative fallback (the cheapest row's LOW; synthetic test table).
     // 60k SF × that LOW leaves $7M all-in at a discount below the 60% floor
     // (built 2005, post-cutoff) ⇒ KILLED.
     const s = score(strongDeal({ allInBasis: 7_000_000 }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('FLOOR-FLAGGED');
     expect(s.floors.find((f) => f.id === 'basis')?.passed).toBe(false);
   });
   it('an inflated caller replacementCostTotal cannot game Basis — RCT governs + divergence is flagged', () => {
@@ -610,7 +610,7 @@ describe('market gate: satellite with an unknown drive time caps at T2 (audit 20
 
   it('satellite + null drive: not KILLED, market gate passes unconfirmed, verdict capped at T2, flagged', () => {
     const s = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: null }));
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.verdict).toBe('WATCH');
     expect(s.tier).toBe('T2');
     expect(s.cappedAtT2).toBe(true);
@@ -622,9 +622,9 @@ describe('market gate: satellite with an unknown drive time caps at T2 (audit 20
   });
 
   it('satellite + drive above the ratified max still KILLS; at the max it passes determinately', () => {
-    expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: max + 1 })).verdict).toBe('KILLED');
+    expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: max + 1 })).verdict).toBe('GATE-FLAGGED');
     const atMax = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: max }));
-    expect(atMax.verdict).not.toBe('KILLED');
+    expect(atMax.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(market(atMax).passed).toBe(true);
     expect(atMax.dataQuality.some((d) => d.field === 'driveMinutesToCluster')).toBe(false);
   });
@@ -637,6 +637,6 @@ describe('market gate: satellite with an unknown drive time caps at T2 (audit 20
 
   it('a null drive never rescues a deal another gate KILLS', () => {
     const s = score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: null, sfhaOnPad: true }));
-    expect(s.verdict).toBe('KILLED');
+    expect(s.verdict).toBe('GATE-FLAGGED');
   });
 });

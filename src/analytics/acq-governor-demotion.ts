@@ -4,7 +4,9 @@
 // render a persisted (tier, verdict) pair: RankedCandidateList, PipelineTierBoard, DealDrawer, the
 // Capital Buy Pipeline and the IC memo.
 //
-// A governor demotion has two persisted shapes, both with verdict PASS:
+// Ruling 5 (Gabriel in-turn 2026-11-20): a genuine DSCR floor miss now relabels the score FLOOR-FLAGGED (tier and
+// verdict) with the same "Governor demotion:" reason; the fail-closed paths (invalid governor set) still demote to PASS.
+// A governor demotion has these persisted shapes:
 //   - current engine (G1, server/warehouse/acq-governor-proxy.ts applyGovernorProxyToScore): tier is
 //     demoted to PASS together with the verdict, and a reason "Governor demotion: PURSUE → PASS
 //     (tier T1 → PASS) — …" is appended;
@@ -18,7 +20,9 @@
 // allocator's own stricter check (capital-allocation.ts isBuyEligible) and is never re-derived here.
 import type { Tier, Verdict } from '../contracts/acquisition';
 
-const TIER_FOR_VERDICT: Record<Verdict, Tier> = { PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', KILLED: 'KILLED' };
+const TIER_FOR_VERDICT: Record<Verdict, Tier> = {
+  PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', 'GATE-FLAGGED': 'GATE-FLAGGED', 'FLOOR-FLAGGED': 'FLOOR-FLAGGED', KILLED: 'KILLED',
+};
 
 /** Prefix of the reason applyGovernorProxyToScore appends on a demotion (acq-governor-proxy.ts). */
 export const GOVERNOR_DEMOTION_REASON_PREFIX = 'Governor demotion:';
@@ -60,11 +64,13 @@ function demotionReason(score: PersistedTierVerdict): string | null {
   return score.reasons?.find((r) => r.startsWith(GOVERNOR_DEMOTION_REASON_PREFIX)) ?? null;
 }
 
-/** A PASS verdict produced by a governor demotion: the legacy T1/T2 + PASS shape, a PASS whose
- *  reasons carry the engine's "Governor demotion:" entry, or the server's governorDemoted flag. */
+/** A verdict produced by a governor demotion: the legacy T1/T2 + PASS shape, a PASS or FLOOR-FLAGGED whose
+ *  reasons carry the engine's "Governor demotion:" entry (Ruling 5: a DSCR floor miss is FLOOR-FLAGGED), or the
+ *  server's governorDemoted flag. An engine FLOOR-FLAGGED with no such reason is a STAGE 1 floor breach, not this. */
 export function isGovernorDemoted(score: PersistedTierVerdict | null | undefined): boolean {
   if (!score) return false;
   if (score.governorDemoted === true) return true;
+  if (score.verdict === 'FLOOR-FLAGGED') return demotionReason(score) !== null;
   if (score.verdict !== 'PASS') return false;
   return isLegacyShape(score) || demotionReason(score) !== null;
 }
@@ -74,7 +80,7 @@ export function isGovernorDemoted(score: PersistedTierVerdict | null | undefined
 export function preDemotionTier(score: PersistedTierVerdict | null | undefined): Tier | null {
   if (!score || !isGovernorDemoted(score)) return null;
   if (isLegacyShape(score)) return score.tier!;
-  const m = /\(tier (T1|T2|PASS|KILLED) →/.exec(demotionReason(score) ?? '');
+  const m = /\(tier (T1|T2|PASS|GATE-FLAGGED|FLOOR-FLAGGED|KILLED) →/.exec(demotionReason(score) ?? '');
   return m ? (m[1] as Tier) : null;
 }
 

@@ -30,7 +30,9 @@ const VERDICT_OPTIONS = [
   { value: 'PURSUE', label: 'Pursue' },
   { value: 'WATCH',  label: 'Watch' },
   { value: 'PASS',   label: 'Pass' },
-  { value: 'KILLED', label: 'Killed' },
+  { value: 'FLOOR-FLAGGED', label: 'Floor-flagged' },
+  { value: 'GATE-FLAGGED',  label: 'Gate-flagged' },
+  { value: 'KILLED', label: 'Killed (legacy)' },
 ];
 
 export function AcquisitionsIntel({ edgeEnabled = false }: { edgeEnabled?: boolean } = {}) {

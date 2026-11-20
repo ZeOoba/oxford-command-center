@@ -16,7 +16,8 @@
 //     is a FINANCING-stage governor enforced at capital allocation (capital_config DB CHECK), not at
 //     OM-screen time. This corrects the prior `allInBasis/price ≤ ltvCeiling` formula, which demoted
 //     EVERY fully-specified deal to PASS (basis ≥ price ⇒ ratio ~1.0 > 0.40).
-//   - Demotion never upgrades KILLED (a hard gate/floor rejection) → PASS.
+//   - A DSCR floor miss relabels FLOOR-FLAGGED (Ruling 5, 2026-11-20); an already-flagged (or legacy KILLED) score
+//     keeps its label; the invalid-governor fail-closed path stays PASS.
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -109,10 +110,10 @@ describe('applyGovernorProxy — DSCR floor', () => {
     expect(out.dscrAtRefiLtv).toBeCloseTo(0.075 / (0.65 * refiDebtConstant(0.063)), 12);
   });
 
-  it('demotes to PASS when the exit cap is below 0.65 × 1.25 × k (DSCR binds; Ruling 5 deferred)', () => {
+  it('FLOOR-FLAGs when the exit cap is below 0.65 × 1.25 × k (DSCR binds; Ruling 5 ratified 2026-11-20)', () => {
     const out = applyGovernorProxy({ verdict: 'PURSUE' }, FAIL, GOV);
     expect(out.governorDscrCleared).toBe(false);
-    expect(out.verdict).toBe('PASS');
+    expect(out.verdict).toBe('FLOOR-FLAGGED');
   });
 
   it('is indeterminate (null, no demotion) when the exit cap or the UST is unknown', () => {
@@ -181,11 +182,13 @@ describe('applyGovernorProxy — LTV proxy is indeterminate at screen time', () 
   });
 });
 
-describe('applyGovernorProxy — KILLED monotonicity', () => {
-  it('never upgrades KILLED to PASS even when a governor fails', () => {
-    const out = applyGovernorProxy({ verdict: 'KILLED' }, FAIL, GOV);
-    expect(out.governorDscrCleared).toBe(false);
-    expect(out.verdict).toBe('KILLED');
+describe('applyGovernorProxy — flag/legacy-KILLED monotonicity', () => {
+  it('never relabels a flagged or legacy KILLED verdict even when a governor fails', () => {
+    for (const v of ['KILLED', 'GATE-FLAGGED', 'FLOOR-FLAGGED'] as const) {
+      const out = applyGovernorProxy({ verdict: v }, FAIL, GOV);
+      expect(out.governorDscrCleared).toBe(false);
+      expect(out.verdict).toBe(v);
+    }
   });
 
   it('leaves PASS as PASS (no spurious change)', () => {
@@ -229,12 +232,12 @@ describe('applyGovernorProxyToScore — tier follows the governor-demoted verdic
     expect(out.governorDscrCleared).toBe(false);
   });
 
-  it('a DSCR-floor failure demotes tier with the verdict, and says why', () => {
+  it('a DSCR-floor failure FLOOR-FLAGs tier with the verdict (Ruling 5), and says why', () => {
     const weak = { ...STRONG, exitCapPct: 0.055 };
-    // Feed the T1 PURSUE score with a failing exit cap so the governor test (not the engine) is what demotes.
+    // Feed the T1 PURSUE score with a failing exit cap so the governor test (not the engine) is what relabels.
     const out = applyGovernorProxyToScore(raw, weak, GOV);
-    expect(out.score.verdict).toBe('PASS');
-    expect(out.score.tier).toBe('PASS');
+    expect(out.score.verdict).toBe('FLOOR-FLAGGED');
+    expect(out.score.tier).toBe('FLOOR-FLAGGED');
     expect(out.score.reasons.at(-1)).toMatch(/DSCR 1\.063x at a 65%-LTV refi \(UST \+ 200 bps, 25-yr\) is below the 1\.25x floor/);
   });
 
@@ -261,7 +264,7 @@ describe('applyGovernorProxyToScore — tier follows the governor-demoted verdic
   it('the demotion reason never prints a DSCR equal to the floor (3 dp)', () => {
     const justUnder = { ...STRONG, exitCapPct: 0.65 * 1.25 * refiDebtConstant(0.063) * (1 - 2e-4) };
     const out = applyGovernorProxyToScore(raw, justUnder, GOV);
-    expect(out.score.verdict).toBe('PASS');
+    expect(out.score.verdict).toBe('FLOOR-FLAGGED');
     expect(out.score.reasons.at(-1)).toMatch(/DSCR 1\.249x at/);
   });
 

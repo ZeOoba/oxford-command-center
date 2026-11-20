@@ -564,6 +564,19 @@ describe('GET /acq/intel — verdict-rank ordering (audit 2026-10-13 G4)', () =>
     seedAll(db);
     expect(await ids(db, '?verdict=KILLED')).toEqual(['k-killed']);
   });
+
+  // Ruling 5 (Gabriel in-turn 2026-11-20): flagged deals are SHOWN in the default view and ranked by composite, after
+  // every clean verdict (FLOOR-FLAGGED before GATE-FLAGGED); only legacy KILLED rows stay hidden by default.
+  it('default view shows FLOOR-/GATE-FLAGGED after PASS, ranked by composite within each flag; legacy KILLED hidden', async () => {
+    const db = freshDb();
+    seedAll(db);
+    seedRow(db, 'f-floor-lo', 'FLOOR-FLAGGED', 'FLOOR-FLAGGED', 70);
+    seedRow(db, 'f-floor-hi', 'FLOOR-FLAGGED', 'FLOOR-FLAGGED', 95);
+    seedRow(db, 'g-gate', 'GATE-FLAGGED', 'GATE-FLAGGED', 98);
+    expect(await ids(db)).toEqual(['u-pursue-hi', 'u-pursue', 'w-watch', 'p-pass', 'f-floor-hi', 'f-floor-lo', 'g-gate', 'z-unscored']);
+    expect(await ids(db, '?verdict=GATE-FLAGGED')).toEqual(['g-gate']);
+    expect(await ids(db, '?verdict=FLOOR-FLAGGED')).toEqual(['f-floor-hi', 'f-floor-lo']);
+  });
 });
 
 // ── Refute H4: an empty capital_config must not 500 the whole ranked list — every scored row is

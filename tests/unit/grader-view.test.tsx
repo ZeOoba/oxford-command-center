@@ -118,8 +118,25 @@ function makeIntelResponse(): AcqIntelResponse {
         calibrationHitRate: null,
         scoredAt: '2026-06-14T00:00:00Z',
       },
+      // Ruling 5 (2026-11-20): flagged deals keep their composite and get their own columns.
       {
-        // Not yet scored — must be omitted from all 4 tier columns.
+        candidate: makeCandidate({ id: 'c-floor-flag', address: '600 Floor Flag Ln', market: 'entry' }),
+        latestScore: makeScore({ tier: 'FLOOR-FLAGGED', verdict: 'FLOOR-FLAGGED', composite: 78 }),
+        governorDscrCleared: true,
+        governorLtvCleared: null,
+        calibrationHitRate: null,
+        scoredAt: '2026-06-14T00:00:00Z',
+      },
+      {
+        candidate: makeCandidate({ id: 'c-gate-flag', address: '700 Gate Flag Ct', market: 'entry' }),
+        latestScore: makeScore({ tier: 'GATE-FLAGGED', verdict: 'GATE-FLAGGED', composite: 66 }),
+        governorDscrCleared: true,
+        governorLtvCleared: null,
+        calibrationHitRate: null,
+        scoredAt: '2026-06-14T00:00:00Z',
+      },
+      {
+        // Not yet scored — must be omitted from every tier column.
         candidate: makeCandidate({ id: 'c-unscored', address: '500 Unscored Way' }),
         latestScore: null,
         governorDscrCleared: null,
@@ -246,7 +263,7 @@ describe('PipelineTierBoard', () => {
     }));
   });
 
-  it('groups candidates into the correct 4 tiers by their persisted tier field', async () => {
+  it('groups candidates into the correct 6 tiers by their persisted tier field (Ruling 5 flag columns)', async () => {
     renderWithClient(<PipelineTierBoard />);
 
     await waitFor(() => expect(screen.getByText('100 T1 Ave')).toBeTruthy());
@@ -255,9 +272,12 @@ describe('PipelineTierBoard', () => {
     // which would also match the nested <li> item cards inside each column's <ul>.
     const board = screen.getByRole('list', { name: /tier board/i });
     const columns = Array.from(board.children) as HTMLElement[];
-    expect(columns).toHaveLength(4); // T1, T2, Pass, Killed — exactly 4 tiers
+    expect(columns).toHaveLength(6); // T1, T2, Pass, Floor-flagged, Gate-flagged, Killed (legacy)
 
-    const [t1, t2, pass, killed] = columns as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+    const [t1, t2, pass, floorFlag, gateFlag, killed] = columns as [HTMLElement, HTMLElement, HTMLElement, HTMLElement, HTMLElement, HTMLElement];
+    expect(within(floorFlag).getByText('600 Floor Flag Ln')).toBeTruthy();
+    expect(within(gateFlag).getByText('700 Gate Flag Ct')).toBeTruthy();
+    expect(within(gateFlag).queryByText('600 Floor Flag Ln')).toBeNull();
 
     expect(within(t1).getByText('100 T1 Ave')).toBeTruthy();
     expect(within(t1).queryByText('200 T2 Blvd')).toBeNull();

@@ -6,8 +6,9 @@
 // the engine NEVER lets the model move the number (mirrors scores.ts:1–6 determinism boundary).
 //
 // Precedence (the skill's STAGE 0 → 1 → 2 → 2.5 → verdict cascade):
-//   gate KILL  >  floor KILL  >  composite band  >  (DD-unknown | incomplete-ruleset | Q3 guard |
-//   floor-indeterminate) cap-to-T2.  Caps only ever DOWNGRADE; nothing upgrades a KILLED/PASS.
+//   GATE-FLAGGED  >  FLOOR-FLAGGED  >  composite band  >  (DD-unknown | incomplete-ruleset | Q3 guard |
+//   floor-indeterminate) cap-to-T2.  Caps only ever DOWNGRADE; nothing upgrades a flagged/PASS score.
+//   Ruling 5 (Gabriel in-turn 2026-11-20): a breach is a FLAG, never a kill; the composite is always scored.
 //
 // FAIL-CLOSED: this file is financial-decision code feeding capital allocation. The production caller
 // MUST call assertProductionRuleset() first; the engine refuses to bless a verdict computed on a
@@ -426,7 +427,7 @@ export function scoreAcquisition(
     const killOnlyUse = pt === 'office-only' || pt === 'retail-only';
     const passed = !killOnlyUse;
     if (pt === null) flag('productType', 'unknown product type — gate not confirmable');
-    gates.push({ id: 'product', passed, detail: pt === null ? 'product type unknown' : killOnlyUse ? `${pt} — killed` : `${pt} OK` });
+    gates.push({ id: 'product', passed, detail: pt === null ? 'product type unknown' : killOnlyUse ? `${pt} — gate flag (Ruling 5)` : `${pt} OK` });
   }
   // size-price
   {
@@ -653,7 +654,7 @@ export function scoreAcquisition(
   if (input.unleveredIrr10yr === null) { floorIndeterminate = true; flag('unleveredIrr10yr', '10-yr unlevered IRR missing — IRR floor indeterminate (levered IRR is reported only, never the floor)'); }
   const irrCmp = input.unleveredIrr10yr === null ? null : atFloorPrecision(input.unleveredIrr10yr);
   // Unknown vacant share decides the floor: the IRR clears without the majority-vacant premium but not with it. The
-  // floor is then INDETERMINATE (null actual: caps at T2, not BUY-eligible, never KILLED) until the share is supplied
+  // floor is then INDETERMINATE (null actual: caps at T2, not BUY-eligible, never flagged) until the share is supplied
   // (Gabriel in-turn 2026-11-12). The IRR itself stays visible in the detail line.
   const irrUndecided = irrCmp !== null && irrCmp >= irr.required
     && irr.requiredIfMajorityVacant !== null && irrCmp < irr.requiredIfMajorityVacant;
@@ -669,7 +670,7 @@ export function scoreAcquisition(
       ? `${irrDetailValue} vs ${(irr.required * 100).toFixed(2)}% required, ${(irr.requiredIfMajorityVacant! * 100).toFixed(2)}% if majority-vacant — vacant share at close unknown, indeterminate (${irr.basis})`
       : `${irrDetailValue} vs ${(irr.required * 100).toFixed(2)}% required (${irr.basis})`,
   });
-  // A floor with a COMPUTABLE actual that fails ⇒ KILLED. A null-actual floor ⇒ indeterminate (caps at T2, never KILL).
+  // A floor with a COMPUTABLE actual that fails ⇒ FLOOR-FLAGGED (Ruling 5). A null-actual floor ⇒ indeterminate (caps at T2, never a flag).
   const floorsHardFail = floors.some((f) => f.actual !== null && !f.passed);
   const floorsPassed = floors.every((f) => f.passed);
 
@@ -801,12 +802,19 @@ export function scoreAcquisition(
   let verdict: Verdict;
   let cappedAtT2 = false;
 
-  if (!gatesPassed) {
-    tier_ = 'KILLED'; verdict = 'KILLED';
-    reasons.push(`KILLED at gate: ${gates.filter((g) => !g.passed).map((g) => `${g.id} (${g.detail})`).join('; ')}.`);
-  } else if (floorsHardFail) {
-    tier_ = 'KILLED'; verdict = 'KILLED';
-    reasons.push(`KILLED at floor: ${floors.filter((f) => f.actual !== null && !f.passed).map((f) => `${f.id} ${f.detail}`).join('; ')}.`);
+  // Ruling 5 (SKILL.md STAGE 0/1; engine alignment Gabriel in-turn 2026-11-20): a breach is a FLAG, never a kill.
+  // The gate label takes precedence; every breach is still named, and the composite stays scored and reported.
+  if (!gatesPassed || floorsHardFail) {
+    if (!gatesPassed) {
+      tier_ = 'GATE-FLAGGED'; verdict = 'GATE-FLAGGED';
+      reasons.push(`GATE-FLAGGED: ${gates.filter((g) => !g.passed).map((g) => `${g.id} (${g.detail})`).join('; ')}.`);
+    } else {
+      tier_ = 'FLOOR-FLAGGED'; verdict = 'FLOOR-FLAGGED';
+    }
+    if (floorsHardFail) {
+      reasons.push(`FLOOR-FLAGGED: ${floors.filter((f) => f.actual !== null && !f.passed).map((f) => `${f.id} ${f.detail}`).join('; ')}.`);
+    }
+    reasons.push(`Composite ${composite}/100 (scored as an exception, Ruling 5; never BUY-eligible while flagged — Gabriel's call).`);
   } else {
     // composite band first
     if (composite >= ruleset.bands.t1PursueMin) { tier_ = 'T1'; verdict = 'PURSUE'; }

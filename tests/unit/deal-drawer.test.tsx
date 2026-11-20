@@ -16,7 +16,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AcquisitionInput, type AcquisitionScore, type AcqIntelResponse, type AcqCandidateRow, type RankedCandidate } from '@contracts/acquisition';
+import { AcquisitionInput, Tier, type AcquisitionScore, type AcqIntelResponse, type AcqCandidateRow, type RankedCandidate } from '@contracts/acquisition';
 import type { Deal, PortfolioSnapshot } from '@contracts/index';
 import { DealDrawer } from '../../src/brain/DealDrawer';
 
@@ -309,10 +309,7 @@ describe('DealDrawer — Underwriting panel with an input but no persisted score
 
     // No gauge/tier/verdict — a score must never be fabricated from an input alone.
     expect(screen.queryAllByRole('img')).toHaveLength(0);
-    expect(screen.queryByText('T1')).toBeNull();
-    expect(screen.queryByText('T2')).toBeNull();
-    expect(screen.queryByText('PASS')).toBeNull();
-    expect(screen.queryByText('KILLED')).toBeNull();
+    for (const t of Tier.options) expect(screen.queryByText(t)).toBeNull(); // tracks the enum (incl. Ruling 5 flags)
   });
 
   it('does not fabricate a score when no candidate is synced to the deal at all', async () => {

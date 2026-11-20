@@ -27,12 +27,14 @@ const TIER_BADGE_TONE: Record<AcquisitionScore['tier'], BadgeTone> = {
   T1: 'gold',
   T2: 'blue',
   PASS: 'neutral',
-  KILLED: 'red',
+  'FLOOR-FLAGGED': 'amber', // Ruling 5: a flag, not a kill
+  'GATE-FLAGGED': 'amber',
+  KILLED: 'red', // legacy rows only
 };
 function gaugeTone(tier: AcquisitionScore['tier']): 'pos' | 'warn' | 'neg' {
   if (tier === 'T1') return 'pos';
   if (tier === 'T2') return 'warn';
-  return 'neg'; // PASS | KILLED
+  return 'neg'; // PASS | GATE-/FLOOR-FLAGGED | legacy KILLED
 }
 
 /** Find the ranked acquisition candidate synced to this deal (Deal.id === candidate.notionDealId —
@@ -57,7 +59,7 @@ export function DealDrawer({
   const deal = snapshot.deals.find((d) => d.id === dealId) ?? null;
   const comps: CompSet | undefined = snapshot.dealComps[dealId];
   const acqInput: AcquisitionInput | null = snapshot.acquisitionInputs[dealId] ?? null;
-  // includeKilled: a KILLED deal's score must still resolve here (/acq/intel hides KILLED by default).
+  // includeKilled: a legacy KILLED deal's score must still resolve here (/acq/intel hides legacy KILLED by default).
   const { data: acqIntel } = useAcqIntel(undefined, undefined, undefined, undefined, true);
   const rankedCandidate = findRankedCandidateForDeal(acqIntel?.rankedCandidates ?? [], dealId);
   const refresh = useMutation({

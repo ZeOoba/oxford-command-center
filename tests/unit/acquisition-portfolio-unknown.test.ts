@@ -50,7 +50,7 @@ describe('size-price gate with an unknown portfolio status', () => {
   it('between the caps: not KILLED, passes unconfirmed, flagged, capped at T2', () => {
     expect(between).toBeLessThanOrEqual(SP.portfolioPriceMax);
     const s = score({ isPortfolio: null, price: between });
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(gate(s).passed).toBe(true);
     expect(gate(s).detail).toMatch(/portfolio status unknown/);
     expect(s.dataQuality.some((d) => d.field === 'isPortfolio' && /portfolio status unknown — price cap not confirmable/.test(d.issue))).toBe(true);
@@ -59,15 +59,15 @@ describe('size-price gate with an unknown portfolio status', () => {
   });
 
   it('the same price with a CONFIRMED single asset still KILLs; a confirmed portfolio passes determinately', () => {
-    expect(score({ isPortfolio: false, price: between }).verdict).toBe('KILLED');
+    expect(score({ isPortfolio: false, price: between }).verdict).toBe('GATE-FLAGGED');
     const pf = score({ isPortfolio: true, price: between });
     expect(gate(pf).passed).toBe(true);
     expect(pf.dataQuality.some((d) => d.field === 'isPortfolio')).toBe(false);
   });
 
   it('above the portfolio cap, or below the minimum, unknown still KILLs (either answer kills)', () => {
-    expect(score({ isPortfolio: null, price: SP.portfolioPriceMax + 1 }).verdict).toBe('KILLED');
-    expect(score({ isPortfolio: null, price: SP.singleAssetPriceMin - 1 }).verdict).toBe('KILLED');
+    expect(score({ isPortfolio: null, price: SP.portfolioPriceMax + 1 }).verdict).toBe('GATE-FLAGGED');
+    expect(score({ isPortfolio: null, price: SP.singleAssetPriceMin - 1 }).verdict).toBe('GATE-FLAGGED');
   });
 
   it('within the single-asset cap, unknown is decision-identical to false: no flag, no cap from it', () => {
@@ -106,7 +106,7 @@ describe('form: unknown building count reaches the engine as unknown, never as a
     const input = AcquisitionInput.parse({ ...STRONG, ...buildInput(form, 'zephyr'), maxBuildingSf: 40_000, allInBasis: BASIS });
     expect(input.isPortfolio).toBeNull();
     const s = scoreAcquisition(input, RULESET, { now: NOW, rct: RCT });
-    expect(s.verdict).not.toBe('KILLED');
+    expect(s.verdict).not.toMatch(/FLAGGED|KILLED/);
     expect(s.cappedAtT2).toBe(true);
   });
 

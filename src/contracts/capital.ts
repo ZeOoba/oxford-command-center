@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { AttentionBand, HealthBand } from './warehouse';
-import { ClusterTier, Ratification, Verdict } from './acquisition';
+import { ClusterTier, Ratification, Tier, Verdict } from './acquisition';
 import { DebtBookTrust } from './debt';
 
 export const AllocationAction = z.enum(['buy', 'hold', 'sell', 'refinance', 'improve']);
@@ -84,7 +84,7 @@ export const PortfolioAllocation = z.object({
     address: z.string().nullable(),
     market: ClusterTier.nullable(),
     composite: z.number().nullable(),
-    tier: z.enum(['T1', 'T2', 'PASS', 'KILLED']).nullable(),
+    tier: Tier.nullable(), // incl. Ruling 5 GATE-FLAGGED / FLOOR-FLAGGED (and legacy KILLED)
     /** The 'irr' floor actual: 10-yr UNLEVERED IRR (acquisition ruleset 2.0.0). Levered IRR is not carried here. */
     unleveredIrr10yr: z.number().nullable(),
     basisDiscountPct: z.number().nullable(),
