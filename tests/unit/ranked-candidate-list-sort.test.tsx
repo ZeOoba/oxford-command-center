@@ -78,6 +78,17 @@ describe('RankedCandidateList — tier sort', () => {
     expect(order()[0]).toBe('t1-75');
   });
 
+  it('Ruling 5: flagged rows rank after PASS (FLOOR before GATE), by composite, matching the server', () => {
+    renderList([
+      cand('gate-99', { tier: 'GATE-FLAGGED', verdict: 'GATE-FLAGGED', composite: 99 }),
+      cand('floor-70', { tier: 'FLOOR-FLAGGED', verdict: 'FLOOR-FLAGGED', composite: 70 }),
+      cand('floor-95', { tier: 'FLOOR-FLAGGED', verdict: 'FLOOR-FLAGGED', composite: 95 }),
+      cand('pass-10', { tier: 'PASS', verdict: 'PASS', composite: 10 }),
+      cand('killed-99', { tier: 'KILLED', verdict: 'KILLED', composite: 99 }),
+    ]);
+    expect(order()).toEqual(['pass-10', 'floor-95', 'floor-70', 'gate-99', 'killed-99']);
+  });
+
   it('a legacy governor-demoted row (tier T1, verdict PASS) ranks as PASS, matching the server', () => {
     renderList([
       cand('legacy-t1-pass', { tier: 'T1', verdict: 'PASS', composite: 95 }),

@@ -22,11 +22,14 @@ import type { RankedCandidate } from '@contracts/acquisition';
 import { effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { useAcqIntel } from './grader-hooks';
 
-const TIER_DEFS: ReadonlyArray<{ key: 'T1' | 'T2' | 'PASS' | 'KILLED'; title: string; tone: Tier['tone'] }> = [
+// Ruling 5 (2026-11-20): gate/floor breaches are FLAGS with their own columns; Killed holds legacy rows only.
+const TIER_DEFS: ReadonlyArray<{ key: 'T1' | 'T2' | 'PASS' | 'FLOOR-FLAGGED' | 'GATE-FLAGGED' | 'KILLED'; title: string; tone: Tier['tone'] }> = [
   { key: 'T1', title: 'T1 · Pursue', tone: 'pos' },
   { key: 'T2', title: 'T2 · Watch', tone: 'accent' },
   { key: 'PASS', title: 'Pass', tone: 'info' },
-  { key: 'KILLED', title: 'Killed', tone: 'neg' },
+  { key: 'FLOOR-FLAGGED', title: 'Floor-flagged', tone: 'warn' },
+  { key: 'GATE-FLAGGED', title: 'Gate-flagged', tone: 'warn' },
+  { key: 'KILLED', title: 'Killed (legacy)', tone: 'neg' },
 ];
 
 const MARKET_LABEL: Record<string, string> = {
@@ -54,7 +57,7 @@ function toTierItem(ranked: RankedCandidate, onOpenDeal: (dealId: string) => voi
 }
 
 export function PipelineTierBoard() {
-  // includeKilled: this board has a Killed column; /acq/intel hides KILLED by default (audit G4).
+  // includeKilled: this board has a legacy Killed column; /acq/intel hides legacy KILLED by default (audit G4).
   const { data } = useAcqIntel(undefined, undefined, undefined, undefined, true);
   const ui = useUi();
   const candidates = data?.rankedCandidates ?? [];

@@ -129,11 +129,22 @@ export type RctAdder = z.infer<typeof RctAdder>;
 export const DdCriticalId = z.enum(['flood', 'zoning', 'roof', 'deferred-maintenance-capex']); // SKILL.md:69–75
 export type DdCriticalId = z.infer<typeof DdCriticalId>;
 
-export const Tier = z.enum(['T1', 'T2', 'PASS', 'KILLED']);
+// Ruling 5 (acquisition-underwriting SKILL.md, ratified 2026-06-09; engine alignment ratified by Gabriel in-turn
+// 2026-11-20): a gate or floor breach is a FLAG, never a kill — only Gabriel kills a deal. A computable gate miss is
+// GATE-FLAGGED, a computable floor miss (incl. the DSCR governor floor) FLOOR-FLAGGED; tier and verdict carry the same
+// label, the composite is still scored, and a flagged deal is never BUY-eligible. 'KILLED' is LEGACY ONLY: rows
+// persisted before 2026-11-20 may still carry it (until re-scored), so readers keep parsing it; the engine never emits it.
+
+export const Tier = z.enum(['T1', 'T2', 'PASS', 'GATE-FLAGGED', 'FLOOR-FLAGGED', 'KILLED']);
 export type Tier = z.infer<typeof Tier>;
 
-export const Verdict = z.enum(['PURSUE', 'WATCH', 'PASS', 'KILLED']);
+export const Verdict = z.enum(['PURSUE', 'WATCH', 'PASS', 'GATE-FLAGGED', 'FLOOR-FLAGGED', 'KILLED']);
 export type Verdict = z.infer<typeof Verdict>;
+
+/** True for a Ruling 5 flag label or the legacy KILLED: a gate/floor breach, never BUY-eligible. */
+export function isGateOrFloorBreach(v: string | null | undefined): boolean {
+  return v === 'GATE-FLAGGED' || v === 'FLOOR-FLAGGED' || v === 'KILLED';
+}
 
 // ─── RULESET (single source of truth; imported by skill + engine) ──────────────────────────────
 

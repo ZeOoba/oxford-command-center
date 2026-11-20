@@ -115,8 +115,8 @@ describe('logAcqOutcome — PASS verdict hit semantics', () => {
     const id = 'deal:pass-verdict-passed';
     seedCandidate(db, id);
     const band = scoreCandidate(db, id, DSCR_FAIL_RAW);
-    // DSCR proxy fails on DSCR_FAIL_RAW (stabilizedYoc=0.02 < threshold) → PASS or KILLED
-    expect(band === 'PASS' || band === 'KILLED').toBe(true);
+    // DSCR_FAIL_RAW misses a floor → FLOOR-FLAGGED (Ruling 5, 2026-11-20); a down-band verdict like PASS / legacy KILLED
+    expect(['PASS', 'FLOOR-FLAGGED', 'GATE-FLAGGED', 'KILLED']).toContain(band);
 
     logAcqOutcome(db, id, 'passed');
 
@@ -126,7 +126,7 @@ describe('logAcqOutcome — PASS verdict hit semantics', () => {
     ).get(verdictId) as { hit: number; is_resolution: number; resolution_basis: string; realized_band: string } | undefined;
 
     expect(outcome).toBeDefined();
-    expect(outcome!.hit).toBe(1);         // passed a PASS/KILLED = vindicated
+    expect(outcome!.hit).toBe(1);         // passed a PASS/flagged/KILLED = vindicated
     expect(outcome!.is_resolution).toBe(1);
     expect(outcome!.resolution_basis).toBe('deal-lifecycle-event');
     expect(outcome!.realized_band).toBe('passed');

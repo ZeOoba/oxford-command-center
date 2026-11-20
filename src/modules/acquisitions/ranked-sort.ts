@@ -1,7 +1,8 @@
 // src/modules/acquisitions/ranked-sort.ts
 //
 // Sort key for the RankedCandidateList Tier column. It must match the server's /acq/intel ORDER BY
-// (server/warehouse/api.ts): verdict rank first (PURSUE, WATCH, PASS, KILLED), then composite DESC.
+// (server/warehouse/api.ts): verdict rank first (PURSUE, WATCH, PASS, FLOOR-FLAGGED, GATE-FLAGGED, legacy KILLED), then
+// composite DESC (Ruling 5: a flagged deal is ranked by its composite, after every clean verdict).
 // Sorting the tier STRING put KILLED and PASS above T1 (localeCompare; audit 2026-11-03). A score with no
 // verdict falls back to the verdict its tier pairs with; a row with no parsed score returns null so
 // DataTable keeps it last in either direction.
@@ -12,9 +13,11 @@
 // verdict; carrying the column verdict would need a RankedCandidate contract change (Architect-owned).
 import type { RankedCandidate, Tier, Verdict } from '@contracts/acquisition';
 
-const VERDICT_RANK: Record<Verdict, number> = { PURSUE: 0, WATCH: 1, PASS: 2, KILLED: 3 };
-const VERDICT_FOR_TIER: Record<Tier, Verdict> = { T1: 'PURSUE', T2: 'WATCH', PASS: 'PASS', KILLED: 'KILLED' };
-const UNKNOWN_RANK = 4;
+const VERDICT_RANK: Record<Verdict, number> = { PURSUE: 0, WATCH: 1, PASS: 2, 'FLOOR-FLAGGED': 3, 'GATE-FLAGGED': 4, KILLED: 5 };
+const VERDICT_FOR_TIER: Record<Tier, Verdict> = {
+  T1: 'PURSUE', T2: 'WATCH', PASS: 'PASS', 'GATE-FLAGGED': 'GATE-FLAGGED', 'FLOOR-FLAGGED': 'FLOOR-FLAGGED', KILLED: 'KILLED',
+};
+const UNKNOWN_RANK = 6;
 
 export function rankedSortValue(item: RankedCandidate): number | null {
   const s = item.latestScore;

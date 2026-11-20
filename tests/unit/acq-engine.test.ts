@@ -159,7 +159,7 @@ describe('persistAndLogScore — LTV is indeterminate at screen time (ratified c
 });
 
 describe('persistAndLogScore — DSCR governor demotion', () => {
-  it('demotes a non-KILLED deal to PASS and stores governor_dscr_cleared=0 when DSCR at a 65%-LTV refi < 1.25', async () => {
+  it('FLOOR-FLAGs a clean deal (Ruling 5) and stores governor_dscr_cleared=0 when DSCR at a 65%-LTV refi < 1.25', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-dscr-fail';
     seedCandidate(db, candidateId);
@@ -168,8 +168,8 @@ describe('persistAndLogScore — DSCR governor demotion', () => {
     const input = strongInput({ exitCapPct: 0.05 });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
-    expect(score.verdict).toBe('PASS');
-    expect(score.tier).toBe('PASS');
+    expect(score.verdict).toBe('FLOOR-FLAGGED');
+    expect(score.tier).toBe('FLOOR-FLAGGED');
   });
 
   it('stores governor_dscr_cleared=0 in acq_scores', async () => {
@@ -437,27 +437,27 @@ describe('persistAndLogScore — calibration logging', () => {
   });
 });
 
-describe('persistAndLogScore — KILLED verdict monotonicity', () => {
-  // Regression: governor demotion must never upgrade KILLED → PASS.
-  // KILLED = hard gate/floor rejection; PASS = soft "didn't score well".
+describe('persistAndLogScore — flagged verdict monotonicity', () => {
+  // Regression: governor demotion must never relabel a GATE-FLAGGED (or legacy KILLED) verdict.
+  // GATE-FLAGGED = gate breach (Ruling 5 flag); PASS = soft "didn't score well".
   // Upgrading would misplace the deal in verdict-filtered ranked lists.
-  it('governor LTV failure does not upgrade KILLED to PASS', async () => {
+  it('a governor check does not relabel a GATE-FLAGGED deal', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-killed-no-upgrade';
     seedCandidate(db, candidateId);
 
-    // sfhaOnPad: true → flood gate kills (sfhaOnPadKills = true in ratified ruleset).
+    // sfhaOnPad: true → flood gate breach → GATE-FLAGGED (Ruling 5).
     // allInBasis/price = 2M/3.5M ≈ 0.57 > 0.40 → LTV governor fails.
-    // Without the KILLED guard, governor demotion would silently upgrade KILLED → PASS.
+    // Without the breach guard, governor demotion would silently relabel the gate flag.
     const input = strongInput({ sfhaOnPad: true, allInBasis: 2_000_000, price: 3_500_000 });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
-    expect(score.verdict).toBe('KILLED');
+    expect(score.verdict).toBe('GATE-FLAGGED');
 
     const row = db.prepare('SELECT verdict FROM acq_scores WHERE candidate_id = ?')
       .get(candidateId) as { verdict: string } | undefined;
     expect(row).toBeDefined();
-    expect(row!.verdict).toBe('KILLED');
+    expect(row!.verdict).toBe('GATE-FLAGGED');
   });
 });
 

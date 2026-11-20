@@ -16,7 +16,9 @@ import {
 } from './acquisition-score';
 import { OmImportDrawer } from './OmImportDrawer';
 
-const VERDICT_TONE: Record<string, BadgeTone> = { PURSUE: 'green', WATCH: 'amber', PASS: 'neutral', KILLED: 'red' };
+const VERDICT_TONE: Record<string, BadgeTone> = {
+  PURSUE: 'green', WATCH: 'amber', PASS: 'neutral', 'FLOOR-FLAGGED': 'amber', 'GATE-FLAGGED': 'amber', KILLED: 'red',
+};
 const TRIBOOL = [{ value: '', label: '—' }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
 
 const inputCls = 'w-full rounded-[var(--radius-sm)] px-2 py-1 text-xs num';

@@ -732,7 +732,7 @@ interface AcqScoreRow {
   score_json: string | null;
 }
 
-import { ClusterTier, AcquisitionScore } from '../../src/contracts/acquisition';
+import { ClusterTier, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
 
 /** Parse a persisted score_json through the AcquisitionScore contract; null on malformed/foreign JSON. */
 function parseAcquisitionScore(json: string | null): AcquisitionScore | null {
@@ -782,8 +782,15 @@ function capReasonsOf(score: AcquisitionScore | null): string[] {
   return items;
 }
 
-function verdictOf(v: string | null): 'PURSUE' | 'WATCH' | 'PASS' | 'KILLED' | null {
-  return v === 'PURSUE' || v === 'WATCH' || v === 'PASS' || v === 'KILLED' ? v : null;
+/** A persisted verdict/tier validated against the contract enums (Ruling 5 flag labels included; legacy KILLED kept
+ *  for rows persisted before 2026-11-20). An unknown string reads as null — never cast. */
+function verdictOf(v: string | null): Verdict | null {
+  const r = Verdict.safeParse(v);
+  return r.success ? r.data : null;
+}
+function tierOf(t: string | null): Tier | null {
+  const r = Tier.safeParse(t);
+  return r.success ? r.data : null;
 }
 
 function finiteOrNull(v: number | null | undefined): number | null {
@@ -792,8 +799,8 @@ function finiteOrNull(v: number | null | undefined): number | null {
 
 /** DSCR governor: BUY requires it EVALUATED and cleared — exactly 1 (refute H1). NULL means the
  *  DSCR floor could not be evaluated (exit cap or 10-yr UST unknown or out of range): the engine never
- *  demotes such a deal, while the same deal with a known cap that misses the floor is demoted to PASS
- *  (a KILLED deal stays KILLED), so admitting NULL would reward missing data. 0 = failed; any other
+ *  demotes such a deal, while the same deal with a known cap that misses the floor is FLOOR-FLAGGED (Ruling 5; an
+ *  already-flagged deal keeps its label), so admitting NULL would reward missing data. 0 = failed; any other
  *  value is out of the column's domain — all fail closed. */
 function dscrFlagAdmitsBuy(flag: number | null): boolean {
   return flag === 1;
@@ -887,10 +894,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
 
     // Validate tier against known values before casting (Fix A-1)
     const tierRaw = scoreRow?.tier ?? null;
-    const tier: 'T1' | 'T2' | 'PASS' | 'KILLED' | null =
-      tierRaw === 'T1' || tierRaw === 'T2' || tierRaw === 'PASS' || tierRaw === 'KILLED'
-        ? tierRaw
-        : null;
+    const tier: Tier | null = tierOf(tierRaw);
 
     // score_json is the authoritative AcquisitionScore (007 migration). Parse it with the contract
     // schema (audit 2026-10-13 G2) — never by poking at keys the type does not have. The basis
@@ -934,8 +938,10 @@ function loadPipelineCandidates(db: WarehouseDb): {
     // has no such reason and stays excluded — a re-score under looser governors cannot promote it.
     // Reason-based rather than "governor flag = 0": a native PASS can also carry a failed DSCR flag
     // (the proxy runs on every scored deal), and counting it would be disclosure noise.
+    // Ruling 5 (2026-11-20): a genuine DSCR miss now relabels FLOOR-FLAGGED with the same reason; counted the same way
+    // (it belongs to the governor regime that produced it). An engine FLOOR-FLAGGED has no such reason and is excluded.
     const governorDemotedPass =
-      scoreRow?.verdict === 'PASS' &&
+      (scoreRow?.verdict === 'PASS' || scoreRow?.verdict === 'FLOOR-FLAGGED') &&
       (score?.reasons.some((r) => r.startsWith('Governor demotion:')) ?? false);
     const wouldContend =
       ((scoreRow?.verdict === 'PURSUE' || scoreRow?.verdict === 'WATCH') &&
@@ -945,7 +951,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
       scoreRow !== undefined &&
       (tier === 'T1' || tier === 'T2' || governorDemotedPass) &&
       scoreRow.composite >= BUY_COMPOSITE_FLOOR &&
-      (eligibleOnItsFace || scoreRow.verdict === 'PASS') &&
+      (eligibleOnItsFace || governorDemotedPass || scoreRow.verdict === 'PASS') &&
       (score === null || (basisFloor?.passed === true && basisDiscountPct !== null));
     if (wouldContend || wouldCompeteForBuy) {
       if (freshness.state === 'stale') staleScores++;
@@ -970,7 +976,7 @@ function loadPipelineCandidates(db: WarehouseDb): {
       yieldFloor?.passed !== true ||
       finiteOrNull(yieldFloor.actual) === null ||
       // Same rule for the IRR floor (refute round 2 T1; 10-yr unlevered since ruleset 2.0.0): an
-      // unknown IRR caps at WATCH in the engine while a known failing IRR is KILLED, so null must not reach BUY.
+      // unknown IRR caps at WATCH in the engine while a known failing IRR is FLOOR-FLAGGED, so null must not reach BUY.
       irrFloor?.passed !== true ||
       unleveredIrr10yr === null
     ) {

@@ -1,7 +1,7 @@
 // src/modules/acquisitions/RankedCandidateList.tsx
 //
 // Renders the ranked acquisition candidate list from GET /acq/intel (Phase 4, Step 7).
-// Tier badges: T1=accent, T2=info, PASS=neutral, KILLED=red.
+// Tier badges: T1=accent, T2=info, PASS=neutral, GATE-/FLOOR-FLAGGED=warn (Ruling 5), legacy KILLED=red.
 // Governor breach indicator: ⚠ when DSCR governor failed.
 // ltvCleared is always null at screen time (no loan amount in AcquisitionInput — indeterminate);
 // the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
@@ -18,7 +18,10 @@ const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> 
   T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)', color: 'var(--text-on-accent)' },
   T2:     { label: 'T2 · WATCH',  bg: 'var(--color-info)', color: 'var(--text-on-info)' },
   PASS:   { label: 'PASS',        bg: 'var(--surface-overlay)',   color: 'var(--text-tertiary)' },
-  KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',         color: 'var(--text-on-accent)' },
+  // Ruling 5: a gate/floor breach is a FLAG (Gabriel's call), shown with its composite, never BUY-eligible.
+  'FLOOR-FLAGGED': { label: 'FLOOR-FLAGGED', bg: 'var(--surface-overlay)', color: 'var(--color-warn)' },
+  'GATE-FLAGGED':  { label: 'GATE-FLAGGED',  bg: 'var(--surface-overlay)', color: 'var(--color-warn)' },
+  KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',         color: 'var(--text-on-accent)' }, // legacy rows only
 };
 
 const UNSCORED_STYLE = { label: '—', bg: 'var(--surface-overlay)', color: 'var(--text-tertiary)' };
