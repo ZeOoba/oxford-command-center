@@ -8,9 +8,10 @@
 //
 // The column is the VERDICT's tier (effectiveTier), matching the ranked list, the /acq/intel sort
 // and the capital BUY gate: a legacy row persisted tier T1/T2 next to a governor-demoted PASS lands
-// in Pass, so the T1/T2 columns only hold governor-cleared deals. Every governor-demoted PASS (that
-// legacy shape, or the current engine's tier PASS + "Governor demotion:" reason) is marked
-// "Governor-demoted (was T1)" (src/analytics/acq-governor-demotion.ts).
+// in Pass, so the T1/T2 columns only hold governor-cleared deals. A current-engine DSCR floor miss lands in
+// Floor-flagged (Ruling 5); the fail-closed path still lands in Pass. Every governor demotion (that legacy shape, or a
+// PASS / FLOOR-FLAGGED carrying the "Governor demotion:" reason) is marked "Governor-demoted (was T1)"
+// (src/analytics/acq-governor-demotion.ts).
 //
 // Detail navigation reuses the existing `ui.openEntity({ type: 'deal', ... })` mechanism already
 // used by AcquisitionsModule.tsx's Active Deals table (onRowClick) — the only "open a detail view"

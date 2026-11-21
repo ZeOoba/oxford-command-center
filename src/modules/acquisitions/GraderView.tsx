@@ -5,7 +5,7 @@
 // design-handoff Grader.html reference for LAYOUT/FLOW ONLY (drop zone + manual-entry affordance
 // on the left, a read-only buy-box reference on the right): its simulated letter-grade scoring
 // (A/B/C/D bands) is NOT ported — the ratified ruleset (config/acquisition-ruleset.v1.json) is the
-// only source of truth, and it defines a tier (T1/T2/PASS/KILLED) + a 0-100 composite, never a
+// only source of truth, and it defines a tier (T1/T2/PASS/GATE-FLAGGED/FLOOR-FLAGGED; KILLED is legacy only) + a 0-100 composite, never a
 // letter grade. This view renders tier + composite ONLY.
 //
 // Intake: reuses OmImportDrawer's existing upload → POST /api/actions/om-extract → fields flow

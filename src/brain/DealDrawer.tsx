@@ -406,8 +406,8 @@ function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | n
   }
 
   const score: AcquisitionScore | null = candidate?.latestScore ?? null;
-  // A governor-demoted PASS (current engine: tier PASS + a "Governor demotion:" reason; legacy: tier
-  // T1/T2 left beside the PASS) is marked, never shown as a plain PASS or a clean T1. The gauge and
+  // A governor-demoted score (current engine: tier FLOOR-FLAGGED on a DSCR miss, or PASS on the fail-closed path, plus a
+  // "Governor demotion:" reason; legacy: tier T1/T2 left beside a PASS) is marked, never shown as a plain verdict or a clean T1. The gauge and
   // badge show the verdict's tier (same rule as the ranked list, the Pipeline board and the Capital
   // Buy Pipeline); the marker keeps the pre-demotion tier visible.
   const demoted = governorDemotedLabel(score);

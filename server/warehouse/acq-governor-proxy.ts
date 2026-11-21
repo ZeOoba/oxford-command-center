@@ -59,7 +59,7 @@ import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../sr
 import { isGateOrFloorBreach } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '../../src/contracts/acquisition-bounds';
-import { GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
+import { FLOOR_FLAG_GOVERNOR_PREFIX, GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
 
 /** Refi rate spread over the 10-yr UST (SKILL.md v4.37: "10-yr U.S. Treasury + 200 bps, always"). */
 export const REFI_UST_SPREAD = 0.02;
@@ -223,7 +223,7 @@ export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verd
     // cap / UST) is disclosed as an open item, unless the score is already a gate/floor breach (out of BUY anyway).
     const breach = isGateOrFloorBreach(score.verdict);
     const extra = breach && governorsValid && outcome.governorDscrCleared === false && outcome.dscrAtRefiLtv !== null
-      ? `FLOOR-FLAGGED (governor): ${dscrMissText()}.`
+      ? `${FLOOR_FLAG_GOVERNOR_PREFIX}${dscrMissText()}.`
       : !breach && outcome.governorDscrCleared === null
         ? dscrIndeterminateReason(input)
         : null;
@@ -246,7 +246,7 @@ export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verd
   // already-flagged path uses (refute wf_8198d211-d20, medium: the demotion prefix inflated the stale-score disclosure).
   if (score.verdict === 'PASS') {
     return {
-      score: { ...score, verdict: outcome.verdict, tier, reasons: [...score.reasons, `FLOOR-FLAGGED (governor): ${why}.`] },
+      score: { ...score, verdict: outcome.verdict, tier, reasons: [...score.reasons, `${FLOOR_FLAG_GOVERNOR_PREFIX}${why}.`] },
       governorDscrCleared: outcome.governorDscrCleared,
       governorLtvCleared: outcome.governorLtvCleared,
     };
