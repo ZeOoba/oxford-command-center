@@ -29,7 +29,8 @@
 //   value like 7.5) ⇒ INDETERMINATE (null): no demotion, and not BUY-eligible (the BUY gate requires
 //   governor_dscr_cleared = 1). Doctrine's UST fallback (the last cited value tagged [UST UNVERIFIED]) is the
 //   underwriter's to enter; with none it is a data gap, never a guessed rate.
-//   A miss DEMOTES to PASS (Ruling 5, flag-not-kill, is deferred by Gabriel; the demotion stays until he rules).
+//   A miss is a STAGE 1 floor breach: FLOOR-FLAGGED (Ruling 5, flag-not-kill; Gabriel in-turn 2026-11-20). Never a kill,
+//   never BUY-eligible while it stands; the composite is untouched.
 //
 //   LTV proxy:  INDETERMINATE at acquisition-screen time → always null, never demotes.
 //               Rationale: AcquisitionInput carries no loan amount, so a true loan-to-value is not
@@ -50,12 +51,15 @@
 // `Governor open item: ...` reason naming the missing input (or "out of range"), which capital-allocation surfaces
 // as an open item, so a deal held out of BUY for a missing or out-of-range exit cap or UST always says why.
 //
-// Either test FAILING (=== false) hard-demotes the verdict to 'PASS' — but NEVER upgrades KILLED
-// (a hard gate/floor rejection) to PASS, so verdict-filtered ranked lists stay correct.
+// A FAILED DSCR floor relabels a clean verdict FLOOR-FLAGGED (Ruling 5). An INVALID governor set (a system fault, not a
+// deal breach) and a failed LTV proxy (inert: always null today) still fail closed to 'PASS'. A score that is already
+// GATE-FLAGGED / FLOOR-FLAGGED (or legacy KILLED) keeps its label — a gate flag outranks a floor flag — and a DSCR miss
+// on it is disclosed as a reason instead, so every breach stays named.
 import type { AcquisitionInput, AcquisitionScore, Tier, Verdict } from '../../src/contracts/acquisition';
+import { isGateOrFloorBreach } from '../../src/contracts/acquisition';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '../../src/contracts/acquisition-bounds';
-import { GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
+import { FLOOR_FLAG_GOVERNOR_PREFIX, GOVERNOR_OPEN_ITEM_PREFIX } from '../../src/analytics/acq-governor-demotion';
 
 /** Refi rate spread over the 10-yr UST (SKILL.md v4.37: "10-yr U.S. Treasury + 200 bps, always"). */
 export const REFI_UST_SPREAD = 0.02;
@@ -159,13 +163,13 @@ export function applyGovernorProxy(
   // consistent contract and as the slot where a real LTV gate would plug in.
   const governorLtvCleared: boolean | null = null;
 
-  // Demotion: a FAILED governor hard-demotes to PASS, but never upgrades KILLED.
+  // Demotion (Ruling 5, Gabriel in-turn 2026-11-20): a genuine DSCR floor miss on a valid governor set is a floor
+  // breach → FLOOR-FLAGGED. An invalid governor set or a failed LTV proxy fails closed to PASS. A score that is already
+  // flagged (or legacy KILLED) keeps its label: never relabelled, never upgraded.
   let verdict: Verdict = score.verdict;
-  if (
-    (governorDscrCleared === false || governorLtvCleared === false) &&
-    verdict !== 'KILLED'
-  ) {
-    verdict = 'PASS';
+  if (!isGateOrFloorBreach(verdict)) {
+    if (governorsValid && governorDscrCleared === false) verdict = 'FLOOR-FLAGGED';
+    else if (governorDscrCleared === false || governorLtvCleared === false) verdict = 'PASS';
   }
 
   return { verdict, governorDscrCleared, governorLtvCleared, dscrAtRefiLtv: dscr };
@@ -198,8 +202,8 @@ export interface GovernorProxyScoreOutcome<S> {
  *
  * applyGovernorProxy demotes only `verdict`; spreading `{ ...score, verdict }` left tier = T1/T2 next
  * to a demoted PASS (audit 2026-10-13 G1), and a tier-keyed reader (the capital BUY gate) then read a
- * governor-failed deal as buyable. On a demotion this sets tier = 'PASS' (the tier that pairs with a
- * PASS verdict) and appends a reason. Composite, floors, sub-scores and every other scored value are
+ * governor-failed deal as buyable. On a relabel this sets the tier that pairs with the new verdict
+ * (FLOOR-FLAGGED for a DSCR floor miss, Ruling 5; PASS for the fail-closed paths) and appends a reason. Composite, floors, sub-scores and every other scored value are
  * left untouched — this changes no scoring value, only the governor-stage label pair.
  */
 export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verdict' | 'tier' | 'reasons'>>(
@@ -208,25 +212,45 @@ export function applyGovernorProxyToScore<S extends Pick<AcquisitionScore, 'verd
   governors: GovernorProxyGovernors,
 ): GovernorProxyScoreOutcome<S> {
   const outcome = applyGovernorProxy(score, input, governors);
+  const governorsValid = Number.isFinite(governors.ltvCeiling) && governors.ltvCeiling > 0
+    && Number.isFinite(governors.dscrFloor) && governors.dscrFloor > 0;
+  // Truncated (never rounded up) to 3 dp, so a value just under the floor never prints as the floor itself.
+  const dscrMissText = (): string =>
+    `DSCR ${(Math.floor(outcome.dscrAtRefiLtv! * 1000) / 1000).toFixed(3)}x at a ${RATIFIED_GOVERNORS.perPropertyLtvCeiling * 100}%-LTV refi (UST + ${REFI_UST_SPREAD * 10000} bps, ${REFI_AMORT_YEARS}-yr) is below the ${governors.dscrFloor}x floor`;
   if (outcome.verdict === score.verdict) {
-    // Not demoted. An indeterminate DSCR floor (valid governors, missing or out-of-range exit cap / UST) is still
-    // disclosed, unless the score is KILLED (already out of every buy list for a harder reason).
-    const disclose = outcome.governorDscrCleared === null && score.verdict !== 'KILLED';
+    // Not relabelled. On an already-flagged (or legacy KILLED) score, a genuine DSCR floor miss is still disclosed so
+    // every breach stays named (Ruling 5). An indeterminate DSCR floor (valid governors, missing or out-of-range exit
+    // cap / UST) is disclosed as an open item, unless the score is already a gate/floor breach (out of BUY anyway).
+    const breach = isGateOrFloorBreach(score.verdict);
+    const extra = breach && governorsValid && outcome.governorDscrCleared === false && outcome.dscrAtRefiLtv !== null
+      ? `${FLOOR_FLAG_GOVERNOR_PREFIX}${dscrMissText()}.`
+      : !breach && outcome.governorDscrCleared === null
+        ? dscrIndeterminateReason(input)
+        : null;
     return {
-      score: disclose ? { ...score, reasons: [...score.reasons, dscrIndeterminateReason(input)] } : score,
+      score: extra !== null ? { ...score, reasons: [...score.reasons, extra] } : score,
       governorDscrCleared: outcome.governorDscrCleared,
       governorLtvCleared: outcome.governorLtvCleared,
     };
   }
-  const tier: Tier = 'PASS';
-  const governorsValid = Number.isFinite(governors.ltvCeiling) && governors.ltvCeiling > 0
-    && Number.isFinite(governors.dscrFloor) && governors.dscrFloor > 0;
+  // The tier that pairs with the relabelled verdict: FLOOR-FLAGGED with FLOOR-FLAGGED, PASS with PASS.
+  const tier: Tier = outcome.verdict === 'FLOOR-FLAGGED' ? 'FLOOR-FLAGGED' : 'PASS';
   const why = outcome.governorLtvCleared === false
     ? 'LTV proxy failed'
     : !governorsValid
       ? 'the live governor set is invalid'
-      // Truncated (never rounded up) to 3 dp, so a value just under the floor never prints as the floor itself.
-      : `DSCR ${(Math.floor(outcome.dscrAtRefiLtv! * 1000) / 1000).toFixed(3)}x at a ${RATIFIED_GOVERNORS.perPropertyLtvCeiling * 100}%-LTV refi (UST + ${REFI_UST_SPREAD * 10000} bps, ${REFI_AMORT_YEARS}-yr) is below the ${governors.dscrFloor}x floor`;
+      : dscrMissText();
+  // A natively scored PASS (composite below the T2 band) that misses the DSCR floor is FLOOR-FLAGGED too (Ruling 5), but
+  // it was never a buyable verdict, so it is NOT a "Governor demotion:" — that prefix marks a PURSUE/WATCH the governor
+  // took out of contention (capital-allocation governorDemotedPass, isGovernorDemoted). It gets the same reason the
+  // already-flagged path uses (refute wf_8198d211-d20, medium: the demotion prefix inflated the stale-score disclosure).
+  if (score.verdict === 'PASS') {
+    return {
+      score: { ...score, verdict: outcome.verdict, tier, reasons: [...score.reasons, `${FLOOR_FLAG_GOVERNOR_PREFIX}${why}.`] },
+      governorDscrCleared: outcome.governorDscrCleared,
+      governorLtvCleared: outcome.governorLtvCleared,
+    };
+  }
   return {
     score: {
       ...score,

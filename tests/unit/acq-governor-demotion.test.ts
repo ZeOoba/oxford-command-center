@@ -3,8 +3,9 @@
 // Display rule for a governor-demoted acquisition score (src/analytics/acq-governor-demotion.ts):
 // the persisted VERDICT decides where a row displays; a T1/T2 tier beside a PASS verdict is marked.
 import { describe, expect, it } from 'vitest';
-import { drawerReasons, effectiveTier, GOVERNOR_OPEN_ITEM_PREFIX, governorDemotedLabel, isGovernorDemoted, preDemotionTier } from '../../src/analytics/acq-governor-demotion';
-import { GOVERNOR_OPEN_ITEM_PREFIX as SERVER_PREFIX } from '../../server/warehouse/acq-governor-proxy';
+import { drawerReasons, effectiveTier, FLOOR_FLAG_GOVERNOR_PREFIX, GOVERNOR_DEMOTION_REASON_PREFIX, GOVERNOR_OPEN_ITEM_PREFIX, governorDemotedLabel, isGovernorDemoted, preDemotionTier } from '../../src/analytics/acq-governor-demotion';
+import { applyGovernorProxyToScore, GOVERNOR_OPEN_ITEM_PREFIX as SERVER_PREFIX } from '../../server/warehouse/acq-governor-proxy';
+import type { AcquisitionScore } from '../../src/contracts/acquisition';
 
 // The exact reason shape applyGovernorProxyToScore appends (server/warehouse/acq-governor-proxy.ts).
 const DEMOTION_T1 = 'Governor demotion: PURSUE → PASS (tier T1 → PASS) — DSCR proxy failed or the live governor set is invalid.';
@@ -104,5 +105,25 @@ describe('drawerReasons', () => {
 
   it('caps ordinary reasons at 3 exactly as before', () => {
     expect(drawerReasons(['a', 'b', 'c', 'd', 'e'])).toEqual(['a', 'b', 'c']);
+  });
+});
+
+// Ruling 5 round-2 refute (wf_34f3d1b5-059, low): the governor's DSCR floor-flag disclosure and its demotion reason are
+// also appended LAST, so a gate+floor deal (3 engine reasons) hid them in the drawer.
+describe('drawerReasons — governor floor-flag and demotion reasons', () => {
+  const floor = `${FLOOR_FLAG_GOVERNOR_PREFIX}DSCR 1.100x at a 65% LTV refi, below the 1.25x floor.`;
+  const demo = `${GOVERNOR_DEMOTION_REASON_PREFIX} PURSUE → FLOOR-FLAGGED (tier T1 → FLOOR-FLAGGED) — DSCR below floor.`;
+
+  it('keeps a governor FLOOR-FLAGGED disclosure and a governor demotion reason that fell beyond the first 3', () => {
+    expect(drawerReasons(['a', 'b', 'c', 'd', floor])).toEqual(['a', 'b', 'c', floor]);
+    expect(drawerReasons(['a', 'b', 'c', 'd', demo])).toEqual(['a', 'b', 'c', demo]);
+  });
+
+  it('the server appends the exact floor-flag prefix the drawer rescues', () => {
+    const score = { tier: 'GATE-FLAGGED', verdict: 'GATE-FLAGGED', reasons: ['GATE-FLAGGED: x', 'FLOOR-FLAGGED: y', 'Composite 70/100.'] };
+    const out = applyGovernorProxyToScore(score as unknown as AcquisitionScore, { exitCapPct: 0.05, ust10yr: 0.043 }, { dscrFloor: 1.25, ltvCeiling: 0.4 });
+    const last = out.score.reasons.at(-1)!;
+    expect(last.startsWith(FLOOR_FLAG_GOVERNOR_PREFIX)).toBe(true);
+    expect(drawerReasons(out.score.reasons)).toContain(last);
   });
 });

@@ -153,7 +153,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
       const { use, verdict } = verdictFor(form);
       const knownKill = a === 'yes' || (c === 'yes' && r === 'no');
       const screened = (a === 'yes' || a === 'no') && (c === 'no' || (c === 'yes' && (r === 'yes' || r === 'no')));
-      if (knownKill) expect(verdict).toBe('KILLED');                 // a confirmed disqualifier is never dropped
+      if (knownKill) expect(verdict).toBe('GATE-FLAGGED');                 // a confirmed disqualifier is never dropped
       else if (screened) { expect(use).not.toBeNull(); expect(verdict).toBe('PURSUE'); }
       else { expect(use).toBeNull(); expect(verdict).toBe('WATCH'); } // incomplete screen: unknown, T2 cap, never KILL
     });
@@ -166,7 +166,7 @@ describe('other-use gate inputs on the underwriting form (audit 2026-11-08)', ()
       [{ 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }],
       [{ 'use:automotive': '', 'use:childRelated': 'yes', 'use:childSafetyReviewed': 'no' }],
     ])('partly blank but already disqualified %j -> KILLED', (form) => {
-      expect(verdictFor(form).verdict).toBe('KILLED');
+      expect(verdictFor(form).verdict).toBe('GATE-FLAGGED');
     });
 
     it('reloading a KILL with blanks restores only the decisive answers (a filled-in false never reappears as "no")', () => {

@@ -80,18 +80,17 @@ describe('current acq score is history-independent', () => {
     const verdicts: string[] = [];
     for (const i of [A, B, A]) verdicts.push((await persistAndLogScore(db, 'c1', i, RULESET, RCT)).score.verdict);
     expect(verdicts[0]).not.toBe(verdicts[1]); // A and B must differ or this proves nothing
-    // Wave 2a G4 (audit 2026-10-13): the DEFAULT /acq/intel view hides KILLED rows, and A scores KILLED
-    // (yield floor), so the explicit includeKilled=1 view is the one that shows c1. Adjusted in the
-    // Wave 2a / #464 rebuild; the original assertion is unchanged.
+    // A scores FLOOR-FLAGGED (yield floor; Ruling 5, 2026-11-20). Flagged rows are shown in the default view too;
+    // includeKilled=1 is kept (it also covers legacy KILLED rows).
     const res = await warehouseRoutes(() => db).request('/acq/intel?status=active&includeKilled=1');
     const body = (await res.json()) as { rankedCandidates: Array<{ latestScore: { verdict: string } | null }> };
     expect(body.rankedCandidates[0]!.latestScore!.verdict).toBe(verdicts[2]);
-    // ...and the default view filters on the CURRENT row's verdict too: had it followed B (PURSUE),
-    // c1 would be listed here.
+    // ...and the default view serves the CURRENT row's verdict too: had it followed B, c1 would read PURSUE.
     const def = await warehouseRoutes(() => db).request('/acq/intel?status=active');
-    const defBody = (await def.json()) as { rankedCandidates: unknown[] };
-    expect(verdicts[2]).toBe('KILLED');
-    expect(defBody.rankedCandidates).toHaveLength(0);
+    const defBody = (await def.json()) as { rankedCandidates: Array<{ latestScore: { verdict: string } | null }> };
+    expect(verdicts[2]).toBe('FLOOR-FLAGGED');
+    expect(defBody.rankedCandidates).toHaveLength(1);
+    expect(defBody.rankedCandidates[0]!.latestScore!.verdict).toBe('FLOOR-FLAGGED');
   });
 
   it('brain-report floor-indeterminate follows the pointer, not the newest row', () => {

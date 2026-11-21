@@ -160,9 +160,10 @@ export interface PersistedScoreRow {
 }
 
 /** The only tier/verdict pairs the engine + governor proxy can produce (acquisition.ts verdict
- *  precedence; applyGovernorProxyToScore demotes BOTH to PASS). */
+ *  precedence; applyGovernorProxyToScore moves BOTH together: FLOOR-FLAGGED for a DSCR miss, PASS on the
+ *  fail-closed paths). Ruling 5 flag labels pair with themselves; legacy KILLED stays coherent with KILLED. */
 const COHERENT_TIER_FOR_VERDICT: Readonly<Record<string, string>> = {
-  PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', KILLED: 'KILLED',
+  PURSUE: 'T1', WATCH: 'T2', PASS: 'PASS', 'GATE-FLAGGED': 'GATE-FLAGGED', 'FLOOR-FLAGGED': 'FLOOR-FLAGGED', KILLED: 'KILLED',
 };
 function incoherentPair(tier: string | null | undefined, verdict: string | null | undefined): string | null {
   if (tier === undefined || verdict === undefined || tier === null || verdict === null) return null;

@@ -111,6 +111,52 @@ describe('BUY gate — real-score control', () => {
   });
 });
 
+// Ruling 5 (Gabriel in-turn 2026-11-20): a gate/floor breach is a FLAG, never a kill. A flagged deal keeps its
+// composite and its tier/verdict label on the pipeline, and is NEVER BUY-eligible while any flag stands.
+describe('BUY gate — Ruling 5 flagged deals', () => {
+  it('a FLOOR-FLAGGED deal (IRR floor miss) is NOT buyable, and carries its label and composite on the pipeline', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-floor-flag', { unleveredIrr10yr: 0.05 });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const c = result.pipeline.find((p) => p.candidateId === 'cand-floor-flag')!;
+    expect(c.verdict).toBe('FLOOR-FLAGGED');
+    expect(c.tier).toBe('FLOOR-FLAGGED');
+    expect(c.composite).toBeGreaterThan(0);
+    expect(c.buyEligible).toBe(false);
+  });
+
+  it('a GATE-FLAGGED deal is NOT buyable, and carries its label on the pipeline', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-gate-flag', { maxBuildingSf: 55_000 });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const c = result.pipeline.find((p) => p.candidateId === 'cand-gate-flag')!;
+    expect(c.verdict).toBe('GATE-FLAGGED');
+    expect(c.tier).toBe('GATE-FLAGGED');
+    expect(c.buyEligible).toBe(false);
+  });
+
+  it('a DSCR-floor miss (governor) is FLOOR-FLAGGED and NOT buyable', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-dscr-flag', { exitCapPct: 0.05 });
+    const { result, buyVerdicts } = await buy(db);
+    expect(buyVerdicts).toHaveLength(0);
+    const c = result.pipeline.find((p) => p.candidateId === 'cand-dscr-flag')!;
+    expect(c.verdict).toBe('FLOOR-FLAGGED');
+    expect(c.governorDemoted).toBe(true);
+  });
+
+  it('a flagged deal with the highest composite never displaces a clean PURSUE from BUY', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-flag-top', { unleveredIrr10yr: 0.05 });
+    mutateLatest(db, 'cand-flag-top', 'composite = 99');
+    await seedScored(db, 'cand-clean');
+    const { buyVerdicts } = await buy(db);
+    expect(buyVerdicts.map((v) => v.propertyId)).toEqual(['pipeline:cand-clean']);
+  });
+});
+
 describe('BUY gate — governor-demoted verdict (audit 2026-10-13 G1)', () => {
   it("tier='T1' with verdict='PASS' (pre-fix persisted row) is NOT buyable", async () => {
     const db = freshDb();
@@ -736,9 +782,10 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
     ).run(version, dscrFloor, ltvCeiling);
   }
 
-  for (const [label, demotingDscr, demotingLtv] of [
-    ['invalid governor set (ltv_ceiling 0, fail-closed demotion)', 1.25, 0],
-    ['genuine DSCR-proxy miss (dscr_floor 4.0)', 4.0, 0.40],
+  // Ruling 5 (2026-11-20): a genuine DSCR miss relabels FLOOR-FLAGGED; the invalid-set fail-closed path stays PASS.
+  for (const [label, demotingDscr, demotingLtv, demotedTo] of [
+    ['invalid governor set (ltv_ceiling 0, fail-closed demotion)', 1.25, 0, 'PASS'],
+    ['genuine DSCR-proxy miss (dscr_floor 4.0)', 4.0, 0.40, 'FLOOR-FLAGGED'],
   ] as const) {
     it(`${label}: demoted row is counted, noted and named while stale; BUY withheld until re-score`, async () => {
       const db = freshDb();
@@ -747,13 +794,13 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
       await seedScored(db, id);
       const row = db.prepare('SELECT tier, verdict, composite, governor_dscr_cleared AS d, score_json FROM acq_scores WHERE candidate_id = ?')
         .get(id) as { tier: string; verdict: string; composite: number; d: number | null; score_json: string };
-      // What the live engine writes for a demotion (G1): tier follows the verdict to PASS.
-      expect([row.tier, row.verdict, row.d]).toEqual(['PASS', 'PASS', 0]);
+      // What the live engine writes for a demotion (G1): tier follows the verdict.
+      expect([row.tier, row.verdict, row.d]).toEqual([demotedTo, demotedTo, 0]);
       expect(row.composite).toBeGreaterThanOrEqual(70);
       expect((JSON.parse(row.score_json) as { reasons: string[] }).reasons.some((r) => r.startsWith('Governor demotion:'))).toBe(true);
       // The pipeline item carries the display-only governorDemoted flag for this current-engine shape.
       const demotedItem = (await buy(db)).result.pipeline.find((p) => p.candidateId === id)!;
-      expect([demotedItem.tier, demotedItem.verdict, demotedItem.governorDemoted, demotedItem.buyEligible]).toEqual(['PASS', 'PASS', true, false]);
+      expect([demotedItem.tier, demotedItem.verdict, demotedItem.governorDemoted, demotedItem.buyEligible]).toEqual([demotedTo, demotedTo, true, false]);
 
       insertConfig(db, 3, 1.25, 0.40); // repaired governor set
       const { result, buyVerdicts } = await buy(db);
@@ -779,6 +826,19 @@ describe('stale governor-demoted PASS written by the live engine (squash review 
     expect(result.buyGate?.staleScores).toBe(0);
     expect(result.buyGate?.suppressedNote).toBeNull();
     expect(result.dataQuality.filter((f) => f.field !== 'buyCompositeFloor')).toEqual([]); // standing floor disclosure (ruling 2026-11-13) is not a stale flag
+  });
+
+  it('Ruling 5: a native PASS that misses the DSCR floor (FLOOR-FLAGGED, no demotion) made stale is not counted or named', async () => {
+    const db = freshDb();
+    await seedScored(db, 'cand-c2-native-dscr', { exitCapPct: 0.055, clusterTier: 'entry', valueAddScore: 0, sellerMotivationScore: 0, clearHeightFt: 16, truckCourtFt: 50, dockCount: 1, driveInCount: 1, inPlaceRentPsf: 6, marketRentPsf: 6, waltYears: 6 });
+    const row = db.prepare('SELECT verdict, governor_dscr_cleared AS d, score_json FROM acq_scores WHERE candidate_id = ?').get('cand-c2-native-dscr') as { verdict: string; d: number; score_json: string };
+    expect([row.verdict, row.d]).toEqual(['FLOOR-FLAGGED', 0]);
+    expect((JSON.parse(row.score_json) as { reasons: string[] }).reasons.some((r) => r.startsWith('Governor demotion:'))).toBe(false);
+    expect((await buy(db)).result.pipeline.find((p) => p.candidateId === 'cand-c2-native-dscr')!.governorDemoted).toBe(false);
+    insertConfig(db, 2, 1.30, 0.40);
+    const { result } = await buy(db);
+    expect(result.buyGate?.staleScores).toBe(0);
+    expect(result.buyGate?.suppressedNote).toBeNull();
   });
 
   it('a natively-scored PASS (no governor demotion) made stale is not counted or named', async () => {

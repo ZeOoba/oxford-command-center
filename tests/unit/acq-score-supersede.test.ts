@@ -261,7 +261,7 @@ const leadSeconds = (db: WarehouseDb, id: string) =>
 describe('DEFECT 1 — latest-row ordering is total for every writer (insert, supersede, reinstate)', () => {
   const A = { dealId: 'c1' };
   const B = { dealId: 'c1', price: 3_400_000 };
-  const C = { dealId: 'c1', stabilizedYoc: 0.05 }; // fails the yield floor: KILLED
+  const C = { dealId: 'c1', stabilizedYoc: 0.05 }; // fails the yield floor: FLOOR-FLAGGED (Ruling 5)
 
   it('repro: A, B, reinstate A, then a NEW insert C — C is the latest (not A)', async () => {
     const db = freshDb();
@@ -271,9 +271,9 @@ describe('DEFECT 1 — latest-row ordering is total for every writer (insert, su
     expect((await persistAndLogScore(db, 'c1', input(A), RULESET, RCT)).persisted).toBe('reinstated');
     const c = await persistAndLogScore(db, 'c1', input(C), RULESET, RCT);
     expect(c.persisted).toBe('inserted');
-    expect(c.score.verdict).toBe('KILLED');
+    expect(c.score.verdict).toBe('FLOOR-FLAGGED');
     expect(latestRow(db, 'c1').v).toBe(c.score.inputsVersion);
-    expect(classify(db, 'c1').score?.verdict).toBe('KILLED');
+    expect(classify(db, 'c1').score?.verdict).toBe('FLOOR-FLAGGED');
   });
 
   it('ping-pong A/B x6 then insert C — C is the latest, and the clock lead does not drift', async () => {
@@ -315,13 +315,13 @@ describe('DEFECT 1 — latest-row ordering is total for every writer (insert, su
 });
 
 describe("DEFECT 2 — logAcqOutcome binds to the LATEST acq_scores row's verdict", () => {
-  it("A (PURSUE), B (KILLED), reinstate A, outcome → resolves against A's verdict", async () => {
+  it("A (PURSUE), B (FLOOR-FLAGGED), reinstate A, outcome → resolves against A's verdict", async () => {
     const db = freshDb();
     addCandidate(db, 'c1');
     const a = await persistAndLogScore(db, 'c1', input({ dealId: 'c1' }), RULESET, RCT);
     const b = await persistAndLogScore(db, 'c1', input({ dealId: 'c1', stabilizedYoc: 0.05 }), RULESET, RCT);
     expect(a.score.verdict).toBe('PURSUE');
-    expect(b.score.verdict).toBe('KILLED');
+    expect(b.score.verdict).toBe('FLOOR-FLAGGED');
     expect(a.calibrationVerdictId).not.toBeNull();
     expect(b.calibrationVerdictId).not.toBe(a.calibrationVerdictId);
     const again = await persistAndLogScore(db, 'c1', input({ dealId: 'c1' }), RULESET, RCT);
@@ -366,12 +366,12 @@ const dq = (db: WarehouseDb, kind: string) =>
   db.prepare('SELECT detail FROM data_quality_issues WHERE kind = ?').all(kind) as Array<{ detail: string }>;
 
 describe('MEDIUM A — an outcome is never signed against a verdict band the served score contradicts', () => {
-  it('same-year supersede PURSUE → KILLED, then passed: no mis-signed outcome, band-mismatch DQ row', async () => {
+  it('same-year supersede PURSUE → FLOOR-FLAGGED, then passed: no mis-signed outcome, band-mismatch DQ row', async () => {
     const db = freshDb();
     addCandidate(db, 'c1');
     const killedInput = input({ dealId: 'c1', stabilizedYoc: 0.05 });
     const first = await persistAndLogScore(db, 'c1', killedInput, RULESET, RCT);
-    expect(first.score.verdict).toBe('KILLED');
+    expect(first.score.verdict).toBe('FLOOR-FLAGGED');
     // Simulate the pre-engine-change state: under the old engine this key scored T1 PURSUE, and
     // that is what was logged to calibration (same year, same key ⇒ logVerdicts dedups later).
     db.prepare(`UPDATE acq_scores SET tier = 'T1', verdict = 'PURSUE', score_json = json_set(score_json, '$.tier', 'T1', '$.verdict', 'PURSUE')`).run();
@@ -379,7 +379,7 @@ describe('MEDIUM A — an outcome is never signed against a verdict band the ser
 
     const again = await persistAndLogScore(db, 'c1', killedInput, RULESET, RCT);
     expect(again.persisted).toBe('superseded');
-    expect(again.score.verdict).toBe('KILLED');
+    expect(again.score.verdict).toBe('FLOOR-FLAGGED');
     expect(again.calibrationVerdictId).toBe(first.calibrationVerdictId); // append-only: not relinked
 
     db.prepare(`UPDATE acq_candidates SET status = 'passed' WHERE id = 'c1'`).run();
@@ -390,7 +390,7 @@ describe('MEDIUM A — an outcome is never signed against a verdict band the ser
     expect(issues[0]!.detail).toMatch(/candidate=c1/);
     expect(issues[0]!.detail).toMatch(new RegExp(`inputs_version=${again.score.inputsVersion}`));
     expect(issues[0]!.detail).toMatch(/PURSUE/);
-    expect(issues[0]!.detail).toMatch(/KILLED/);
+    expect(issues[0]!.detail).toMatch(/FLOOR-FLAGGED/);
   });
 
   it('control: an agreeing band still resolves normally', async () => {

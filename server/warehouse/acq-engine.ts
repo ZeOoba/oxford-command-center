@@ -18,7 +18,8 @@
 //               CHECK bounds only the governor value). Gabriel-ratified correction 2026-06-20 — replaces the
 //               prior `allInBasis/price ≤ ltvCeiling` formula, which demoted every fully-specified
 //               deal to PASS (basis ≥ price ⇒ ratio ≈ 1.0 > 0.40).
-//   A FAILED governor hard-demotes the verdict to 'PASS'; KILLED is never upgraded.
+//   A FAILED DSCR floor relabels the verdict FLOOR-FLAGGED (Ruling 5); an invalid governor set fails closed to PASS;
+//   an already-flagged (or legacy KILLED) verdict is never relabelled.
 //
 // Governor VALUES loaded via loadGovernors() (never hardcoded) — satisfies the governance-check
 // `acquisition_scorecard_governor_coupling` rule (Step 9). The refi terms (UST + 200 bps, 25 yr) live in
@@ -122,7 +123,8 @@ export { governorFingerprint };
  *   - DSCR floor: exitCap ÷ (0.65 × k(UST + 200 bps, 25 yr)) ≥ dscrFloor. Exit cap or UST absent, or outside the
  *     contract's decimal bounds (src/contracts/acquisition-bounds.ts) → NULL (no demotion, not BUY-eligible).
  *   - LTV proxy: INDETERMINATE at screen time → NULL (enforced at financing; see module header).
- *   - A FAILED governor hard-demotes verdict to 'PASS' (never upgrades KILLED).
+ *   - A FAILED DSCR floor relabels verdict to 'FLOOR-FLAGGED' (Ruling 5); an invalid governor set → 'PASS';
+ *     an already-flagged (or legacy KILLED) verdict keeps its label.
  *   - Composite is preserved (analysts can see the underlying score).
  *
  * IDEMPOTENT: a second call on identical (candidateId, input, ruleset, rct) is a no-op
@@ -136,7 +138,10 @@ export { governorFingerprint };
  * 'acq-score-superseded' data_quality_issues row names the key. If the supersede changed the verdict
  * band, logAcqOutcome refuses to resolve against that stale band ('acq-outcome-band-mismatch') rather
  * than writing a mis-signed hit/action — that deal's outcome is then absent from calibration.
- * The check is on the exact band, so SAME-DIRECTION flips (PURSUE <-> WATCH, PASS <-> KILLED) are
+ * Ruling 5 (2026-11-20) makes this a MASS flip, not a rare one: every legacy KILLED row (and every governor-demoted
+ * PASS whose DSCR miss now reads FLOOR-FLAGGED) re-scored in the same year changes band, so its outcome is skipped
+ * here and must be resolved manually (refute wf_8198d211-d20, accepted low; band equality kept on purpose).
+ * The check is on the exact band, so SAME-DIRECTION flips (PURSUE <-> WATCH, KILLED/PASS <-> FLAGGED) are
  * skipped too, although hit/action would have come out identical — deliberate (refute round 3 #3):
  * the comparison stays a plain band equality rather than a re-derivation of the hit rule. Every
  * skipped deal is excluded from the calibration n (no blessed outcome), and its verdict stays OPEN —
@@ -208,7 +213,7 @@ export async function persistAndLogScore(
 
   // 3b. Apply the SHARED governor proxy — the SAME demotion the ad-hoc /acquisition/score route
   //     and the edge Pages Function apply, so all three surfaces agree. LTV is indeterminate at
-  //     screen time (null, never demotes); DSCR floor (65%-LTV refi) + KILLED-monotonicity.
+  //     screen time (null, never demotes); DSCR floor (65%-LTV refi) + flag/legacy-KILLED monotonicity (Ruling 5).
   //     Score-level wrapper (audit 2026-10-13 G1): a demotion moves tier WITH the verdict, so the
   //     persisted tier column and score_json can never read T1/T2 next to a governor-demoted PASS.
   const { score: governedScore, governorDscrCleared, governorLtvCleared } =
@@ -578,8 +583,8 @@ function recordOutcomeSkip(
  * If the candidate has no acquisition-score verdict (never scored), this is a no-op.
  *
  * Hit semantics (intent-outcome — decision-action alignment, NOT realized-NOI predictive accuracy):
- *   'acquired': closed → PURSUE/WATCH verdict vindicated (hit=1); PASS/KILLED = miss (hit=0).
- *   'passed':   walked → PASS/KILLED verdict vindicated (hit=1); PURSUE/WATCH = miss (hit=0).
+ *   'acquired': closed → PURSUE/WATCH verdict vindicated (hit=1); PASS/flagged/KILLED = miss (hit=0).
+ *   'passed':   walked → PASS/flagged/KILLED verdict vindicated (hit=1); PURSUE/WATCH = miss (hit=0).
  *   WATCH is treated as a buy-signal verdict (same as PURSUE) — Gabriel G3 decision (2026-06-20).
  *
  * FENCE: intent-outcomes are isolated by verdict_kind='acquisition-score' (the distinct kind bucket

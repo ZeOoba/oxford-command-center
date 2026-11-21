@@ -97,7 +97,7 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
   { title: 'Product & Physical', fields: [
     { key: 'productType', label: 'Product type', kind: 'select', options: PRODUCT_TYPES },
     { key: 'officePct', label: 'Office %', kind: 'pct' },
-    { key: 'clearHeightFt', label: 'Clear height (ft)', kind: 'num', hint: '< 12 kills' },
+    { key: 'clearHeightFt', label: 'Clear height (ft)', kind: 'num', hint: '< 12 gate-flags' },
     { key: 'multiStory', label: 'Multi-story warehouse', kind: 'tribool' },
     { key: 'hasDock', label: 'Has dock(s)', kind: 'tribool' },
     { key: 'dockCount', label: 'Dock count', kind: 'num' },
@@ -114,8 +114,8 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
     { key: 'yearBuilt', label: 'Year built', kind: 'num' },
     { key: 'sfhaOnPad', label: 'SFHA flood on pad', kind: 'tribool' },
   ] },
-  // Other-use kill screen (audit 2026-11-08): the engine caps the verdict at T2 while any of these is unknown.
-  { title: 'Other-Use Kill Screen', fields: [
+  // Other-use gate screen (audit 2026-11-08; a breach is a GATE-FLAG, Ruling 5): the engine caps the verdict at T2 while any of these is unknown.
+  { title: 'Other-Use Gate Screen', fields: [
     { key: 'groundLeased', label: 'Ground-leased', kind: 'tribool', hint: 'No = fee simple' },
     { key: 'groundLeaseYearsRemaining', label: 'Ground lease yrs remaining', kind: 'num' },
     { key: 'envRemediationPctOfPrice', label: 'Env remediation % of price', kind: 'pct', hint: '0 = Phase I clean' },

@@ -17,8 +17,9 @@ const ACQ_KEYS = {
 };
 
 /**
- * GET /acq/intel. The server ranks by verdict (PURSUE, WATCH, PASS, KILLED) and HIDES KILLED by
- * default (audit 2026-10-13 G4); pass includeKilled=true for views that render KILLED candidates
+ * GET /acq/intel. The server ranks by verdict (PURSUE, WATCH, PASS, FLOOR-FLAGGED, GATE-FLAGGED, legacy KILLED)
+ * and shows flagged deals (Ruling 5) but HIDES legacy KILLED rows by default (audit 2026-10-13 G4); pass
+ * includeKilled=true for views that render legacy KILLED candidates
  * (the OM Grader tier board's Killed column, the deal drawer's score lookup).
  */
 export function useAcqIntel(

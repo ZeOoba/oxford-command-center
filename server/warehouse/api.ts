@@ -658,10 +658,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // GET /acq/intel — ranked candidates with latest scores + calibration summary.
   // Query params: ?status=active|archived|acquired|passed &market=<ClusterTier>
-  //               &verdict=PURSUE|WATCH|PASS|KILLED &includeKilled=1 &limit=<n>
-  // Ranking (audit 2026-10-13 G4): verdict rank FIRST (PURSUE, WATCH, PASS, KILLED, then unscored),
-  // composite DESC only within a verdict — a KILLED deal (hard gate/floor rejection) can carry a
-  // high composite and must never outrank a live PURSUE. The default view EXCLUDES KILLED;
+  //               &verdict=PURSUE|WATCH|PASS|FLOOR-FLAGGED|GATE-FLAGGED|KILLED &includeKilled=1 &limit=<n>
+  // Ranking (audit 2026-10-13 G4): verdict rank FIRST (PURSUE, WATCH, PASS, FLOOR-FLAGGED, GATE-FLAGGED,
+  // legacy KILLED, then unscored), composite DESC within a verdict — a flagged deal can carry a high
+  // composite and must never outrank a clean PURSUE. Ruling 5 (Gabriel in-turn 2026-11-20): a flagged deal is
+  // screened as an exception, so it is SHOWN and ranked by composite in the default view (flagged-and-deprioritized,
+  // never hidden). Only legacy KILLED rows (persisted before 2026-11-20, not yet re-scored) are hidden by default;
   // includeKilled=1 (or an explicit verdict=KILLED filter) brings them back.
   app.get('/acq/intel', (c) =>
     withDb((db) => {
@@ -677,12 +679,13 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const params: Array<string | number> = [statusParam];
       if (marketParam) { where.push('c.market = ?'); params.push(marketParam); }
       // Allowlist verdict values before binding to prevent junk params.
-      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'KILLED']);
+      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'FLOOR-FLAGGED', 'GATE-FLAGGED', 'KILLED']);
       if (verdictParam && VALID_VERDICTS.has(verdictParam)) {
         where.push('s.verdict = ?');
         params.push(verdictParam);
       } else if (!includeKilled) {
-        // Default view: hide KILLED. Unscored candidates (no score row ⇒ s.verdict NULL) stay visible.
+        // Default view: hide legacy KILLED only (flagged deals stay visible, Ruling 5). Unscored candidates
+        // (no score row ⇒ s.verdict NULL) stay visible.
         where.push("(s.verdict IS NULL OR s.verdict <> 'KILLED')");
       }
 
@@ -705,8 +708,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         LEFT JOIN acq_score_inputs i ON i.id = s.score_input_id
         WHERE ${where.join(' AND ')}
         ORDER BY CASE s.verdict
-                   WHEN 'PURSUE' THEN 0 WHEN 'WATCH' THEN 1 WHEN 'PASS' THEN 2 WHEN 'KILLED' THEN 3
-                   ELSE 4 END,
+                   WHEN 'PURSUE' THEN 0 WHEN 'WATCH' THEN 1 WHEN 'PASS' THEN 2
+                   WHEN 'FLOOR-FLAGGED' THEN 3 WHEN 'GATE-FLAGGED' THEN 4 WHEN 'KILLED' THEN 5
+                   ELSE 6 END,
                  s.composite DESC NULLS LAST, c.created_at DESC,
                  c.id ASC  -- total order before LIMIT (created_at has 1-second resolution)
         LIMIT ?
