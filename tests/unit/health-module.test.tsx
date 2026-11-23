@@ -159,6 +159,17 @@ describe('HealthModule — Data Feeds header badge tone (M5)', () => {
     await waitFor(() => expect((badge.closest('span') as HTMLElement).getAttribute('style')).toContain('--text-neg'));
   });
 
+  // Tier 1 data honesty (2026-11-23 review): a failed read is red and names the failure.
+  it('is red and shows the read failure when a feed read errored', async () => {
+    brain.state = fresh;
+    const errorFeed = { ...freshFeed, id: 'warehouseLedger', lastAt: null, ageDays: null, status: 'error' as const, error: 'SQLITE_BUSY' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ feeds: [staleFeed, errorFeed] }) }));
+    renderHealth();
+    const badge = await screen.findByText(/need attention/);
+    await waitFor(() => expect((badge.closest('span') as HTMLElement).getAttribute('style')).toContain('--text-neg'));
+    expect(await screen.findByText(/read failed: SQLITE_BUSY/)).toBeTruthy();
+  });
+
   it('is amber when feeds are stale but none is missing', async () => {
     brain.state = fresh;
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ feeds: [staleFeed, freshFeed] }) }));

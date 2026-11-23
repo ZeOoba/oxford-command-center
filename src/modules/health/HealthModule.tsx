@@ -153,7 +153,8 @@ export function HealthModule() {
               trailing={<Badge tone={
                 // M5 (2026-09-23 review): missing outranks stale — a feed that's never run at all
                 // is worse than one that's merely overdue, and the badge tone must say so.
-                health.feeds.some((f) => f.status === 'missing')
+                // 'error' (a failed read, 2026-11-23 review) is as serious as missing.
+                health.feeds.some((f) => f.status === 'missing' || f.status === 'error')
                   ? 'red'
                   : health.feeds.some((f) => f.status === 'stale')
                     ? 'amber'
@@ -166,11 +167,13 @@ export function HealthModule() {
               {health.feeds.map((f) => (
                 <Row
                   key={f.id}
-                  tone={f.status === 'fresh' ? 'ok' : f.status === 'missing' ? 'error' : 'warn'}
+                  tone={f.status === 'fresh' ? 'ok' : f.status === 'missing' || f.status === 'error' ? 'error' : 'warn'}
                   label={f.label}
                   value={f.status === 'fresh'
                     ? `${f.ageDays}d old`
-                    : f.status === 'missing' ? `never — ${f.fix}` : `${f.ageDays}d old (max ${f.maxAgeDays}d) — ${f.fix}`}
+                    : f.status === 'error'
+                      ? `read failed: ${f.error ?? 'unknown error'} — ${f.fix}`
+                      : f.status === 'missing' ? `never — ${f.fix}` : `${f.ageDays}d old (max ${f.maxAgeDays}d) — ${f.fix}`}
                 />
               ))}
             </ul>

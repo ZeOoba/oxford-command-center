@@ -145,3 +145,16 @@ describe('buildMarketIntel', () => {
     expect(sig.reasons.some(r => r.includes('Insufficient'))).toBe(true);
   });
 });
+
+// Tier 1 data honesty (2026-11-23 review): a score computed on the seeded FRED snapshot says so.
+describe('FRED provenance reason', () => {
+  it('names a seeded FRED input in reasons and leaves the score unchanged; a live fetch adds nothing', async () => {
+    const { buildMarketIntel } = await import('../../server/warehouse/market-intel');
+    const db = freshDb();
+    const seeded = await buildMarketIntel(db, 'fred-only-test', '2026-06-21', { ...MACRO_NEUTRAL, source: 'mock' });
+    const live = await buildMarketIntel(db, 'fred-only-test', '2026-06-21', { ...MACRO_NEUTRAL, source: 'live-fred' });
+    expect(seeded.reasons.some((r) => r.includes('seeded snapshot'))).toBe(true);
+    expect(live.reasons.some((r) => r.includes('seeded snapshot'))).toBe(false);
+    expect(seeded.marketScore).toBe(live.marketScore);
+  });
+});

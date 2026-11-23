@@ -19,6 +19,8 @@ vi.mock('../../src/modules/intel/hooks', () => ({
   useWarehouseLive: () => q.live,
   useWarehouseFreshness: () => ({ detail: 'baked 2h ago' }),
 }));
+const healthFeeds = { feeds: [] as unknown[] };
+vi.mock('../../src/data/health', () => ({ useHealth: () => ({ data: healthFeeds }) }));
 vi.mock('../../src/modules/intel/ImportsView', () => ({ ImportsView: () => <div>imports-panel</div> }));
 vi.mock('../../src/modules/intel/DataQualityView', () => ({ DataQualityView: () => <div>quality-panel</div> }));
 vi.mock('../../src/modules/intel/MappingsView', () => ({ MappingsView: () => <div>mappings-panel</div> }));
@@ -45,6 +47,7 @@ beforeEach(() => {
   q.imports.error = q.issues.error = q.noi.error = null;
   q.imports.isLoading = q.issues.isLoading = q.noi.isLoading = false;
   q.live = true;
+  healthFeeds.feeds = [];
 });
 afterEach(cleanup);
 
@@ -163,5 +166,24 @@ describe('Data destination', () => {
       const search = screen.getByTestId('loc').textContent!.split('?')[1] ?? '';
       expect(new URLSearchParams(search).get('view')).toBeNull();
     });
+  });
+
+  // Tier 1 data honesty (2026-11-23 review): non-fresh feeds surface on the Data page itself.
+  it('lists the feeds needing attention above the tabs, and nothing when all are fresh', () => {
+    renderData();
+    expect(screen.queryByText(/feeds need attention/)).toBeNull();
+    cleanup();
+    healthFeeds.feeds = [
+      { id: 'ar', label: 'AR aging (QuickBooks)', lastAt: 'x', ageDays: 131, maxAgeDays: 35, status: 'stale', fix: 'f' },
+      { id: 'backup', label: 'Warehouse backup', lastAt: null, ageDays: null, maxAgeDays: 2, status: 'missing', fix: 'f' },
+      { id: 'warehouseLedger', label: 'P&L warehouse', lastAt: null, ageDays: null, maxAgeDays: 45, status: 'error', fix: 'f', error: 'locked' },
+      { id: 'snapshot', label: 'Workbook snapshot', lastAt: 'x', ageDays: 1, maxAgeDays: 2, status: 'fresh', fix: 'f' },
+    ];
+    renderData();
+    expect(screen.getByText(/3 feeds need attention/)).toBeTruthy();
+    expect(screen.getByText(/AR aging \(QuickBooks\) 131d \(max 35d\)/)).toBeTruthy();
+    expect(screen.getByText(/Warehouse backup: none on record/)).toBeTruthy();
+    expect(screen.getByText(/P&L warehouse read failed/)).toBeTruthy();
+    expect(screen.queryByText(/Workbook snapshot/)).toBeNull();
   });
 });

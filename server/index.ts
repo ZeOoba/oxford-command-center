@@ -39,14 +39,22 @@ import { captureMonthSnapshot, describeCaptureOutcome } from './warehouse/month-
 import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insurance';
 import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
-import { setLeaseRunAssumptions } from './overlay';
+import { overlayHealthAt, setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
 import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 import { startServer } from './startup';
-import { assessFeeds, lastLedgerImportAt } from './feed-freshness';
+import {
+  assessFeeds,
+  lastBackupAt,
+  lastLedgerImportAt,
+  lastPcaImportAt,
+  lastTaxAssessmentAsOf,
+  readFeed,
+  type FeedInput,
+} from './feed-freshness';
 import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
@@ -283,6 +291,7 @@ app.get('/api/health', (c) => {
   // null (same "no run recorded yet" UI as the file never having existed), warn once rather than
   // per request.
   let briefHealth: { ranAt: string; briefSent: boolean; alertsSent: number; failures: string[] } | null = null;
+  let briefReadError: string | null = null;
   try {
     briefHealth = existsSync('data/brief-health.json')
       ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
@@ -298,6 +307,7 @@ app.get('/api/health', (c) => {
       console.warn('[health] failed to read/parse data/brief-health.json — serving null:', err instanceof Error ? err.message : String(err));
     }
     briefHealth = null;
+    briefReadError = err instanceof Error ? err.message : String(err);
   }
   const snap = brain.getSnapshot();
   const arDates = Object.values(snap?.tenantArrears ?? {})
@@ -305,27 +315,25 @@ app.get('/api/health', (c) => {
     .filter((d): d is string => !!d)
     .sort();
   // existsSync-gated (same precedent as liveGovernors below): getWarehouse() would otherwise
-  // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
-  let leaseMarketAt: string | null = null;
-  let ledgerAt: string | null = null;
-  try {
-    leaseMarketAt = existsSync(warehouseDbPath()) ? lastComputedAt(getWarehouse()) : null;
-  } catch {
-    leaseMarketAt = null;
-  }
-  try {
-    ledgerAt = existsSync(warehouseDbPath()) ? lastLedgerImportAt(getWarehouse()) : null;
-  } catch {
-    ledgerAt = null;
-  }
+  // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines. A read that
+  // THROWS is graded 'error', not 'missing' (2026-11-23 review): a locked or broken warehouse must
+  // not look like one that was simply never loaded.
+  const hasWarehouse = existsSync(warehouseDbPath());
+  const fromWarehouse = (read: (db: ReturnType<typeof getWarehouse>) => string | null): FeedInput =>
+    hasWarehouse ? readFeed(() => read(getWarehouse())) : null;
   const feeds = assessFeeds({
     snapshot: snap?.meta.generatedAt ?? null,
     cashHistory: snap?.cash.history.at(-1)?.date ?? null,
     ar: arDates[0] ?? null, // oldest stamped record — collections gating is per-lease
-    dailyBrief: briefHealth?.ranAt ?? null,
-    leaseMarket: leaseMarketAt,
-    docIndex: docIndexBuiltAt(),
-    warehouseLedger: ledgerAt,
+    // A torn/corrupt read grades 'error', not 'missing' (refute round 1, 2026-11-23).
+    dailyBrief: briefReadError !== null ? { error: briefReadError } : briefHealth?.ranAt ?? null,
+    leaseMarket: fromWarehouse(lastComputedAt),
+    docIndex: readFeed(() => docIndexBuiltAt()),
+    warehouseLedger: fromWarehouse(lastLedgerImportAt),
+    backup: readFeed(() => lastBackupAt()),
+    overlay: readFeed(() => overlayHealthAt()),
+    taxRegister: fromWarehouse(lastTaxAssessmentAsOf),
+    pcaRegister: fromWarehouse(lastPcaImportAt),
   }, Date.now());
   return c.json({
     ok: true,
