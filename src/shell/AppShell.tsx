@@ -96,7 +96,7 @@ export function AppShell() {
                 >
                   <ErrorBoundary key={ui.activeModuleId}>
                     {snap.isError ? (
-                      <ModuleError onRetry={() => void snap.refetch()} message={(snap.error as Error | null)?.message} />
+                      <ModuleError onRetry={() => void snap.refetch()} error={snap.error} />
                     ) : snap.isLoading && !data ? (
                       <ModuleLoading />
                     ) : (

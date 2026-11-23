@@ -29,6 +29,7 @@ import type {
   RebidStage,
   SelfInsureSplit,
 } from '@contracts/insurance-loss';
+import { QueryError } from '@/primitives/QueryError';
 
 // ── Retained vs Transferred split bar ──────────────────────────────────────────────────────
 
@@ -235,9 +236,7 @@ export function SelfInsureView() {
     return (
       <Card>
         <CardHeader title="Self-Insure & Bids" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load loss reasoning.'}
-        </div>
+        <QueryError error={error} what="loss reasoning" />
       </Card>
     );
   }

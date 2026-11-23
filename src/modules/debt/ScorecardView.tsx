@@ -15,6 +15,7 @@ import { noiBasisLabel } from '@/lib/spine-label';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useDebtScores, signalTone, signalLabel, bandTone } from './hooks';
 import type { DebtScore } from './hooks';
+import { QueryError } from '@/primitives/QueryError';
 
 function fmtDscr(n: number | null): string {
   if (n === null || !Number.isFinite(n)) return '—';
@@ -127,9 +128,7 @@ export function ScorecardView() {
     return (
       <Card>
         <CardHeader title="Debt Scorecard" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load debt scores.'}
-        </div>
+        <QueryError error={error} what="debt scores" />
       </Card>
     );
   }

@@ -11,7 +11,7 @@ export function useSnapshotGate(): ReactElement | null {
   const q = useSnapshot();
   if (q.isLoading) return <ModuleLoading />;
   if (q.isError && !q.data) {
-    return <ModuleError onRetry={() => void q.refetch()} message={q.error instanceof Error ? q.error.message : undefined} />;
+    return <ModuleError onRetry={() => void q.refetch()} error={q.error} />;
   }
   return null;
 }
