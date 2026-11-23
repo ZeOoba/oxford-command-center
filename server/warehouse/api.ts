@@ -987,7 +987,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   // POST /acq/sync/notion — pull the Notion Acquisition Pipeline and upsert into acq_candidates.
   // POST /acq/sync/hubspot — pull the HubSpot "Acquisitions" pipeline (885606973) likewise.
   // Requires NOTION_TOKEN / HUBSPOT_TOKEN env var (never committed) → 400 when unset. Returns
-  // { inserted, updated, errors[] }. Read-only from the source; writes only Spine-C acq_candidates.
+  // { inserted, updated, errors[] }. Read-only from the source; writes Spine-C acq_candidates, plus (via
+  // logAcqOutcome, on an active -> acquired/passed transition) calibration_outcome / data_quality_issues.
   // First-page failure → 502 (redacted status logged). The two feeds never collide (namespaced ids:
   // 'deal:hubspot:<id>' vs 'deal:<notionPageId>'). Run/classify logic is shared with
   // scripts/acq-sync.ts via acq-sync-runner.ts.

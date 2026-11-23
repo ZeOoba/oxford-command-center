@@ -50,6 +50,7 @@ import {
   assessFeeds,
   lastBackupAt,
   lastLedgerImportAt,
+  lastAcqInputAt,
   lastPcaImportAt,
   lastTaxAssessmentAsOf,
   readFeed,
@@ -334,6 +335,7 @@ app.get('/api/health', (c) => {
     overlay: readFeed(() => overlayHealthAt()),
     taxRegister: fromWarehouse(lastTaxAssessmentAsOf),
     pcaRegister: fromWarehouse(lastPcaImportAt),
+    acqInputs: fromWarehouse(lastAcqInputAt),
   }, Date.now());
   return c.json({
     ok: true,

@@ -1,12 +1,14 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { openWarehouse } from '../../server/warehouse/db';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assessFeeds,
   FEED_MAX_AGE_DAYS,
+  lastAcqInputAt,
   lastBackupAt,
   lastLedgerImportAt,
   lastPcaImportAt,
@@ -166,5 +168,24 @@ describe('Tier 1 feed honesty', () => {
     expect(readFeed(() => '2026-09-01')).toBe('2026-09-01');
     expect(readFeed(() => null)).toBeNull();
     expect(readFeed(() => { throw new Error('boom'); })).toEqual({ error: 'boom' });
+  });
+});
+
+describe('acqInputs feed (2026-11-23 review Tier 1 #3)', () => {
+  it('is missing when no deal input was ever scored, then fresh, then stale after 30 days', () => {
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'acq-feed-')), 't.sqlite'));
+    expect(lastAcqInputAt(db)).toBeNull();
+    expect(assessFeeds({ acqInputs: null }, NOW).find((f) => f.id === 'acqInputs')!.status).toBe('missing');
+    db.prepare("INSERT INTO acq_candidates (id, source) VALUES ('c', 'manual')").run();
+    // A POST /acq/score or re-score row is not a Cowork screen and never counts (refute wf_c51f7c6a-65b).
+    db.prepare("INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, scored_at, scored_by) VALUES ('c', 'api-v', '{}', '2026-09-22 12:00:00', 'api')").run();
+    expect(lastAcqInputAt(db)).toBeNull();
+    db.prepare("INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, scored_at, scored_by) VALUES ('c', 'v', '{}', '2026-09-20 12:00:00', 'cowork-skill')").run();
+    const at = lastAcqInputAt(db);
+    expect(at).toBe('2026-09-20T12:00:00Z'); // stored UTC, read as UTC (not local time)
+    expect(FEED_MAX_AGE_DAYS.acqInputs).toBe(30);
+    expect(assessFeeds({ acqInputs: at }, NOW).find((f) => f.id === 'acqInputs')!.status).toBe('fresh');
+    expect(assessFeeds({ acqInputs: '2026-08-01T00:00:00Z' }, NOW).find((f) => f.id === 'acqInputs')!.status).toBe('stale');
+    db.close();
   });
 });

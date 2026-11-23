@@ -13,6 +13,12 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { syncNotionPipeline } from '../../server/warehouse/acq-notion-sync';
 import type { FetchLike } from '../../server/warehouse/acq-notion-sync';
+import { readFileSync as readFileSyncOutcome } from 'node:fs';
+import { resolve as resolveOutcome } from 'node:path';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
+import { parseRuleset } from '../../server/warehouse/acquisition';
+import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
 
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'acq-notion-test-'));
@@ -408,5 +414,55 @@ describe('syncNotionPipeline — spine isolation', () => {
     });
     const count = (db.prepare('SELECT COUNT(*) AS n FROM import_batches').get() as { n: number }).n;
     expect(count).toBe(0);
+  });
+});
+
+// ── Outcome logging on a terminal transition (2026-11-23) ──────────────────────────────────────
+
+describe('syncNotionPipeline — calibration outcome on a terminal status', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  async function scoredThen(stage: string): Promise<{ db: WarehouseDb; id: string }> {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-1', status: 'Candidate' })]) });
+    const id = 'deal:np-1';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const to = mockFetch([makePage({ id: 'np-1', status: stage })]);
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: to });
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: to });
+    return { db, id };
+  }
+  const bands = (db: WarehouseDb, id: string) => db.prepare(`SELECT o.realized_band AS band FROM calibration_outcome o
+    JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id);
+
+  it.each([['Passed', 'passed'], ['Killed', 'passed'], ['Closed Won', 'acquired'], ['closed won ', 'acquired']])(
+    'exact live stage %s writes one %s outcome against the stored row id, even across re-syncs',
+    async (stage, band) => {
+      const { db, id } = await scoredThen(stage);
+      expect(bands(db, id)).toEqual([{ band }]);
+    },
+  );
+
+  it.each([['Dead', 'passed'], ['Closed Lost', 'passed'], ['Closed', 'acquired']])(
+    'a terminal-looking stage outside the live select (%s) moves status to %s but writes NO outcome',
+    async (stage, status) => {
+      const { db, id } = await scoredThen(stage);
+      expect((db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get(id) as { status: string }).status).toBe(status);
+      expect(bands(db, id)).toEqual([]);
+    },
+  );
+});
+
+describe('syncNotionPipeline — status mapping checks negative terms first (refute wf_c51f7c6a-65b)', () => {
+  it.each([
+    ['Closed Lost', 'passed'],
+    ['Closed - Dead', 'passed'],
+    ["Won't Pursue", 'active'],
+    ['Won', 'acquired'],
+  ])('Stage %s maps to status %s', async (stage, expected) => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'map-1', status: stage })]) });
+    expect((db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get('deal:map-1') as { status: string }).status).toBe(expected);
   });
 });
