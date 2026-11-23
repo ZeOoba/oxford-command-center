@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Target,
   Building2,
+  Signpost,
   ShieldCheck,
   LineChart,
   CheckSquare,
@@ -86,7 +87,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'property-condition', label: 'Property Condition', icon: ClipboardCheck, group: 'Capital', Component: PropertyConditionModule },
   { id: 'obligations', label: 'Obligations', icon: ShieldCheck, group: 'Capital', Component: ObligationsModule, tabs: OBLIGATIONS_TABS },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule, tabs: MARKET_TABS },
-  { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule, tabs: LEASE_MARKET_TABS },
+  { id: 'lease-market', label: 'Lease Market', icon: Signpost, group: 'Market', Component: LeaseMarketModule, tabs: LEASE_MARKET_TABS },
   { id: 'data', label: 'Data', icon: Database, group: 'System', Component: DataModule, tabs: DATA_TABS },
   // System Health left the rail in Phase 4a — it is a TopBar status dot; /health still resolves.
   { id: 'health', label: 'System Health', icon: Activity, group: 'System', Component: HealthModule, rail: false },
