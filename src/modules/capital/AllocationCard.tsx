@@ -7,11 +7,7 @@ import { Card } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import type { AllocationVerdict } from './hooks';
 import { actionLabel, actionColor, actionFillColor, riskBandTone } from './hooks';
-
-function fmtPct(n: number | null): string {
-  if (n === null) return '—';
-  return `${(n * 100).toFixed(1)}%`;
-}
+import { fmtPct } from '@analytics/index';
 
 function ConfidenceBar({ value }: { value: number }) {
   return (
