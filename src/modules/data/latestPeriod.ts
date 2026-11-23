@@ -77,13 +77,15 @@ export function ledgerCoverage(imports: readonly CoverageRow[]): LedgerCoverage 
   const first = cutoffs[0]!;
   const latestYear = cutoffs[cutoffs.length - 1]!.slice(0, 4);
   const day = new Date(`${first}T00:00:00Z`);
-  let label: string;
-  if (first.slice(5) === '12-31' && cutoffs.every((c) => c === first)) label = first.slice(0, 4);
-  else if (first.slice(0, 4) === latestYear) label = `${latestYear} YTD thru ${MONTH_DAY.format(day)}`;
-  else label = `thru ${MONTH_DAY.format(day)}, ${first.slice(0, 4)}`;
+  // The label is the KPI value (large font, narrow tile), so it stays a short date; the year and
+  // basis go in `detail` (2026-11-23: "2026 YTD thru Jun 12" wrapped to four lines on the live page).
+  const complete = first.slice(5) === '12-31' && cutoffs.every((c) => c === first);
+  const ytd = !complete && first.slice(0, 4) === latestYear;
+  const label = complete ? first.slice(0, 4) : ytd ? MONTH_DAY.format(day) : `${MONTH_DAY.format(day)}, ${first.slice(0, 4)}`;
   const behind = cutoffs.filter((c) => c.slice(0, 4) < latestYear).length;
   const parts: string[] = [];
-  if (label !== first.slice(0, 4)) parts.push('earliest property cut-off');
+  if (ytd) parts.push(`${latestYear} YTD`);
+  if (!complete) parts.push('earliest property cut-off');
   if (behind > 0) parts.push(`${behind} of ${total} not loaded for ${latestYear}`);
   if (undated > 0) parts.push(`${undated} of ${total} undated`);
   return { label, detail: parts.length > 0 ? parts.join(' · ') : null };
