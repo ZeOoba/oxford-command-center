@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { openWarehouse } from '../../server/warehouse/db';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -187,5 +187,21 @@ describe('acqInputs feed (2026-11-23 review Tier 1 #3)', () => {
     expect(assessFeeds({ acqInputs: at }, NOW).find((f) => f.id === 'acqInputs')!.status).toBe('fresh');
     expect(assessFeeds({ acqInputs: '2026-08-01T00:00:00Z' }, NOW).find((f) => f.id === 'acqInputs')!.status).toBe('stale');
     db.close();
+  });
+});
+
+// Merge gate PR #591, T-2: FeedInputs is Partial, so dropping a feed's input line from the /api/health
+// assessFeeds call still type-checks and the feed silently reads 'missing' forever. Every feed id must be
+// wired there. (Structural check on the source: booting server/index.ts in a unit test is heavy.)
+describe('every feed is wired into /api/health', () => {
+  it('server/index.ts passes an input for each FeedId', () => {
+    const src = readFileSync(join(process.cwd(), 'server', 'index.ts'), 'utf8');
+    const start = src.indexOf('assessFeeds({');
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf('}, Date.now())', start));
+    const ids = assessFeeds({}, NOW).map((f) => f.id);
+    expect(ids).toContain('acqInputs');
+    const unwired = ids.filter((id) => !new RegExp(String.raw`\b${id}\s*:`).test(block));
+    expect(unwired).toEqual([]);
   });
 });

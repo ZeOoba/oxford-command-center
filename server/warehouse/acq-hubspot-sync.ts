@@ -276,14 +276,18 @@ export async function syncHubSpotPipeline(
               updated_at = CASE WHEN ? THEN datetime('now') ELSE updated_at END
           WHERE id = ?
         `).run(dealName, resolvedStatus, contentHash(dealName, resolvedStatus), persistedChanged ? 1 : 0, candidateId);
-        return { existing: true, resolvedTo: terminalTransition(existingRow.status, resolvedStatus) };
+        const resolvedTo = terminalTransition(existingRow.status, resolvedStatus);
+        // The deal just resolved in HubSpot (Closed Won / Closed Lost): record the calibration outcome, as
+        // PATCH /acq/candidates/:id/status does. INSIDE this transaction (merge gate PR #591, R-3): run after
+        // the commit, another writer (an importer) could move the current-score pointer in between and the
+        // permanent outcome would bind to a screen made after the decision. Fail-open (logAcqOutcome never
+        // throws) and idempotent per deal; it nests as plain statements under this transaction.
+        if (resolvedTo !== null) logAcqOutcome(db, candidateId, resolvedTo);
+        return { existing: true, resolvedTo };
       })();
 
       if (upsert.existing) {
         result.updated += 1;
-        // The deal just resolved in HubSpot (Closed Won / Closed Lost): record the calibration outcome,
-        // as PATCH /acq/candidates/:id/status does. Fail-open and idempotent per deal (acq-engine.ts).
-        if (upsert.resolvedTo !== null) logAcqOutcome(db, candidateId, upsert.resolvedTo);
       } else {
         const newHash = contentHash(dealName, status);
         // county/state/market/rentable_sf/year_built/owner_name: HubSpot's deal object in

@@ -19,6 +19,7 @@ import { persistAndLogScore } from '../../server/warehouse/acq-engine';
 import { parseRuleset } from '../../server/warehouse/acquisition';
 import { AcquisitionInput } from '@contracts/acquisition';
 import { loadTestRct } from '../support/rct';
+import { withCommitGap } from '../support/commit-gap';
 
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'acq-notion-test-'));
@@ -464,5 +465,26 @@ describe('syncNotionPipeline — status mapping checks negative terms first (ref
     const db = freshDb();
     await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'map-1', status: stage })]) });
     expect((db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get('deal:map-1') as { status: string }).status).toBe(expected);
+  });
+});
+
+describe('syncNotionPipeline — outcome binds inside the status transaction (merge gate PR #591, R-3)', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  it('a score landing right after the commit does not capture the outcome', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-9', status: 'Candidate' })]) });
+    const id = 'deal:np-9';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const decisionIv = (db.prepare('SELECT s.inputs_version AS iv FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id WHERE c.id = ?')
+      .get(id) as { iv: string }).iv;
+    const gap = withCommitGap(db, () => {
+      void persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 2_000_000 }), ruleset, rct);
+    });
+    await syncNotionPipeline(gap, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-9', status: 'Passed' })]) });
+    const bound = db.prepare(`SELECT v.inputs_version AS iv FROM calibration_outcome o
+      JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id) as Array<{ iv: string }>;
+    expect(bound).toEqual([{ iv: decisionIv }]);
   });
 });

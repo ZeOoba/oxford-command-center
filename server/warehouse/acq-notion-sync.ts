@@ -118,9 +118,11 @@ function mapStatus(raw: string | null): 'active' | 'archived' | 'acquired' | 'pa
   const lower = raw.toLowerCase();
   // Negative terms FIRST (refute wf_c51f7c6a-65b): 'Closed Lost' / 'Closed - Dead' used to match 'closed'
   // and map to 'acquired'. Harmless while only the status label read it; wrong-signed once a status
-  // move writes a calibration outcome. 'won' is matched as a whole word so "Won't Pursue" is not a close.
+  // move writes a calibration outcome. 'won' is matched as a whole word so "Won't Pursue" is not a close —
+  // straight, curly (U+2019) or backtick apostrophe alike (merge gate PR #591, C-4: Notion autocorrects to
+  // the curly one, and "Won’t Pursue" used to lock the deal as 'acquired').
   if (lower.includes('dead') || lower.includes('lost') || lower.includes('passed') || lower.includes('killed')) return 'passed';
-  if (lower.includes('closed') || /\bwon\b(?!')/.test(lower)) return 'acquired';
+  if (lower.includes('closed') || /\bwon\b(?!['’`])/.test(lower)) return 'acquired';
   if (lower.includes('archiv')) return 'archived';
   return 'active';
 }
@@ -267,14 +269,17 @@ export async function syncNotionPipeline(
         const moved = terminalTransition(existing.status, resolvedStatus);
         const key = statusRaw === null ? '' : statusRaw.trim().toLowerCase();
         const exact = Object.hasOwn(NOTION_OUTCOME_STAGES, key) ? NOTION_OUTCOME_STAGES[key] : undefined;
-        return { candidateId: existing.id, resolvedTo: moved !== null && exact === moved ? moved : null };
+        const resolvedTo = moved !== null && exact === moved ? moved : null;
+        // Resolved in Notion: record the calibration outcome against the stored row's own id (matched by
+        // notion_deal_id), as PATCH /acq/candidates/:id/status does. INSIDE this transaction (merge gate
+        // PR #591, R-3), so no other writer can move the current-score pointer between the status move and
+        // the outcome binding. Fail-open, idempotent per deal.
+        if (resolvedTo !== null) logAcqOutcome(db, existing.id, resolvedTo);
+        return { candidateId: existing.id, resolvedTo };
       })();
 
       if (upsert.candidateId !== null) {
         result.updated += 1;
-        // Resolved in Notion: record the calibration outcome against the stored row's own id (matched
-        // by notion_deal_id), as PATCH /acq/candidates/:id/status does. Fail-open, idempotent per deal.
-        if (upsert.resolvedTo !== null) logAcqOutcome(db, upsert.candidateId, upsert.resolvedTo);
       } else {
         db.prepare(`
           INSERT INTO acq_candidates

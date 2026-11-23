@@ -5,22 +5,26 @@
 // scripts/import-acq-screen-packet.ts — parser rejects, candidate crosswalk, idempotent scoring through
 // persistAndLogScore, per-packet isolation, batch provenance, CLI args. Synthetic RCT only
 // (tests/support/rct.ts); a tmpdir SQLite, never data/warehouse/finance.sqlite. Pseudonymous deals.
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { parseRuleset } from '../../server/warehouse/acquisition';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
 import type { AcquisitionRuleset } from '@contracts/acquisition';
 import { loadTestRct } from '../support/rct';
 import {
   SCREEN_PACKET_SCHEMA,
   importScreenPackets,
   latestScreenedAt,
+  main,
   parseArgs,
   scoredTwin,
   streetKey,
+  streetKeys,
   parseScreenPacket,
   parseScreenPacketPayload,
   resolveCandidate,
@@ -321,6 +325,216 @@ describe('screen order, duplicates and twins (refute wf_c51f7c6a-65b)', () => {
     expect(streetKey('3849 N. Example Ave, Indy')).toBe('3849 n example');
     expect(streetKey('E Example Street, Columbus')).toBeNull();
     expect(streetKey(null)).toBeNull();
+  });
+
+  it('streetKeys holds every number + two words, always including streetKey', () => {
+    expect([...streetKeys('Suite 120, 4410 Sample Road')]).toEqual(['120 4410 sample', '4410 sample rd']);
+    expect(streetKeys('4410 Sample Rd, Exampleville, OH 40001').has(streetKey('4410 Sample Rd, Exampleville, OH 40001')!)).toBe(true);
+    expect(streetKeys('E Example Street, Columbus').size).toBe(0);
+    expect(streetKeys(null).size).toBe(0);
+  });
+
+  // A missed twin is double-scored — the costly direction. Every shape that defeated an earlier attempt to
+  // pick THE street number or separate twins by city / ZIP / unit (merge gate PR #591 C-2; refutes
+  // wf_6f36c81a-7bd, wf_aea96b00-a7e) must be caught: the second twin skips as ambiguous.
+  it.each([
+    ['4410 Sample Rd, Suite 100, Exampleville OH', '4410 Sample Road, Exampleville, OH 40001'],
+    ['4410 Sample Rd, Bldg B, Exampleville', '4410 Sample Rd, Exampleville'],
+    ['Suite 120, 4410 Sample Road, Exampleville', '4410 Sample Road, Exampleville, OH 40001'],
+    ['Suite #120, 4410 Sample Road', '4410 Sample Rd'],
+    ['4410 Sample Rd, Exampleville, OH 40001', '4410 Sample Rd - 25000 SF flex'],
+    ['4410 Sample Rd, Exampleville, OH 40001', '4410 Sample Rd, OH 40001 (12000 SF)'],
+    ['4410 Sample Rd, Exampleville OH 40001', 'Commerce Building 4410 Sample Rd'],
+    ['4410 66 Hwy', '4410 66 Highway, Exampleville, OH 40001'],
+    ['4410 1/2 Sample Rd', '4410 1/2 Sample Road'],
+  ])('a twin is caught: %s vs %s', async (scored, other) => {
+    await expectTwin(scored, other, true);
+  });
+
+  // Refute wf_99b93364-38d: extra keys built from size / ZIP figures matched unrelated properties.
+  it.each([
+    ['100 Main St (15,000 SF)', '2200 Oak Ave (22,000 SF)'],
+    ['100 Main St, Exampleville, OH 40001, USA', '2200 High St, Exampleville, OH 40001, USA'],
+    ['100 Main St - 15,000 SF flex', '2200 Oak Ave - 48,000 SF flex'],
+    ['100 Main St 25000 SF', '2200 Oak Ave 25000 SF'],
+  ])('different properties sharing only a size or ZIP figure are not twins: %s vs %s', async (scored, other) => {
+    await expectTwin(scored, other, false);
+  });
+
+  async function expectTwin(scored: string, other: string, twin: boolean): Promise<void> {
+    const db = freshDb();
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa', address: scored });
+    seed(db, 'deal:hubspot:42', { address: other });
+    await importScreenPackets(db, [ok(parseScreenPacket(packet()))], RULESET, RCT, FILE);
+    const r = await importScreenPackets(db, [ok(parseScreenPacket(packet({ deal: { hubspotDealId: '42' } })))], RULESET, RCT, fileB);
+    expect(r).toMatchObject(twin ? { scored: [], ambiguous: 1 } : { ambiguous: 0 });
+    if (!twin) expect(r.scored).toHaveLength(1);
+  }
+
+  // Refute wf_99b93364-38d: the named-twice count used to be read once, before any lock. A sync that creates
+  // the candidate mid-run let the first packet score and the second slip through as 'already imported'
+  // (exit 0, no DQ row). Under the lock both packets now resolve to it, so neither scores.
+  it('a candidate created mid-run by a concurrent sync is still caught as named twice', async () => {
+    const db = freshDb();
+    let inserted = false;
+    const racing = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'exec') {
+          return (sql: string) => {
+            if (!inserted && sql === 'BEGIN IMMEDIATE') {
+              inserted = true;
+              seed(target, 'deal:page-race', { notion: 'page-race' }); // the sync commits just before our lock
+            }
+            return target.exec(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const r = await importScreenPackets(racing, [
+      ok(parseScreenPacket(packet({ screenedAt: '2026-11-01', deal: { notionPageId: 'page-race' } }))),
+      ok(parseScreenPacket(packet({ screenedAt: '2026-11-20', deal: { notionPageId: 'page-race' } }, { price: 1_200_000 }))),
+    ], RULESET, RCT, FILE);
+    expect(r).toMatchObject({ scored: [], ambiguous: 2, alreadyImported: 0 });
+    expect(count(db, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
+  });
+
+  // The same-run backstop: packet 1 scores X; before packet 2's lock a sync makes packet 1's refs ambiguous
+  // and links packet 2's Notion page to X, so the named-twice count for X is 1 and X is already in this
+  // file's ledger. Without the backstop packet 2 would be a silent 'already imported' (exit 0).
+  it('a later packet resolving to a candidate scored earlier in the same run is ambiguous, not already-imported', async () => {
+    const db = freshDb();
+    seed(db, 'deal:x');
+    let begins = 0;
+    const relinking = new Proxy(db, {
+      get(target, prop) {
+        if (prop === 'exec') {
+          return (sql: string) => {
+            if (sql === 'BEGIN IMMEDIATE' && ++begins === 2) {
+              seed(target, 'deal:hubspot:77');
+              target.prepare("UPDATE acq_candidates SET notion_deal_id = 'page-late' WHERE id = 'deal:x'").run();
+            }
+            return target.exec(sql);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const r = await importScreenPackets(relinking, [
+      ok(parseScreenPacket(packet({ deal: { candidateId: 'deal:x', hubspotDealId: '77' } }))),
+      ok(parseScreenPacket(packet({ deal: { notionPageId: 'page-late' } }, { price: 1_200_000 }))),
+    ], RULESET, RCT, FILE);
+    expect(r.scored.map((s) => s.candidateId)).toEqual(['deal:x']);
+    expect(r).toMatchObject({ ambiguous: 1, alreadyImported: 0 });
+    const dq = db.prepare("SELECT detail FROM data_quality_issues WHERE kind = 'acq-screen-packet-ambiguous'").all() as Array<{ detail: string }>;
+    expect(dq.some((d) => d.detail.includes('the first was scored'))).toBe(true);
+  });
+
+  it('the stale guard ignores a future date already sitting in the ledger', async () => {
+    const db = freshDb();
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    db.prepare("INSERT INTO acq_source_batches (id, source, notes) VALUES ('screen-packet:legacy', 'screen-packet', ?)")
+      .run(JSON.stringify({ screens: { 'deal:page-aaa': '2062-11-12' } }));
+    expect(latestScreenedAt(db, 'deal:page-aaa', Date.parse('2026-11-23T12:00:00Z'))).toBeNull();
+    const r = await importScreenPackets(db, [ok(parseScreenPacket(packet()))], RULESET, RCT, FILE);
+    expect(r).toMatchObject({ stale: 0 });
+    expect(r.scored).toHaveLength(1);
+  });
+});
+
+describe('merge gate PR #591 round 1 regressions', () => {
+  it('C-1: rejects a future screenedAt (one day of timezone slack allowed)', () => {
+    const now = Date.parse('2026-11-23T12:00:00Z');
+    expect(parseScreenPacket(packet({ screenedAt: '2062-11-12' }), 0, now)).toMatchObject({ reason: expect.stringMatching(/in the future/) });
+    expect('reason' in parseScreenPacket(packet({ screenedAt: '2026-11-24' }), 0, now)).toBe(false);
+    expect(parseScreenPacket(packet({ screenedAt: '2026-11-25' }), 0, now)).toMatchObject({ reason: expect.stringMatching(/in the future/) });
+  });
+
+  it('C-3: rejects a non-finite number anywhere in the input (JSON 1e400 parses to Infinity)', () => {
+    const viaJson = JSON.parse(JSON.stringify(packet()).replace('"price":1350000', '"price":1350000,"clearHeightFt":1e400')) as unknown;
+    expect(parseScreenPacket(viaJson)).toMatchObject({ reason: expect.stringMatching(/input\.clearHeightFt: must be a finite number/) });
+    expect(parseScreenPacket(packet({}, { truckCourtFt: -Infinity }))).toMatchObject({ reason: expect.stringMatching(/input\.truckCourtFt/) });
+  });
+
+  it('S-1: rejects a misspelled key inside ddKnown or use (nested objects are not stripped silently)', () => {
+    expect(parseScreenPacket(packet({}, { ddKnown: { flood: true, roofs: true } })))
+      .toMatchObject({ reason: expect.stringMatching(/input\.ddKnown\.roofs: unrecognized key/) });
+    expect(parseScreenPacket(packet({}, { use: { automotive: false, childRelated: false, childSafetyReviewed: true, automotve: true } })))
+      .toMatchObject({ reason: expect.stringMatching(/input\.use\.automotve: unrecognized key/) });
+    expect('reason' in parseScreenPacket(packet({}, { use: { automotive: false, childRelated: false, childSafetyReviewed: true } }))).toBe(false);
+  });
+
+  it('persistAndLogScore without opts still stamps scored_by api (the existing callers keep their provenance)', async () => {
+    const db = freshDb();
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    const p = ok(parseScreenPacket(packet()));
+    await persistAndLogScore(db, 'deal:page-aaa', { ...p.input, dealId: 'deal:page-aaa' }, RULESET, RCT);
+    expect(db.prepare('SELECT scored_by FROM acq_score_inputs').get()).toEqual({ scored_by: 'api' });
+  });
+
+  // R-1 / R-2 / T-1: the guards, the score and the ledger date run under ONE write lock per packet. A second
+  // process holds the write lock and commits a NEWER screen for the candidate; this import must wait for it
+  // and then see it (stale). With the guards read outside the lock it scored the older packet instead.
+  it('R-1: guards are read under the write lock, so a concurrent newer screen makes this packet stale', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acq-packet-lock-'));
+    const path = join(dir, 'test.sqlite');
+    const db = openWarehouse(path);
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    const holder = [
+      "const D = require('better-sqlite3');",
+      `const db = new D(${JSON.stringify(path)});`,
+      "db.pragma('busy_timeout = 10000');",
+      "db.exec('BEGIN IMMEDIATE');",
+      "db.prepare(\"INSERT INTO acq_source_batches (id, source, candidate_count, notes) VALUES ('screen-packet:other', 'screen-packet', 1, ?)\")",
+      "  .run(JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-20' } }));",
+      "process.stdout.write('locked\\n');",
+      "setTimeout(() => { db.exec('COMMIT'); db.close(); }, 300);",
+    ].join('\n');
+    const child = spawn(process.execPath, ['-e', holder], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise<void>((res, rej) => {
+      child.stdout.on('data', (b: Buffer) => { if (b.toString().includes('locked')) res(); });
+      child.on('exit', (code) => rej(new Error(`lock holder exited early (${code})`)));
+    });
+    const r = await importScreenPackets(db, [ok(parseScreenPacket(packet({ screenedAt: '2026-11-12' })))], RULESET, RCT, FILE);
+    await new Promise<void>((res) => { if (child.exitCode !== null) res(); else child.on('exit', () => res()); });
+    expect(r).toMatchObject({ stale: 1, scored: [], failed: 0 });
+    expect(count(db, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
+    db.close();
+  });
+
+  it('a failed persist rolls back its ledger date with it (no date for a score that never landed)', async () => {
+    const db = freshDb();
+    seed(db, 'deal:bad');
+    db.exec("CREATE TRIGGER boom BEFORE INSERT ON acq_scores WHEN NEW.candidate_id = 'deal:bad' BEGIN SELECT RAISE(ABORT, 'boom'); END;");
+    const r = await importScreenPackets(db, [ok(parseScreenPacket(packet({ deal: { candidateId: 'deal:bad' } })))], RULESET, RCT, FILE);
+    expect(r).toMatchObject({ failed: 1, scored: [], batchId: null });
+    expect(count(db, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
+    expect(count(db, 'SELECT COUNT(*) n FROM acq_source_batches')).toBe(0);
+    expect(db.inTransaction).toBe(false);
+  });
+});
+
+describe('main() exit codes (merge gate PR #591, T-3)', () => {
+  function writePacketFile(dir: string, body: unknown): string {
+    const p = join(dir, 'packet.json');
+    writeFileSync(p, JSON.stringify(body));
+    return p;
+  }
+  it('dry run: 0 when every packet would score, 1 when one is unmapped or rejected; nothing is written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acq-packet-main-'));
+    const dbPath = join(dir, 'test.sqlite');
+    const db = openWarehouse(dbPath);
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    db.close();
+    expect(await main([writePacketFile(dir, packet()), '--db', dbPath, '--dry-run'])).toBe(0);
+    expect(await main([writePacketFile(dir, packet({ deal: { notionPageId: 'nope' } })), '--db', dbPath, '--dry-run'])).toBe(1);
+    expect(await main([writePacketFile(dir, { packets: [packet(), packet({ screenedAt: 'x' })] }), '--db', dbPath, '--dry-run'])).toBe(1);
+    expect(await main([join(dir, 'missing.json'), '--db', dbPath])).toBe(1);
+    const check = openWarehouse(dbPath);
+    expect(count(check, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
+    check.close();
   });
 });
 
