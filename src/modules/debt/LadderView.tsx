@@ -11,6 +11,7 @@ import { fmtUsdCompact, fmtMonths, fmtDate } from '@analytics/index';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useDebtMaturity, groupByBucket, bucketBalance, bucketTone, signalTone, signalLabel } from './hooks';
 import type { MaturityLadderEntry } from './hooks';
+import { QueryError } from '@/primitives/QueryError';
 
 // ── Bucket configuration ─────────────────────────────────────────────────────────────────
 
@@ -149,9 +150,7 @@ export function LadderView() {
     return (
       <Card>
         <CardHeader title="Maturity Ladder" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load maturity ladder.'}
-        </div>
+        <QueryError error={error} what="the maturity ladder" />
       </Card>
     );
   }

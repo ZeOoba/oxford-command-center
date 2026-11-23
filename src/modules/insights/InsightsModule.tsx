@@ -24,6 +24,7 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { fmtUsdCompact } from '@analytics/index';
+import { QueryError } from '@/primitives/QueryError';
 
 // Quoted verbatim from server/insights/rank.ts's INSIGHT_CONFIG header comment, so this badge
 // never drifts out of sync with the engine's own disclaimer.
@@ -166,11 +167,7 @@ export function InsightsModule() {
           </div>
         )}
         {warehouseErrored && (
-          <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-neg)' }}>
-            {insightsQuery.error instanceof Error
-              ? insightsQuery.error.message
-              : 'Failed to load warehouse insight candidates.'}
-          </div>
+          <QueryError error={insightsQuery.error} what="warehouse insight candidates" className="px-4 pb-3 text-2xs" />
         )}
         {supersededCount > 0 && (
           <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>

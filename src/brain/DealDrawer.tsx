@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useRef } from 'react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import { motion } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-react';
@@ -67,11 +68,8 @@ export function DealDrawer({
     onSuccess: () => qc.invalidateQueries({ queryKey: SNAPSHOT_KEY }),
   });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, onClose); // Escape, focus trap, focus return (2026-11-23 review)
 
   const ns = deal ? nextStage(deal.stage) : null;
   // One record per basis test: with a saved underwriting input, every field (numerator, SF, market, type, adders,
@@ -79,7 +77,7 @@ export function DealDrawer({
   const rc = deal ? replacementCostAnalysis(rcDealFor(deal, acqInput)) : null;
 
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Deal detail">
+    <div ref={dialogRef} className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Deal detail">
       <motion.div className="absolute inset-0" style={{ background: 'rgba(2,4,8,0.5)' }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
       <motion.aside
         className="absolute right-0 top-0 flex h-full w-[1180px] max-w-[96vw] flex-col"

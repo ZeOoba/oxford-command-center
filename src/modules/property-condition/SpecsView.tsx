@@ -40,6 +40,7 @@ import {
 } from '@/analytics/building-specs';
 import { fmtPartialDate } from './hooks';
 import { useBuildingSpecs, type BuildingSpecsModel } from './specs-data';
+import { QueryError } from '@/primitives/QueryError';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 const yrs = (n: number): string => `${n} yr${n === 1 ? '' : 's'}`;
@@ -507,7 +508,7 @@ export function SpecsPanel({ enabled }: { enabled: boolean }) {
     return (
       <Card>
         <CardHeader title="Building specs" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>{error instanceof Error ? error.message : 'Failed to load building specs.'}</div>
+        <QueryError error={error} what="building specs" />
       </Card>
     );
   }
