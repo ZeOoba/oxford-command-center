@@ -281,7 +281,7 @@ All commands are `npm run <script>`; [`package.json`](package.json) is the sourc
 |---|---|
 | `bake` | Bake `public/snapshot.json` + `public/macro.json` (redacted by default) |
 | `build:mirror` | `bake`, `check:rct-pin` (before anything is bundled), `build`, then roster-scan the built `dist/` (REDACTED mode, `scripts/scan-mirror-dist.ts`) |
-| `deploy:mirror` | Manual, REDACTED-only `wrangler pages deploy`: refuses if a FULL-mode variable is set; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
+| `deploy:mirror` | Manual, REDACTED-only deploy via `scripts/deploy-mirror-manual.ps1`: refuses if a FULL-mode variable is set or the canonical gate latch is open, runs the pre- and post-deploy Access probes around a bounded `wrangler pages deploy`, and contains on an observed exposure; the scheduled FULL deploy uses `scripts/deploy-mirror.ps1` instead |
 | `worktree -- <add\|remove\|prune>` | Junction-safe worktree management (`scripts/safe-worktree.ts`) |
 
 </details>
@@ -395,7 +395,7 @@ The mirror is a read-only copy for remote use: no Brain Server, no live warehous
    raises an alert. A failure showing served content opens a gate latch (later runs refuse until
    it is cleared) and swaps the live site for a no-data lockdown page.
 
-`npm run deploy:mirror` exists for a human at a terminal and has none of that hardening.
+`npm run deploy:mirror` exists for a human at a terminal. Since 2026-11-23 it shares the Access-gate hardening (the canonical checkout's gate latch, the pre-deploy probe, a bounded deploy, the post-deploy check and lockdown containment) but still has no git fast-forward, no FULL bake and no alert mail (`scripts/lib/mirror-manual-deploy.ps1`).
 
 > [!WARNING]
 > A Cloudflare Access application on the apex domain does not automatically cover per-deployment

@@ -114,7 +114,17 @@ describe('the manual deploy path and the template', () => {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
 
   it('deploy:mirror prechecks REDACTED-only before it builds, and build:mirror scans dist/ after the build', () => {
-    expect(pkg.scripts['deploy:mirror']).toMatch(/^tsx scripts\/scan-mirror-dist\.ts --precheck-redacted-only && npm run build:mirror && /);
+    // Since 2026-11-23 (cross-repo audit, HIGH) deploy:mirror runs scripts/deploy-mirror-manual.ps1, which wraps the
+    // precheck + build:mirror in the Access pre/post probes (lib/mirror-manual-deploy.ps1). It must never call
+    // wrangler itself again.
+    expect(pkg.scripts['deploy:mirror']).toBe(
+      'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-mirror-manual.ps1',
+    );
+    const wrapper = readFileSync(join(root, 'scripts', 'deploy-mirror-manual.ps1'), 'utf8');
+    const pre = wrapper.indexOf('scan-mirror-dist.ts --precheck-redacted-only');
+    const build = wrapper.indexOf('npm run build:mirror');
+    expect(pre).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(pre);
     // check:rct-pin runs after bake and before build. The bundled RCT must be the pinned ratified table before vite and
     // wrangler bundle it. bake reads no RCT, and it runs the Daily Brief, which must not stop because RCT_PIN_KEY is missing
     // (merge gate G3; docs/ops/rct-runtime-config.md).
