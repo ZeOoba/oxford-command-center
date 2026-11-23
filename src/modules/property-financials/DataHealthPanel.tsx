@@ -25,6 +25,7 @@ import type { PfDataHealthMeta, PfDatasetResponse, PfMappingResponse, PfMappingR
 import { sfProvenance, type PfLiveSfBlock } from '@analytics/property-financials/live-sf';
 import type { PfDataset } from '@contracts/property-financials';
 import './pf.css';
+import { fmtPct } from '@analytics/index';
 
 const AVAILABILITY_WHY = {
   missing: 'The dataset file is not on disk.',
@@ -160,7 +161,6 @@ function MappingTable({ mapping }: { mapping: PfMappingResponse }) {
 }
 
 const fmtInt = (n: number | null) => (n === null ? '—' : n.toLocaleString('en-US'));
-const fmtPct = (n: number | null) => (n === null ? '—' : `${(n * 100).toFixed(1)}%`);
 
 /**
  * Square-footage source (T9b part 2): per entity, the SF the module divides by right now and where it

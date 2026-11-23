@@ -25,6 +25,25 @@ export function fmtPct(n: number | null | undefined, digits = 1): string {
   return `${(n * 100).toFixed(digits)}%`;
 }
 
+/** Signed percent: +2.6% / -8.0% (zero reads +0.0%). One shared copy (2026-11-23 review). */
+export function fmtSignedPct(n: number | null | undefined, digits = 1): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return n >= 0 ? `+${fmtPct(n, digits)}` : fmtPct(n, digits);
+}
+
+/** Signed whole basis points of a decimal rate gap: 0.0042 -> +42 bps. */
+export function fmtBps(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  const bps = Math.round(n * 10_000);
+  return `${bps >= 0 ? '+' : ''}${bps} bps`;
+}
+
+/** Dollars per square foot: $12.50. */
+export function fmtPsf(n: number | null | undefined, digits = 2): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return `$${n.toFixed(digits)}`;
+}
+
 export function fmtNum(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   return num0.format(n);

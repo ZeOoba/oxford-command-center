@@ -16,7 +16,7 @@
 // (pre-mortem #5). No AreaChart — annual periods are 'YYYY', so trends use BarChart with
 // 'FY2024' labels and tiles use Sparkline (pre-mortem #1).
 import { useMemo } from 'react';
-import { fmtUsd, fmtUsdCompact, fmtPct } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtSignedPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
@@ -494,12 +494,6 @@ function SinceAcquisitionStrip({ sinceAcq }: { sinceAcq: SinceAcquisition | null
 function growthColor(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return 'var(--text-tertiary)';
   return v >= 0 ? 'var(--text-pos)' : 'var(--text-neg)';
-}
-
-/** Signed percentage, '—' when null. Positive carries a leading '+' for legibility. */
-function fmtSignedPct(v: number | null): string {
-  if (v === null || !Number.isFinite(v)) return '—';
-  return v >= 0 ? `+${fmtPct(v)}` : fmtPct(v);
 }
 
 // ---------------------------------------------------------------------------

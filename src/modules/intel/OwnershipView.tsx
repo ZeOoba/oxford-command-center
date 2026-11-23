@@ -19,7 +19,7 @@
 // (pre-mortem #5). No raw hex — theme tokens only.
 import { useMemo } from 'react';
 import { Database } from 'lucide-react';
-import { fmtUsd, fmtUsdCompact, fmtPct } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtSignedPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
@@ -669,12 +669,6 @@ function TrajectoryCard({
       )}
     </Card>
   );
-}
-
-/** Signed percentage, '—' when null. Positive carries a leading '+'. */
-function fmtSignedPct(v: number | null): string {
-  if (v === null || !Number.isFinite(v)) return '—';
-  return v >= 0 ? `+${fmtPct(v)}` : fmtPct(v);
 }
 
 // ---------------------------------------------------------------------------

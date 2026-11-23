@@ -16,7 +16,7 @@ import { useMemo } from 'react';
 import type { CompSet, SaleComp, RentComp, Deal } from '@contracts/index';
 import type { CapitalAllocationEntry, CapitalAllocationReport } from '@contracts/capital-allocation';
 import type { CapRatePercentile } from '@contracts/market-intelligence';
-import { fmtUsdCompact, fmtSf, fmtNum, fmtDate } from '@analytics/index';
+import { fmtUsdCompact, fmtSf, fmtNum, fmtDate, fmtPct, fmtBps } from '@analytics/index';
 import { useSnapshot } from '@/data/queries';
 import { useCapitalAllocationReport } from './comps-hooks';
 import { compSourceCount, humanizeDealId } from './comps-display';
@@ -29,19 +29,8 @@ import { saleCompPoints } from '../capital/cap-rate-scatter';
 
 // ── pure helpers (module scope — no derivation logic in component bodies) ──────────────────
 
-// Precision matches CapitalModule's own fmtCapRate/fmtCapRateGap (src/modules/capital/CapitalModule.tsx)
+// Cap rates and gaps use the shared fmtPct / fmtBps (src/analytics/format.ts), as CapitalModule does.
 // so the rendered strings — not just the underlying numbers — are identical between the two panels.
-function fmtCapRate(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  return `${(n * 100).toFixed(1)}%`;
-}
-
-function fmtCapRateGap(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  const bps = Math.round(n * 10_000);
-  return `${bps >= 0 ? '+' : ''}${bps} bps`;
-}
-
 function bandLabel(band: CapRatePercentile | null): string {
   switch (band) {
     case 'bottom': return 'Below mkt';
@@ -110,7 +99,7 @@ const SALE_COLUMNS: Column<IndexedSaleComp>[] = [
   { key: 'sf', header: 'SF', align: 'right', render: (r) => fmtSf(r.sf), sortValue: (r) => r.sf },
   { key: 'price', header: 'Price', align: 'right', render: (r) => fmtUsdCompact(r.price), sortValue: (r) => r.price },
   { key: 'pricePerSf', header: '$/SF', align: 'right', render: (r) => (r.pricePerSf !== null ? `$${fmtNum(r.pricePerSf)}` : '—'), sortValue: (r) => r.pricePerSf },
-  { key: 'capRate', header: 'Cap Rate', align: 'right', render: (r) => fmtCapRate(r.capRate), sortValue: (r) => r.capRate },
+  { key: 'capRate', header: 'Cap Rate', align: 'right', render: (r) => fmtPct(r.capRate), sortValue: (r) => r.capRate },
   { key: 'date', header: 'Date', align: 'right', render: (r) => r.date ?? '—' },
   { key: 'source', header: 'Source', render: (r) => r.source },
 ];
@@ -147,8 +136,8 @@ function toBenchmarkRows(entries: CapitalAllocationEntry[]): BenchmarkRow[] {
 const BENCHMARK_COLUMNS: Column<BenchmarkRow>[] = [
   { key: 'market', header: 'Market', render: (r) => r.market ?? '—', sortValue: (r) => r.market ?? '' },
   { key: 'property', header: 'Property', render: (r) => r.propertyName ?? r.propertyId, sortValue: (r) => r.propertyName ?? r.propertyId },
-  { key: 'impliedCapRate', header: 'Implied Cap Rate', align: 'right', render: (r) => fmtCapRate(r.impliedCapRate), sortValue: (r) => r.impliedCapRate ?? -1 },
-  { key: 'capRateGap', header: 'Gap vs Mkt P50', align: 'right', render: (r) => fmtCapRateGap(r.capRateGap), sortValue: (r) => r.capRateGap ?? -999 },
+  { key: 'impliedCapRate', header: 'Implied Cap Rate', align: 'right', render: (r) => fmtPct(r.impliedCapRate), sortValue: (r) => r.impliedCapRate ?? -1 },
+  { key: 'capRateGap', header: 'Gap vs Mkt P50', align: 'right', render: (r) => fmtBps(r.capRateGap), sortValue: (r) => r.capRateGap ?? -999 },
   {
     key: 'band',
     header: 'Band',
