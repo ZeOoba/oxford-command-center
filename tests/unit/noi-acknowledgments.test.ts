@@ -154,8 +154,18 @@ describe('loadNoiAcknowledgments — fail closed on absence, fail loud on malfor
     expect(rarig).toBeDefined();
     expect(rarig.comparisonPeriod).toBe('2025');
     expect(rarig.direction).toBe('warehouse-exceeds-workbook');
-    expect(rarig.maxDeltaPct).toBeLessThanOrEqual(0.6);
+    expect(rarig.maxDeltaPct).toBe(0.25); // Gabriel 2026-11-23: 25% until the second move-out is re-ratified
     expect(rarig.expires <= '2027-06-30').toBe(true);
+  });
+
+  it('the shipped Rarig entry covers today\'s 20.73% gap but NOT the gap after the F & I + J move-out (56.57%)', () => {
+    const rarig = loadNoiAcknowledgments(NOI_ACKNOWLEDGMENTS_PATH).find((a) => a.propertyId === RARIG)!;
+    const shipped = (wb: number) => classifyNoiReconciliation(
+      input({ workbookOxfordNoi: wb, warehouseOxfordNoi: 165024, acknowledgment: rarig, asOfDate: '2026-11-23' }), TOL,
+    );
+    expect(shipped(130811).status).toBe('structural-mismatch'); // 20.73%
+    expect(shipped(71673).status).toBe('large-drift'); // 56.57%
+    expect(shipped(71673).severity).toBe('error');
   });
 });
 
