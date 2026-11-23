@@ -36,7 +36,8 @@ import { ImportsView } from '../intel/ImportsView';
 import { DataQualityView } from '../intel/DataQualityView';
 import { MappingsView } from '../intel/MappingsView';
 import { DataOpsKpiRow } from './DataOpsKpiRow';
-import { latestPeriod } from './latestPeriod';
+import { DataFeedStrip } from './DataFeedStrip';
+import { latestPeriod, ledgerCoverage } from './latestPeriod';
 import {
   DATA_TABS,
   DATA_TAB_KEYS,
@@ -100,6 +101,7 @@ export function DataModule() {
             )
           }
         />
+        <DataFeedStrip />
         {DATA_OPS_TABS.has(tab) && !pfHealth && !unavailable && (
           <div className="px-4 py-3">
             <DataOpsKpiRow
@@ -108,6 +110,7 @@ export function DataModule() {
               openIssues={issues.data?.length ?? 0}
               propertiesCovered={new Set((noi.data ?? []).map((c) => c.propertyId)).size}
               latestPeriod={latestPeriod(noi.data ?? [])}
+              coverage={ledgerCoverage(imports.data ?? [])}
             />
           </div>
         )}

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { z } from 'zod';
@@ -386,10 +386,35 @@ export function loadOverlay(): Overlay {
       if (!isBlank(o)) lastSeenContent.set(overlayPath(), true);
       return o;
     }
-  } catch {
-    /* corrupt overlay → start clean */
+  } catch (err) {
+    // Corrupt overlay: start clean, which is the defensible default for a UI read (see
+    // evaluateOverlayPrecondition). Never silently, though: every enrichment domain now merges empty,
+    // and System Health's overlay feed reports the same condition (2026-11-23 review).
+    console.warn(
+      `⚠ overlay: ${overlayPath()} is unreadable; serving an EMPTY overlay (write-back enrichment merges empty): ` +
+        (err instanceof Error ? err.message : String(err)),
+    );
   }
   return { ...EMPTY_OVERLAY };
+}
+
+/**
+ * System Health read of the overlay: the file's modified time when it is present and loads whole,
+ * null when absent. Throws with the judge's reason when the file is unreadable, the wrong shape, or
+ * carries a domain the loader drops. It uses the same judge as the unattended writers, so health and
+ * the writers never disagree about what counts as a bad overlay.
+ */
+export function overlayHealthAt(path: string = overlayPath()): string | null {
+  if (!existsSync(path)) return null;
+  const judged = judgeOverlayText(path, readFileSync(path, 'utf8'), {});
+  if (judged.refuse) throw new Error(judged.reason);
+  // A present, well-formed overlay with no enrichment merges exactly like a missing one (the
+  // snapshot writers refuse it); health says so instead of grading it fresh (refute round 2).
+  // Judged directly, not via expectEnriched, so ALLOW_EMPTY_OVERLAY's warning is not logged per poll.
+  if (hasNoEnrichment(judged.overlay as unknown as Record<string, unknown>)) {
+    throw new Error(`${path} carries no enrichment data (every write-back domain is empty)`);
+  }
+  return statSync(path).mtime.toISOString();
 }
 
 /** True when the overlay carries nothing at all, leaseRunAssumptions included. */

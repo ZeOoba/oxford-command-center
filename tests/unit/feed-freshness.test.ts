@@ -1,7 +1,18 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { assessFeeds, FEED_MAX_AGE_DAYS, lastLedgerImportAt } from '../../server/feed-freshness';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  assessFeeds,
+  FEED_MAX_AGE_DAYS,
+  lastBackupAt,
+  lastLedgerImportAt,
+  lastPcaImportAt,
+  lastTaxAssessmentAsOf,
+  readFeed,
+} from '../../server/feed-freshness';
 
 const NOW = Date.parse('2026-09-23T12:00:00Z');
 
@@ -75,5 +86,85 @@ describe('assessFeeds', () => {
     expect(feed('2026-08-08T11:59:00Z').status).toBe('stale'); // just over 45 days
     expect(feed(null).status).toBe('missing');
     db.close();
+  });
+});
+
+// Tier 1 data honesty (2026-11-23 review): a read FAILURE must not look like "never imported", and
+// the registers + backup + overlay get their own rows so they cannot go stale silently.
+describe('Tier 1 feed honesty', () => {
+  it("a read failure grades 'error' (not 'missing') and carries the message", () => {
+    const feeds = assessFeeds({ warehouseLedger: { error: 'SQLITE_BUSY: database is locked' } }, NOW);
+    const ledger = feeds.find((f) => f.id === 'warehouseLedger')!;
+    expect(ledger.status).toBe('error');
+    expect(ledger.lastAt).toBeNull();
+    expect(ledger.error).toBe('SQLITE_BUSY: database is locked');
+    // An omitted input is still 'missing', never 'error'.
+    expect(feeds.find((f) => f.id === 'snapshot')!.status).toBe('missing');
+  });
+
+  it('grades the backup, overlay and register feeds', () => {
+    expect(FEED_MAX_AGE_DAYS.backup).toBe(2);
+    const feeds = assessFeeds({
+      backup: '2026-09-17T03:00:00Z',
+      overlay: '2026-09-23T08:00:00Z',
+      taxRegister: '2025-07-01',
+      pcaRegister: '2026-09-05T19:22:19Z',
+    }, NOW);
+    const by = Object.fromEntries(feeds.map((f) => [f.id, f]));
+    expect(by.backup!.status).toBe('stale'); // 6 days before NOW, budget 2
+    expect(by.overlay!.status).toBe('fresh');
+    expect(by.taxRegister!.status).toBe('fresh'); // 449 days, inside the 18-month cycle
+    expect(by.pcaRegister!.status).toBe('fresh');
+    expect(feeds.every((f) => f.fix.length > 0)).toBe(true);
+  });
+
+  it('backup goes stale after 2 days', () => {
+    const at = (d: string) => assessFeeds({ backup: d }, NOW).find((f) => f.id === 'backup')!.status;
+    expect(at('2026-09-21T11:00:00Z')).toBe('stale');
+    expect(at('2026-09-22T12:00:00Z')).toBe('fresh');
+  });
+
+  it('lastBackupAt reads manifest.json `at`; missing dir is null; a corrupt manifest throws', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'feed-backup-'));
+    try {
+      expect(lastBackupAt(join(dir, 'absent'))).toBeNull();
+      writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ latest: 'x.enc', at: '2026-09-20T03:00:00.000Z' }));
+      expect(lastBackupAt(dir)).toBe('2026-09-20T03:00:00.000Z');
+      writeFileSync(join(dir, 'manifest.json'), '{not json');
+      expect(() => lastBackupAt(dir)).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('register readers return the newest stamp, or null when the table is empty', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE property_tax_assessments (as_of TEXT); CREATE TABLE pca_reports (imported_at TEXT NOT NULL)');
+    expect(lastTaxAssessmentAsOf(db)).toBeNull();
+    expect(lastPcaImportAt(db)).toBeNull();
+    db.exec("INSERT INTO property_tax_assessments VALUES ('2024-07-01'), ('2025-07-01'), (NULL)");
+    db.exec("INSERT INTO pca_reports VALUES ('2026-11-05 19:22:19'), ('2026-10-01 10:00:00')");
+    expect(lastTaxAssessmentAsOf(db)).toBe('2025-07-01');
+    expect(lastPcaImportAt(db)).toBe('2026-11-05 19:22:19');
+    // Not lexical: '9/1/2025' would win a SQL MAX over '2026-01-01'; loose and future values are
+    // ignored (refute round 2: '45658' parses as year 45658, '2052-01-01' is a typo year).
+    db.exec("INSERT INTO property_tax_assessments VALUES ('9/1/2025'), ('2026-01-01'), ('45658'), ('2052-01-01'), ('2026-02-30')");
+    expect(lastTaxAssessmentAsOf(db, NOW)).toBe('2026-01-01');
+    db.exec('DELETE FROM property_tax_assessments');
+    db.exec("INSERT INTO property_tax_assessments VALUES (NULL), ('FY2025'), ('2099-01-01')");
+    expect(() => lastTaxAssessmentAsOf(db, NOW)).toThrow(/none with a valid past as_of/);
+    db.close();
+  });
+
+  it('a stamp more than a day in the future grades error, never fresh', () => {
+    const f = assessFeeds({ taxRegister: '2052-01-01' }, NOW).find((x) => x.id === 'taxRegister')!;
+    expect(f.status).toBe('error');
+    expect(f.error).toMatch(/in the future/);
+  });
+
+  it('readFeed turns a throw into an error input', () => {
+    expect(readFeed(() => '2026-09-01')).toBe('2026-09-01');
+    expect(readFeed(() => null)).toBeNull();
+    expect(readFeed(() => { throw new Error('boom'); })).toEqual({ error: 'boom' });
   });
 });

@@ -73,7 +73,10 @@ export async function buildMarketIntel(
     db.prepare('SELECT COUNT(*) as cnt FROM property_master WHERE market = ?').get(cluster) as { cnt: number } | undefined
   )?.cnt ?? 0;
 
-  // ── FRED source (never stale — getMacro has seeded fallback) ─────────────
+  // ── FRED source ─────────────────────────────────────────────────────────
+  // Never graded stale: getMacro() always returns rates, live or the seeded June-2026 snapshot. A
+  // seeded input is named in `reasons` below instead, so a score on stale rates is labelled
+  // (2026-11-23 review), without changing the composite.
   const fScore = fredScore(macro.indicators);
   const fredSrc = {
     source: 'fred' as MarketSourceTag,
@@ -142,6 +145,9 @@ export async function buildMarketIntel(
   if (marketScore === null) reasons.push('Insufficient data — defaulting to maintain');
   if (censusStale && latestCensus) reasons.push('Census ACS data stale (>400d)');
   if (compsStale && latestComps)   reasons.push('Comps data stale (>90d)');
+  if (macro.source === 'mock' || macro.source === 'seed') {
+    reasons.push(`FRED rates are the seeded snapshot (as of ${macro.asOf}), not a live fetch`);
+  }
   reasons.push(`ORA properties in cluster: ${oraCount}`);
 
   return {

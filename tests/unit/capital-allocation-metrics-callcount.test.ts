@@ -126,3 +126,23 @@ describe('G5 — propertyPeriodMetrics call-once guard', () => {
     expect(mockPeriodMetrics).toHaveBeenCalledTimes(2);
   });
 });
+
+// Tier 1 data honesty (2026-11-23 review): fetchFredMacro() stamps a live fetch 'live-fred', which
+// used to fall through to 'mock', so the report labelled live rates as the seeded snapshot.
+describe('macro provenance label', () => {
+  it.each([
+    ['live-fred', 'fred'],
+    ['fred', 'fred'],
+    ['mock', 'mock'],
+    ['seed', 'mock'],
+  ] as const)('getMacro source %s reports as %s', async (from, to) => {
+    const { buildCapitalAllocationReport } = await import('../../server/warehouse/capital-allocation');
+    mockGetMacro.mockResolvedValue({
+      asOf: '2026-11-20', source: from,
+      indicators: [{ id: 'DGS10', label: '10Y Treasury', value: 4.25, unit: '%', change: null }],
+      tenYearHistory: [],
+    } as never);
+    const report = await buildCapitalAllocationReport(freshDb(), makeSnapshot() as never);
+    expect(report.macro.source).toBe(to);
+  });
+});

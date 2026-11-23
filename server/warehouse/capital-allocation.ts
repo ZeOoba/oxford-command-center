@@ -1053,7 +1053,11 @@ export async function buildPortfolioAllocation(
   const advisoryOnly = config.hurdleRateRatification === 'proposed';
   const hurdleRatePct = config.hurdleRatePct;
 
-  // Load macro — non-fatal: FRED down = null DGS5 = refi signal suppressed
+  // Load macro — non-fatal. getMacro() falls back to the seeded June-2026 snapshot when FRED is
+  // unreachable or unkeyed, so DGS5 is NOT null on a FRED outage: the refi signal then runs on the
+  // seeded rate, and nothing on that signal says so (macro.source is not carried into it; open
+  // follow-up). Only a throw from getMacro itself yields null here.
+  // (Corrected 2026-11-23: the comment used to claim a FRED outage suppressed the refi signal.)
   const macro = await getMacro().catch(() => null);
   const dgs5Raw = macro?.indicators.find((i) => i.id === 'DGS5')?.value ?? null;
   // FRED reports as percentage (e.g. 4.18 = 4.18%); scoring engine expects decimal (0.0418)
@@ -1419,7 +1423,9 @@ export async function buildCapitalAllocationReport(
     macro = {
       tenYearRate: dgs10?.value ?? null,
       cpi: cpi?.value ?? null,
-      source: live.source === 'fred' || live.source === 'mock' ? live.source : 'mock',
+      // fetchFredMacro() stamps a live fetch 'live-fred'; it used to fall through to 'mock' here, so
+      // a live rate was labelled as the seeded snapshot (2026-11-23 review). 'seed'/'mock' stay 'mock'.
+      source: live.source === 'fred' || live.source === 'live-fred' ? 'fred' : 'mock',
       asOf: live.asOf ?? null,
     };
   } else {

@@ -35,6 +35,9 @@ export function computeHealthSignal(
   // "missing" reads as stale for the dot — a feed that never ran and one that's merely overdue
   // both mean the same thing at a glance: something needs a look.
   const staleFeeds = feeds.filter((f) => f.status === 'stale' || f.status === 'missing').length;
+  // A failed read is named on its own (2026-11-23 review): "stale" would send the user to refresh a
+  // feed whose real problem is that the server cannot read it.
+  const failingFeeds = feeds.filter((f) => f.status === 'error').length;
 
   if (freshness.kind === 'offline' || freshness.kind === 'stale') {
     return { tone: 'error', label: 'Attention needed', detail: `Data ${freshness.label.toLowerCase()}${freshness.detail ? ` (${freshness.detail})` : ''}` };
@@ -42,13 +45,14 @@ export function computeHealthSignal(
   if (errors > 0) {
     return { tone: 'error', label: 'Attention needed', detail: `${errors} data-quality error${errors === 1 ? '' : 's'}` };
   }
-  if (warns > 0 || staleFeeds > 0) {
+  if (warns > 0 || staleFeeds > 0 || failingFeeds > 0) {
     // Both reasons can coexist (a data-quality warning and a stale feed are independent signals) —
     // keep both in the detail rather than letting one silently win, joined in the same order the
     // checks run: data-quality first, feed reason second.
     const parts: string[] = [];
     if (warns > 0) parts.push(`${warns} data-quality warning${warns === 1 ? '' : 's'}`);
     if (staleFeeds > 0) parts.push(`${staleFeeds} feed${staleFeeds === 1 ? '' : 's'} stale`);
+    if (failingFeeds > 0) parts.push(`${failingFeeds} feed${failingFeeds === 1 ? '' : 's'} read failing`);
     return { tone: 'warn', label: 'Warnings', detail: parts.join(' · ') };
   }
   if (freshness.kind === 'connecting') {

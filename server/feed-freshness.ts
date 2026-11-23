@@ -1,8 +1,26 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ALERT_THRESHOLDS } from '../src/analytics/conditions';
 
-export type FeedId = 'snapshot' | 'cashHistory' | 'ar' | 'dailyBrief' | 'leaseMarket' | 'docIndex' | 'warehouseLedger';
-export type FeedStatus = 'fresh' | 'stale' | 'missing';
-export type FeedInputs = Record<FeedId, string | null>;
+export type FeedId =
+  | 'snapshot'
+  | 'cashHistory'
+  | 'ar'
+  | 'dailyBrief'
+  | 'leaseMarket'
+  | 'docIndex'
+  | 'warehouseLedger'
+  | 'backup'
+  | 'overlay'
+  | 'taxRegister'
+  | 'pcaRegister';
+/** 'error' = the read itself failed. Kept apart from 'missing' (never ran / nothing imported) so a
+ *  locked DB or a corrupt file no longer looks like a feed that simply has no data (2026-11-23 review). */
+export type FeedStatus = 'fresh' | 'stale' | 'missing' | 'error';
+export type FeedReadError = { error: string };
+export type FeedInput = string | null | FeedReadError;
+/** Partial: an omitted feed grades 'missing'. */
+export type FeedInputs = Partial<Record<FeedId, FeedInput>>;
 
 export interface FeedFreshness {
   id: FeedId;
@@ -12,6 +30,8 @@ export interface FeedFreshness {
   maxAgeDays: number;
   status: FeedStatus;
   fix: string;
+  /** Set only when status is 'error': the read failure, for the System Health row. */
+  error?: string;
 }
 
 /** Per-feed staleness budget in days (2026-09-23 review found six feeds silently stale). */
@@ -25,6 +45,17 @@ export const FEED_MAX_AGE_DAYS: Record<FeedId, number> = {
   // P&L exports land at month/quarter close; 45 days covers one close plus slack. Before this feed
   // the ledger sat 139 days unloaded with nothing in the UI saying so (roadmap 2026-10-30, item 1.1).
   warehouseLedger: 45,
+  // The backup is meant to run nightly; two days allows one missed night.
+  backup: 2,
+  // The overlay holds user write-backs, so its age is not staleness. Only 'missing' (the file is
+  // absent, so every enrichment domain merges empty) and 'error' (unreadable or a domain the loader
+  // drops) matter; the budget is set high on purpose.
+  overlay: 3650,
+  // Assessments carry an annual valuation date; 18 months allows one tax-year cycle plus the lag
+  // before the new values are posted.
+  taxRegister: 548,
+  // PCAs are commissioned per property every few years; three years flags an import that never recurs.
+  pcaRegister: 1095,
 };
 
 const META: Record<FeedId, { label: string; fix: string }> = {
@@ -37,6 +68,22 @@ const META: Record<FeedId, { label: string; fix: string }> = {
   warehouseLedger: {
     label: 'P&L warehouse (last import)',
     fix: 'Drop current property P&L exports in the P&L folder, then npm run warehouse:backfill',
+  },
+  backup: {
+    label: 'Warehouse backup',
+    fix: 'npm run backup (set BACKUP_DIR to an off-machine OneDrive folder). Not scheduled: register it via register-scheduled-task',
+  },
+  overlay: {
+    label: 'Overlay (write-backs)',
+    fix: 'data/overlay.json is absent or unreadable, so write-back enrichment (arrears, renewal stages, comps) is merging empty. Restore it from the live checkout or a backup',
+  },
+  taxRegister: {
+    label: 'Tax assessments (latest valuation date)',
+    fix: 'Import the current assessor values: scripts/import-assessments.ts',
+  },
+  pcaRegister: {
+    label: 'PCA register (last import)',
+    fix: 'Re-run the PCA register import with the latest extraction register',
   },
 };
 
@@ -54,9 +101,84 @@ export function lastLedgerImportAt(db: { prepare(sql: string): { get(): unknown 
   return row?.t ?? null;
 }
 
+/**
+ * Newest valuation date in the tax-assessment register (null = nothing imported). as_of is free text
+ * stored verbatim by the importer, so the max is taken over PARSED dates, not a lexical SQL MAX
+ * ('9/1/2025' sorts above '2026-01-01'). Rows present with no parseable as_of throw, so the feed
+ * reads 'error' rather than 'none on record' (refute round 1, 2026-11-23).
+ */
+export function lastTaxAssessmentAsOf(
+  db: { prepare(sql: string): { all(): unknown[] } },
+  now: number = Date.now(),
+): string | null {
+  const rows = db.prepare('SELECT as_of AS t FROM property_tax_assessments').all() as Array<{ t: string | null }>;
+  if (rows.length === 0) return null;
+  // Strict ISO day, a real calendar date, not in the future (refute round 2: V8's Date.parse takes
+  // '45658', 'FY 2025' and '2025-02-30', and one future row would grade a stale register fresh).
+  let best: string | null = null;
+  for (const { t } of rows) {
+    const m = t ? /^(\d{4})-(\d{2})-(\d{2})/.exec(t) : null;
+    if (!m) continue;
+    const day = `${m[1]}-${m[2]}-${m[3]}`;
+    const d = new Date(`${day}T00:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day || d.getTime() > now + DAY_MS) continue;
+    if (best === null || day > best) best = day;
+  }
+  if (best === null) throw new Error(`${rows.length} assessment row(s) imported, none with a valid past as_of date (YYYY-MM-DD)`);
+  return best;
+}
+
+/** When the PCA register last took in a report (null = nothing imported). */
+export function lastPcaImportAt(db: { prepare(sql: string): { get(): unknown } }): string | null {
+  const row = db.prepare('SELECT MAX(imported_at) AS t FROM pca_reports').get() as { t: string | null } | undefined;
+  return row?.t ?? null;
+}
+
+/** The backup directory scripts/warehouse-backup.ts writes to (same env var, same default). */
+export function backupDirPath(): string {
+  return process.env.BACKUP_DIR ?? join(process.cwd(), 'data', 'backups');
+}
+
+/**
+ * When the last verified backup finished: manifest.json `at`, which warehouse-backup.ts writes only
+ * after the integrity and row-count checks pass. Null when there is no manifest. Throws on a
+ * corrupt manifest, which the caller reports as 'error'.
+ */
+export function lastBackupAt(dir: string = backupDirPath()): string | null {
+  const p = join(dir, 'manifest.json');
+  if (!existsSync(p)) return null;
+  const m = JSON.parse(readFileSync(p, 'utf8')) as { at?: unknown };
+  if (typeof m.at !== 'string') throw new Error('backup manifest.json has no `at` timestamp');
+  return m.at;
+}
+
+/** Runs one feed read; a throw becomes an error input, so a failure is never shown as 'missing'. */
+export function readFeed(read: () => string | null): FeedInput {
+  try {
+    return read();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export function assessFeeds(input: FeedInputs, now: number): FeedFreshness[] {
   return (Object.keys(META) as FeedId[]).map((id) => {
-    const lastAt = input[id];
+    const raw = input[id] ?? null;
+    if (raw !== null && typeof raw === 'object') {
+      return {
+        id, label: META[id].label, lastAt: null, ageDays: null, maxAgeDays: FEED_MAX_AGE_DAYS[id],
+        status: 'error' as const, fix: META[id].fix, error: raw.error,
+      };
+    }
+    const lastAt = raw;
+    // A stamp more than a day in the future is a bad source value, never 'fresh' (refute round 2).
+    const futureMs = lastAt ? Date.parse(lastAt) - now : NaN;
+    if (Number.isFinite(futureMs) && futureMs > DAY_MS) {
+      return {
+        id, label: META[id].label, lastAt, ageDays: null, maxAgeDays: FEED_MAX_AGE_DAYS[id],
+        status: 'error' as const, fix: META[id].fix, error: `timestamp ${lastAt} is in the future`,
+      };
+    }
     const t = lastAt ? Date.parse(lastAt) : NaN;
     const ok = Number.isFinite(t);
     const ageMs = ok ? now - t : null;

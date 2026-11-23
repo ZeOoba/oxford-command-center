@@ -44,6 +44,12 @@ describe('computeHealthSignal (same severity semantics as HealthModule)', () => 
     expect(s.tone).toBe('warn');
     expect(s.detail).toBe('1 feed stale');
   });
+  // Tier 1 data honesty (2026-11-23 review): a feed whose read FAILED is named apart from stale.
+  it('a failed feed read is counted separately from stale', () => {
+    const s = computeHealthSignal(fresh('live', 'Live'), [], [{ status: 'error' }, { status: 'stale' }]);
+    expect(s.tone).toBe('warn');
+    expect(s.detail).toBe('1 feed stale · 1 feed read failing');
+  });
   it('fresh-only feeds never move the tone', () => {
     expect(computeHealthSignal(fresh('live', 'Live'), [], [{ status: 'fresh' }, { status: 'fresh' }]).tone).toBe('ok');
   });
