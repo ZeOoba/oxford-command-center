@@ -35,7 +35,6 @@ function compsScore(capRatePct: number | null): number | null {
 
 // ── Staleness ─────────────────────────────────────────────────────────────────
 
-/** Exported read-only for the /api/health feed budget (server/feed-freshness.ts); scoring owns the values. */
 export const STALE_DAYS: Record<string, number> = { 'census-acs': 400, 'comps-ai': 90 };
 
 function daysBetween(isoA: string, isoB: string): number {
