@@ -8,11 +8,15 @@ import {
   assessFeeds,
   FEED_MAX_AGE_DAYS,
   lastBackupAt,
+  lastLeaseEventsImportAt,
   lastLedgerImportAt,
+  lastMarketSeriesAsOf,
   lastPcaImportAt,
   lastTaxAssessmentAsOf,
   readFeed,
 } from '../../server/feed-freshness';
+import { STALE_DAYS } from '../../server/warehouse/market-intel';
+import { runMigrations } from '../../server/warehouse/migrate';
 
 const NOW = Date.parse('2026-09-23T12:00:00Z');
 
@@ -166,5 +170,111 @@ describe('Tier 1 feed honesty', () => {
     expect(readFeed(() => '2026-09-01')).toBe('2026-09-01');
     expect(readFeed(() => null)).toBeNull();
     expect(readFeed(() => { throw new Error('boom'); })).toEqual({ error: 'boom' });
+  });
+});
+
+// Tier 1 #2 (2026-11-23 review): market_series and lease_events gained writers
+// (scripts/import-market-series.ts, scripts/import-lease-events.ts), so each gets a freshness row.
+describe('market_series + lease_events feeds', () => {
+  const MARKET_DDL = `CREATE TABLE market_series (cluster TEXT, as_of TEXT, source TEXT, metric TEXT);
+    CREATE TABLE lease_events (abstract_date TEXT, source_file TEXT)`;
+
+  it("marketSeries budget is the market-intel scorer's census-acs window", () => {
+    expect(FEED_MAX_AGE_DAYS.marketSeries).toBe(STALE_DAYS['census-acs']);
+    expect(FEED_MAX_AGE_DAYS.marketSeries).toBe(400);
+    expect(FEED_MAX_AGE_DAYS.leaseEvents).toBe(14);
+  });
+
+  it('lastMarketSeriesAsOf: the stalest cluster, newest valid census-acs as_of; other sources ignored', () => {
+    const db = new Database(':memory:');
+    db.exec(MARKET_DDL);
+    expect(lastMarketSeriesAsOf(db, NOW)).toBeNull();
+    db.exec(`INSERT INTO market_series VALUES
+      ('Cluster A', '2025-01-30', 'census-acs', 'vacancy_rate'),
+      ('Cluster B', '2025-12-11', 'census-acs', 'vacancy_rate'),
+      ('Cluster A', '2026-09-01', 'comps-ai', 'cap_rate'),
+      ('Cluster A', '9/1/2026', 'census-acs', 'vacancy_rate'),
+      ('Cluster A', '2025-02-30', 'census-acs', 'vacancy_rate'),
+      ('Cluster A', '2099-01-01', 'census-acs', 'vacancy_rate')`);
+    // Cluster A's newest valid release is 2025-01-30 (601 days, scorer-stale) even though Cluster B
+    // has 2025-12-11: the feed reports the stalest cluster, matching the per-cluster scorer.
+    expect(lastMarketSeriesAsOf(db, NOW)).toBe('2025-01-30');
+    db.exec("INSERT INTO market_series VALUES ('Cluster A', '2026-01-29', 'census-acs', 'vacancy_rate')");
+    expect(lastMarketSeriesAsOf(db, NOW)).toBe('2025-12-11');
+    db.close();
+  });
+
+  it('lastMarketSeriesAsOf: census rows present but none valid throws (feed reads error)', () => {
+    const db = new Database(':memory:');
+    db.exec(MARKET_DDL);
+    db.exec("INSERT INTO market_series VALUES ('Cluster A', 'ACS 2024', 'census-acs', 'v'), ('Cluster A', '2026-09-01', 'comps-ai', 'c')");
+    expect(() => lastMarketSeriesAsOf(db, NOW)).toThrow(/none with a valid past as_of/);
+    // One valid cluster does not mask another cluster whose rows are all invalid.
+    db.exec("INSERT INTO market_series VALUES ('Cluster B', '2026-01-29', 'census-acs', 'v')");
+    expect(() => lastMarketSeriesAsOf(db, NOW)).toThrow(/cluster Cluster A/);
+    expect(readFeed(() => lastMarketSeriesAsOf(db, NOW))).toMatchObject({ error: expect.stringMatching(/census-acs/) });
+    db.close();
+  });
+
+  it('lastLeaseEventsImportAt: newest created_at (UTC) over [DERIVED:] rows only', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE lease_events (abstract_date TEXT, source_file TEXT, created_at TEXT)');
+    expect(lastLeaseEventsImportAt(db)).toBeNull();
+    // Only non-derived rows: still 'never derived', not an error.
+    db.exec("INSERT INTO lease_events VALUES ('2026-09-22', 'lease-abstract.pdf', '2026-09-22 10:00:00'), ('2026-09-22', NULL, '2026-09-22 10:00:00')");
+    expect(lastLeaseEventsImportAt(db)).toBeNull();
+    // abstract_date (the capture an event was seen in) does not drive the feed: an old capture
+    // re-derived today is a run today.
+    db.exec(`INSERT INTO lease_events VALUES
+      ('2026-06-01', 'rent-roll-diff a -> b [DERIVED:first_absent]', '2026-09-20 06:15:00'),
+      ('2026-05-01', 'rent-roll b [DERIVED:lease_start]', '2026-09-21 23:59:59'),
+      ('2026-05-01', 'x [DERIVED:lease_start]', '2026-02-30 00:00:00'),
+      ('2026-05-01', 'x [DERIVED:lease_start]', 'yesterday'),
+      ('2026-05-01', 'x [DERIVED:lease_start]', NULL),
+      ('2026-05-01', 'x [DERIVED-no-colon]', '2026-09-23 00:00:00')`);
+    // SQLite datetime('now') carries no zone: it is UTC, returned as ISO with Z.
+    expect(lastLeaseEventsImportAt(db)).toBe('2026-09-21T23:59:59Z');
+    // Case-insensitive like the importer's own LIKE ownership match.
+    db.exec("INSERT INTO lease_events VALUES ('2026-05-01', 'x [derived:lease_start]', '2026-09-22 01:00:00')");
+    expect(lastLeaseEventsImportAt(db)).toBe('2026-09-22T01:00:00Z');
+    db.exec("DELETE FROM lease_events WHERE created_at IN ('2026-09-20 06:15:00', '2026-09-21 23:59:59', '2026-09-22 01:00:00')");
+    expect(() => lastLeaseEventsImportAt(db)).toThrow(/none with a valid created_at/);
+    db.close();
+  });
+
+  it('lastLeaseEventsImportAt reads the migration-011 created_at default as UTC', () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    db.exec("INSERT INTO lease_events (property_id, event_kind, event_date, source_file) VALUES ('P1', 'commence', '2026-01-01', 'x [DERIVED:lease_start]')");
+    const at = lastLeaseEventsImportAt(db)!;
+    expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(Math.abs(Date.parse(at) - Date.now())).toBeLessThan(5 * 60_000);
+    db.close();
+  });
+
+  it("on the real migrated schema with no importer run, both feeds read 'missing', not 'error'", () => {
+    const db = new Database(':memory:');
+    runMigrations(db);
+    const feeds = assessFeeds({
+      marketSeries: readFeed(() => lastMarketSeriesAsOf(db, NOW)),
+      leaseEvents: readFeed(() => lastLeaseEventsImportAt(db)),
+    }, NOW);
+    const by = Object.fromEntries(feeds.map((f) => [f.id, f]));
+    expect(by.marketSeries!.status).toBe('missing');
+    expect(by.leaseEvents!.status).toBe('missing');
+    expect(by.marketSeries!.label).toBe('Market series (Census ACS, latest release)');
+    expect(by.leaseEvents!.label).toBe('Lease events (last import of rent-roll diffs)');
+    expect(by.marketSeries!.fix).toMatch(/import-market-series\.ts --census/);
+    expect(by.leaseEvents!.fix).toMatch(/import-lease-events\.ts/);
+    db.close();
+  });
+
+  it('grades against the budgets', () => {
+    const at = (id: 'marketSeries' | 'leaseEvents', d: string) =>
+      assessFeeds({ [id]: d }, NOW).find((f) => f.id === id)!.status;
+    expect(at('marketSeries', '2025-09-01')).toBe('fresh'); // 387 days
+    expect(at('marketSeries', '2025-08-01')).toBe('stale'); // 418 days
+    expect(at('leaseEvents', '2026-09-10T00:00:00Z')).toBe('fresh'); // 13.5 days
+    expect(at('leaseEvents', '2026-09-08T00:00:00Z')).toBe('stale'); // 15.5 days
   });
 });

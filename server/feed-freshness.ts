@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALERT_THRESHOLDS } from '../src/analytics/conditions';
+import { STALE_DAYS } from './warehouse/market-intel';
 
 export type FeedId =
   | 'snapshot'
@@ -13,7 +14,9 @@ export type FeedId =
   | 'backup'
   | 'overlay'
   | 'taxRegister'
-  | 'pcaRegister';
+  | 'pcaRegister'
+  | 'marketSeries'
+  | 'leaseEvents';
 /** 'error' = the read itself failed. Kept apart from 'missing' (never ran / nothing imported) so a
  *  locked DB or a corrupt file no longer looks like a feed that simply has no data (2026-11-23 review). */
 export type FeedStatus = 'fresh' | 'stale' | 'missing' | 'error';
@@ -56,6 +59,13 @@ export const FEED_MAX_AGE_DAYS: Record<FeedId, number> = {
   taxRegister: 548,
   // PCAs are commissioned per property every few years; three years flags an import that never recurs.
   pcaRegister: 1095,
+  // Census ACS releases annually; the budget is the market-intel scorer's own census staleness
+  // window, and the reader grades the stalest cluster, so this row goes stale when the scorer
+  // starts flagging any cluster's census series stale.
+  marketSeries: STALE_DAYS['census-acs']!,
+  // Last run of the rent-roll diff derivation; the snapshot refreshes weekly or faster, so two weeks
+  // allows one missed run before the leasing-velocity events are called stale.
+  leaseEvents: 14,
 };
 
 const META: Record<FeedId, { label: string; fix: string }> = {
@@ -85,6 +95,14 @@ const META: Record<FeedId, { label: string; fix: string }> = {
     label: 'PCA register (last import)',
     fix: 'Re-run the PCA register import with the latest extraction register',
   },
+  marketSeries: {
+    label: 'Market series (Census ACS, latest release)',
+    fix: "Add the new vintage's release date to config/market-series-geographies.json acs5Releases, then npx tsx scripts/import-market-series.ts --census",
+  },
+  leaseEvents: {
+    label: 'Lease events (last import of rent-roll diffs)',
+    fix: 'npx tsx scripts/import-lease-events.ts (whether the rent-roll capture itself is current is the Workbook snapshot row)',
+  },
 };
 
 const DAY_MS = 86_400_000;
@@ -112,9 +130,17 @@ export function lastTaxAssessmentAsOf(
   now: number = Date.now(),
 ): string | null {
   const rows = db.prepare('SELECT as_of AS t FROM property_tax_assessments').all() as Array<{ t: string | null }>;
+  return newestValidPastDay(rows, now, 'assessment', 'as_of');
+}
+
+/**
+ * Newest strict ISO calendar day among `rows` (null = no rows). Strict ISO day, a real calendar
+ * date, not in the future (refute round 2: V8's Date.parse takes '45658', 'FY 2025' and
+ * '2025-02-30', and one future row would grade a stale register fresh). Rows present with none
+ * valid throw, so the feed reads 'error' rather than 'none on record'.
+ */
+function newestValidPastDay(rows: Array<{ t: string | null }>, now: number, what: string, column: string): string | null {
   if (rows.length === 0) return null;
-  // Strict ISO day, a real calendar date, not in the future (refute round 2: V8's Date.parse takes
-  // '45658', 'FY 2025' and '2025-02-30', and one future row would grade a stale register fresh).
   let best: string | null = null;
   for (const { t } of rows) {
     const m = t ? /^(\d{4})-(\d{2})-(\d{2})/.exec(t) : null;
@@ -124,7 +150,66 @@ export function lastTaxAssessmentAsOf(
     if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day || d.getTime() > now + DAY_MS) continue;
     if (best === null || day > best) best = day;
   }
-  if (best === null) throw new Error(`${rows.length} assessment row(s) imported, none with a valid past as_of date (YYYY-MM-DD)`);
+  if (best === null) throw new Error(`${rows.length} ${what} row(s) imported, none with a valid past ${column} date (YYYY-MM-DD)`);
+  return best;
+}
+
+/**
+ * Latest Census ACS release on record for the STALEST cluster: per cluster the newest valid as_of,
+ * then the oldest of those (null = never imported). The market-intel scorer flags census staleness
+ * per cluster, so a portfolio-wide MAX would read fresh while one cluster's signal is already stale
+ * (review 2026-11-23). as_of is the ACS public release date (ruling 2026-11-23), so this is the age
+ * of the vintage, not of the import run. A cluster whose rows carry no valid as_of throws ('error').
+ * Other sources (comps-ai) have no in-system writer yet and are not graded here.
+ */
+export function lastMarketSeriesAsOf(
+  db: { prepare(sql: string): { all(...params: unknown[]): unknown[] } },
+  now: number = Date.now(),
+): string | null {
+  const rows = db
+    .prepare('SELECT cluster AS c, as_of AS t FROM market_series WHERE source = ?')
+    .all('census-acs') as Array<{ c: string; t: string | null }>;
+  const byCluster = new Map<string, Array<{ t: string | null }>>();
+  for (const r of rows) {
+    const list = byCluster.get(r.c);
+    if (list) list.push(r);
+    else byCluster.set(r.c, [r]);
+  }
+  let stalest: string | null = null;
+  for (const [cluster, list] of byCluster) {
+    const newest = newestValidPastDay(list, now, `census-acs market_series (cluster ${cluster})`, 'as_of')!;
+    if (stalest === null || newest < stalest) stalest = newest;
+  }
+  return stalest;
+}
+
+/**
+ * When the lease-event derivation last ran: MAX(created_at) over rows whose source_file carries the
+ * [DERIVED:<basis>] tag (null = never derived). scripts/import-lease-events.ts deletes and re-inserts
+ * the whole derived set in one transaction per successful run and never updates a row in place, so
+ * the newest created_at is the last successful run. abstract_date is NOT used: it is the capture each
+ * event was observed in, so its MAX lags the run whenever no new tenancy appears (review 2026-11-23).
+ * Whether the rent-roll capture itself is current is the `snapshot` feed's job.
+ * created_at is SQLite datetime('now'): 'YYYY-MM-DD HH:MM:SS' in UTC, no 'T'/'Z', so it is parsed
+ * strictly as UTC and returned as ISO. Rows present with no valid created_at throw ('error').
+ */
+export function lastLeaseEventsImportAt(db: { prepare(sql: string): { all(): unknown[] } }): string | null {
+  // Same match the importer uses to own (and replace) its rows: LIKE '%[DERIVED:%' (SQLite LIKE is
+  // ASCII case-insensitive and gives '[' no meaning), so reader and writer agree on the row set.
+  const rows = db
+    .prepare("SELECT created_at AS t FROM lease_events WHERE source_file LIKE '%[DERIVED:%'")
+    .all() as Array<{ t: string | null }>;
+  if (rows.length === 0) return null;
+  let best: string | null = null;
+  for (const { t } of rows) {
+    const m = t ? /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?Z?$/.exec(t) : null;
+    if (!m) continue;
+    const iso = `${m[1]}T${m[2]}Z`;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 19) !== iso.slice(0, 19)) continue;
+    if (best === null || iso > best) best = iso;
+  }
+  if (best === null) throw new Error(`${rows.length} derived lease_events row(s), none with a valid created_at (YYYY-MM-DD HH:MM:SS UTC)`);
   return best;
 }
 

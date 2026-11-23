@@ -9,6 +9,15 @@
     "review_detail": "Architect-authority edits: gate scripts (architecture/agent-assignments.md) scripts/check-refute-required.ts, scripts/prepush-confidential-scan.mjs, scripts/deploy-mirror.ps1, scripts/lib/access-gate-probe.ps1, scripts/lib/native-timeout.ps1; architecture/coding-standards.md (delivery-only allowlist paragraph: api.ts and debt-api.ts removals recorded, membership now points at the code set). Acknowledged: Gabriel approved Wave 1 mechanism-only gate widening 2026-11-08; Gabriel (architect) approved the server/warehouse/api.ts DELIVERY_ONLY_PATHS removal 2026-11-09; Gabriel (architect) approved the server/warehouse/debt-api.ts DELIVERY_ONLY_PATHS removal 2026-11-09. Not merged; every scripts/** commit needs its own Refute-Reviewed wf_ trailer from the refute-financial-change Workflow (runs wf_44a3341e-b41 and wf_c135181a-31a not clean; third run pending).",
     "last_updated": "2026-11-09T18:00:00Z"
   },
+  "feed-freshness-market-lease-e1476f": {
+    "agent_role": "Engineering (Claude Code) - side session of the 2026-11-23 command-center review (Tier 1 #2), Gabriel-directed",
+    "phase": "Feed freshness rows for market_series (census-acs newest as_of, 400d = market-intel STALE_DAYS) and lease_events (last importer run = MAX(created_at) over [DERIVED: rows, 14d; per importer-owner session 2026-11-23) on /api/health. Branch claude/feed-freshness-market-lease-e1476f; pairs with the importer PR from claude/vigorous-villani-100fb5.",
+    "status": "review_needed",
+    "blocked_by": "importer PR from claude/vigorous-villani-100fb5 must merge first (Gabriel: \"merge the feed freshness PR after this one lands\")",
+    "review_needed": true,
+    "review_detail": "Architect-owned server/index.ts edit: two feed inputs beside pcaRegister in the /api/health assessFeeds call (same shape as PR #587). Acknowledged: Gabriel (architect) approved 2026-11-23 via the design-review session (\"approve the index.ts line for the feed freshness session\"), scope limited to those input lines and their imports. Also server/feed-freshness.ts, server/warehouse/market-intel.ts (export STALE_DAYS only, no value change), tests/unit/feed-freshness.test.ts.",
+    "last_updated": "2026-11-23T21:00:00Z"
+  },
   "refute-check-clean-effort-d750f8": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-28",
     "phase": "Refute gate: qualifier grammar for Refute-Reviewed wf_<id> trailers (clean/scoped/effort/base-workflow/partial/accepted), per Gabriel's AskUserQuestion pick 2026-10-28.",
