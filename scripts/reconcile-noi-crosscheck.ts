@@ -9,7 +9,8 @@
 // materially disagree on NOI). 'warn' rows (in-band drift, missing-from-one-side, low-confidence
 // basis, structural-mismatch) are printed but do not fail the gate — the classifier already
 // encodes which states are structurally expected (e.g. a newly-acquired property pre-ingest, or
-// OI-137's ownership/tenancy-changed-since-comparison-period case) vs. a real integrity break.
+// OI-137's ownership/tenancy-changed-since-comparison-period case, or an R34-3 ratified, dated
+// acknowledgment in config/noi-crosscheck-acknowledgments.json) vs. a real integrity break.
 //
 // Local-only gate (wired into `npm run gate`, NOT gate:ci — CI runners have no live workbook or
 // warehouse DB), matching the existing reconcile / warehouse:verify / warehouse:drift pattern.
@@ -20,6 +21,12 @@ import { workbookPath } from '../server/config';
 import { parseWorkbook } from '../server/workbook/parse';
 import { openWarehouseReadOnly } from '../server/warehouse/db';
 import { reconcileNoiABFromDb, DEFAULT_TOLERANCE, type NoiReconciliationRow } from '../server/warehouse/reconcile-noi';
+import { acknowledgmentInForce, loadNoiAcknowledgments } from '../server/warehouse/noi-acknowledgments';
+
+/** Today in America/New_York (the gate's operating timezone) as YYYY-MM-DD. */
+function todayEt(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
 
 loadEnvFile();
 
@@ -57,18 +64,41 @@ async function main() {
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot } = await parseWorkbook(workbookPath());
 
+  // R34-3: ratified, dated acknowledgments. Malformed file -> throws -> this stage fails loudly.
+  const acknowledgments = loadNoiAcknowledgments();
+  const asOfDate = todayEt();
+  for (const a of acknowledgments) {
+    const live = acknowledgmentInForce(a, asOfDate);
+    console.log(
+      `${live ? '→' : '⚠'} Acknowledgment ${a.propertyId} (period ${a.comparisonPeriod}, ceiling ` +
+        `${(a.maxDeltaPct * 100).toFixed(2)}%, expires ${a.expires})${live ? '' : ' — EXPIRED, no longer applied'}`,
+    );
+  }
+
   // Pure reader: a read-only handle never applies migrations to the live warehouse (openWarehouse
   // did, silently, from whatever branch this ran on — see server/warehouse/db.ts).
   const db = openWarehouseReadOnly(warehousePath);
   let rows: NoiReconciliationRow[];
   try {
-    rows = reconcileNoiABFromDb(db, snapshot, DEFAULT_TOLERANCE);
+    rows = reconcileNoiABFromDb(db, snapshot, DEFAULT_TOLERANCE, { acknowledgments, asOfDate });
   } finally {
     db.close();
   }
 
   console.log('── NOI CROSS-CHECK: Spine A (workbook) ↔ Spine B (warehouse) ───────────');
   for (const r of rows) printRow(r);
+  // Say whether each acknowledgment actually applied, so a period-superseded or unmatched entry is
+  // never read as live (REFUTE wf_e0c420fd-227 LOW).
+  for (const a of acknowledgments) {
+    const row = rows.find((r) => r.propertyId === a.propertyId);
+    const applied = row !== undefined && row.reason.startsWith('Acknowledged drift');
+    const why = row === undefined
+      ? 'no matching property row'
+      : row.period !== a.comparisonPeriod
+        ? `comparison period is now ${row.period ?? 'n/a'}, not ${a.comparisonPeriod}`
+        : `row is ${row.status}`;
+    console.log(`  acknowledgment ${a.propertyId}: ${applied ? 'APPLIED' : `NOT APPLIED (${why})`}`);
+  }
 
   const errors = rows.filter((r) => r.severity === 'error');
   const warnings = rows.filter((r) => r.severity === 'warn');

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "acknowledgments": [
+    {
+      "propertyId": "1100-rarig-ave-columbus-oh",
+      "comparisonPeriod": "2025",
+      "direction": "warehouse-exceeds-workbook",
+      "maxDeltaPct": 0.6,
+      "expires": "2027-06-30",
+      "ratifiedBy": "Gabriel",
+      "ratifiedOn": "2026-11-23",
+      "reason": "Audit R34-3: the unit G & H lease expired 2026-10-31 and its rent left the current rent roll; unit F & I + J is under notice to vacate at 2026-12-31. The 2025 warehouse actuals still carry both. Ceiling covers both move-outs; a new full-year ingest ends this acknowledgment. Ratified in-session 2026-11-23: Gabriel replaced the estimated move-out rule with this explicit acknowledgment after five review rounds, and directed the list be kept in this repo without dollar figures."
+    }
+  ]
+}
