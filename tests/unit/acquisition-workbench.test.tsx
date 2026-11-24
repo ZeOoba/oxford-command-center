@@ -108,6 +108,9 @@ describe('AcquisitionWorkbench — engine-unavailable retry (fake timers)', () =
 
     render(<AcquisitionWorkbench scoreFn={genericErr} saveFn={async () => false} />);
     await tick(400);
+    // Plain headline; the raw server text sits under Details (review round 2, 2026-11-24).
+    expect(screen.getByText('The deal was not scored.')).toBeTruthy();
+    expect(screen.getByText('Details')).toBeTruthy();
     expect(screen.getByText(/scoring failed/i)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /retry now/i })).toBeNull();
   });

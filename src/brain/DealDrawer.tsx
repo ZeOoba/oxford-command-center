@@ -14,6 +14,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { GaugeRing } from '@/primitives/GaugeRing';
 import { useAcqIntel } from '@/modules/acquisitions/grader-hooks';
 import { EdgeMarketReadout } from '@/modules/acquisitions/EdgeMarketReadout';
+import { ActionError } from '@/primitives/ActionError';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -252,7 +253,7 @@ export function DealDrawer({
 
                 <div className="flex flex-col gap-4 px-4 py-3">
                   {refresh.isPending && <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>Researching comps via web search… this can take ~20s.</div>}
-                  {refresh.isError && <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>{(refresh.error as Error)?.message ?? 'Comp research failed.'}</div>}
+                  {refresh.isError && <ActionError error={refresh.error} failed="Comp research did not run." />}
 
                   {!comps && !refresh.isPending ? (
                     <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>

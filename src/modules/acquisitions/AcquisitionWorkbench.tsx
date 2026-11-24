@@ -46,6 +46,8 @@ export function AcquisitionWorkbench({
   const retryInFlight = useRef(false);
   const loadedFor = useRef<string | null>(deal?.id ?? null);
   const [errIsEngineDown, setErrIsEngineDown] = useState(false);
+  /** Raw text of a generic scoring failure, shown under Details, never as the headline (2026-11-24). */
+  const [errDetail, setErrDetail] = useState<string | null>(null);
 
   // Re-initialize the form only when the SELECTED DEAL changes (not on every snapshot refetch), so a
   // background refresh never clobbers in-progress edits. A saved deal reloads its persisted inputs.
@@ -66,7 +68,8 @@ export function AcquisitionWorkbench({
       if (reqId.current === id) {
         const unavailable = isEngineUnavailable(e);
         setScore(null);
-        setErr(unavailable ? 'Acquisition engine unavailable — start the Brain server to score.' : e instanceof Error ? e.message : 'scoring failed');
+        setErr(unavailable ? 'Acquisition engine unavailable — start the Brain server to score.' : 'The deal was not scored.');
+        setErrDetail(!unavailable && e instanceof Error && e.message.trim() ? e.message.trim() : null);
         setErrIsEngineDown(unavailable);
       }
     } finally {
@@ -163,6 +166,12 @@ export function AcquisitionWorkbench({
           {err && (
             <Banner tone="red">
               {err}
+              {errDetail && (
+                <details className="mt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  <summary className="cursor-pointer">Details</summary>
+                  <div className="num mt-1 break-words">{errDetail}</div>
+                </details>
+              )}
               {errIsEngineDown && (
                 <button
                   type="button"

@@ -24,6 +24,7 @@ import {
 import { NORMALIZED_CATEGORIES, CLASSIFICATIONS, statusTone, severityTone } from './constants';
 import { SIGN_VERIFY_BLOCKED_REASON, signVerifyBlocker } from './approve-blockers';
 import type { Classification } from '@contracts/warehouse';
+import { ActionError } from '@/primitives/ActionError';
 
 export function ImportsView({ imports }: { imports: ImportSummary[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -64,7 +65,9 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
   const action = useImportAction();
   const resolveIssue = useResolveIssue();
   const [unmapped, setUnmapped] = useState<string[] | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // A server refusal (r.error) is already plain words and is the headline; a thrown error gets a
+  // plain headline with its raw text under Details (review round 2, 2026-11-24).
+  const [actionError, setActionError] = useState<{ failed: string; error?: unknown } | null>(null);
 
   if (detail.isLoading) {
     return (
@@ -99,10 +102,10 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
             setUnmapped(null);
           } else {
             setUnmapped(r.unmapped);
-            if (r.unmapped.length === 0 && r.error) setActionError(r.error);
+            if (r.unmapped.length === 0 && r.error) setActionError({ failed: r.error });
           }
         },
-        onError: (e) => setActionError(e instanceof Error ? e.message : 'Approve failed'),
+        onError: (e) => setActionError({ failed: 'The import was not approved.', error: e }),
       },
     );
   };
@@ -114,9 +117,9 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
       {
         onSuccess: (res) => {
           const r = res as SimpleResult;
-          if (!r.ok) setActionError(r.error ?? 'Reject failed');
+          if (!r.ok) setActionError({ failed: r.error ?? 'The import was not rejected.' });
         },
-        onError: (e) => setActionError(e instanceof Error ? e.message : 'Reject failed'),
+        onError: (e) => setActionError({ failed: 'The import was not rejected.', error: e }),
       },
     );
   };
@@ -157,8 +160,8 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
                         onPress={() => {
                           setActionError(null); // drop the stale approve refusal once the reviewer acts on it
                           resolveIssue.mutate(i.id, {
-                            onSuccess: (r) => { if (!r.ok) setActionError(r.error ?? 'Verify failed'); },
-                            onError: (e) => setActionError(e instanceof Error ? e.message : 'Verify failed'),
+                            onSuccess: (r) => { if (!r.ok) setActionError({ failed: r.error ?? 'Not verified.' }); },
+                            onError: (e) => setActionError({ failed: 'Not verified.', error: e }),
                           });
                         }}
                         isDisabled={resolveIssue.isPending || signBlocker !== null}
@@ -187,7 +190,7 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
               <Button variant="subtle" size="sm" onPress={runReject} isDisabled={action.isPending}>Reject</Button>
               {action.isPending && <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>Working…</span>}
             </div>
-            {actionError && <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>{actionError}</span>}
+            {actionError && <ActionError error={actionError.error} failed={actionError.failed} />}
             {unmapped && unmapped.length > 0 && (
               <UnmappedResolver
                 accounts={unmapped}

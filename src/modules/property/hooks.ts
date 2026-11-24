@@ -19,17 +19,32 @@ export interface PropertyLedger {
   sf: number | null;
 }
 
-/** Null while loading, when the dataset is unavailable, or when no PF entity maps to the property. */
-export function usePropertyLedger(propertyId: string): PropertyLedger | null {
+/**
+ * Where the ledger stands for one property (review round 2, 2026-11-24): the property page used to
+ * say "not in the P&L ledger" while the dataset was still loading or had failed to load.
+ */
+export type PropertyLedgerState =
+  | { status: 'loading'; ledger: null }
+  | { status: 'error'; ledger: null; error: unknown }
+  | { status: 'ready'; ledger: PropertyLedger | null };
+
+export function usePropertyLedgerState(propertyId: string): PropertyLedgerState {
   const pf = usePfDataset();
-  return useMemo(() => {
+  return useMemo((): PropertyLedgerState => {
+    if (pf.isPending) return { status: 'loading', ledger: null };
+    if (pf.isError) return { status: 'error', ledger: null, error: pf.error };
     const d = pf.data?.dataset;
     const entity = pfEntityFor(pf.data?.liveSf?.entries, propertyId) as PfEntityId | null;
-    if (!d || !entity) return null;
+    if (!d || !entity) return { status: 'ready', ledger: null };
     const cube = (d.monthly as Partial<Record<string, Parameters<typeof ledgerMonths>[0]>>)[entity];
     const months = ledgerMonths(cube);
-    return { entity, months, t12: rollingT12(months), sf: d.sf[entity]?.sf ?? null };
-  }, [pf.data, propertyId]);
+    return { status: 'ready', ledger: { entity, months, t12: rollingT12(months), sf: d.sf[entity]?.sf ?? null } };
+  }, [pf.isPending, pf.isError, pf.error, pf.data, propertyId]);
+}
+
+/** Null while loading, when the dataset is unavailable, or when no PF entity maps to the property. */
+export function usePropertyLedger(propertyId: string): PropertyLedger | null {
+  return usePropertyLedgerState(propertyId).ledger;
 }
 
 export interface PropertyOccupancy {

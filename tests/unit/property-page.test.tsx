@@ -79,16 +79,18 @@ vi.mock('../../src/shell/SnapshotGate', () => ({ useSnapshotGate: () => null }))
 vi.mock('../../src/data/alerts', () => ({ useAlertView: () => ({ items: [] }) }));
 vi.mock('../../src/brain/ui-context', () => ({ useUi: () => ({ openEntity: vi.fn() }) }));
 vi.mock('../../src/modules/leasing/hooks', () => ({ useLeaseForecast: () => ({ data: undefined }) }));
+const READY_LEDGER = {
+  entity: 'Example Flex Park',
+  months: [],
+  t12: [
+    { month: '2026-08', value: 780_000 },
+    { month: '2026-09', value: 795_000 },
+  ],
+  sf: 72000,
+};
+let ledgerState: { status: string; ledger: unknown; error?: unknown } = { status: 'ready', ledger: READY_LEDGER };
 vi.mock('../../src/modules/property/hooks', () => ({
-  usePropertyLedger: () => ({
-    entity: 'Example Flex Park',
-    months: [],
-    t12: [
-      { month: '2026-08', value: 780_000 },
-      { month: '2026-09', value: 795_000 },
-    ],
-    sf: 72000,
-  }),
+  usePropertyLedgerState: () => ledgerState,
   usePropertyOccupancy: () => null,
 }));
 
@@ -99,6 +101,7 @@ class NoopResizeObserver {
 }
 beforeEach(() => vi.stubGlobal('ResizeObserver', NoopResizeObserver));
 afterEach(() => {
+  ledgerState = { status: 'ready', ledger: READY_LEDGER };
   cleanup();
   vi.unstubAllGlobals();
 });
@@ -115,6 +118,29 @@ async function renderAt(path: string) {
 }
 
 describe('PropertyPage', () => {
+  // Review round 2 (2026-11-24): loading and failure used to read as "not in the P&L ledger".
+  it('says the ledger is loading, never "not in the P&L ledger", while it loads', async () => {
+    ledgerState = { status: 'loading', ledger: null };
+    await renderAt('/property/p1');
+    expect(screen.getByText('loading the P&L ledger…')).toBeTruthy();
+    expect(screen.queryByText('not in the P&L ledger')).toBeNull();
+    expect(screen.queryByText(/not in the P&L ledger set yet/)).toBeNull();
+  });
+
+  it('says the ledger did not load when it failed, with the reason under Details', async () => {
+    ledgerState = { status: 'error', ledger: null, error: new Error('HTTP 500: dataset parse') };
+    await renderAt('/property/p1');
+    expect(screen.getByText('P&L ledger did not load')).toBeTruthy();
+    expect(screen.getByText("Couldn't load the P&L ledger.")).toBeTruthy();
+    expect(screen.queryByText(/not in the P&L ledger set yet/)).toBeNull();
+  });
+
+  it('still says "not in the P&L ledger" once loaded with no entity for the property', async () => {
+    ledgerState = { status: 'ready', ledger: null };
+    await renderAt('/property/p1');
+    expect(screen.getByText('not in the P&L ledger')).toBeTruthy();
+  });
+
   it('shows workbook (Oxford share) and ledger (entity 100%) NOI as separate tiles', async () => {
     await renderAt('/property/p1');
     expect(screen.getByText('NOI · workbook, Oxford 50%')).toBeTruthy();
