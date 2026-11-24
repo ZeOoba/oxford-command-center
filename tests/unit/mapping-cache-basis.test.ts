@@ -6,7 +6,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cacheCheckBasis,
   checkMappingCache,
@@ -49,6 +49,7 @@ function seededRoot(): string {
 const cache = (entries: Record<string, string>) => ({ entries, savedAt: '2026-01-01T00:00:00Z' });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
 
@@ -261,6 +262,20 @@ describe('checkMappingCache', () => {
     expect(r.failed).toBe(true);
     expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
     expect(checkMappingCache(root, ['real-1'], cache({ 'x co': 'lease-a' }), {}).failed).toBe(false);
+  });
+
+  it('reads process.env by default, as reconcile calls it (no env argument)', () => {
+    const root = seededRoot();
+    const outside = mkdtempSync(join(tmpdir(), 'cache-basis-out-'));
+    roots.push(outside);
+    put(outside, 'cache.json', FIX_CACHE);
+    vi.stubEnv('AR_MAPPING_CACHE', join(outside, 'cache.json'));
+    const r = checkMappingCache(root, ['real-1'], cache({ 'x co': 'lease-a' }));
+    expect(r.failed).toBe(true);
+    expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+    vi.unstubAllEnvs();
+    vi.stubEnv('AR_MAPPING_CACHE', undefined);
+    expect(checkMappingCache(root, ['real-1'], cache({ 'x co': 'lease-a' })).failed).toBe(false);
   });
 
   it('fails a mixed checkout (stand-in cache, real snapshot, no marker) against the workbook', () => {
