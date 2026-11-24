@@ -180,11 +180,11 @@ describe('LeaseForecastModule — empty states', () => {
   it('Leasing Velocity explains what source data is missing instead of naming a table', () => {
     renderModule('/leasing', { forecast: { velocity: [] } });
     expect(screen.queryByText(/populate lease_events/)).toBeNull();
-    // One line, and honest that no feed exists (design review 2026-10-31 finding 12).
+    // One line, and honest about what is missing (design review 2026-10-31 finding 12).
     const note = screen.getByRole('note');
-    expect(note.textContent).toMatch(/^Not yet sourced\./);
-    expect(note.textContent).toMatch(/date each suite went vacant and the date it was re-leased/);
-    expect(note.textContent).toMatch(/no lease-history feed exists yet/);
+    expect(note.textContent).toMatch(/^No re-leasing measured yet\./);
+    expect(note.textContent).toMatch(/date a suite went vacant with the date it was re-leased/);
+    expect(note.textContent).toMatch(/Either no suite has turned over within that history, or lease events have not\s+been imported yet/);
   });
 
   it('Market rents shows a banner when none are entered, and none when some are', () => {

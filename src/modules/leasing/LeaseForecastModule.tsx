@@ -612,13 +612,15 @@ export function LeaseForecastModule() {
           <Card>
             <CardHeader title="Leasing Velocity" />
             {velocity.length === 0 ? (
-              // Design review 2026-10-31 finding 12: no empty panel on a default tab. One line that says
-              // the source is missing and that no feed exists: nothing writes lease_events today (its
-              // only code path is the reader in server/warehouse/lease-velocity.ts).
+              // Design review 2026-10-31 finding 12: no empty panel on a default tab. lease_events is
+              // written by scripts/import-lease-events.ts, which derives vacates and commencements from the
+              // rent-roll capture history. An empty result has two causes this panel cannot tell apart (no
+              // suite turned over in that history, or the importer has not run), so the copy names both.
               <div role="note" className="px-4 py-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Not yet sourced.</span>{' '}
-                Days-to-lease needs the date each suite went vacant and the date it was re-leased. The Master Workbook
-                carries only current leases, and no lease-history feed exists yet.
+                <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>No re-leasing measured yet.</span>{' '}
+                Days-to-lease pairs the date a suite went vacant with the date it was re-leased, derived from the
+                rent-roll history. Either no suite has turned over within that history, or lease events have not
+                been imported yet.
               </div>
             ) : (
               <DataTable
