@@ -38,6 +38,7 @@ import {
   assertCachedValuesPresent,
 } from './openpyxl-integrity';
 import { WORKBOOK_AS_OF, referenceDate } from '../config';
+import { classifyLeaseStatus } from './lease-status';
 
 type Worksheet = ExcelJS.Worksheet;
 type CellValue = ExcelJS.CellValue;
@@ -1266,12 +1267,19 @@ function parseLeases(
     // before the rename -- misattributing a data-quality warning to the wrong lease on a collision.
     const rowFlags: DataQualityFlag[] = [];
     const leaseEnd = isoOrNull(row(ws, r, 9), rowFlags, id, 'leaseEnd');
-    const rawStatus = (str(row(ws, r, 12)) ?? '').toLowerCase();
-    let status: LeaseStatus = 'Unknown';
-    if (rawStatus.includes('expiring')) status = 'Expiring Soon';
-    else if (rawStatus.includes('expired')) status = 'Expired';
-    else if (rawStatus.includes('active')) status = 'Active';
-    else if (rawStatus.includes('vacant')) status = 'Vacant';
+    const rawStatusCell = str(row(ws, r, 12)) ?? '';
+    const rawStatus = rawStatusCell.toLowerCase(); // still read below (vacant-row check)
+    const classified = classifyLeaseStatus(rawStatusCell);
+    const status: LeaseStatus = classified.status;
+    if (classified.inactiveSubstring) {
+      rowFlags.push({
+        entity: id,
+        field: 'status',
+        issue: 'Status contains "Inactive" but reads as Active (substring match); confirm whether this lease is live',
+        rawValue: rawStatusCell,
+        severity: 'warn',
+      });
+    }
     const resolvedPropertyId = resolvePropertyId(propertyKey, properties);
     // A lease that fails to resolve to a property is not dropped -- it still counts toward
     // that property's rent -- but propertyId:null silently zeroes it out of every per-property
