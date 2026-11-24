@@ -29,27 +29,31 @@
 //              tenancy seen in a single capture emits nothing: held when that is the newest capture
 //              (commence-unconfirmed), dropped as a phantom otherwise. A real lease sits on a weekly
 //              rent roll for many captures.
-//   commence   per confirmed tenancy, dated its earliest leaseStart (basis 'lease_start'), in the suite
-//              it was first seen in. A leaseStart after the newest capture is not yet an event.
+//   commence   per confirmed tenancy with a leaseStart, in the suite it was first seen in, dated its
+//              earliest leaseStart when that is on or before its first sighting      'lease_start'
+//              else its first sighting (listed ahead of its start, or first keyed with a blank start
+//              and given one later: it was on the rent roll from then)                'first_seen'
+//              So every commence is a LOWER bound on occupancy (refute round 6, wf_24523df2-4fd). A
+//              leaseStart after the newest capture is not yet an event.
 //   vacate     per confirmed tenancy whose last sighting is not the newest capture. The departure
 //              window is (lo, hi]: lo = asOf of its last sighting, hi = asOf of the first LATER capture
-//              holding any lease of that property (a capture missing the whole property is skipped).
+//              holding any line of that property (a capture missing the whole property is skipped).
 //              Held (vacate-unconfirmed) unless a capture after hi also holds the property.
 //              Dated, in order:
-//                leaseEnd when it falls in (lo, hi]                               'lease_end'
+//                leaseEnd when it falls in (lo, hi] AND hi - lo <= LEASE_END_WINDOW_DAYS (14)  'lease_end'
 //                else hi, the first capture it is missing from                    'first_absent'
-//              then, when a SUCCESSOR tenancy exists in the suite it was last seen in (a different
-//              confirmed tenancy, later leaseStart, and either starting on or after this lease's end
-//              or first seen after this tenancy's last sighting, so a co-tenant never qualifies),
-//              with S = the earliest successor start:
-//                S when S is earlier than the date above                        'successor_start'
+//              then S, when S is earlier than the date above                    'successor_start'
+//              where S = the earliest commence date of a REAL REPLACEMENT in the suite it was last seen
+//              in: another confirmed, non-renewal tenancy that emits a commence, began after this one
+//              (or, with no start of its own, was first seen after it), and is still listed after this
+//              tenancy's last sighting, a replacement listed beside it included (rounds 6-7).
 //              A line still listed past its lease end is a possible month-to-month holdover and is
-//              never backdated to the expired lease end, whatever is listed beside it (refute rounds
-//              3-5: wf_12470799-a63, wf_4d9846fe-f7c, wf_2a1ff182-4c1). The vacate is never dated
-//              after S, so a vacate never sorts after its successor's commence (that loses the real
-//              pair and mis-pairs the vacate with a later commence). Every basis is an UPPER bound on
-//              the vacate date, so a measured gap understates downtime and never raises a false
-//              slowLeasing flag.
+//              never backdated to the expired lease end (refute rounds 3-5: wf_12470799-a63,
+//              wf_4d9846fe-f7c, wf_2a1ff182-4c1). 'first_absent' and 'successor_start' are UPPER bounds
+//              on departure. 'lease_end' is a point estimate: an unseen holdover inside its window makes
+//              it early by at most the window (14 days), the only way a gap can read long, and by no
+//              more than that. A vacate is never dated after a later occupant's commence, so it never
+//              pairs with a later, unrelated commence (round 6).
 //   renewal    the same tenant's later lease in the suite it was last seen in, listed beside it or first
 //              listed by the next capture holding the property: no vacate, no second commence.
 //   presence   a property is on the rent roll in a capture when it has ANY line there, vacancy
@@ -126,7 +130,11 @@ export interface Capture {
   presentProperties?: string[];
 }
 
-export type EventBasis = 'lease_start' | 'lease_end' | 'first_absent' | 'successor_start';
+export type EventBasis = 'lease_start' | 'first_seen' | 'lease_end' | 'first_absent' | 'successor_start';
+
+/** A lease end is a usable vacate date only inside a departure window this tight (days). */
+export const LEASE_END_WINDOW_DAYS = 14;
+const dayDiff = (a: string, b: string): number => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 
 export interface LeaseEventRow {
   propertyId: string;
@@ -383,20 +391,35 @@ export function deriveLeaseEvents(input: Capture[]): { rows: LeaseEventRow[]; no
       }
     }
 
+    // OCCUPANCY BOUND (refute round 6, wf_24523df2-4fd): a tenancy was on the rent roll from its first
+    // sighting, so its commence is dated no later than that, whatever leaseStart is keyed later (a line
+    // first listed with a blank start). It is null only for a tenancy first seen in the earliest capture
+    // with no leaseStart: then nothing bounds when it began. Every commence is a LOWER bound.
+    const occOf = (t: Tenancy): { date: string; basis: EventBasis } | null => {
+      const start = startOf(t);
+      const seenAt = caps[first(t).idx]!.asOf;
+      if (start !== null && start <= seenAt) return { date: start, basis: 'lease_start' };
+      if (start !== null) return { date: seenAt, basis: 'first_seen' };
+      return first(t).idx === 0 ? null : { date: seenAt, basis: 'first_seen' };
+    };
+
     for (const t of confirmed) {
       const f = first(t);
       const start = startOf(t);
-      // Commence.
-      if (start !== null && !renewal.has(t)) {
-        const key = `c|${propertyId}|${f.lease.suiteKey}|${start}`;
+      const occ = occOf(t);
+      // Commence: dated the lease start when the tenancy was first listed on or after it, else its first
+      // sighting (listed ahead of its start, or keyed with a blank start). A lease start after the newest
+      // capture is not yet an event.
+      if (occ !== null && start !== null && !renewal.has(t)) {
+        const key = `c|${propertyId}|${f.lease.suiteKey}|${occ.date}`;
         if (start > newestAsOf) {
           notes.push({ kind: 'future-commence', propertyId, detail: `${propertyId} suite '${f.lease.suiteKey}' commences ${start}, after the newest capture (${newestAsOf}); not yet an event` });
         } else if (!seen.has(key)) {
           seen.add(key);
           rows.push({
             propertyId, suite: suiteOut(f.lease.suiteKey), tenant: last(t).lease.tenant, eventKind: 'commence',
-            eventDate: start, basis: 'lease_start',
-            sourceFile: `rent-roll ${caps[f.idx]!.asOf} [DERIVED:lease_start]`, abstractDate: caps[f.idx]!.asOf,
+            eventDate: occ.date, basis: occ.basis,
+            sourceFile: `rent-roll ${caps[f.idx]!.asOf} [DERIVED:${occ.basis}]`, abstractDate: caps[f.idx]!.asOf,
           });
         }
       }
@@ -418,23 +441,34 @@ export function deriveLeaseEvents(input: Capture[]): { rows: LeaseEventRow[]; no
       const lo = caps[l.idx]!.asOf;
       const hi = caps[hiIdx]!.asOf;
       const leaseEnd = l.lease.leaseEnd;
-      let basis: EventBasis = leaseEnd !== null && leaseEnd > lo && leaseEnd <= hi ? 'lease_end' : 'first_absent';
+      // The lease end dates the vacate only inside a TIGHT window (round 6): a holdover past it is unseen
+      // there, so the date can be early by at most the window. A wider window is dated hi, an upper bound.
+      const tight = dayDiff(lo, hi) <= LEASE_END_WINDOW_DAYS;
+      let basis: EventBasis = tight && leaseEnd !== null && leaseEnd > lo && leaseEnd <= hi ? 'lease_end' : 'first_absent';
       let date = basis === 'lease_end' ? leaseEnd! : hi;
 
-      const successors = confirmed
-        .filter((o) => o !== t && first(o).lease.suiteKey === l.lease.suiteKey)
-        .map((o) => ({ o, s: startOf(o) }))
-        .filter((x): x is { o: Tenancy; s: string } => x.s !== null && (start === null || x.s > start)
-          && ((leaseEnd !== null && x.s >= leaseEnd) || first(x.o).idx > l.idx))
-        .sort((a, b) => a.s.localeCompare(b.s));
-      const S = successors[0]?.s;
-      // The vacate is only ever moved EARLIER to the successor start S, never back to an expired lease
-      // end before the last sighting. A line listed past its lease end may be a month-to-month holdover
-      // for any number of captures, so an expired leaseEnd bounds nothing (refute rounds 3-5:
-      // wf_12470799-a63, wf_4d9846fe-f7c, wf_2a1ff182-4c1). Every vacate date is an upper bound, so a
-      // measured gap can understate downtime but never overstate it.
+      // Clamp to S, the earliest occupancy bound of ANY other confirmed tenancy in this suite that began
+      // after this one (round 6: a replacement listed beside the departing tenant counts too, so no vacate
+      // is ever left dated after a later occupant's commence). Never back to an expired lease end before
+      // the last sighting: a line listed past its lease end may be a month-to-month holdover (rounds 3-5:
+      // wf_12470799-a63, wf_4d9846fe-f7c, wf_2a1ff182-4c1).
+      // Only a REAL REPLACEMENT counts (round 7, wf_02d58977-4bc): one that emits a commence (same
+      // predicate as the commence loop, so the clamped vacate always has a commence on S to pair with)
+      // and is still listed after this tenancy's last sighting (a co-tenant that came and went earlier
+      // never qualifies). With no occupancy bound of its own, only a tenancy first seen later counts.
+      const tOcc = occ?.date ?? null;
+      const S = confirmed
+        .filter((o) => {
+          if (o === t || renewal.has(o) || first(o).lease.suiteKey !== l.lease.suiteKey) return false;
+          const os = startOf(o);
+          if (os === null || os > newestAsOf || last(o).idx <= l.idx) return false;
+          return tOcc !== null || first(o).idx > first(t).idx;
+        })
+        .map((o) => occOf(o)?.date ?? null)
+        .filter((d): d is string => d !== null && (tOcc === null || d > tOcc))
+        .sort()[0];
       if (S !== undefined && S < date) { date = S; basis = 'successor_start'; }
-      if (start !== null && date < start) continue; // never vacate before the tenancy began
+      if (tOcc !== null && date < tOcc) continue; // never vacate before the tenancy began
       const key = `v|${propertyId}|${l.lease.suiteKey}|${date}|${l.lease.tenantKey}`;
       if (seen.has(key)) continue;
       seen.add(key);

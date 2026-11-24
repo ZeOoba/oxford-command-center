@@ -107,16 +107,25 @@ describe('deriveLeaseEvents', () => {
 
   it('a tenancy first seen in the earliest capture counts as confirmed (history starts there)', () => {
     const { rows } = deriveLeaseEvents([cap('2026-08-01', [{ leaseEnd: '2026-08-20' }, STAY]), cap('2026-09-01', [STAY]), cap('2026-10-01', [STAY])]);
-    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', eventDate: '2026-08-20', basis: 'lease_end' })]);
+    // A month-wide window: the lease end is not used (round 6), the vacate is the first absence.
+    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', eventDate: '2026-09-01', basis: 'first_absent' })]);
   });
 
-  it('vacate dated leaseEnd when it falls between the last sighting and the first absence', () => {
+  it('vacate dated leaseEnd when it falls inside a tight window between the last sighting and the first absence', () => {
+    const { rows } = deriveLeaseEvents([
+      cap('2026-09-03', [{ leaseEnd: '2026-09-15' }, STAY]), cap('2026-09-10', [{ leaseEnd: '2026-09-15' }, STAY]),
+      cap('2026-09-17', [STAY]), cap('2026-09-24', [STAY]),
+    ]);
+    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', tenant: 'Acme Widgets', eventDate: '2026-09-15', basis: 'lease_end' })]);
+    expect(vacates(rows)[0]!.sourceFile).toBe('rent-roll-diff 2026-09-10 -> 2026-09-17 [DERIVED:lease_end]');
+  });
+
+  it('a window wider than LEASE_END_WINDOW_DAYS dates the vacate at the first absence', () => {
     const { rows } = deriveLeaseEvents([
       cap('2026-08-01', [{ leaseEnd: '2026-09-15' }, STAY]), cap('2026-09-01', [{ leaseEnd: '2026-09-15' }, STAY]),
       cap('2026-10-01', [STAY]), cap('2026-11-01', [STAY]),
     ]);
-    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', tenant: 'Acme Widgets', eventDate: '2026-09-15', basis: 'lease_end' })]);
-    expect(vacates(rows)[0]!.sourceFile).toBe('rent-roll-diff 2026-09-01 -> 2026-10-01 [DERIVED:lease_end]');
+    expect(vacates(rows)).toEqual([expect.objectContaining({ eventDate: '2026-10-01', basis: 'first_absent' })]);
   });
 
   it('vacate dated at the first absent capture for a holdover or an early termination with no successor', () => {
@@ -276,11 +285,15 @@ describe('refute round 2 (wf_d7dfc6cb-dc6) triggers', () => {
     expect(v).toMatchObject({ leasingEventsN: 1, medianDaysToLease: 0 });
   });
 
-  it('T4: a turnover inside one capture window keeps the dark period the lease dates show', () => {
+  it('T4: a turnover inside one wide capture window no longer depends on where a capture lands (round 6)', () => {
     const old: L = { tenantName: 'Alpha', leaseStart: '2020-01-01', leaseEnd: '2024-06-30' };
     const next: L = { tenantName: 'Bravo', leaseStart: '2024-11-01' };
     const v = velocityOf([cap('2024-06-10', [old, STAY]), cap('2024-06-25', [old, STAY]), cap('2024-12-10', [next, STAY]), cap('2025-01-10', [next, STAY])])!;
-    expect(v).toMatchObject({ leasingEventsN: 1, medianDaysToLease: 124 }); // 06-30 -> 11-01
+    // The 06-25 -> 12-10 window is too wide to trust the 06-30 lease end (an unseen holdover fits in it).
+    expect(v).toMatchObject({ leasingEventsN: 1, medianDaysToLease: 0, slowLeasing: false });
+    // With weekly captures around the lease end the dark period is measured.
+    const tight = velocityOf([cap('2024-06-18', [old, STAY]), cap('2024-06-25', [old, STAY]), cap('2024-07-02', [STAY]), cap('2024-11-05', [next, STAY]), cap('2024-11-12', [next, STAY])])!;
+    expect(tight).toMatchObject({ leasingEventsN: 1, medianDaysToLease: 124, slowLeasing: true }); // 06-30 -> 11-01
     // Listed again 07-10, past its lease end, it is a holdover (round 3 H2): the 06-30 end is no longer
     // evidence of the vacate date, so the gap is bounded by the successor's start, never backdated.
     const held = velocityOf([cap('2024-06-10', [old, STAY]), cap('2024-07-10', [old, STAY]), cap('2024-12-10', [next, STAY]), cap('2025-01-10', [next, STAY])])!;
@@ -296,7 +309,8 @@ describe('refute round 2 (wf_d7dfc6cb-dc6) triggers', () => {
       cap('2024-12-01', [gone, C1, other]), cap('2025-01-01', [gone, C1, other]), cap('2025-02-01', [other]),
       cap('2025-04-01', [C2, other]), cap('2025-05-01', [C2, other]),
     ]);
-    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', eventDate: '2025-01-31', basis: 'lease_end' })]);
+    // prop-a is absent from the 02-01 capture, so the first capture holding it (hi) is 04-01.
+    expect(vacates(rows)).toEqual([expect.objectContaining({ suite: 'A', eventDate: '2025-04-01', basis: 'first_absent' })]);
     expect(commences(rows).filter((r) => r.suite === 'C').map((r) => r.eventDate)).toEqual(['2023-01-01']);
   });
 
@@ -449,6 +463,111 @@ describe('refute round 5 (wf_2a1ff182-4c1) triggers', () => {
   });
 });
 
+describe('refute round 6 (wf_24523df2-4fd) triggers', () => {
+  it('HIGH: a successor listed with a blank start commences no later than its first sighting', () => {
+    const alpha: L = { unit: '100', tenantName: 'Alpha', leaseStart: '2020-01-01', leaseEnd: '2025-12-31' };
+    const gamma: L = { unit: '200', tenantName: 'Gamma' };
+    const beta0: L = { unit: '100', tenantName: 'Beta', leaseStart: null, leaseEnd: null };
+    const beta1: L = { unit: '100', tenantName: 'Beta', leaseStart: '2026-09-01', leaseEnd: '2031-08-31' };
+    const caps = [
+      cap('2025-11-01', [alpha, gamma]), cap('2025-12-15', [alpha, gamma]), cap('2026-01-15', [beta0, gamma]),
+      cap('2026-03-01', [beta0, gamma]), cap('2026-06-01', [beta0, gamma]), cap('2026-09-15', [beta1, gamma]),
+      cap('2026-10-15', [beta1, gamma]),
+    ];
+    const c = commences(deriveLeaseEvents(caps).rows).find((r) => r.tenant === 'Beta')!;
+    expect(c).toMatchObject({ eventDate: '2026-01-15', basis: 'first_seen' });
+    const v = velocityOf(caps)!;
+    expect(v.slowLeasing).toBe(false);
+    expect(v.medianDaysToLease!).toBeLessThanOrEqual(15);
+  });
+
+  it('MEDIUM: a lease end inside a wide capture window is not used; the vacate is bounded by the window and the successor', () => {
+    const old: L = { tenantName: 'Old Tenant', leaseStart: '2020-01-01', leaseEnd: '2025-02-01' };
+    const nu: L = { tenantName: 'New Tenant', leaseStart: '2025-04-28' };
+    const caps = [cap('2025-01-18', [old, STAY]), cap('2025-01-25', [old, STAY]), cap('2025-05-03', [nu, STAY]), cap('2025-05-10', [nu, STAY])];
+    const v = vacates(deriveLeaseEvents(caps).rows).find((r) => r.tenant === 'Old Tenant')!;
+    expect(v.basis).not.toBe('lease_end');
+    expect(velocityOf(caps)).toMatchObject({ leasingEventsN: 1, medianDaysToLease: 0, slowLeasing: false });
+  });
+
+  it('a lease end inside a tight (<= 14 day) window is still used', () => {
+    const old: L = { tenantName: 'Old Tenant', leaseStart: '2020-01-01', leaseEnd: '2025-01-31' };
+    const nu: L = { tenantName: 'New Tenant', leaseStart: '2025-04-01' };
+    const caps = [cap('2025-01-25', [old, STAY]), cap('2025-02-01', [STAY]), cap('2025-04-15', [nu, STAY]), cap('2025-04-22', [nu, STAY])];
+    expect(vacates(deriveLeaseEvents(caps).rows)).toEqual([expect.objectContaining({ eventDate: '2025-01-31', basis: 'lease_end' })]);
+  });
+
+  it('MEDIUM: a replacement listed beside the departing tenant clamps its vacate, so no orphan vacate pairs with a later commence', () => {
+    const alpha: L = { tenantName: 'Alpha', leaseStart: '2020-01-01', leaseEnd: '2027-12-31' };
+    const beta: L = { tenantName: 'Beta', leaseStart: '2026-03-15', leaseEnd: '2029-12-31' };
+    const gamma: L = { tenantName: 'Gamma', leaseStart: '2026-10-01' };
+    const caps = [
+      cap('2026-01-01', [alpha, STAY]), cap('2026-03-01', [alpha, beta, STAY]), cap('2026-05-01', [beta, STAY]),
+      cap('2026-07-01', [beta, STAY]), cap('2026-10-01', [beta, gamma, STAY]), cap('2026-11-01', [gamma, STAY]),
+    ];
+    const rows = deriveLeaseEvents(caps).rows;
+    const av = vacates(rows).find((r) => r.tenant === 'Alpha')!;
+    const bc = commences(rows).find((r) => r.tenant === 'Beta')!;
+    expect(av.eventDate <= bc.eventDate).toBe(true);
+    const v = velocityOf(caps)!;
+    expect(v.slowLeasing).toBe(false);
+    // Same with Beta staying through the newest capture and Gamma a second occupant.
+    const caps2 = [
+      cap('2026-01-01', [alpha, STAY]), cap('2026-03-01', [alpha, beta, STAY]), cap('2026-05-01', [beta, STAY]),
+      cap('2026-07-01', [beta, STAY]), cap('2026-10-01', [beta, gamma, STAY]), cap('2026-11-01', [beta, gamma, STAY]),
+    ];
+    expect(velocityOf(caps2)!.slowLeasing).toBe(false);
+  });
+});
+
+describe('refute round 7 (wf_02d58977-4bc) triggers', () => {
+  const X: L = { unit: '200', tenantName: 'Xstay' };
+  const Y: L = { unit: '300', tenantName: 'Ystay' };
+
+  it("HIGH: a short-stay co-tenant that left earlier never backdates a long-tenured tenant's vacate", () => {
+    const a: L = { unit: '100', tenantName: 'Alpha', leaseStart: '2020-01-01', leaseEnd: '2026-05-31' };
+    const b: L = { unit: '100', tenantName: 'Bravo', leaseStart: '2022-01-15', leaseEnd: '2023-01-31' };
+    const d: L = { unit: '100', tenantName: 'Delta', leaseStart: '2026-07-15' };
+    const caps = [
+      cap('2021-12-01', [a, X, Y]), cap('2022-02-01', [a, b, X, Y]), cap('2022-06-01', [a, b, X, Y]),
+      cap('2023-03-01', [a, X, Y]), cap('2023-06-01', [a, X, Y]), cap('2026-07-01', [X, Y]),
+      cap('2026-09-01', [d, X, Y]), cap('2026-10-01', [d, X, Y]),
+    ];
+    const av = vacates(deriveLeaseEvents(caps).rows).find((r) => r.tenant === 'Alpha')!;
+    expect(av.eventDate >= '2023-06-01').toBe(true);
+    expect(velocityOf(caps)!.slowLeasing).toBe(false);
+  });
+
+  it('MEDIUM: a tenancy that never emits a commence (future or blank start) listed beside the departing tenant does not clamp its vacate', () => {
+    const xray: L = { tenantName: 'Xray Co', leaseStart: '2020-01-01', leaseEnd: '2030-12-31' };
+    const wex: L = { tenantName: 'Wex Co', leaseStart: '2026-07-01' };
+    for (const zedStart of ['2027-06-01', null]) {
+      const zed: L = { tenantName: 'Zed Co', leaseStart: zedStart };
+      const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11'];
+      const caps = months.map((m) => {
+        const n = Number(m);
+        const ls: L[] = [STAY];
+        if (n <= 5) ls.push(xray);
+        if (n >= 3) ls.push(zed);
+        if (n >= 7) ls.push(wex);
+        return cap(`2026-${m}-01`, ls);
+      });
+      const v = velocityOf(caps)!;
+      expect(v.medianDaysToLease!).toBeLessThanOrEqual(61);
+    }
+  });
+
+  it("a departing tenancy with no start (first seen in the earliest capture) is never backdated to an earlier co-tenant's start", () => {
+    const old: L = { tenantName: 'Oldco', leaseStart: null, leaseEnd: null };
+    const co: L = { tenantName: 'Coco', leaseStart: '2015-01-01' };
+    const caps = [
+      cap('2026-01-01', [old, co, STAY]), cap('2026-02-01', [old, co, STAY]), cap('2026-03-01', [co, STAY]), cap('2026-04-01', [co, STAY]),
+    ];
+    const ov = vacates(deriveLeaseEvents(caps).rows).find((r) => r.tenant === 'Oldco');
+    if (ov) expect(ov.eventDate > '2026-02-01').toBe(true);
+  });
+});
+
 describe('replaceDerivedLeaseEvents', () => {
   const history = () => [
     cap('2026-07-01', [{ leaseEnd: '2026-08-20' }, STAY]),
@@ -462,7 +581,7 @@ describe('replaceDerivedLeaseEvents', () => {
     const db = freshDb();
     const res = importLeaseEvents(db, history());
     expect(res.added).toBe(res.derived);
-    expect(velocity(db)).toMatchObject({ medianDaysToLease: 40, leasingEventsN: 1 }); // 08-20 -> 09-29
+    expect(velocity(db)).toMatchObject({ medianDaysToLease: 28, leasingEventsN: 1 }); // 09-01 (first absent) -> 09-29
   });
 
   it('a re-run adds and removes nothing; non-derived rows are never touched', () => {

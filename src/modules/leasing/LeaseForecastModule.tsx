@@ -103,6 +103,12 @@ const SCENARIO_OPTIONS = (['renew_at_current', 'renew_at_market', 'vacancy_hairc
 
 // ── Velocity table ─────────────────────────────────────────────────────────────
 
+// The slow-leasing flag is ADVISORY (Gabriel, 2026-11-24): days-to-lease is derived from rent-roll
+// snapshots by scripts/import-lease-events.ts, whose dating did not pass adversarial review clean
+// (refute rounds 1-7, last wf_02d58977-4bc). It is a prompt to look, never a ratified signal.
+const SLOW_ADVISORY_TITLE =
+  'Advisory: median days-to-lease above 60, derived from rent-roll snapshots. Check the property before acting on it.';
+
 const velocityCols: Column<LeasingVelocity>[] = [
   {
     key: 'property',
@@ -139,7 +145,9 @@ const velocityCols: Column<LeasingVelocity>[] = [
     header: 'Slow?',
     render: (v) =>
       v.slowLeasing ? (
-        <Badge tone="amber">Slow</Badge>
+        <span title={SLOW_ADVISORY_TITLE}>
+          <Badge tone="amber">Slow (advisory)</Badge>
+        </span>
       ) : (
         <span style={{ color: 'var(--text-tertiary)' }}>—</span>
       ),
@@ -623,13 +631,21 @@ export function LeaseForecastModule() {
                 been imported yet.
               </div>
             ) : (
-              <DataTable
-                columns={velocityCols}
-                rows={velocity}
-                getRowId={(v) => v.propertyId}
-                initialSort={{ key: 'median', dir: 'asc' }}
-                maxHeight={360}
-              />
+              <>
+                <DataTable
+                  columns={velocityCols}
+                  rows={velocity}
+                  getRowId={(v) => v.propertyId}
+                  initialSort={{ key: 'median', dir: 'asc' }}
+                  maxHeight={360}
+                />
+                <div role="note" className="px-4 py-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Advisory.</span>{' '}
+                  Days-to-lease is derived from rent-roll snapshots, not lease documents, so a gap can read long
+                  or short by the spacing between snapshots. Treat the Slow flag as a prompt to check the
+                  property, not a confirmed finding.
+                </div>
+              </>
             )}
           </Card>
         </div>

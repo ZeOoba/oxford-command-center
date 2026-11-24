@@ -176,6 +176,17 @@ describe('LeaseForecastModule — leases outside the four buckets', () => {
   });
 });
 
+describe('LeaseForecastModule — slow-leasing flag is advisory', () => {
+  it('labels the Slow badge advisory and explains why beneath the velocity table', () => {
+    renderModule();
+    expect(screen.getByText('Slow (advisory)')).toBeTruthy();
+    expect(screen.queryByText(/^Slow$/)).toBeNull();
+    const note = screen.getByRole('note');
+    expect(note.textContent).toMatch(/^Advisory\./);
+    expect(note.textContent).toMatch(/derived from rent-roll snapshots/);
+  });
+});
+
 describe('LeaseForecastModule — empty states', () => {
   it('Leasing Velocity explains what source data is missing instead of naming a table', () => {
     renderModule('/leasing', { forecast: { velocity: [] } });
