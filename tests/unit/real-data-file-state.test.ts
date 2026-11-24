@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileState } from '../../server/real-data-status';
-import { cacheCheckBasis, cacheFileState, type ReadState } from '../../server/ar/mapping-cache-basis';
+import { cacheCheckBasis, cacheFileState, runCacheCheck, type ReadState } from '../../server/ar/mapping-cache-basis';
 
 const CACHE = 'data/ar-mapping-cache.json';
 const roots: string[] = [];
@@ -107,5 +107,52 @@ describe('cacheFileState', () => {
     put(root, 'data/.synthetic-seeded.json', '{not json');
     expect(cacheFileState(root, {})).toBe('unknown');
     expect(cacheCheckBasis(cacheFileState(root, {}), 'synthetic')).toBe('workbook');
+    expect(cacheFileState(root, { AR_MAPPING_CACHE: CACHE })).toBe('unknown');
+  });
+});
+
+describe('runCacheCheck', () => {
+  const SNAP = 'data/snapshots/portfolio.json';
+  const cache = (entries: Record<string, string>) => ({ entries, savedAt: '2026-01-01T00:00:00Z' });
+
+  it('checks against the workbook roster on the workbook basis, and counts a dangling entry as a failure', () => {
+    const root = makeRoot();
+    put(root, SNAP, JSON.stringify({ leases: [{ id: 'lease-snap' }] }));
+    const ok = runCacheCheck('workbook', ['lease-wb'], cache({ 'a co': 'lease-wb', 'b co': 'SKIP' }), root);
+    expect(ok.failed).toBe(false);
+    expect(ok.lines).toEqual([expect.stringMatching(/^✓ PASS {2}AR mapping cache resolves +0 dangling$/)]);
+    const bad = runCacheCheck('workbook', ['lease-wb'], cache({ 'a co': 'lease-snap' }), root);
+    expect(bad.failed).toBe(true);
+    expect(bad.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+    expect(bad.lines).toHaveLength(2);
+    expect(bad.lines[1]).toContain('a co → lease-snap');
+  });
+
+  it('checks against the synthetic snapshot roster, not the workbook, on the synthetic basis', () => {
+    const root = makeRoot();
+    put(root, SNAP, JSON.stringify({ leases: [{ id: 'lease-snap' }] }));
+    const ok = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-snap' }), root);
+    expect(ok.failed).toBe(false);
+    expect(ok.lines[0]).toMatch(/^✓ PASS {2}AR mapping cache resolves \(synthetic\) +0 dangling$/);
+    const bad = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-wb' }), root);
+    expect(bad.failed).toBe(true);
+    expect(bad.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves \(synthetic\) +1 dangling$/);
+  });
+
+  it('turns a missing or torn synthetic snapshot into a FAIL line instead of throwing', () => {
+    const root = makeRoot();
+    const missing = runCacheCheck('synthetic-snapshot', [], cache({}), root);
+    expect(missing.failed).toBe(true);
+    expect(missing.lines).toEqual([expect.stringMatching(/^✗ FAIL .*synthetic snapshot unreadable: /)]);
+    put(root, SNAP, '{"leases": [');
+    const torn = runCacheCheck('synthetic-snapshot', [], cache({}), root);
+    expect(torn.failed).toBe(true);
+    expect(torn.lines[0]).toMatch(/synthetic snapshot unreadable/);
+  });
+
+  it('skips without failing only on the skip basis', () => {
+    const root = makeRoot();
+    const skip = runCacheCheck('skip', [], cache({ 'a co': 'nowhere' }), root);
+    expect(skip).toEqual({ failed: false, lines: [expect.stringMatching(/^– SKIP {2}AR mapping cache resolves /)] });
   });
 });

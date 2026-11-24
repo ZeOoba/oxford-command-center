@@ -3,10 +3,8 @@ import { findRentRollColumns, inferType, parseWorkbook, rentTotalColumns } from 
 import { annualRentGapIsExplainedByAbatement, checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
-import { loadCache, validateMappingCache } from '../server/ar/mapping-cache';
-import { SNAPSHOT_REL, cacheCheckBasis, cacheFileState, readState } from '../server/ar/mapping-cache-basis';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { loadCache } from '../server/ar/mapping-cache';
+import { SNAPSHOT_REL, cacheCheckBasis, cacheFileState, readState, runCacheCheck } from '../server/ar/mapping-cache-basis';
 
 loadEnvFile();
 
@@ -224,20 +222,9 @@ async function main() {
   // the real workbook — see server/ar/mapping-cache-basis.ts.
   const root = process.cwd();
   const basis = cacheCheckBasis(cacheFileState(root), readState(root, SNAPSHOT_REL));
-  if (basis === 'skip') {
-    console.log(`– SKIP  ${'AR mapping cache resolves'.padEnd(42)} synthetic stand-in cache, no synthetic snapshot to check it against`);
-  } else {
-    const roster =
-      basis === 'workbook'
-        ? snapshot.leases.map((l) => l.id)
-        : ((JSON.parse(readFileSync(join(root, SNAPSHOT_REL), 'utf8')) as { leases?: Array<{ id: string }> }).leases ?? []).map((l) => l.id);
-    const cacheFlags = validateMappingCache(loadCache(), new Set(roster));
-    const cacheOk = cacheFlags.length === 0;
-    if (!cacheOk) failed++;
-    const label = basis === 'workbook' ? 'AR mapping cache resolves' : 'AR mapping cache resolves (synthetic)';
-    console.log(`${cacheOk ? '✓ PASS' : '✗ FAIL'}  ${label.padEnd(42)} ${cacheFlags.length} dangling`);
-    for (const f of cacheFlags) console.log(`         ${f.field} → ${f.rawValue}: ${f.issue}`);
-  }
+  const cacheCheck = runCacheCheck(basis, snapshot.leases.map((l) => l.id), loadCache(), root);
+  if (cacheCheck.failed) failed++;
+  for (const line of cacheCheck.lines) console.log(line);
 
   const peopleSeeded = snapshot.counterparties.filter((c) => c.source === 'memory').length;
   const peopleOk = peopleSeeded >= 4;
