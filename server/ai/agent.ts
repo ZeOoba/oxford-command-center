@@ -2,6 +2,7 @@ import type { Deal, MacroSnapshot, PortfolioSnapshot } from '../../src/contracts
 import { TOOL_DEFS, runTool, type EntityRefLite, type ToolResult } from './tools';
 import { respond } from './respond';
 import { mentionsClaimedDeal, tightenDeals } from './deal-name-gate';
+import { ASSISTANT_MODEL } from './models';
 
 /**
  * Runtime-agnostic, streaming, tool-using agent over the company spine. One implementation
@@ -334,7 +335,7 @@ function cleanBlocks(blocks: Block[]): unknown[] {
 
 export async function runAgent(opts: AgentOptions): Promise<void> {
   const { question, snapshot, emit, signal } = opts;
-  const model = opts.model || 'claude-opus-5';
+  const model = opts.model || ASSISTANT_MODEL;
   const effort = opts.effort || 'medium';
   const maxTurns = opts.maxTurns ?? 8;
   const allRefs: EntityRefLite[] = [];

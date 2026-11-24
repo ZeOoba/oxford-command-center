@@ -147,7 +147,8 @@ describe('composeLeaseNarrative — happy path', () => {
     expect(result.narrative?.model).toBe(DEFAULT_MODEL);
   });
 
-  it('sends temperature 0 in the request body', async () => {
+  // Tier 4 (2026-11-23): Haiku 5.5 rejects a non-default temperature; thinking is turned off instead.
+  it('sends no temperature and thinking disabled in the request body', async () => {
     let capturedBody: unknown;
     const capturingFetch: typeof fetch = async (_url, init) => {
       capturedBody = JSON.parse((init as RequestInit).body as string);
@@ -157,7 +158,9 @@ describe('composeLeaseNarrative — happy path', () => {
       apiKey: 'test-api-key',
       fetchImpl: capturingFetch,
     });
-    expect((capturedBody as { temperature?: number })?.temperature).toBe(0);
+    expect((capturedBody as { temperature?: number })?.temperature).toBeUndefined();
+    expect((capturedBody as { thinking?: unknown })?.thinking).toEqual({ type: 'disabled' });
+    expect((capturedBody as { model?: string })?.model).toBe('claude-haiku-5-5');
   });
 });
 
