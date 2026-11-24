@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { RCT_ADDER_IDS, RCT_CONSTRUCTION_TYPES } from '../lib/rct-adjust';
-import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from './acquisition-bounds';
+import { EXIT_CAP_MAX, RATE_UNIT_MAX_EXCLUSIVE, UST10YR_MAX, UST10YR_MIN } from './acquisition-bounds';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
 export const RULESET_VERSION = '2.0.0' as const;
@@ -356,12 +356,13 @@ export const AcquisitionInput = z.object({
    * market at all, which is precisely why its RCT was flat.
    */
   market: z.string().nullable().default(null),
-  stabilizedYoc: z.number().nullable().default(null),
+  // Decimal rate (0.095 = 9.50%): a percent-scale value (9.5) is rejected; the engine re-checks (isDecimalRate).
+  stabilizedYoc: z.number().finite().lt(RATE_UNIT_MAX_EXCLUSIVE).nullable().default(null), // bound shared with the engine
   // IRR floor inputs (ruleset 2.0.0). unleveredIrr10yr: all-cash 10-yr IRR, exit at the market exit cap; null =>
   // the IRR floor is indeterminate (caps at T2). ust10yr: FRED DGS10 trailing 30-day average as a decimal (0.043 =
   // 4.30%), with its as-of date; null => the floor is tested at unleveredIrrFloorMin and flagged [UST UNVERIFIED].
   // vacantSfShareAtClose: share of SF vacant at close (0..1); null on a not-fully-vacant deal => no premium, flagged.
-  unleveredIrr10yr: z.number().nullable().default(null),
+  unleveredIrr10yr: z.number().finite().lt(RATE_UNIT_MAX_EXCLUSIVE).nullable().default(null), // decimal; bound shared with the engine
   ust10yr: z.number().min(UST10YR_MIN).max(UST10YR_MAX).nullable().default(null), // bounds shared with the governor
   ustAsOf: z.string().nullable().default(null),
   vacantSfShareAtClose: z.number().min(0).max(1).nullable().default(null),

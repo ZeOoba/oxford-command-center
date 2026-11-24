@@ -22,3 +22,18 @@ export const UST10YR_MAX = 0.2;
  * 4.30% UST) — enough to clear a deal that fails at the intended UST. Ratified by Gabriel 2026-11-18 (PR 585 merge gate F-012, "Add a 0.5% UST floor").
  */
 export const UST10YR_MIN = 0.005;
+
+/**
+ * Exclusive upper bound for the STAGE 1 floor rates -- stabilized YoC and 10-yr unlevered IRR -- as DECIMALS (1 = 100%).
+ * A percent-scale typo (9.5 for 9.50%) always lands at >= 1, and "9.5 > 0.08" would clear the yield floor (and earn full
+ * Yield credit) for a deal far below it; the IRR floor the same (cross-repo audit 2026-11-23, HIGH). A pure UNIT guard,
+ * not an economic cap: no real decimal YoC or unlevered IRR reaches 100%. Chosen by Gabriel 2026-11-23 ("Unit guard:
+ * < 1.0"). Ratified floor values are unchanged. Shared by the contract (zod .lt) and the engine (isDecimalRate), so
+ * loosening either layer alone cannot fail open.
+ */
+export const RATE_UNIT_MAX_EXCLUSIVE = 1;
+
+/** True when x is a finite decimal rate below RATE_UNIT_MAX_EXCLUSIVE (negative rates are real and allowed). */
+export function isDecimalRate(x: number): boolean {
+  return Number.isFinite(x) && x < RATE_UNIT_MAX_EXCLUSIVE;
+}

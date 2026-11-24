@@ -9,7 +9,39 @@ import {
   ReplacementCostTable,
   RULESET_VERSION,
 } from '@contracts/acquisition';
-import { EXIT_CAP_MAX, UST10YR_MAX, UST10YR_MIN } from '@contracts/acquisition-bounds';
+import { EXIT_CAP_MAX, isDecimalRate, RATE_UNIT_MAX_EXCLUSIVE, UST10YR_MAX, UST10YR_MIN } from '@contracts/acquisition-bounds';
+
+// Cross-repo audit 2026-11-23 (HIGH): stabilizedYoc and unleveredIrr10yr were bare z.number(), so a percent-scale typo
+// (9.5 for 9.50%) cleared the 8% yield / 10% IRR floors. Unit guard < 1.0 (Gabriel 2026-11-23), contract + engine.
+describe('STAGE 1 floor input scale (stabilized YoC, 10-yr unlevered IRR)', () => {
+  const ok = (o: Record<string, unknown>) => AcquisitionInput.safeParse({ dealId: 'scale', ...o }).success;
+  it('the shared bound is a pure unit guard at 100%', () => {
+    expect(RATE_UNIT_MAX_EXCLUSIVE).toBe(1);
+  });
+  it('rejects a percent-scale YoC / IRR and anything at or above 100%', () => {
+    for (const field of ['stabilizedYoc', 'unleveredIrr10yr']) {
+      expect(ok({ [field]: 9.5 })).toBe(false);
+      expect(ok({ [field]: 12 })).toBe(false);
+      expect(ok({ [field]: 1 })).toBe(false);
+    }
+  });
+  it('accepts real decimal rates, including negative ones and null', () => {
+    for (const field of ['stabilizedYoc', 'unleveredIrr10yr']) {
+      expect(ok({ [field]: 0.095 })).toBe(true);
+      expect(ok({ [field]: 0.999 })).toBe(true);
+      expect(ok({ [field]: -0.02 })).toBe(true);
+      expect(ok({ [field]: null })).toBe(true);
+    }
+  });
+  it('isDecimalRate (the engine-side second layer) agrees, and rejects non-finite values', () => {
+    expect(isDecimalRate(0.095)).toBe(true);
+    expect(isDecimalRate(-0.5)).toBe(true);
+    expect(isDecimalRate(1)).toBe(false);
+    expect(isDecimalRate(9.5)).toBe(false);
+    expect(isDecimalRate(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(isDecimalRate(Number.NaN)).toBe(false);
+  });
+});
 
 // PR 585 merge gate F-009/F-010: the DSCR-floor inputs are decimal rates; the contract is the first unit guard and
 // shares its bounds with the governor (which independently fails closed — see acq-governor-proxy.test.ts).
