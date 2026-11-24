@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fileState } from '../../server/real-data-status';
-import { cacheCheckBasis, cacheFileState, runCacheCheck, type ReadState } from '../../server/ar/mapping-cache-basis';
+import { cacheCheckBasis, cacheFileState, classifyCacheCheck, runCacheCheck, type ReadState } from '../../server/ar/mapping-cache-basis';
 
 const CACHE = 'data/ar-mapping-cache.json';
 const roots: string[] = [];
@@ -67,19 +67,71 @@ describe('fileState', () => {
 describe('cacheCheckBasis', () => {
   const states: ReadState[] = ['absent', 'synthetic', 'real', 'unknown'];
 
-  it('keeps the real-workbook check for every cache reading except a positive synthetic one', () => {
+  it('keeps the real-workbook check for every cell except synthetic/synthetic and synthetic/absent', () => {
     for (const cache of states) {
       for (const snapshot of states) {
-        const basis = cacheCheckBasis(cache, snapshot);
-        if (cache === 'synthetic') expect(basis).not.toBe('workbook');
-        else expect(basis).toBe('workbook');
+        const expected =
+          cache === 'synthetic' && snapshot === 'synthetic'
+            ? 'synthetic-snapshot'
+            : cache === 'synthetic' && snapshot === 'absent'
+              ? 'skip'
+              : 'workbook';
+        expect([cache, snapshot, cacheCheckBasis(cache, snapshot)]).toEqual([cache, snapshot, expected]);
       }
     }
   });
+});
 
-  it('checks a synthetic cache against a synthetic snapshot, and skips only when there is none', () => {
-    expect(cacheCheckBasis('synthetic', 'synthetic')).toBe('synthetic-snapshot');
-    for (const snapshot of ['absent', 'real', 'unknown'] as const) expect(cacheCheckBasis('synthetic', snapshot)).toBe('skip');
+describe('classifyCacheCheck', () => {
+  const SNAP = 'data/snapshots/portfolio.json';
+  const FIX_CACHE = '{"entries":{"Synthetic Co":"lease-a"}}';
+  const FIX_SNAP = '{"leases":[{"id":"lease-a"}]}';
+
+  // A root whose manifest covers both files, each with a synthetic stand-in.
+  function makeRoot2(): string {
+    const root = mkdtempSync(join(tmpdir(), 'file-state-'));
+    roots.push(root);
+    put(root, 'scripts/fixtures/real-data-manifest.json', JSON.stringify({ files: [CACHE, SNAP], dirs: [] }));
+    put(root, `fixtures/synthetic/${CACHE}`, FIX_CACHE);
+    put(root, `fixtures/synthetic/${SNAP}`, FIX_SNAP);
+    return root;
+  }
+
+  it('checks a seeded cache against the seeded snapshot', () => {
+    const root = makeRoot2();
+    put(root, CACHE, FIX_CACHE);
+    put(root, SNAP, '{"leases":[{"id":"lease-a"},{"id":"lease-z"}]}');
+    put(root, 'data/.synthetic-seeded.json', JSON.stringify({ seeded: [CACHE, SNAP] }));
+    expect(classifyCacheCheck(root, {})).toBe('synthetic-snapshot');
+  });
+
+  it('keeps the workbook check for a fixture-identical cache beside a real snapshot and no marker (mixed checkout)', () => {
+    const root = makeRoot2();
+    put(root, CACHE, FIX_CACHE);
+    put(root, SNAP, '{"leases":[{"id":"real-1"}]}');
+    expect(classifyCacheCheck(root, {})).toBe('workbook');
+  });
+
+  it('skips a synthetic cache only when there is no snapshot at all', () => {
+    const root = makeRoot2();
+    put(root, CACHE, FIX_CACHE);
+    expect(classifyCacheCheck(root, {})).toBe('skip');
+  });
+
+  it('keeps the workbook check for a real cache, an out-of-repo override and an unreadable marker', () => {
+    const root = makeRoot2();
+    put(root, CACHE, '{"entries":{"Real Co":"real-1"}}');
+    put(root, SNAP, FIX_SNAP);
+    expect(classifyCacheCheck(root, {})).toBe('workbook');
+    put(root, CACHE, FIX_CACHE);
+    put(root, 'data/.synthetic-seeded.json', JSON.stringify({ seeded: [CACHE, SNAP] }));
+    expect(classifyCacheCheck(root, {})).toBe('synthetic-snapshot');
+    const outside = mkdtempSync(join(tmpdir(), 'file-state-cache-'));
+    roots.push(outside);
+    put(outside, 'cache.json', FIX_CACHE);
+    expect(classifyCacheCheck(root, { AR_MAPPING_CACHE: join(outside, 'cache.json') })).toBe('workbook');
+    put(root, 'data/.synthetic-seeded.json', '{not json');
+    expect(classifyCacheCheck(root, {})).toBe('workbook');
   });
 });
 

@@ -5,11 +5,11 @@
 // stand-in cache, whose lease ids are pseudonyms of the synthetic snapshot: checked against the real
 // workbook it can only fail, saying nothing about either file. So a synthetic cache is checked against
 // the synthetic snapshot instead (which still catches a build-synthetic-data regression that leaves the
-// stand-in's links dangling), and skipped only when no synthetic snapshot is there to check it against.
-// Every reading other than a positive 'synthetic' keeps the real-workbook check (the strict side).
+// stand-in's links dangling), and skipped only when there is no snapshot at all to check it against.
+// Every other reading keeps the real-workbook check (the strict side).
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { fileState, type FileState } from '../real-data-status';
+import { fileState, normPath, realDataStatus, type FileState, type PathStatus } from '../real-data-status';
 import { validateMappingCache, type MappingCache } from './mapping-cache';
 
 export const CACHE_REL = 'data/ar-mapping-cache.json';
@@ -27,21 +27,45 @@ export function readState(root: string, rel: string): ReadState {
   }
 }
 
-/** The state of the cache file loadCache() actually reads: AR_MAPPING_CACHE when set (as
- *  mapping-cache.ts's cachePath does), else <root>/data/ar-mapping-cache.json. A path outside the
- *  repo can't be matched to a stand-in, so it reads as 'real' and keeps the workbook check. */
-export function cacheFileState(root: string, env: NodeJS.ProcessEnv = process.env): ReadState {
+/** The repo-relative path of the cache file loadCache() actually reads: AR_MAPPING_CACHE when set
+ *  (as mapping-cache.ts's cachePath does), else data/ar-mapping-cache.json. Null for a path outside
+ *  the repo, which can't be matched to a stand-in and so reads as 'real'. */
+function cacheRel(root: string, env: NodeJS.ProcessEnv): string | null {
   const override = env['AR_MAPPING_CACHE'];
-  if (override === undefined) return readState(root, CACHE_REL);
+  if (override === undefined) return CACHE_REL;
   const rel = relative(resolve(root), resolve(root, override));
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return 'real';
-  return readState(root, rel);
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel) ? null : rel;
 }
 
-/** Only a positive synthetic cache leaves the real-workbook check. */
+/** The state of the cache file loadCache() actually reads (see cacheRel). */
+export function cacheFileState(root: string, env: NodeJS.ProcessEnv = process.env): ReadState {
+  const rel = cacheRel(root, env);
+  return rel === null ? 'real' : readState(root, rel);
+}
+
+/** Only a positive synthetic cache leaves the real-workbook check, and only when the snapshot is
+ *  synthetic too (checked against it) or absent (nothing to check against: skip). A synthetic cache
+ *  beside a real or unreadable snapshot is a mixed checkout, e.g. a real cache overwritten by the
+ *  stand-in with no seed marker: that keeps the real-workbook check, which fails loudly. */
 export function cacheCheckBasis(cache: ReadState, snapshot: ReadState): CacheCheckBasis {
   if (cache !== 'synthetic') return 'workbook';
-  return snapshot === 'synthetic' ? 'synthetic-snapshot' : 'skip';
+  if (snapshot === 'synthetic') return 'synthetic-snapshot';
+  return snapshot === 'absent' ? 'skip' : 'workbook';
+}
+
+/** The basis reconcile uses, from ONE realDataStatus scan, so the cache and the snapshot are read
+ *  against the same seed-marker state (a marker moved between two scans can't mismatch them). An
+ *  unreadable manifest or marker keeps the real-workbook check. */
+export function classifyCacheCheck(root: string, env: NodeJS.ProcessEnv = process.env): CacheCheckBasis {
+  let statuses: PathStatus[];
+  try {
+    statuses = realDataStatus(root);
+  } catch {
+    return 'workbook';
+  }
+  const stateOf = (rel: string): FileState => statuses.find((s) => normPath(s.rel) === normPath(rel))?.state ?? 'absent';
+  const rel = cacheRel(root, env);
+  return cacheCheckBasis(rel === null ? 'real' : stateOf(rel), stateOf(SNAPSHOT_REL));
 }
 
 export interface CacheCheckResult {
