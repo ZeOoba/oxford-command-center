@@ -103,6 +103,12 @@ const SCENARIO_OPTIONS = (['renew_at_current', 'renew_at_market', 'vacancy_hairc
 
 // ── Velocity table ─────────────────────────────────────────────────────────────
 
+// The slow-leasing flag is ADVISORY (Gabriel, 2026-11-24): days-to-lease is derived from rent-roll
+// snapshots by scripts/import-lease-events.ts, whose dating did not pass adversarial review clean
+// (refute rounds 1-7, last wf_02d58977-4bc). It is a prompt to look, never a ratified signal.
+const SLOW_ADVISORY_TITLE =
+  'Advisory: median days-to-lease above 60, derived from rent-roll snapshots. Check the property before acting on it.';
+
 const velocityCols: Column<LeasingVelocity>[] = [
   {
     key: 'property',
@@ -139,7 +145,9 @@ const velocityCols: Column<LeasingVelocity>[] = [
     header: 'Slow?',
     render: (v) =>
       v.slowLeasing ? (
-        <Badge tone="amber">Slow</Badge>
+        <span title={SLOW_ADVISORY_TITLE}>
+          <Badge tone="amber">Slow (advisory)</Badge>
+        </span>
       ) : (
         <span style={{ color: 'var(--text-tertiary)' }}>—</span>
       ),
@@ -612,22 +620,32 @@ export function LeaseForecastModule() {
           <Card>
             <CardHeader title="Leasing Velocity" />
             {velocity.length === 0 ? (
-              // Design review 2026-10-31 finding 12: no empty panel on a default tab. One line that says
-              // the source is missing and that no feed exists: nothing writes lease_events today (its
-              // only code path is the reader in server/warehouse/lease-velocity.ts).
+              // Design review 2026-10-31 finding 12: no empty panel on a default tab. lease_events is
+              // written by scripts/import-lease-events.ts, which derives vacates and commencements from the
+              // rent-roll capture history. An empty result has two causes this panel cannot tell apart (no
+              // suite turned over in that history, or the importer has not run), so the copy names both.
               <div role="note" className="px-4 py-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Not yet sourced.</span>{' '}
-                Days-to-lease needs the date each suite went vacant and the date it was re-leased. The Master Workbook
-                carries only current leases, and no lease-history feed exists yet.
+                <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>No re-leasing measured yet.</span>{' '}
+                Days-to-lease pairs the date a suite went vacant with the date it was re-leased, derived from the
+                rent-roll history. Either no suite has turned over within that history, or lease events have not
+                been imported yet.
               </div>
             ) : (
-              <DataTable
-                columns={velocityCols}
-                rows={velocity}
-                getRowId={(v) => v.propertyId}
-                initialSort={{ key: 'median', dir: 'asc' }}
-                maxHeight={360}
-              />
+              <>
+                <DataTable
+                  columns={velocityCols}
+                  rows={velocity}
+                  getRowId={(v) => v.propertyId}
+                  initialSort={{ key: 'median', dir: 'asc' }}
+                  maxHeight={360}
+                />
+                <div role="note" className="px-4 py-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>Advisory.</span>{' '}
+                  Days-to-lease is derived from rent-roll snapshots, not lease documents, so a gap can read long
+                  or short by the spacing between snapshots. Treat the Slow flag as a prompt to check the
+                  property, not a confirmed finding.
+                </div>
+              </>
             )}
           </Card>
         </div>
