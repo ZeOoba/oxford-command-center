@@ -135,11 +135,12 @@ describe('PriorityActionsWidget — See all → Brain Insights', () => {
     expect(openTab).toHaveBeenCalledTimes(1);
   });
 
-  it('labels the control with the full merged-insight count', () => {
+  it('labels the control with the open-action count (the Results card number) plus any observations', () => {
     // An "empty" snapshot still synthesizes a data-quality staleness insight (asOf is fixed at
     // 2026-07-06 in the past), so the count is whatever mergeInsightSources() produces for this
-    // fixture — not necessarily 0. Assert the label's shape, not a hardcoded count.
+    // fixture — not necessarily 0. Assert the label's shape, not a hardcoded count. 2026-11-23:
+    // the link counted observations too, so it read "See all 58 insights" next to "57 open".
     renderWidget(() => {});
-    expect(screen.getByRole('button', { name: /see all \d+ insights? →/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^see all \d+ open actions?( \+ \d+ observations?)? →$/i })).toBeTruthy();
   });
 });
