@@ -99,6 +99,12 @@ export function realDataStatus(root: string): PathStatus[] {
   return out;
 }
 
+/** The state of one path (`absent` when no manifest entry or stand-in covers it). Throws when the
+ *  manifest or seed marker is unreadable, like realDataStatus. */
+export function fileState(root: string, rel: string): FileState {
+  return realDataStatus(root).find((s) => normPath(s.rel) === normPath(rel))?.state ?? 'absent';
+}
+
 /** The manifest files currently in use that are synthetic stand-ins. */
 export function syntheticInUse(root: string): string[] {
   return realDataStatus(root)
