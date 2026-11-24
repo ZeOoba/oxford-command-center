@@ -221,12 +221,16 @@ describe('runCacheCheck', () => {
     expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
   });
 
-  it('never throws on a malformed cache', () => {
+  it('fails, never throws and never skips, on a malformed cache on every basis', () => {
     const root = makeRoot();
     put(root, SNAP, FIX_SNAP);
-    for (const bad of [null, {}, { entries: null }, { entries: [] }, { entries: 'x' }, { entries: { a: 5 } }]) {
+    // { entries: ['lease-a'] } is an array of stand-in ids: it must still not count as the stand-in.
+    const malformed = [null, {}, { entries: null }, { entries: [] }, { entries: ['lease-a'] }, { entries: 'x' }, { entries: { a: 5 } }];
+    for (const bad of malformed) {
       for (const basis of ['workbook', 'synthetic-snapshot', 'skip'] as const) {
-        expect(() => runCacheCheck(basis, ['lease-a'], bad as never, root)).not.toThrow();
+        const r = runCacheCheck(basis, ['lease-a'], bad as never, root);
+        expect([JSON.stringify(bad), basis, r.failed]).toEqual([JSON.stringify(bad), basis, true]);
+        expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +\d+ dangling$/);
       }
     }
   });
@@ -245,6 +249,18 @@ describe('checkMappingCache', () => {
     const r = checkMappingCache(root, ['real-1'], cache({ 'synthetic co': 'lease-a', 'other co': 'lease-b' }), {});
     expect(r.failed).toBe(true);
     expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves \(synthetic\) +1 dangling$/);
+  });
+
+  it('classifies with the env it is given: an out-of-repo AR_MAPPING_CACHE on a seeded root keeps the workbook check', () => {
+    const root = seededRoot();
+    const outside = mkdtempSync(join(tmpdir(), 'cache-basis-out-'));
+    roots.push(outside);
+    put(outside, 'cache.json', FIX_CACHE);
+    const env = { AR_MAPPING_CACHE: join(outside, 'cache.json') };
+    const r = checkMappingCache(root, ['real-1'], cache({ 'x co': 'lease-a' }), env);
+    expect(r.failed).toBe(true);
+    expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+    expect(checkMappingCache(root, ['real-1'], cache({ 'x co': 'lease-a' }), {}).failed).toBe(false);
   });
 
   it('fails a mixed checkout (stand-in cache, real snapshot, no marker) against the workbook', () => {
