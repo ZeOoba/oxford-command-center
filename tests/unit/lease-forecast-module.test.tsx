@@ -187,6 +187,24 @@ describe('LeaseForecastModule — slow-leasing flag is advisory', () => {
   });
 });
 
+// Review round 2 (2026-11-24): a 0-day median read as "re-leased the same day". It means the next
+// tenant appeared within one rent-roll snapshot interval, below what the snapshots can measure.
+describe('LeaseForecastModule — velocity below snapshot resolution', () => {
+  it.each([0, 0.5])('shows "< 1 snapshot" for a %s-day median, never a bare number', (median) => {
+    renderModule('/leasing', {
+      forecast: { velocity: [{ propertyId: 'p3', propertyName: 'Northwood', medianDaysToLease: median, leasingEventsN: 2, slowLeasing: false }] },
+    });
+    const cell = screen.getByText('< 1 snapshot');
+    expect(cell.getAttribute('title')).toMatch(/same rent-roll snapshot interval/);
+  });
+
+  it('labels the narrative as an AI draft without naming a model version', () => {
+    renderModule('/leasing?tab=forecast');
+    expect(screen.queryByText(/Haiku 4\.5/)).toBeNull();
+    expect(screen.getByText(/AI draft · fail-open/)).toBeTruthy();
+  });
+});
+
 describe('LeaseForecastModule — empty states', () => {
   it('Leasing Velocity explains what source data is missing instead of naming a table', () => {
     renderModule('/leasing', { forecast: { velocity: [] } });

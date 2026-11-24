@@ -40,14 +40,27 @@ import { leasingVelocity } from './lease-velocity';
 import { loadMarketRentFeed } from './lease-market/feed';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { referenceDate } from '../config';
+import { z } from 'zod';
 import {
   RentForecastInput,
+  RentScenario as RentScenarioSchema,
   LeaseForecastResponse,
   RentForecastResponse,
   LeaseNarrativeResponse,
   type RentScenario,
 } from '../../src/contracts/lease-forecast';
 import { composeLeaseNarrative } from '../ai/narrative';
+
+/**
+ * POST /rent-forecast request body (review round 2, 2026-11-24). It was cast, not checked: a JSON
+ * `null` body threw a 500, and a non-array `scenarios` silently fell back to all three scenarios.
+ * Same field rules as RentForecastInput; an unparseable JSON body still means "use the defaults".
+ */
+export const RentForecastBody = z.object({
+  scenarios: z.array(RentScenarioSchema).min(1).optional(),
+  horizonMonths: RentForecastInput.shape.horizonMonths.removeDefault().optional(),
+  vacancyPct: RentForecastInput.shape.vacancyPct.removeDefault().optional(),
+});
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
 
 // ── Snapshot access ────────────────────────────────────────────────────────────
@@ -192,15 +205,20 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         return c.json({ error: 'snapshot unavailable' }, 503);
       }
 
-      let body: { scenarios?: RentScenario[]; horizonMonths?: 12 | 24; vacancyPct?: number };
+      let raw: unknown;
       try {
-        body = (await c.req.json()) as typeof body;
+        raw = await c.req.json();
       } catch {
-        body = {};
+        raw = {};
       }
+      const bodyResult = RentForecastBody.safeParse(raw);
+      if (!bodyResult.success) {
+        return c.json({ error: `Invalid input: ${bodyResult.error.message}` }, 400);
+      }
+      const body = bodyResult.data;
 
       const ALL_SCENARIOS: RentScenario[] = ['renew_at_current', 'renew_at_market', 'vacancy_haircut'];
-      const scenarios = Array.isArray(body.scenarios) ? body.scenarios : ALL_SCENARIOS;
+      const scenarios = body.scenarios ?? ALL_SCENARIOS;
       const horizonMonths = body.horizonMonths ?? 12;
       const vacancyPct = body.vacancyPct ?? 0;
       const asOf = snapshot.meta.asOf; // data-snapshot LABEL (response envelope)

@@ -22,6 +22,7 @@ import { GaugeRing, type GaugeRingProps } from '@/primitives/GaugeRing';
 import { FIELD_GROUPS, type FieldSpec, type FormState, buildInput, denominatorNotes } from './acquisition-score';
 import { OmImportDrawer } from './OmImportDrawer';
 import { useGradeAcquisition, isEngineUnavailable } from './grader-hooks';
+import { ActionError } from '@/primitives/ActionError';
 
 const GRADER_DEAL_ID = 'om-grader';
 
@@ -110,15 +111,14 @@ export function GraderView() {
             >
               {grade.isPending ? 'Grading…' : 'Grade'}
             </button>
-            {grade.isError && (
-              <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-                {isEngineUnavailable(grade.error)
-                  ? 'Acquisition engine unavailable — start the Brain server to grade.'
-                  : grade.error instanceof Error
-                    ? grade.error.message
-                    : 'Grading failed.'}
-              </span>
-            )}
+            {grade.isError &&
+              (isEngineUnavailable(grade.error) ? (
+                <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>
+                  Acquisition engine unavailable — start the Brain server to grade.
+                </span>
+              ) : (
+                <ActionError error={grade.error} failed="The deal was not graded." />
+              ))}
           </div>
         </Card>
 

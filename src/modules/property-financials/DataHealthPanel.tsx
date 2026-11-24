@@ -26,6 +26,7 @@ import { sfProvenance, type PfLiveSfBlock } from '@analytics/property-financials
 import type { PfDataset } from '@contracts/property-financials';
 import './pf.css';
 import { fmtPct } from '@analytics/index';
+import { QueryError } from '@/primitives/QueryError';
 
 const AVAILABILITY_WHY = {
   missing: 'The dataset file is not on disk.',
@@ -249,9 +250,13 @@ function MappingSection({ datasetOk }: { datasetOk: boolean }) {
   if (q.isPending) body = <Skeleton style={{ height: 160 }} />;
   else if (q.isError) {
     body = (
-      <p className="pf-flag" role="alert" data-testid="pf-dh-mapping-error">
-        The mapping table could not be read: {isWarehouseUnavailable(q.error) ? 'the Brain Server is not reachable.' : q.error instanceof Error ? q.error.message : 'unknown error.'}
-      </p>
+      <div data-testid="pf-dh-mapping-error">
+        {isWarehouseUnavailable(q.error) ? (
+          <p className="pf-flag" role="alert">The mapping table could not be read: the Brain Server is not reachable.</p>
+        ) : (
+          <QueryError error={q.error} what="the mapping table" className="py-2" />
+        )}
+      </div>
     );
   } else {
     body = (

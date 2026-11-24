@@ -26,6 +26,7 @@ import {
   type InsightStatusErrors,
 } from './insight-workflow';
 import type { PfInsightStatus, PfInsightStatusRecord } from './types';
+import { ActionError } from '@/primitives/ActionError';
 
 export interface InsightRowProps {
   readonly insight: PfInsight;
@@ -173,11 +174,7 @@ function useInsightWorkflow({ insight, record, workflowAvailable, onOpenProperty
         <button type="button" className="pf-btn ghost" onClick={() => setEditing(false)}>
           Cancel
         </button>
-        {save.isError && (
-          <span className="pf-err" role="alert">
-            {save.error instanceof Error ? save.error.message : 'Save failed.'}
-          </span>
-        )}
+        {save.isError && <ActionError error={save.error} failed="Not saved." />}
       </div>
     </form>
   );

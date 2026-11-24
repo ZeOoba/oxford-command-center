@@ -32,6 +32,18 @@ export function describeError(error: unknown, what: string): ErrorDescription {
   return { kind: 'failed', headline: `Couldn't load ${what}.`, detail };
 }
 
+/**
+ * Same idea for a failed ACTION (save, grade, file, decide), review round 2 (2026-11-24). `failed` is
+ * the whole plain-words headline, e.g. "The decision was not saved." The raw server text (often a
+ * useful validation reason) stays available as `detail`, never as the headline.
+ */
+export function describeActionError(error: unknown, failed: string): ErrorDescription {
+  const raw = error instanceof Error ? error.message : error === undefined || error === null ? null : String(error);
+  const detail = raw && raw.trim() ? raw.trim() : null;
+  if (isNetwork(error)) return { kind: 'network', headline: `Can't reach the command-center server. ${failed}`, detail };
+  return { kind: 'failed', headline: failed, detail };
+}
+
 function capitalize(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
 }
