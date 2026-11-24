@@ -13,6 +13,7 @@ import { Button } from '@/primitives/Button';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import type { Task, TaskStatus } from '@contracts/index';
 import { buildSectionViews, type SectionView } from './tasks-view';
+import { ActionError } from '@/primitives/ActionError';
 
 const STATUS_META: Record<TaskStatus, { tone: BadgeTone; label: string }> = {
   done: { tone: 'green', label: 'Done' },
@@ -30,18 +31,21 @@ export function TasksModule() {
   const qc = useQueryClient();
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
+  const [addError, setAddError] = useState<unknown>(null);
   const canWrite = computeFreshness(state).kind === 'live';
 
   const addTask = async () => {
     const v = label.trim();
     if (!v || busy) return;
     setBusy(true);
+    setAddError(null);
     try {
       await createTask({ label: v });
       await qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
       setLabel('');
-    } catch {
-      /* leave the input for retry */
+    } catch (e) {
+      // The input is kept for a retry; say so instead of failing silently (review round 2, 2026-11-24).
+      setAddError(e ?? new Error('unknown error'));
     } finally {
       setBusy(false);
     }
@@ -80,6 +84,7 @@ export function TasksModule() {
           </Button>
         </div>
       )}
+      {canWrite && addError !== null && <ActionError error={addError} failed="The task was not added; it is still in the box to retry." />}
 
       {views.map((v) => (
         <SectionCard key={v.section} view={v} />

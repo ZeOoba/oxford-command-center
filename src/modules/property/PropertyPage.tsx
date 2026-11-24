@@ -24,7 +24,9 @@ import { isInvestmentProperty, landlordCostsNotSourced } from '@analytics/proper
 import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 import { useLeaseForecast } from '../leasing/hooks';
 import { BUCKET_LABEL, monthEndIso, propertyAlerts, rolloverLadder, type LadderRow } from './property-page-model';
-import { usePropertyLedger, usePropertyOccupancy } from './hooks';
+import { usePropertyLedgerState, usePropertyOccupancy } from './hooks';
+import { Skeleton } from '@/primitives/Skeleton';
+import { QueryError } from '@/primitives/QueryError';
 
 /** Monthly charts show the latest 24 recorded ledger months. */
 const TREND_MONTHS = 24;
@@ -128,7 +130,8 @@ export function PropertyPage() {
   const snapshot = data?.snapshot;
   // The residence is excluded from every surface (ruling 2026-10-30) — its id resolves to "not found".
   const property = snapshot?.properties.find((p) => p.id === id && isInvestmentProperty(p)) ?? null;
-  const ledger = usePropertyLedger(id);
+  const ledgerState = usePropertyLedgerState(id);
+  const ledger = ledgerState.ledger;
   const occupancy = usePropertyOccupancy(snapshot, property);
 
   if (gate) return gate;
@@ -154,7 +157,11 @@ export function PropertyPage() {
   const ledgerChip = lastLedgerMonth ? <AsOfChip asOf={monthEndIso(lastLedgerMonth)} source={LEDGER_SOURCE} /> : null;
   const workbookChip = <AsOfChip asOf={snapshot.meta.asOf} source="Master Workbook" />;
 
-  const ledgerSub = !ledger
+  const ledgerSub = ledgerState.status === 'loading'
+    ? 'loading the P&L ledger…'
+    : ledgerState.status === 'error'
+      ? 'P&L ledger did not load'
+      : !ledger
     ? 'not in the P&L ledger'
     : lastT12
       ? `entity 100% · T12 to ${lastT12.month}`
@@ -215,7 +222,13 @@ export function PropertyPage() {
               ariaLabel={`${p.name} monthly NOI, P&L ledger basis`}
             />
           ) : (
-            <Muted>{ledger ? 'No monthly ledger detail for this property (annual statements only).' : 'This property is not in the P&L ledger set yet.'}</Muted>
+            ledgerState.status === 'loading' ? (
+              <Skeleton style={{ height: 200 }} />
+            ) : ledgerState.status === 'error' ? (
+              <QueryError error={ledgerState.error} what="the P&L ledger" className="py-2" />
+            ) : (
+              <Muted>{ledger ? 'No monthly ledger detail for this property (annual statements only).' : 'This property is not in the P&L ledger set yet.'}</Muted>
+            )
           )}
         </Section>
         <Section title={`Operating expense · ${LEDGER}, monthly`} trailing={ledgerChip}>

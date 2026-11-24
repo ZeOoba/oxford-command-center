@@ -17,6 +17,7 @@ import { useToast } from '@/primitives/toast-context';
 import { useResolveVerdict, type CalibrationLogRow, type CalibrationResolveRequest } from './hooks';
 import { verdictLabel } from './format';
 import type { ActionTaken } from '@contracts/warehouse';
+import { ActionError } from '@/primitives/ActionError';
 
 const ACTION_OPTIONS: Array<{ value: ActionTaken; label: string }> = [
   { value: 'none', label: 'None — left alone (clean test)' },
@@ -42,10 +43,13 @@ export function ResolveDialog({ row, onClose }: { row: CalibrationLogRow; onClos
   const [actionTaken, setActionTaken] = useState<ActionTaken>('none');
   const [treatmentNote, setTreatmentNote] = useState('');
   const [actionDetail, setActionDetail] = useState('');
+  // Validation text is the headline; a thrown save error keeps its raw text under Details (2026-11-24).
   const [err, setErr] = useState<string | null>(null);
+  const [errCause, setErrCause] = useState<unknown>(undefined);
 
   const submit = () => {
     setErr(null);
+    setErrCause(undefined);
     const parsedValue = realizedValue.trim() === '' ? null : Number(realizedValue);
     if (parsedValue !== null && Number.isNaN(parsedValue)) {
       setErr('Realized value must be a number (or blank).');
@@ -75,7 +79,7 @@ export function ResolveDialog({ row, onClose }: { row: CalibrationLogRow; onClos
           });
           onClose();
         },
-        onError: (e) => setErr(e instanceof Error ? e.message : String(e)),
+        onError: (e) => { setErr('The resolution was not saved.'); setErrCause(e); },
       },
     );
   };
@@ -143,7 +147,7 @@ export function ResolveDialog({ row, onClose }: { row: CalibrationLogRow; onClos
         {err && (
           <div className="rounded-md px-3 py-2 text-2xs" role="alert"
             style={{ background: 'color-mix(in oklab, var(--color-neg) 12%, transparent)', color: 'var(--text-neg)', border: '1px solid color-mix(in oklab, var(--color-neg) 35%, transparent)' }}>
-            {err}
+            {errCause === undefined ? err : <ActionError error={errCause} failed={err} />}
           </div>
         )}
 
