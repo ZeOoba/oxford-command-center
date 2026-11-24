@@ -123,7 +123,10 @@ export function StrategyBoard({
   opportunities: TaxOpportunity[];
   strategyReport?: TaxStrategyReport;
 }) {
-  const strategy = strategyReport && strategyReport.basisDataSource !== 'absent' ? strategyReport : undefined;
+  // Only a warehouse-sourced basis drives the cost-seg tier. A placeholder basis (no importer yet,
+  // docs/placeholder-data.md) is treated like an absent one, per Gabriel's 2026-11-23 ruling: hide
+  // the cost-seg surface until accountant-verified basis data exists.
+  const strategy = strategyReport && strategyReport.basisDataSource === 'warehouse' ? strategyReport : undefined;
 
   const tiers: Tier[] = [
     { key: 'appeals', title: 'Appeals', tone: 'pos', items: buildAppealTierItems(opportunities) },
