@@ -6,7 +6,8 @@ import { fetchFredMacro } from './fred';
  * Macro snapshot. Live FRED when FRED_API_KEY is set; otherwise the fallback below,
  * which is seeded with REAL values pulled from FRED as of June 2026 (so the dashboard
  * is accurate-as-of-today even without a key). Labeled `source: 'mock'` since it's a
- * static snapshot — set FRED_API_KEY to go live (`source: 'fred'`).
+ * static snapshot. A live fetch is labelled `source: 'live-fred'` by fetchFredMacro() (not
+ * 'fred': that mismatch is what mislabelled live rates as seeded until PR #587).
  */
 export async function getMacro(): Promise<MacroSnapshot> {
   const live = await fetchFredMacro().catch(() => null);

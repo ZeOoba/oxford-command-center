@@ -35,6 +35,18 @@ const emptySnapshot = {
 } as unknown as PortfolioSnapshot;
 
 describe('fillImpact', () => {
+  // Tier 1 follow-up (2026-11-24): an escalation row left unpriced on purpose (Vacant, Expired,
+  // implausible pct...) must never be back-filled with the lease's full contract rent.
+  it('never back-fills an escalation row with the lease rent', () => {
+    const snap = {
+      ...emptySnapshot,
+      leases: [{ id: 'l1', monthlyRent: 2000, annualRent: 24000, status: 'Vacant' }],
+    } as unknown as PortfolioSnapshot;
+    const out = fillImpact(baseInsight({ id: 'escalation-l1', category: 'lease', entityId: 'l1' }), snap);
+    expect(out.impactAnnualUsd).toBeNull();
+    expect(out.provenance).toBe('absent');
+  });
+
   it('returns a new object (does not mutate input)', () => {
     const insight = baseInsight();
     const result = fillImpact(insight, emptySnapshot);

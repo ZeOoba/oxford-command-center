@@ -50,6 +50,20 @@ describe('leaseRent', () => {
     expect(leaseRent(l, '2027-10', '2026-10')).toBeCloseTo(1030, 6);
     expect(leaseRent(l, '2027-11', '2026-10')).toBeCloseTo(1060.9, 6);
   });
+  // Tier 1 follow-up (2026-11-24): the same plausibility bound as the escalation alert (conditions.ts,
+  // refute wf_774968c9-439). A percent-form value (3 for 3%) used to compound 300% a year.
+  it('ignores an implausible escalationPct (above 25%) instead of compounding it', () => {
+    const bad = lease({ monthlyRent: 1000, escalationDate: '2026-11-01', escalationPct: 3 });
+    expect(leaseRent(bad, '2027-11', '2026-10')).toBe(1000);
+    const edge = lease({ monthlyRent: 1000, escalationDate: '2026-11-01', escalationPct: 0.25 });
+    expect(leaseRent(edge, '2026-11', '2026-10')).toBeCloseTo(1250, 6);
+    const badNeg = lease({ monthlyRent: 1000, escalationDate: '2026-11-01', escalationPct: -3 });
+    expect(leaseRent(badNeg, '2027-11', '2026-10')).toBe(1000);
+  });
+  it('still compounds a plausible step-down (negative pct), as before', () => {
+    const down = lease({ monthlyRent: 1000, escalationDate: '2026-11-01', escalationPct: -0.02 });
+    expect(leaseRent(down, '2027-11', '2026-10')).toBeCloseTo(960.4, 6);
+  });
   it('rolls a stale (already-passed) escalation date forward without applying it', () => {
     const stale = lease({ monthlyRent: 1000, escalationDate: '2026-05-01', escalationPct: 0.03 });
     expect(leaseRent(stale, '2026-12', '2026-10')).toBe(1000);

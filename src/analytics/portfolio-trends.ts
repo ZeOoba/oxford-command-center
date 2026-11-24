@@ -3,6 +3,13 @@
 import type { Lease, Property } from '@contracts/index';
 import { isInvestmentProperty } from './property-basis';
 
+/**
+ * An escalationPct whose magnitude exceeds this is a mis-entered percent (3 for 3%), not a bump.
+ * One bound for the escalation alert (conditions.ts) and the rent forecast (leaseRent) so the two
+ * cannot drift (refute wf_774968c9-439, wf_0b6281f9-b48).
+ */
+export const MAX_PLAUSIBLE_ESCALATION_PCT = 0.25;
+
 /** 'YYYY-MM' — lexicographic order == chronological order. */
 export type MonthKey = string;
 
@@ -38,7 +45,9 @@ export function leaseActive(l: Lease, m: MonthKey): boolean {
  */
 export function leaseRent(l: Lease, m: MonthKey, asOfMonth: MonthKey): number {
   const pct = l.escalationPct;
-  if (m <= asOfMonth || !l.escalationDate || !pct) return l.monthlyRent;
+  // A magnitude above MAX_PLAUSIBLE_ESCALATION_PCT is a mis-entered percent (3 for 3%, or -3), never
+  // compounded. Plausible step-downs (negative, down to -25%) still compound, as before (2026-11-24).
+  if (m <= asOfMonth || !l.escalationDate || !pct || !(Math.abs(pct) <= MAX_PLAUSIBLE_ESCALATION_PCT)) return l.monthlyRent;
   let next = monthOf(l.escalationDate);
   while (next <= asOfMonth) next = addMonths(next, 12);
   if (m < next) return l.monthlyRent;
