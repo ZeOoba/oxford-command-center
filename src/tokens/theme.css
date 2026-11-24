@@ -63,7 +63,7 @@
   --grid-line: #1b2531;
   --text-primary: #e8edf3;
   --text-secondary: #aab6c4;
-  --text-tertiary: #768393; /* was #6b7888: 3.9:1 on raised surfaces; now >=4.5:1 (WCAG AA), 2026-11-23 */
+  --text-tertiary: #7a8796; /* was #6b7888 (3.9:1), then #768393 (4.3:1 on --surface-overlay, caught by the e2e axe run 2026-11-24); now >=4.5:1 on base, raised and overlay (WCAG AA) */
   --text-on-accent: #06120f;
   /* Per-consumer token, separate from --text-on-accent: in warm, --text-on-accent
      must be DARK for --accent/--color-neg yet LIGHT for --color-info — disjoint
