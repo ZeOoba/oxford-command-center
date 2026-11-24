@@ -1,4 +1,5 @@
-import { useEffect, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight } from 'lucide-react';
@@ -134,16 +135,11 @@ function Panel({
   canWrite: boolean;
   onAdvanceStage: (dealId: string, stage: DealStage, label: string) => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(dialogRef, onClose); // Escape, focus trap, focus return (2026-11-23 review)
 
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Entity detail">
+    <div ref={dialogRef} className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Entity detail">
       <motion.div
         className="absolute inset-0"
         style={{ background: 'rgba(2,4,8,0.5)' }}

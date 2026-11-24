@@ -16,6 +16,9 @@ const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
 
+/** An escalationPct above this is treated as mis-entered (percent form), never priced (refute wf_774968c9-439). */
+const MAX_PLAUSIBLE_ESCALATION_PCT = 0.25;
+
 /** Single source of truth for every alert threshold. Change a number once, here. */
 export const ALERT_THRESHOLDS = {
   balloonCriticalDays: 180,
@@ -477,12 +480,38 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       }
     }
     if (l.escalationDate && daysBetween(l.escalationDate, asOf) < 0) {
+      // Missed-escalation dollars (RM 5.1; Gabriel 2026-11-23): the annual rent ONE contractual bump
+      // adds = current contract rent x escalationPct (decimal, as leaseRent() compounds it). It is the
+      // amount at stake IF the bump was not billed; the rent roll cannot show whether it was. A stale
+      // date can hide several compounding bumps, so the copy says "per missed bump", not "up to".
+      // Priced only when it is an honest figure (refute wf_774968c9-439): a live, billing tenancy
+      // (Active / Expiring Soon; not Vacant asking rent, not an Expired lease whose lapsed row already
+      // carries the full rent), positive rent, and a plausible decimal pct (0 < pct <= 0.25; a
+      // percent-form "3" from a text cell would read as 300%). Otherwise unquantified (null), never $0.
+      // Ruled EXEMPT from the $5K signal floor: each row is a contract right, however small.
+      const pct = l.escalationPct;
+      const base = contractAnnualRent(l);
+      // Live by status AND by date (refute wf_0983ca4b-b20): a row still marked Active whose term has
+      // ended is the lapsed case the L-2 alert owns, and a bump dated after the term never fell due.
+      const termOpen = !l.leaseEnd || daysBetween(l.leaseEnd, asOf) >= 0;
+      const bumpInTerm = !l.leaseEnd || daysBetween(l.leaseEnd, l.escalationDate) >= 0;
+      const live = (l.status === 'Active' || l.status === 'Expiring Soon') && termOpen && bumpInTerm;
+      const pctKnown = pct !== null && Number.isFinite(pct) && pct > 0;
+      const pctPlausible = pctKnown && pct <= MAX_PLAUSIBLE_ESCALATION_PCT;
+      const raw = live && base > 0 && pctPlausible ? base * pct : null;
+      const bumpUsd = raw !== null && Math.round(raw) >= 1 ? raw : null; // never "about $0/yr".
       out.push({
         id: `escalation-${l.id}`, severity: 'warning', category: 'lease',
         title: `Escalation date passed — ${l.company ?? l.tenantName}`,
-        detail: `${l.propertyKey} ${l.unit ?? ''} escalation was due ${fmtDate(l.escalationDate)}. Confirm the bump was applied.`,
+        detail:
+          `${l.propertyKey} ${l.unit ?? ''} escalation was due ${fmtDate(l.escalationDate)}. ` +
+          (bumpUsd !== null
+            ? `Confirm the bump was applied: about ${fmtUsd(bumpUsd)}/yr per missed bump.`
+            : live && pctKnown && !pctPlausible
+              ? `Confirm the bump was applied. Escalation % (${fmtPct(pct)}) looks mis-entered, so it is not priced.`
+              : 'Confirm the bump was applied.'),
         entityType: 'lease', entityId: l.id,
-        impactAnnualUsd: null, spine: 'A', provenance: 'absent',
+        impactAnnualUsd: bumpUsd, spine: 'A', provenance: bumpUsd !== null ? 'real' : 'absent',
       });
     }
   }

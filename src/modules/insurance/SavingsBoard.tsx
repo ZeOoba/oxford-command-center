@@ -17,6 +17,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { TierBoard } from '@/primitives/TierBoard';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useInsuranceAnalysis, useInsuranceLoss, buildSavingsTiers, buildOptimizeTier, benchmarkSublabel } from './hooks';
+import { QueryError } from '@/primitives/QueryError';
 
 export function SavingsBoard() {
   const { data: report, isLoading, error } = useInsuranceAnalysis();
@@ -49,9 +50,7 @@ export function SavingsBoard() {
     return (
       <Card>
         <CardHeader title="Savings Board" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load the insurance analysis.'}
-        </div>
+        <QueryError error={error} what="the insurance analysis" />
       </Card>
     );
   }

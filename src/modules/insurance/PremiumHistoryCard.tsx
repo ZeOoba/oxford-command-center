@@ -18,6 +18,7 @@ import { fmtUsdCompact } from '@analytics/index';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { usePremiumHistory, PREMIUM_HISTORY_KEY } from './hooks';
 import { premiumHistoryBars } from './premium-history-chart-data';
+import { QueryError } from '@/primitives/QueryError';
 
 export { PREMIUM_HISTORY_KEY };
 
@@ -47,9 +48,7 @@ export function PremiumHistoryCard() {
     return (
       <Card>
         <CardHeader title="Premium History" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load premium history.'}
-        </div>
+        <QueryError error={error} what="premium history" />
       </Card>
     );
   }

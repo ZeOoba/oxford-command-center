@@ -40,6 +40,7 @@ import {
 } from '@/analytics/building-specs';
 import { fmtPartialDate } from './hooks';
 import { useBuildingSpecs, type BuildingSpecsModel } from './specs-data';
+import { QueryError } from '@/primitives/QueryError';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 const yrs = (n: number): string => `${n} yr${n === 1 ? '' : 's'}`;
@@ -47,6 +48,54 @@ const VINTAGE_TONE: Record<Vintage, BadgeTone> = { CURRENT: 'green', DRAFT: 'amb
 const STATUS_TONE: Record<CoverageRow['status'], BadgeTone> = { READ: 'green', PARTIAL: 'amber', UNREADABLE: 'red' };
 
 const fmtValue = formatSpecValue;
+
+// One table primitive (2026-11-23 review, Tier 3): sortable, and the same row styling as the rest of the module.
+const COVERAGE_COLS: Column<CoverageRow>[] = [
+  {
+    key: 'report',
+    header: 'Report',
+    render: (r) => (
+      <div className="text-xs">
+        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.reportId} · {r.propertyLabel}</div>
+        <div className="num text-2xs" style={muted}>{r.consultant} · {fmtPartialDate(r.reportDate)}</div>
+      </div>
+    ),
+    sortValue: (r) => r.reportId,
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (r) => (
+      <span className="text-xs">
+        <Badge tone={STATUS_TONE[r.status]}>{r.status}</Badge>
+        {r.ocr && <span className="text-2xs" style={muted}> OCR</span>}
+      </span>
+    ),
+    sortValue: (r) => r.status,
+  },
+  { key: 'facts', header: 'Facts', align: 'right', render: (r) => <span className="num text-xs">{r.facts}</span>, sortValue: (r) => r.facts },
+  { key: 'findings', header: 'Findings', align: 'right', render: (r) => <span className="num text-xs">{r.findings}</span>, sortValue: (r) => r.findings },
+  {
+    key: 'pages',
+    header: 'Pages',
+    render: (r) => (
+      <span className="num text-2xs" style={muted}>
+        {r.pagesTotal} total{r.pagesWithoutText > 0 ? ` · ${r.pagesWithoutText} no text` : ''}
+      </span>
+    ),
+    sortValue: (r) => r.pagesTotal,
+  },
+  {
+    key: 'note',
+    header: 'Note',
+    render: (r) => (
+      <div className="text-2xs" style={muted}>
+        {r.status === 'UNREADABLE' && <div style={{ color: 'var(--text-neg)' }}>UNREADABLE — path tried: {r.pathTried ?? 'n/a'}</div>}
+        {Object.entries(r.factsByComponent).map(([c, n]) => `${c} ${n}`).join(' · ')}
+      </div>
+    ),
+  },
+];
 
 // ── coverage ────────────────────────────────────────────────────────────────────────────────
 
@@ -59,45 +108,7 @@ export function CoverageCard({ rows }: { rows: CoverageRow[] }) {
         title="Extraction coverage"
         trailing={<Badge tone={counts.UNREADABLE > 0 ? 'red' : 'neutral'}>{counts.READ} read · {counts.PARTIAL} partial · {counts.UNREADABLE} unreadable</Badge>}
       />
-      <div className="overflow-x-auto">
-        <table style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr className="text-2xs" style={{ ...muted, textAlign: 'left' }}>
-              <th className="px-3 py-2">Report</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2 text-right">Facts</th>
-              <th className="px-3 py-2 text-right">Findings</th>
-              <th className="px-3 py-2">Pages</th>
-              <th className="px-3 py-2">Note</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.reportId} style={{ borderTop: '1px solid var(--border-subtle)', verticalAlign: 'top' }}>
-                <td className="px-3 py-2 text-xs">
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.reportId} · {r.propertyLabel}</div>
-                  <div className="num text-2xs" style={muted}>{r.consultant} · {fmtPartialDate(r.reportDate)}</div>
-                </td>
-                <td className="px-3 py-2 text-xs">
-                  <Badge tone={STATUS_TONE[r.status]}>{r.status}</Badge>
-                  {r.ocr && <span className="text-2xs" style={muted}> OCR</span>}
-                </td>
-                <td className="num px-3 py-2 text-right text-xs">{r.facts}</td>
-                <td className="num px-3 py-2 text-right text-xs">{r.findings}</td>
-                <td className="num px-3 py-2 text-2xs" style={muted}>
-                  {r.pagesTotal} total{r.pagesWithoutText > 0 ? ` · ${r.pagesWithoutText} no text` : ''}
-                </td>
-                <td className="px-3 py-2 text-2xs" style={muted}>
-                  {r.status === 'UNREADABLE' && (
-                    <div style={{ color: 'var(--text-neg)' }}>UNREADABLE — path tried: {r.pathTried ?? 'n/a'}</div>
-                  )}
-                  {Object.entries(r.factsByComponent).map(([c, n]) => `${c} ${n}`).join(' · ')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable columns={COVERAGE_COLS} rows={rows} getRowId={(r) => r.reportId} initialSort={{ key: 'report', dir: 'asc' }} minWidth={760} />
     </Card>
   );
 }
@@ -234,6 +245,13 @@ function RollupsCard({ facts }: { facts: BuildingSpecsModel['facts'] }) {
   );
 }
 
+const DIFF_COLS: Column<DiffRow>[] = [
+  { key: 'what', header: 'Component · attribute', render: (r) => <span className="text-xs">{r.component} · {r.attribute}</span>, sortValue: (r) => `${r.component}|${r.attribute}` },
+  { key: 'stale', header: 'Stale report', render: (r) => <span className="text-xs" style={muted}>{r.stale.length ? r.stale.join('; ') : 'n/a'}</span> },
+  { key: 'current', header: 'Current / draft report', render: (r) => <span className="text-xs">{r.current.length ? r.current.join('; ') : 'n/a'}</span> },
+  { key: 'differs', header: '', render: (r) => (r.differs ? <Badge tone="amber">differs</Badge> : null), sortValue: (r) => (r.differs ? 0 : 1) },
+];
+
 // ── cross-vintage diff ──────────────────────────────────────────────────────────────────────
 
 function DiffCard({ propertyLabel, rows }: { propertyLabel: string; rows: DiffRow[] }) {
@@ -241,28 +259,7 @@ function DiffCard({ propertyLabel, rows }: { propertyLabel: string; rows: DiffRo
   return (
     <Card>
       <CardHeader title={`Cross-vintage diff — ${propertyLabel}`} trailing={<Badge tone={changed > 0 ? 'amber' : 'neutral'}>{changed} differ</Badge>} />
-      <div className="overflow-x-auto">
-        <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr className="text-2xs" style={{ ...muted, textAlign: 'left' }}>
-              <th className="px-3 py-2">Component · attribute</th>
-              <th className="px-3 py-2">Stale report</th>
-              <th className="px-3 py-2">Current / draft report</th>
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={`${r.component}|${r.attribute}`} className="text-xs" style={{ borderTop: '1px solid var(--border-subtle)', verticalAlign: 'top' }}>
-                <td className="px-3 py-2">{r.component} · {r.attribute}</td>
-                <td className="px-3 py-2" style={muted}>{r.stale.length ? r.stale.join('; ') : 'n/a'}</td>
-                <td className="px-3 py-2">{r.current.length ? r.current.join('; ') : 'n/a'}</td>
-                <td className="px-3 py-2">{r.differs && <Badge tone="amber">differs</Badge>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable columns={DIFF_COLS} rows={rows} getRowId={(r) => `${r.component}|${r.attribute}`} initialSort={{ key: 'what', dir: 'asc' }} minWidth={640} />
       <p className="num px-4 py-2 text-2xs" style={muted}>
         The current-vintage value governs; the stale value is history. Differences are candidates for PCA_RECONCILIATION.md, not corrections.
       </p>
@@ -507,7 +504,7 @@ export function SpecsPanel({ enabled }: { enabled: boolean }) {
     return (
       <Card>
         <CardHeader title="Building specs" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>{error instanceof Error ? error.message : 'Failed to load building specs.'}</div>
+        <QueryError error={error} what="building specs" />
       </Card>
     );
   }

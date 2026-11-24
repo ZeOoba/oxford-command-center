@@ -17,6 +17,7 @@ export type FeedId =
   | 'pcaRegister'
   | 'marketSeries'
   | 'leaseEvents';
+  | 'acqInputs';
 /** 'error' = the read itself failed. Kept apart from 'missing' (never ran / nothing imported) so a
  *  locked DB or a corrupt file no longer looks like a feed that simply has no data (2026-11-23 review). */
 export type FeedStatus = 'fresh' | 'stale' | 'missing' | 'error';
@@ -66,6 +67,10 @@ export const FEED_MAX_AGE_DAYS: Record<FeedId, number> = {
   // Last run of the rent-roll diff derivation; the snapshot refreshes weekly or faster, so two weeks
   // allows one missed run before the leasing-velocity events are called stale.
   leaseEvents: 14,
+  // Acquisition engine inputs: underwriting runs weekly-to-monthly; 30 days with no deal input scored
+  // means the Cowork screens are not reaching the engine (it had never scored a live deal before the
+  // screen-packet importer, 2026-11-23 review Tier 1 #3).
+  acqInputs: 30,
 };
 
 const META: Record<FeedId, { label: string; fix: string }> = {
@@ -102,6 +107,9 @@ const META: Record<FeedId, { label: string; fix: string }> = {
   leaseEvents: {
     label: 'Lease events (last import of rent-roll diffs)',
     fix: 'npx tsx scripts/import-lease-events.ts (whether the rent-roll capture itself is current is the Workbook snapshot row)',
+  acqInputs: {
+    label: 'Acquisition engine inputs (last deal scored)',
+    fix: 'Import the acquisition-underwriting screen packet: npx tsx scripts/import-acq-screen-packet.ts <packet.json>',
   },
 };
 
@@ -217,6 +225,21 @@ export function lastLeaseEventsImportAt(db: { prepare(sql: string): { all(): unk
 export function lastPcaImportAt(db: { prepare(sql: string): { get(): unknown } }): string | null {
   const row = db.prepare('SELECT MAX(imported_at) AS t FROM pca_reports').get() as { t: string | null } | undefined;
   return row?.t ?? null;
+}
+
+/**
+ * When the acquisition engine last took in a Cowork screen (null = none ever imported). Newest
+ * acq_score_inputs row stamped scored_by 'cowork-skill' — the screen-packet importer. POST /acq/score
+ * ('api') and re-score sweeps do not count: they re-run the engine without a new underwriting screen
+ * (refute wf_c51f7c6a-65b). A re-import of an unchanged packet is INSERT OR IGNORE and does not move it.
+ * Known limit: this is load time, not the packet's screenedAt, so importing a backlog of old screens
+ * reads fresh.
+ */
+export function lastAcqInputAt(db: { prepare(sql: string): { get(): unknown } }): string | null {
+  const row = db.prepare("SELECT MAX(scored_at) AS t FROM acq_score_inputs WHERE scored_by = 'cowork-skill'").get() as { t: string | null } | undefined;
+  // scored_at is SQLite datetime('now'): 'YYYY-MM-DD HH:MM:SS' in UTC with no zone. Date.parse would read it
+  // as LOCAL time, so mark it UTC explicitly.
+  return row?.t ? `${row.t.replace(' ', 'T')}Z` : null;
 }
 
 /** The backup directory scripts/warehouse-backup.ts writes to (same env var, same default). */

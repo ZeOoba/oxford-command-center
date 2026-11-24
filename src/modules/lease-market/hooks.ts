@@ -70,9 +70,9 @@ export function useRadarDecision() {
 }
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
-export function fmtPsf(v: number | null | undefined): string {
-  return v === null || v === undefined ? '—' : `$${v.toFixed(2)}`;
-}
+// One shared copy (2026-11-23 review); imported for local use and re-exported for this module's callers.
+import { fmtPsf } from '@analytics/format';
+export { fmtPsf };
 export function fmtPct(v: number | null | undefined, signed = true): string {
   if (v === null || v === undefined) return '—';
   const pct = Math.round(v * 100);

@@ -52,6 +52,7 @@ import {
   lastLeaseEventsImportAt,
   lastLedgerImportAt,
   lastMarketSeriesAsOf,
+  lastAcqInputAt,
   lastPcaImportAt,
   lastTaxAssessmentAsOf,
   readFeed,
@@ -338,6 +339,7 @@ app.get('/api/health', (c) => {
     pcaRegister: fromWarehouse(lastPcaImportAt),
     marketSeries: fromWarehouse(lastMarketSeriesAsOf),
     leaseEvents: fromWarehouse(lastLeaseEventsImportAt),
+    acqInputs: fromWarehouse(lastAcqInputAt),
   }, Date.now());
   return c.json({
     ok: true,

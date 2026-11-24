@@ -42,9 +42,11 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="text-sm font-semibold" style={{ color: 'var(--text-neg)' }}>
             Something went wrong rendering this module.
           </div>
-          <div className="num max-w-lg text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          {/* Raw text behind a disclosure, not as the message (2026-11-23 review). */}
+          <details className="num max-w-lg text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            <summary className="cursor-pointer">Details</summary>
             {this.state.error.message}
-          </div>
+          </details>
         </div>
       );
     }

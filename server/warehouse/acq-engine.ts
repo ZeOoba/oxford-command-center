@@ -92,6 +92,16 @@ const NEXT_SCORED_AT_SQL = `(SELECT MAX(strftime('%Y-%m-%d %H:%M:%f', 'now'),
 /** ORDER BY for "latest acq_scores row of a candidate" — must match every reader (see above). */
 const LATEST_SCORE_ORDER = 'scored_at DESC, id DESC';
 
+/**
+ * Provenance only. scoredBy is written to acq_score_inputs.scored_by (migration 007's vocabulary:
+ * 'engine' | 'cowork-skill' | 'api') on the row's FIRST insert; it is NOT part of the dedup key, so the
+ * same input arriving later through another path keeps the original stamp (INSERT OR IGNORE). It never
+ * changes the score, the verdict or the governor demotion.
+ */
+export interface PersistAndLogScoreOptions {
+  scoredBy?: 'api' | 'cowork-skill' | 'engine';
+}
+
 export interface PersistAndLogScoreResult {
   score: AcquisitionScore;
   calibrationVerdictId: number | null;
@@ -173,8 +183,10 @@ export { governorFingerprint };
  *       FROM calibration_outcome o JOIN calibration_verdict v ON v.id = o.calibration_id
  *       WHERE o.is_resolution = 1 AND v.subject_kind = 'deal' AND v.verdict_kind = 'acquisition-score'
  *       GROUP BY v.subject_id HAVING COUNT(*) > 1;
- *   - The HubSpot / Notion candidate syncs set status to acquired / passed without calling
- *     logAcqOutcome, so those resolutions never reach calibration.
+ *   - (Closed 2026-11-23) The HubSpot / Notion candidate syncs used to set status to acquired / passed
+ *     without calling logAcqOutcome. Both now call it on an active -> terminal transition
+ *     (acq-hubspot-sync.ts terminalTransition). A deal resolved in a source BEFORE that change is not
+ *     back-filled: its row is already terminal, so no transition fires — resolve it via resolveManualOutcome.
  *
  * score_json.scoredAt is the ENGINE-RUN time of the stored output (refute round 2, low 2): a
  * supersede writes a new run so it is refreshed; a reinstate keeps it, because the output is the
@@ -192,6 +204,7 @@ export async function persistAndLogScore(
   input: AcquisitionInput,
   ruleset: AcquisitionRuleset,
   rct: ReplacementCostTable,
+  opts: PersistAndLogScoreOptions = {},
 ): Promise<PersistAndLogScoreResult> {
   // 0. FAIL CLOSED (Invariant 4): a persisted score feeds the ranked pipeline, the capital BUY verdict
   //    (capital-allocation.ts now also refuses advisory_only rows — defense in depth) and the 40-year calibration
@@ -239,13 +252,14 @@ export async function persistAndLogScore(
   db.prepare(`
     INSERT OR IGNORE INTO acq_score_inputs
       (candidate_id, inputs_version, input_json, ruleset_version, rct_version, scored_by)
-    VALUES (?, ?, ?, ?, ?, 'api')
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     candidateId,
     inputsVersion,
     JSON.stringify(input),
     ruleset.rulesetVersion,
     rct.rctVersion,
+    opts.scoredBy ?? 'api',
   );
 
   // Retrieve the score_input_id (whether just inserted or already present).

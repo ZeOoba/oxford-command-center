@@ -13,6 +13,14 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { syncHubSpotPipeline } from '../../server/warehouse/acq-hubspot-sync';
 import type { FetchLike } from '../../server/warehouse/acq-hubspot-sync';
+import { readFileSync as readFileSyncOutcome } from 'node:fs';
+import { resolve as resolveOutcome } from 'node:path';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
+import { parseRuleset } from '../../server/warehouse/acquisition';
+import { terminalTransition } from '../../server/warehouse/acq-hubspot-sync';
+import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
+import { withCommitGap } from '../support/commit-gap';
 
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'acq-hubspot-test-'));
@@ -491,5 +499,67 @@ describe('syncHubSpotPipeline — updated_at gate reflects persisted state (M1)'
       .get('deal:hubspot:m1-3') as { status: string; updated_at: string };
     expect(row.status).toBe('passed');
     expect(row.updated_at).toBe('2000-01-01 00:00:00');
+  });
+});
+
+// ── Outcome logging on a terminal transition (2026-11-23) ──────────────────────────────────────
+
+describe('syncHubSpotPipeline — calibration outcome on Closed Won / Closed Lost', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+  const outcomes = (db: WarehouseDb, id: string) => db.prepare(`
+    SELECT o.realized_band AS band, o.resolved_by AS by FROM calibration_outcome o
+    JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id) as Array<{ band: string; by: string }>;
+
+  it('terminalTransition fires only on a move INTO acquired / passed', () => {
+    expect(terminalTransition('active', 'passed')).toBe('passed');
+    expect(terminalTransition('active', 'acquired')).toBe('acquired');
+    expect(terminalTransition('passed', 'passed')).toBeNull();
+    expect(terminalTransition('active', 'archived')).toBeNull();
+    expect(terminalTransition('active', 'active')).toBeNull();
+  });
+
+  it('a scored active deal that turns Closed Lost gets exactly one auto outcome; a re-sync adds none', async () => {
+    const db = freshDb();
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([makeDeal({ id: '77', dealname: 'Example A', dealstage: '1331037317' })]) });
+    const id = 'deal:hubspot:77';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    expect(outcomes(db, id)).toHaveLength(0);
+    const lost = mockFetch([makeDeal({ id: '77', dealname: 'Example A', dealstage: '1331037323' })]);
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: lost });
+    expect(outcomes(db, id)).toEqual([{ band: 'passed', by: 'auto:deal-lifecycle' }]);
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: lost });
+    expect(outcomes(db, id)).toHaveLength(1);
+  });
+
+  it('a deal first seen already Closed Won writes no outcome and does not throw', async () => {
+    const db = freshDb();
+    const r = await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([makeDeal({ id: '78', dealstage: '1331037322' })]) });
+    expect(r.errors).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) n FROM calibration_outcome').get()).toEqual({ n: 0 });
+  });
+});
+
+// Merge gate PR #591, R-3: the outcome is logged INSIDE the per-deal transaction. withCommitGap lands
+// another writer's score (moving the current-score pointer) right after the first top-level transaction
+// commits; the outcome must still bind to the verdict current when the status moved.
+describe('syncHubSpotPipeline — outcome binds inside the status transaction (merge gate PR #591, R-3)', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  it('a score landing right after the commit does not capture the outcome', async () => {
+    const db = freshDb();
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([makeDeal({ id: '91', dealname: 'Example B', dealstage: '1331037317' })]) });
+    const id = 'deal:hubspot:91';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const decisionIv = (db.prepare('SELECT s.inputs_version AS iv FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id WHERE c.id = ?')
+      .get(id) as { iv: string }).iv;
+    const gap = withCommitGap(db, () => {
+      void persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 2_000_000 }), ruleset, rct);
+    });
+    await syncHubSpotPipeline(gap, 'tok', { fetchImpl: mockFetch([makeDeal({ id: '91', dealname: 'Example B', dealstage: '1331037323' })]) });
+    const bound = db.prepare(`SELECT v.inputs_version AS iv FROM calibration_outcome o
+      JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id) as Array<{ iv: string }>;
+    expect(bound).toEqual([{ iv: decisionIv }]);
   });
 });

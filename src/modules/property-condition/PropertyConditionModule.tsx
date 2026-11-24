@@ -36,6 +36,7 @@ import { CostSegPanel } from './CostSegView';
 import { buildClockRows } from './clock';
 import { EXTRA_ASSET_FACTS, INFO_LANE_DETAIL, PCA_OVERLAY } from './pca-overlay';
 import { CALIBRATION_LEDGER, CALIBRATION_PENDING } from './calibration-data';
+import { QueryError } from '@/primitives/QueryError';
 
 /** Reports dated before 2024 are history only — their lifecycle lines are not projected as forecasts. Judged on the RAW
  *  register date on purpose: lifecycle rows carry that raw date and a dueYear computed from it, so a report the overlay
@@ -76,9 +77,7 @@ export function PropertyConditionModule() {
     return (
       <Card>
         <CardHeader title="Property Condition" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load property condition.'}
-        </div>
+        <QueryError error={error} what="property condition" />
       </Card>
     );
   }

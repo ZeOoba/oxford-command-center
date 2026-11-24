@@ -353,16 +353,17 @@ describe('StrategyBoard', () => {
 // Driven by an OPTIONAL strategyReport prop (RESOLVED data-flow: TaxesModule calls both
 // useTaxAnalysis() and useTaxStrategy() and threads both reports down as props — StrategyBoard
 // itself calls no hook). Absent/undefined or an 'absent'-sourced report falls back to exactly the
-// pre-existing two-tier + deferred-card behavior proven above; a placeholder- or
-// warehouse-sourced report renders a third tier + a qualitative entity-strategies Card instead.
+// pre-existing two-tier + deferred-card behavior proven above; a warehouse-sourced report renders a
+// third tier + a qualitative entity-strategies Card instead. A PLACEHOLDER-sourced report is treated
+// like an absent one (Gabriel 2026-11-23: hide the cost-seg surface while the basis is placeholder).
 
 describe('StrategyBoard — cost-seg tier (P4c / C2)', () => {
   const opportunities: TaxOpportunity[] = [
     makeOpportunity({ propertyId: 'appeal-det', kind: 'appeal', propertyName: 'Appeal Co', savingsOxfordShare: 5_000 }),
   ];
 
-  it('renders the "Depreciation & Cost-Seg" third tier and NOT the deferred card when a placeholder-sourced strategy report is passed', () => {
-    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+  it('renders the "Depreciation & Cost-Seg" third tier and NOT the deferred card when a warehouse-sourced strategy report is passed', () => {
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport({ basisDataSource: 'warehouse' })} />);
     const board = screen.getByRole('list', { name: /tier board/i });
     const tierColumns = board.querySelectorAll(':scope > [role="listitem"]');
     expect(tierColumns).toHaveLength(3);
@@ -372,7 +373,7 @@ describe('StrategyBoard — cost-seg tier (P4c / C2)', () => {
   });
 
   it('renders the entity-strategies "Structure & Pipeline — qualitative" Card listing all three items alongside the third tier', () => {
-    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport({ basisDataSource: 'warehouse' })} />);
     expect(screen.getByText('Structure & Pipeline — qualitative')).toBeTruthy();
     expect(screen.getByText('Holding-entity structure review')).toBeTruthy();
     expect(screen.getByText('Section 469 passive-activity grouping election')).toBeTruthy();
@@ -402,8 +403,17 @@ describe('StrategyBoard — cost-seg tier (P4c / C2)', () => {
     expect(screen.getByText(/deferred pending that data source/i)).toBeTruthy();
   });
 
-  it('cost-seg tier item detail language is deduction-acceleration / not-tax-savings, never a bare dollar-savings claim', () => {
+  // Gabriel 2026-11-23: a placeholder basis must not drive a visible cost-seg tier.
+  it('renders the deferred card and no third tier when strategyReport.basisDataSource is "placeholder"', () => {
     render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+    const board = screen.getByRole('list', { name: /tier board/i });
+    expect(board.querySelectorAll(':scope > [role="listitem"]')).toHaveLength(2);
+    expect(screen.queryByText('Depreciation & Cost-Seg')).toBeNull();
+    expect(screen.getByText(/deferred pending that data source/i)).toBeTruthy();
+  });
+
+  it('cost-seg tier item detail language is deduction-acceleration / not-tax-savings, never a bare dollar-savings claim', () => {
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport({ basisDataSource: 'warehouse' })} />);
     const card = screen.getByText('Prop One').closest('li')!;
     expect(card.textContent).toMatch(/not tax savings|deduction acceleration/i);
     expect(card.textContent).not.toMatch(/\$[\d,.]+[KMB]?\s*(in\s+)?savings/i);
@@ -749,7 +759,8 @@ describe('TaxesModule inner switch (SegmentedControl on ?view=)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
     const qc = seededClient();
     qc.setQueryData(TAX_KEYS.analysis, makeReport());
-    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+    // Warehouse-sourced basis: a placeholder basis hides the cost-seg tier (2026-11-23 ruling).
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport({ basisDataSource: 'warehouse' }));
     return qc;
   }
 
@@ -840,12 +851,12 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
     expect(screen.getByText('PLACEHOLDER — Entity A LLC')).toBeTruthy();
   });
 
-  it('renders the Depreciation & Cost-Seg tier on the Strategy Board view once useTaxStrategy resolves', () => {
+  it('renders the Depreciation & Cost-Seg tier on the Strategy Board view once useTaxStrategy resolves (warehouse basis)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
     qc.setQueryData(TAX_KEYS.analysis, makeReport());
-    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport({ basisDataSource: 'warehouse' }));
 
     render(
       <MemoryRouter>
