@@ -460,6 +460,7 @@ describe('syncNotionPipeline — status mapping checks negative terms first (ref
     ['Closed Lost', 'passed'],
     ['Closed - Dead', 'passed'],
     ["Won't Pursue", 'active'],
+    ['Won’t Pursue', 'active'], // curly apostrophe (merge gate PR #591, T2-2)
     ['Won', 'acquired'],
   ])('Stage %s maps to status %s', async (stage, expected) => {
     const db = freshDb();

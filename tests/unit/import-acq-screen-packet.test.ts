@@ -5,7 +5,7 @@
 // scripts/import-acq-screen-packet.ts — parser rejects, candidate crosswalk, idempotent scoring through
 // persistAndLogScore, per-packet isolation, batch provenance, CLI args. Synthetic RCT only
 // (tests/support/rct.ts); a tmpdir SQLite, never data/warehouse/finance.sqlite. Pseudonymous deals.
-import { spawn } from 'node:child_process';
+import Database from 'better-sqlite3';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -357,6 +357,10 @@ describe('screen order, duplicates and twins (refute wf_c51f7c6a-65b)', () => {
     ['100 Main St, Exampleville, OH 40001, USA', '2200 High St, Exampleville, OH 40001, USA'],
     ['100 Main St - 15,000 SF flex', '2200 Oak Ave - 48,000 SF flex'],
     ['100 Main St 25000 SF', '2200 Oak Ave 25000 SF'],
+    // Merge gate PR #591, T2-3: each pair is caught by exactly one extra-key filter. The thousands tail
+    // ('000 flex warehouse') and the number followed by a number ('15 000 sf').
+    ['100 Main St, 15,000 flex warehouse', '2200 Oak Ave, 22,000 flex warehouse'],
+    ['100 Main St (15,000 SF)', '2200 Oak Ave (15,000 SF)'],
   ])('different properties sharing only a size or ZIP figure are not twins: %s vs %s', async (scored, other) => {
     await expectTwin(scored, other, false);
   });
@@ -475,30 +479,49 @@ describe('merge gate PR #591 round 1 regressions', () => {
   });
 
   // R-1 / R-2 / T-1: the guards, the score and the ledger date run under ONE write lock per packet. A second
-  // process holds the write lock and commits a NEWER screen for the candidate; this import must wait for it
-  // and then see it (stale). With the guards read outside the lock it scored the older packet instead.
+  // connection commits a NEWER screen for the candidate as the lock is requested; this import must see it
+  // (stale). With the guards read outside the lock it scored the older packet instead.
   it('R-1: guards are read under the write lock, so a concurrent newer screen makes this packet stale', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'acq-packet-lock-'));
-    const path = join(dir, 'test.sqlite');
+    // Deterministic (merge gate PR #591, T2-4): a second connection commits a NEWER screen at the instant
+    // this import issues BEGIN IMMEDIATE, so guards read before the lock miss it; and when the guard first
+    // reads the ledger, the second connection must be unable to take the write lock (BEGIN DEFERRED would
+    // let it in between the read and the score).
+    const path = join(mkdtempSync(join(tmpdir(), 'acq-packet-lock-')), 'test.sqlite');
     const db = openWarehouse(path);
     seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
-    const holder = [
-      "const D = require('better-sqlite3');",
-      `const db = new D(${JSON.stringify(path)});`,
-      "db.pragma('busy_timeout = 10000');",
-      "db.exec('BEGIN IMMEDIATE');",
-      "db.prepare(\"INSERT INTO acq_source_batches (id, source, candidate_count, notes) VALUES ('screen-packet:other', 'screen-packet', 1, ?)\")",
-      "  .run(JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-20' } }));",
-      "process.stdout.write('locked\\n');",
-      "setTimeout(() => { db.exec('COMMIT'); db.close(); }, 300);",
-    ].join('\n');
-    const child = spawn(process.execPath, ['-e', holder], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'] });
-    await new Promise<void>((res, rej) => {
-      child.stdout.on('data', (b: Buffer) => { if (b.toString().includes('locked')) res(); });
-      child.on('exit', (code) => rej(new Error(`lock holder exited early (${code})`)));
+    const other = new Database(path);
+    other.pragma('busy_timeout = 0');
+    let injected = false;
+    let otherWriter: string | null = null;
+    const probe = new Proxy(db, {
+      get(t, p) {
+        if (p === 'exec') {
+          return (sql: string) => {
+            if (!injected && /^\s*BEGIN IMMEDIATE/i.test(sql)) {
+              injected = true;
+              other.prepare("INSERT INTO acq_source_batches (id, source, candidate_count, notes) VALUES ('screen-packet:other', 'screen-packet', 1, ?)")
+                .run(JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-20' } }));
+            }
+            return t.exec(sql);
+          };
+        }
+        if (p === 'prepare') {
+          return (sql: string) => {
+            const st = t.prepare(sql);
+            if (otherWriter !== null || !t.inTransaction || !/acq_source_batches/.test(sql)) return st;
+            try { other.exec('BEGIN IMMEDIATE'); other.exec('ROLLBACK'); otherWriter = 'got the lock'; }
+            catch (e) { otherWriter = (e as { code?: string }).code ?? String(e); }
+            return st;
+          };
+        }
+        const v = Reflect.get(t, p, t) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(t) : v;
+      },
     });
-    const r = await importScreenPackets(db, [ok(parseScreenPacket(packet({ screenedAt: '2026-11-12' })))], RULESET, RCT, FILE);
-    await new Promise<void>((res) => { if (child.exitCode !== null) res(); else child.on('exit', () => res()); });
+    const r = await importScreenPackets(probe, [ok(parseScreenPacket(packet({ screenedAt: '2026-11-12' })))], RULESET, RCT, FILE);
+    other.close();
+    expect(injected).toBe(true);
+    expect(otherWriter).toBe('SQLITE_BUSY');
     expect(r).toMatchObject({ stale: 1, scored: [], failed: 0 });
     expect(count(db, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
     db.close();
@@ -534,6 +557,21 @@ describe('main() exit codes (merge gate PR #591, T-3)', () => {
     expect(await main([join(dir, 'missing.json'), '--db', dbPath])).toBe(1);
     const check = openWarehouse(dbPath);
     expect(count(check, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(0);
+    check.close();
+  });
+
+  it('real run (merge gate PR #591, T2-1): 0 when every packet scores, 1 when one is unmapped, stale or rejected', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acq-packet-main-'));
+    const dbPath = join(dir, 'test.sqlite');
+    const db = openWarehouse(dbPath);
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    db.close();
+    expect(await main([writePacketFile(dir, packet()), '--db', dbPath])).toBe(0);
+    expect(await main([writePacketFile(dir, packet({ deal: { notionPageId: 'nope' } })), '--db', dbPath])).toBe(1);
+    expect(await main([writePacketFile(dir, packet({ screenedAt: '2026-11-01' }, { price: 1_200_000 })), '--db', dbPath])).toBe(1);
+    expect(await main([writePacketFile(dir, { packets: [packet({ screenedAt: 'x' })] }), '--db', dbPath])).toBe(1);
+    const check = openWarehouse(dbPath);
+    expect(count(check, "SELECT COUNT(*) n FROM acq_score_inputs WHERE scored_by = 'cowork-skill'")).toBe(1);
     check.close();
   });
 });

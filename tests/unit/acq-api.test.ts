@@ -25,6 +25,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { AcqIntelResponse } from '@contracts/acquisition';
 import type { ParcelScreenImportRequest } from '@contracts/acquisition';
+import { withCommitGap } from '../support/commit-gap';
 
 /** Open a fresh in-memory warehouse (all migrations applied). */
 function freshDb(): WarehouseDb {
@@ -393,6 +394,40 @@ describe('PATCH /acq/candidates/:id/status', () => {
 
     const res = await patch(app, `/acq/candidates/${candidateId}/status`, { status: 'invalid-status' });
     expect(res.status).toBe(400);
+  });
+});
+
+// Merge gate PR #591, R2-1: the status UPDATE and the outcome binding share one transaction. withCommitGap
+// lands another writer's score (moving the current-score pointer) the moment the status write is durable:
+// right after an autocommitted UPDATE, or right after the enclosing transaction commits.
+describe('PATCH /acq/candidates/:id/status — outcome binds inside the status transaction (merge gate PR #591, R2-1)', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncG3(resolveG3(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  it('a score landing right after the status write does not capture the outcome', async () => {
+    const db = freshDb();
+    const { candidateId: id } = (await (await post(makeApp(db), '/acq/candidates', { address: '400 Test Rd' })).json()) as { candidateId: string };
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const decisionIv = (db.prepare('SELECT s.inputs_version AS iv FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id WHERE c.id = ?')
+      .get(id) as { iv: string }).iv;
+    let landed = false;
+    const gap = withCommitGap(db, () => {
+      landed = true;
+      void persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 2_000_000 }), ruleset, rct);
+    }, { autocommit: /UPDATE acq_candidates SET status/ });
+    const res = await patch(makeApp(gap), `/acq/candidates/${id}/status`, { status: 'passed' });
+    expect(res.status).toBe(200);
+    expect(landed).toBe(true);
+    const bound = db.prepare(`SELECT v.inputs_version AS iv FROM calibration_outcome o
+      JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id) as Array<{ iv: string }>;
+    expect(bound).toEqual([{ iv: decisionIv }]);
+  });
+
+  it('an unknown id is still a 404 and writes nothing', async () => {
+    const db = freshDb();
+    const res = await patch(makeApp(db), '/acq/candidates/no-such-id/status', { status: 'acquired' });
+    expect(res.status).toBe(404);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM calibration_outcome').get() as { n: number }).n).toBe(0);
   });
 });
 
