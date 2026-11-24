@@ -63,7 +63,7 @@
   --grid-line: #1b2531;
   --text-primary: #e8edf3;
   --text-secondary: #aab6c4;
-  --text-tertiary: #6b7888;
+  --text-tertiary: #768393; /* was #6b7888: 3.9:1 on raised surfaces; now >=4.5:1 (WCAG AA), 2026-11-23 */
   --text-on-accent: #06120f;
   /* Per-consumer token, separate from --text-on-accent: in warm, --text-on-accent
      must be DARK for --accent/--color-neg yet LIGHT for --color-info — disjoint
@@ -104,7 +104,7 @@
   --grid-line: #eef1f6;
   --text-primary: #121a26;
   --text-secondary: #475568;
-  --text-tertiary: #8593a6;
+  --text-tertiary: #606f84; /* was #8593a6: 2.8:1; now >=4.5:1 (WCAG AA), 2026-11-23 */
   --text-on-accent: #0a0806;
   /* Separate token (see command block / PR-B disjoint-luminance finding).
      Coincides with --text-on-accent here (4.88:1 on --color-info). */
@@ -160,7 +160,7 @@
   --grid-line: #efe7d6;
   --text-primary: #2a2420;
   --text-secondary: #5c5247;
-  --text-tertiary: #9b9081;
+  --text-tertiary: #746a5c; /* was #9b9081: 2.7:1; now >=4.5:1 (WCAG AA), 2026-11-23 */
   --text-on-accent: #fffdf8;
   /* Coincides with --text-on-accent today (both near-white) — kept as a separate
      token deliberately (PR-B disjoint-luminance finding): --color-info (#2f6f6a)

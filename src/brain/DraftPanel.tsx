@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { DialogFocus } from '@/lib/useDialogFocus';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X, Copy, Check, Mail, ShieldAlert } from 'lucide-react';
 import { useUi } from './ui-context';
@@ -12,6 +13,7 @@ import { buildDraft, mailtoHref, ORA_CC } from './draft';
  */
 export function DraftPanel() {
   const ui = useUi();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const { data } = useSnapshot();
   const built = ui.draft && data ? buildDraft(data.snapshot, ui.draft) : null;
 
@@ -46,7 +48,9 @@ export function DraftPanel() {
   return (
     <AnimatePresence>
       {open && built && (
-        <div className="fixed inset-0 z-[70] grid place-items-center p-4" role="dialog" aria-modal="true" aria-label="Draft email">
+        <div ref={dialogRef} className="fixed inset-0 z-[70] grid place-items-center p-4" role="dialog" aria-modal="true" aria-label="Draft email">
+          {/* Escape (it had none), focus trap and focus return (2026-11-23 review) */}
+          <DialogFocus target={dialogRef} onClose={ui.closeDraft} />
           <motion.div className="absolute inset-0" style={{ background: 'rgba(2,4,8,0.55)' }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={ui.closeDraft} />
           <motion.div
             className="relative flex w-[min(620px,94vw)] flex-col rounded-[var(--radius-lg)]"

@@ -47,16 +47,12 @@ import { HurdleRateBanner } from './HurdleRateBanner';
 import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTab } from './tabs';
 import { ScatterChart } from '@/charts/ScatterChart';
 import { allocationCapPoints } from './cap-rate-scatter';
+import { fmtPct, fmtBps } from '@analytics/index';
 
 const DebtModule = lazy(() => import('../debt/DebtModule').then((m) => ({ default: m.DebtModule })));
 const CashModule = lazy(() => import('../cash/CashModule').then((m) => ({ default: m.CashModule })));
 const CloseModule = lazy(() => import('../close/CloseModule').then((m) => ({ default: m.CloseModule })));
 type CapitalData = NonNullable<ReturnType<typeof useCapitalAllocation>['data']>;
-
-function fmtPct(n: number | null): string {
-  if (n === null) return '—';
-  return `${(n * 100).toFixed(1)}%`;
-}
 
 // ── Market cap-rate positioning ──────────────────────────────────────────────────
 // Folded in from CapitalAllocationModule.tsx (deleted — this was its only mounted home).
@@ -89,18 +85,6 @@ async function postCapitalNotionSync(): Promise<NotionSyncResult> {
     throw new Error(msg);
   }
   return NotionSyncResult.parse(json);
-}
-
-function fmtCapRate(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  return `${(n * 100).toFixed(1)}%`;
-}
-
-/** Signed gap in basis points vs market median. Positive = higher yield than market. */
-function fmtCapRateGap(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  const bps = Math.round(n * 10_000);
-  return `${bps >= 0 ? '+' : ''}${bps} bps`;
 }
 
 function capBandLabel(band: CapitalAllocationEntry['capRatePercentile']): string {
@@ -146,7 +130,7 @@ const CAP_RATE_COLS: Column<CapitalAllocationEntry>[] = [
     align: 'right',
     render: (e) => (
       <span className="num text-xs" style={{ color: 'var(--text-secondary)' }}>
-        {fmtCapRate(e.impliedCapRate)}
+        {fmtPct(e.impliedCapRate)}
       </span>
     ),
     sortValue: (e) => e.impliedCapRate ?? -1,
@@ -166,7 +150,7 @@ const CAP_RATE_COLS: Column<CapitalAllocationEntry>[] = [
             : 'var(--text-warn)',
         }}
       >
-        {fmtCapRateGap(e.capRateGap)}
+        {fmtBps(e.capRateGap)}
       </span>
     ),
     sortValue: (e) => e.capRateGap ?? -999,
@@ -389,7 +373,7 @@ export function CapitalModule() {
             xLabel="Implied cap"
             yLabel="vs market"
             xFormat={(n) => `${(n * 100).toFixed(1)}%`}
-            yFormat={fmtCapRateGap}
+            yFormat={fmtBps}
             yRef={0}
           />
         </Card>

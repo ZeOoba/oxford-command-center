@@ -22,6 +22,7 @@ import type { WarehouseDb } from './db';
 import { latestFullYearPeriod, propertyPeriodMetrics, type PeriodMetrics } from './metrics';
 import { PROPERTY_ALIASES } from './property-crosswalk';
 import { hasBlankGovernorInput } from '../../src/analytics/governor-inputs';
+import { acknowledgmentInForce, type NoiDriftAcknowledgment } from './noi-acknowledgments';
 
 export interface Tolerance {
   /** Relative band: |delta| / max(|wbNoi|, |whNoi|) ≤ pctBand ⇒ in-tolerance. */
@@ -78,6 +79,28 @@ export interface NoiReconcileInput {
    *  structural-mismatch downgrade (OI-137). Null only when there is no comparison period to
    *  evaluate leaseStart against (never null merely because no lease qualified — that's a real 0). */
   recentTenancyAnnualRent: number | null;
+  /** R34-3: the ratified acknowledgment for this property, if any (config/noi-crosscheck-acknowledgments.json).
+   *  Optional: absent/null never downgrades anything. */
+  acknowledgment?: NoiDriftAcknowledgment | null;
+  /** YYYY-MM-DD the acknowledgment's expiry is checked against. Absent/invalid -> no acknowledgment applies. */
+  asOfDate?: string | null;
+}
+
+/**
+ * R34-3: does the row's ratified acknowledgment cover this large drift? Every condition must hold —
+ * same property, same comparison period, warehouse exceeds workbook (delta < 0), workbook NOI > 0,
+ * deltaPct within the ratified ceiling, and an as-of date strictly before the expiry. The caller
+ * never consults this on a sign conflict.
+ */
+function acknowledgmentCovers(input: NoiReconcileInput, delta: number, deltaPct: number): boolean {
+  const ack = input.acknowledgment ?? null;
+  if (ack === null) return false;
+  if (ack.propertyId !== input.propertyId) return false;
+  if (input.warehousePeriod === null || ack.comparisonPeriod !== input.warehousePeriod) return false;
+  if (ack.direction !== 'warehouse-exceeds-workbook' || !(delta < 0)) return false;
+  if (input.workbookOxfordNoi === null || !(input.workbookOxfordNoi > 0)) return false;
+  if (!(deltaPct <= ack.maxDeltaPct)) return false;
+  return acknowledgmentInForce(ack, input.asOfDate);
 }
 
 export interface NoiReconciliationRow {
@@ -294,6 +317,16 @@ export function classifyNoiReconciliation(
         `Structural mismatch, not an integrity break: ${direction} by ${(deltaPct * 100).toFixed(2)}% ` +
         `(${formatUsd(delta)}) — ${structuralEvidence} Spine A (workbook) reflects the current rent ` +
         `roll; Spine B (warehouse) reflects that period's historical actuals — neither is wrong. (OI-137)`;
+    } else if (!signsConflict && acknowledgmentCovers(input, delta, deltaPct)) {
+      // R34-3: a ratified, dated acknowledgment of this exact known drift (see noi-acknowledgments.ts).
+      const ack = input.acknowledgment!;
+      status = 'structural-mismatch';
+      severity = 'warn';
+      reason =
+        `Acknowledged drift, not an integrity break: ${direction} by ${(deltaPct * 100).toFixed(2)}% ` +
+        `(${formatUsd(delta)}), within the ${(ack.maxDeltaPct * 100).toFixed(2)}% ceiling ratified by ` +
+        `${ack.ratifiedBy} on ${ack.ratifiedOn} for the ${ack.comparisonPeriod} comparison period ` +
+        `(expires ${ack.expires}): ${ack.reason} (R34-3)`;
     } else {
       status = 'large-drift';
       severity = 'error';
@@ -336,12 +369,27 @@ export function reconcileNoiAB(
 // FVC and Solar slug-alias bridge: PROPERTY_ALIASES (property-crosswalk.ts) is the single
 // source of truth for workbook-name → property_master.id slug corrections (H4).
 
+/** R34-3 options: ratified acknowledgments and the as-of date their expiry is checked against.
+ *  Omitted -> no acknowledgments apply (unchanged behaviour for every existing caller). */
+export interface NoiReconcileOptions {
+  acknowledgments?: ReadonlyArray<NoiDriftAcknowledgment>;
+  asOfDate?: string | null;
+}
+
 /** Build reconciliation inputs from the live workbook snapshot + warehouse periodMetrics. */
 export function buildNoiReconcileInputs(
   snapshot: PortfolioSnapshot,
   periodMetrics: PeriodMetrics[],
   propertyMaster: ReadonlyArray<{ id: string; financialMode: string }>,
+  options: NoiReconcileOptions = {},
 ): NoiReconcileInput[] {
+  const ackById = new Map<string, NoiDriftAcknowledgment>();
+  for (const a of options.acknowledgments ?? []) {
+    // Order-independence must not rest on the loader alone (REFUTE wf_e0c420fd-227 LOW).
+    if (ackById.has(a.propertyId)) throw new Error(`noi-acknowledgments: duplicate entry for ${a.propertyId}`);
+    ackById.set(a.propertyId, a);
+  }
+  const asOfDate = options.asOfDate ?? null;
   const metricsByProperty = new Map<string, PeriodMetrics[]>();
   for (const m of periodMetrics) {
     const arr = metricsByProperty.get(m.propertyId) ?? [];
@@ -406,6 +454,8 @@ export function buildNoiReconcileInputs(
       isResidence: wp.type === 'Residence',
       acqDate: wp.acqDate ?? null,
       recentTenancyAnnualRent,
+      acknowledgment: ackById.get(canonicalId) ?? null,
+      asOfDate,
     });
   }
 
@@ -444,11 +494,12 @@ export function reconcileNoiABFromDb(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
   tolerance: Tolerance = DEFAULT_TOLERANCE,
+  options: NoiReconcileOptions = {},
 ): NoiReconciliationRow[] {
   const periodMetrics = propertyPeriodMetrics(db);
   const propertyMaster = db.prepare(
     `SELECT id, financial_mode AS financialMode FROM property_master`,
   ).all() as Array<{ id: string; financialMode: string }>;
-  const inputs = buildNoiReconcileInputs(snapshot, periodMetrics, propertyMaster);
+  const inputs = buildNoiReconcileInputs(snapshot, periodMetrics, propertyMaster, options);
   return reconcileNoiAB(inputs, tolerance);
 }

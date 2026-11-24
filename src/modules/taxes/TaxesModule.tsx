@@ -38,6 +38,7 @@ import { StrategyBoard } from './StrategyBoard';
 import { AssessmentHistoryCard } from './AssessmentHistoryCard';
 import { AssessmentsTable } from './AssessmentsTable';
 import { FiledReturnsTable } from './FiledReturnsTable';
+import { QueryError } from '@/primitives/QueryError';
 
 type View = 'strategy' | 'assessments' | 'returns';
 const VIEW_KEYS: readonly View[] = ['strategy', 'assessments', 'returns'];
@@ -75,9 +76,7 @@ export function TaxesModule() {
     return (
       <Card>
         <CardHeader title="Taxes" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          {error instanceof Error ? error.message : 'Failed to load tax analysis.'}
-        </div>
+        <QueryError error={error} what="the tax analysis" />
       </Card>
     );
   }

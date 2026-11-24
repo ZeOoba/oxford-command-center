@@ -86,10 +86,7 @@ export function fmtDeltaPct(n: number | null): string {
   return `${n < 0 ? '−' : '+'}${pct}%`;
 }
 
-export function fmtPsf(n: number | null, digits = 2): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  return `$${n.toFixed(digits)}`;
-}
+export { fmtPsf } from '@analytics/format'; // one shared copy (2026-11-23 review)
 
 /** '2025-11' → 'Nov 2025'; '2025-11-25' → '25 Nov 2025'; '2016' → '2016'; null → '—'. Pure string math (no Date/timezone). */
 export function fmtPartialDate(d: string | null): string {

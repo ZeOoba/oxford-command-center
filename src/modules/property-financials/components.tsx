@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import type { PfInsight } from '@contracts/property-financials';
 import { NM, pctLevel } from '@analytics/property-financials/format';
 import type { MetricResult } from '@analytics/property-financials/periods';
+import { EmptyState as SharedEmptyState } from '@/primitives/EmptyState';
 
 const SEVERITY_ICON_NAME: Readonly<Record<PfInsight['severity'], string>> = {
   High: 'filled circle',
@@ -53,11 +54,7 @@ export function ChangeChip({ result, invert = false }: { result: MetricResult; i
   );
 }
 
+/** The shared primitive with this module's `pf-empty` styling (promoted 2026-11-23). */
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="pf-empty" role="status">
-      <h2>{title}</h2>
-      {children}
-    </div>
-  );
+  return <SharedEmptyState title={title} className="pf-empty">{children}</SharedEmptyState>;
 }

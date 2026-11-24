@@ -16,14 +16,10 @@ import { Badge } from '@/primitives/Badge';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Skeleton } from '@/primitives/Skeleton';
 import { isWarehouseUnavailable, useBrainReport } from './hooks';
+import { fmtPct } from '@analytics/index';
 
 /** The resolved composed report — what `useBrainReport().data` holds once loaded. */
 export type BrainReport = NonNullable<ReturnType<typeof useBrainReport>['data']>;
-
-function fmtPct(n: number | null): string {
-  if (n === null || Number.isNaN(n)) return '—';
-  return `${Math.round(n * 100)}%`;
-}
 
 function fmtCount(n: number | null): string {
   return n === null || Number.isNaN(n) ? '—' : String(n);
@@ -79,7 +75,7 @@ export function ReportGate({ children }: { children: (r: BrainReport) => ReactNo
         <KpiStat
           label="Flag Accuracy"
           value={r.overallHitRate}
-          format={fmtPct}
+          format={(v) => fmtPct(v, 0)}
           accentColor="var(--accent)"
           sublabel={accuracySublabel(r.overallCi, r.overallHitRate, r.resolvedTotal)}
         />

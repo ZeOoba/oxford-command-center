@@ -8,6 +8,7 @@ import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
 import { useAcqIntel } from './hooks';
 import { RankedCandidateList } from './RankedCandidateList';
 import { CalibrationSummaryPanel } from './CalibrationSummaryPanel';
+import { QueryError } from '@/primitives/QueryError';
 
 const STATUS_OPTIONS = [
   { value: 'active',   label: 'Active' },
@@ -91,9 +92,7 @@ export function AcquisitionsIntel({ edgeEnabled = false }: { edgeEnabled?: boole
       )}
 
       {!isLoading && error && !isWarehouseUnavailable(error) && !data && (
-        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>
-          Unable to load acquisition intel: {error instanceof Error ? error.message : 'unknown error'}
-        </p>
+        <QueryError error={error} what="acquisition intel" className="py-2" />
       )}
 
       {!isLoading && data && (

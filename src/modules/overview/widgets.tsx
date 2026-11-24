@@ -359,6 +359,10 @@ function PriorityActionsWidget() {
   const candidates = insightsQuery.data?.candidates ?? [];
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
   const tier = buildPriorityActionsTier(merged, OVERVIEW_MAX_ITEMS);
+  // Same split the Results card uses (buildSummary), so the link and "N open" can never disagree:
+  // the link used to count observations too ("57 open" next to "See all 58 insights", 2026-11-23).
+  const summary = buildSummary(merged);
+  const observations = summary.count - summary.actionCount;
 
   // A single ranked tier — full width, one column, so the card doesn't render half-empty. "See
   // all" is the one link out to the full Insights tier board (Brain › Insights) — the ratified
@@ -384,7 +388,8 @@ function PriorityActionsWidget() {
             className="text-2xs font-semibold"
             style={{ color: 'var(--accent)' }}
           >
-            See all {merged.length} insights →
+            See all {summary.actionCount} open action{summary.actionCount === 1 ? '' : 's'}
+            {observations > 0 ? ` + ${observations} observation${observations === 1 ? '' : 's'}` : ''} →
           </button>
         </div>
       )}

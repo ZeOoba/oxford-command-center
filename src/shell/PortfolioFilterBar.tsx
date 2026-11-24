@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type { Market } from '@contracts/index';
 import { PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 import { Button } from '@/primitives/Button';
+import { isInvestmentProperty } from '@/analytics/property-basis';
 import { usePortfolioFilter } from './PortfolioFilterContext';
 import { filterSliceText, type FilterSlice } from './filter-slice';
 
@@ -68,7 +69,9 @@ export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps)
         style={filter.propertyType !== 'all' ? fieldStyleSet : fieldStyle}
       >
         <option value="all">All types</option>
-        {PropertyType.options.map((t) => (
+        {/* The residence is excluded from every surface (ruling 2026-10-30), so offering it here could
+            only ever match nothing (2026-11-23 review). Same predicate the surfaces use. */}
+        {PropertyType.options.filter((t) => isInvestmentProperty({ type: t })).map((t) => (
           <option key={t} value={t}>
             {t}
           </option>

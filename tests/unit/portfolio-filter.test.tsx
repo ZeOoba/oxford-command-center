@@ -200,7 +200,8 @@ describe('PortfolioFilterBar', () => {
     for (const dealOnly of ['Cincinnati OH', 'Madison WI', 'Grand Rapids MI', 'Des Moines IA', 'Louisville KY', 'Richmond VA']) {
       expect(Array.from(market.options).map((o) => o.value)).not.toContain(dealOnly);
     }
-    expect(Array.from(type.options).map((o) => o.value)).toEqual(['all', 'Flex', 'Retail', 'Industrial', 'Residence', 'Other']);
+    // No 'Residence': the residence is excluded from every surface (ruling 2026-10-30; option removed 2026-11-23).
+    expect(Array.from(type.options).map((o) => o.value)).toEqual(['all', 'Flex', 'Retail', 'Industrial', 'Other']);
     expect(Array.from(manager.options).map((o) => o.value)).toEqual(['all', 'CRC', 'SVN', 'Thomas Park']);
   });
 

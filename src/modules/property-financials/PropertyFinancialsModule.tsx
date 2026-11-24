@@ -132,7 +132,8 @@ export function PropertyFinancialsModule() {
       </EmptyState>
     ) : (
       <EmptyState title="Property Financials could not load">
-        <p>{q.error instanceof Error ? q.error.message : 'Unknown error.'}</p>
+        {/* Raw text behind a disclosure, not as the message (2026-11-23 review). */}
+        <details className="text-2xs"><summary className="cursor-pointer">Details</summary>{q.error instanceof Error ? q.error.message : 'Unknown error.'}</details>
       </EmptyState>
     );
   } else if (!q.data.dataset) {
