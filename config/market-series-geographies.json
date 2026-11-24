@@ -1,0 +1,15 @@
+{
+  "_comment": "Cluster -> Census CBSA codes for scripts/import-market-series.ts --census. Keys must equal property_master.market. A multi-CBSA cluster is POOLED (sum vacant / sum total), never averaged. Codes verified against the ACS 2024 5-year NAME field 2026-11-23. Mid-Atlantic = every CBSA holding a Mid-Atlantic property: Baltimore-Columbia-Towson (Columbia, Baltimore, Owings Mills), Salisbury, Easton micro, Cambridge micro.",
+  "clusters": {
+    "Columbus OH": ["18140"],
+    "Kansas City MO": ["28140"],
+    "Mid-Atlantic": ["12580", "41540", "20660", "15700"]
+  },
+  "_acs5ReleasesComment": "Vintage (period end year) -> PUBLIC release date of the ACS 5-year Detailed Tables. Census as_of = this date (Gabriel ruling 2026-11-23: release date, not period end). Add each new vintage from census.gov before importing it; the importer refuses a vintage missing here unless --released is passed.",
+  "acs5Releases": {
+    "2024": {
+      "released": "2026-01-29",
+      "source": "U.S. Census Bureau press release 'Census Bureau Announces Embargo for 2020-2024 American Community Survey 5-Year Estimates' (2026-01-22): public release Jan. 29, 2026 (revised from 2025-12-11 on 2025-11-20)"
+    }
+  }
+}
