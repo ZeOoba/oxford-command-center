@@ -3,7 +3,8 @@ import { findRentRollColumns, inferType, parseWorkbook, rentTotalColumns } from 
 import { annualRentGapIsExplainedByAbatement, checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
-import { loadCache, validateMappingCache } from '../server/ar/mapping-cache';
+import { loadCache } from '../server/ar/mapping-cache';
+import { checkMappingCache } from '../server/ar/mapping-cache-basis';
 
 loadEnvFile();
 
@@ -217,12 +218,11 @@ async function main() {
   // counterparty-edge check above — a cache entry is an edge from a tenant name to a lease, and a
   // dangling one silently demotes a previously human-confirmed attribution to "needs review". The
   // roster is the FULL leases array (Expired included), matching the importers' allLeaseIds.
-  const leaseIds = new Set(snapshot.leases.map((l) => l.id));
-  const cacheFlags = validateMappingCache(loadCache(), leaseIds);
-  const cacheOk = cacheFlags.length === 0;
-  if (!cacheOk) failed++;
-  console.log(`${cacheOk ? '✓ PASS' : '✗ FAIL'}  ${'AR mapping cache resolves'.padEnd(42)} ${cacheFlags.length} dangling`);
-  for (const f of cacheFlags) console.log(`         ${f.field} → ${f.rawValue}: ${f.issue}`);
+  // A synthetic stand-in cache (test-seeded worktree) is checked against the synthetic snapshot, not
+  // the real workbook — see server/ar/mapping-cache-basis.ts.
+  const cacheCheck = checkMappingCache(process.cwd(), snapshot.leases.map((l) => l.id), loadCache());
+  if (cacheCheck.failed) failed++;
+  for (const line of cacheCheck.lines) console.log(line);
 
   const peopleSeeded = snapshot.counterparties.filter((c) => c.source === 'memory').length;
   const peopleOk = peopleSeeded >= 4;
