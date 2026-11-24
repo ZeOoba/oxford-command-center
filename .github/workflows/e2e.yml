@@ -6,7 +6,7 @@ name: E2E
 # required check, so a failure shows red on the PR without blocking the merge. Promote it to required
 # only once it has a clean track record.
 #
-# Runs on GitHub-hosted ubuntu-latest only (no CI_RUNNER toggle): the laptop runner is
+# Runs on GitHub-hosted Ubuntu 24.04 only (no CI_RUNNER toggle): the laptop runner is
 # decommissioned and Playwright's browser deps install with --with-deps on Ubuntu. Data is the
 # synthetic stand-in seeded by `npm ci`'s postinstall (scripts/ensure-local-data.ts), exactly as in
 # ci.yml; playwright.config.ts boots `npm run dev` itself (webServer) and retries twice under CI.
@@ -28,7 +28,10 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that image moved to Ubuntu 26.04, where Playwright 1.60 has no
+    # Chromium build ("Playwright does not support chromium on ubuntu26.04-x64", first run 2026-11-24).
+    # Revisit when Playwright is upgraded.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
