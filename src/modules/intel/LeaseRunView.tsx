@@ -30,6 +30,7 @@ import {
   rolloverLabels,
   statusLabel,
 } from './lease-run-view';
+import { ActionError } from '@/primitives/ActionError';
 
 interface Props {
   /** The property to project. Null until a property is selected upstream. */
@@ -307,11 +308,7 @@ function AssumptionsPanel({
           </div>
         ))}
       </div>
-      {mutation.isError && (
-        <div className="px-4 py-2 text-xs" role="alert" style={{ color: 'var(--color-neg)' }}>
-          Not saved: {mutation.error.message}
-        </div>
-      )}
+      {mutation.isError && <ActionError error={mutation.error} failed="The assumption was not saved." className="px-4 py-2" />}
       <div className="px-4 py-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
         Management fee, reserve, vacancy, renewal growth, and cap rate are editable landlord-cost
         assumptions — not lease terms. Overrides persist to the local overlay; the workbook and

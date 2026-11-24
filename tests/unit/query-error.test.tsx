@@ -2,8 +2,9 @@
 // fallback blamed "the Brain Server (:8911)" for every failure, including schema and 500 errors.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { describeError } from '../../src/lib/describe-error';
+import { describeActionError, describeError } from '../../src/lib/describe-error';
 import { QueryError } from '../../src/primitives/QueryError';
+import { ActionError } from '../../src/primitives/ActionError';
 
 class WarehouseUnavailableError extends Error {
   constructor() {
@@ -55,5 +56,35 @@ describe('<QueryError>', () => {
     render(<QueryError error={new TypeError('Failed to fetch')} what="x" />);
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.getByText('Details')).toBeTruthy(); // the network message is still available
+  });
+});
+
+// Review round 2 (2026-11-24): the action-side twin. Save/grade/file/decide failures printed the
+// raw error.message as the whole message.
+describe('describeActionError / ActionError', () => {
+  it('headline is what did not happen; the raw server text is detail only', () => {
+    expect(describeActionError(new Error('HTTP 400: Invalid input: vacancyPct'), 'The decision was not saved.')).toEqual({
+      kind: 'failed',
+      headline: 'The decision was not saved.',
+      detail: 'HTTP 400: Invalid input: vacancyPct',
+    });
+  });
+
+  it('an unreachable server says so, then what did not happen', () => {
+    const d = describeActionError(new TypeError('Failed to fetch'), 'Not saved.');
+    expect(d.kind).toBe('network');
+    expect(d.headline).toBe("Can't reach the command-center server. Not saved.");
+  });
+
+  it('renders the headline as an alert with the raw text under Details', () => {
+    render(<ActionError error={new Error('SQLITE_CONSTRAINT: UNIQUE')} failed="The mapping was not added." />);
+    expect(screen.getByRole('alert').textContent).toMatch(/^The mapping was not added\./);
+    expect(screen.getByText('Details')).toBeTruthy();
+    expect(screen.getByText('SQLITE_CONSTRAINT: UNIQUE')).toBeTruthy();
+  });
+
+  it('renders no Details when there is no message', () => {
+    render(<ActionError error={undefined} failed="Not saved." />);
+    expect(screen.queryByText('Details')).toBeNull();
   });
 });

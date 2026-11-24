@@ -25,6 +25,8 @@ import {
   fmtPsf, fmtSf, fmtUsd, radarWhy, severityTone, sourceLabel, sourceTone, unknownLabel, useLeaseMarketChanges, useLeaseMarketHistory,
   useLeaseMarketPositioning, useLeaseMarketRadar, useLeaseMarketSignals, useLeaseMarketSummary, useRadarDecision,
 } from './hooks';
+import { ActionError } from '@/primitives/ActionError';
+import { QueryError } from '@/primitives/QueryError';
 
 const MUTED = { color: 'var(--text-tertiary)' } as const;
 
@@ -33,8 +35,8 @@ function Note({ children }: { children: ReactNode }) {
   return <p className="text-2xs" style={MUTED}>{children}</p>;
 }
 
-function unavailable(error: unknown): string {
-  return isWarehouseUnavailable(error) ? 'Not available on this mirror.' : `Failed to load: ${error instanceof Error ? error.message : 'unknown error'}`;
+function loadFailure(error: unknown): ReactNode {
+  return isWarehouseUnavailable(error) ? <Note>Not available on this mirror.</Note> : <QueryError error={error} what="lease-market data" className="py-2" />;
 }
 
 // ── Portfolio ─────────────────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
   const q = useLeaseMarketPositioning();
   const [selected, setSelected] = useState<string | null>(null);
   if (q.isLoading) return <Note>Loading…</Note>;
-  if (!q.data) return <Note>{unavailable(q.error)}</Note>;
+  if (!q.data) return loadFailure(q.error);
   const rowId = (r: PositioningRow) => `${r.propertyKey}|${r.unit ?? ''}`;
   const active = q.data.rows.find((r) => rowId(r) === selected) ?? null;
   return (
@@ -177,7 +179,7 @@ function RadarTab({ onHistory }: { onHistory: (id: number) => void }) {
   // pattern — see DataQualityView/MappingsView/LeaseRunView for the same live-gated column).
   const live = useWarehouseLive();
   if (q.isLoading) return <Note>Loading…</Note>;
-  if (!q.data) return <Note>{unavailable(q.error)}</Note>;
+  if (!q.data) return loadFailure(q.error);
   const cols: Column<RadarCandidate>[] = [
     { key: 'score', header: 'Score', align: 'right', render: (c) => <Badge tone={c.score >= 70 ? 'red' : 'amber'}>{String(c.score)}</Badge>, sortValue: (c) => c.score },
     { key: 'address', header: 'Property', render: (c) => <span style={{ fontWeight: 600 }}>{c.address ?? `Property ${c.propertyId}`}</span> },
@@ -229,7 +231,7 @@ function RadarTab({ onHistory }: { onHistory: (id: number) => void }) {
         <CardHeader title="Acquisition Radar — ranked candidates" trailing={<span className="text-2xs" style={MUTED}>Indicative rent gap = gross, vacant space only — not NOI.</span>} />
         <div className="p-4">
           {q.data.candidates.length === 0 ? <Note>No radar candidates.</Note> : <DataTable columns={cols} rows={q.data.candidates} getRowId={(c) => String(c.propertyId)} minWidth={1300} />}
-          {decide.isError && <p role="alert" className="mt-2 text-2xs" style={{ color: 'var(--color-warn)' }}>{decide.error instanceof Error ? decide.error.message : 'Decision failed'}</p>}
+          {decide.isError && <ActionError error={decide.error} failed="The decision was not saved." className="mt-2" />}
         </div>
       </Card>
       <Card>
@@ -264,7 +266,7 @@ function ChangesTab({ onHistory }: { onHistory: (id: number) => void }) {
       <Card>
         <CardHeader title="Changes in the latest complete exports" />
         <div className="p-4">
-          {changes.isLoading ? <Note>Loading…</Note> : !changes.data ? <Note>{unavailable(changes.error)}</Note> : changes.data.events.length === 0 ? <Note>No changes.</Note> : (
+          {changes.isLoading ? <Note>Loading…</Note> : !changes.data ? loadFailure(changes.error) : changes.data.events.length === 0 ? <Note>No changes.</Note> : (
             <DataTable columns={eventCols} rows={changes.data.events} getRowId={(e) => String(e.id)} onRowClick={(e) => onHistory(e.listingId)} />
           )}
         </div>
@@ -276,7 +278,7 @@ function ChangesTab({ onHistory }: { onHistory: (id: number) => void }) {
           {(signals.data?.candidatesWithheld ?? []).map((w) => (
             <p key={w.marketId} className="mb-2 text-2xs" style={{ color: 'var(--color-warn)' }}>{w.marketId}: {w.reason}</p>
           ))}
-          {signals.isLoading ? <Note>Loading…</Note> : !signals.data ? <Note>{unavailable(signals.error)}</Note> : signals.data.signals.length === 0 ? <Note>No signals.</Note> : (
+          {signals.isLoading ? <Note>Loading…</Note> : !signals.data ? loadFailure(signals.error) : signals.data.signals.length === 0 ? <Note>No signals.</Note> : (
             <DataTable columns={signalCols} rows={signals.data.signals} getRowId={(s) => String(s.id)} onRowClick={(s) => s.listingId !== null && onHistory(s.listingId)} />
           )}
         </div>
@@ -324,7 +326,7 @@ function HistoryDrawer({ listingId, onClose }: { listingId: number; onClose: () 
           trailing={<button type="button" className="text-2xs" style={MUTED} onClick={onClose}>Close</button>}
         />
         <div className="p-4">
-          {q.isLoading ? <Note>Loading…</Note> : !q.data ? <Note>{unavailable(q.error)}</Note> : (
+          {q.isLoading ? <Note>Loading…</Note> : !q.data ? loadFailure(q.error) : (
             <ul className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
               {q.data.observations.map((o, i) => (
                 <li key={`${i}-${o.observedAt}`}>{o.observedAt} · {fmtSf(o.availableSf)} · {fmtPsf(o.askingNnnEq)} {o.rentBasis} ({o.confidence}){o.costarDom !== null ? ` · CoStar DOM ${o.costarDom}d` : ''}</li>
@@ -354,7 +356,7 @@ export function LeaseMarketModule() {
   const points = useMemo(() => (data && marketId ? curvePointsFor(data.curve, marketId) : []), [data, marketId]);
 
   if (summary.isLoading) return <div className="p-6"><Note>Loading…</Note></div>;
-  if (!data) return <Card><div className="p-6"><Note>{unavailable(summary.error)}</Note></div></Card>;
+  if (!data) return <Card><div className="p-6">{loadFailure(summary.error)}</div></Card>;
 
   const k = data.kpis;
   const kpis: Array<[string, string]> = [

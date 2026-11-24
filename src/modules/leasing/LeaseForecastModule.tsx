@@ -48,6 +48,7 @@ import { useTabSpecs } from '@/shell/tab-badges';
 import { LEASING_TABS, LEASING_TAB_KEYS, LEASING_FORECAST_TABS, type LeasingTab } from './tabs';
 import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
 import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
+import { ActionError } from '@/primitives/ActionError';
 
 // ── Expiry bucket display helpers ──────────────────────────────────────────────
 
@@ -123,6 +124,16 @@ const velocityCols: Column<LeasingVelocity>[] = [
     render: (v) =>
       v.medianDaysToLease === null ? (
         <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+      ) : v.medianDaysToLease < 1 ? (
+        // Below 1 day (0, or 0.5 as an even-count median) means the next tenant appeared within the same
+        // rent-roll snapshot interval, not that the suite re-leased the same day (review round 2, 2026-11-24).
+        <span
+          className="num"
+          title="The next tenant appeared within the same rent-roll snapshot interval, so the gap is below what the snapshots can measure."
+          style={{ color: 'var(--text-primary)' }}
+        >
+          &lt; 1 snapshot
+        </span>
       ) : (
         <span
           className="num"
@@ -541,11 +552,7 @@ export function LeaseForecastModule() {
               </div>
             )}
 
-            {rentMutation.isError && (
-              <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-                Forecast unavailable — warehouse not reachable.
-              </div>
-            )}
+            {rentMutation.isError && <ActionError error={rentMutation.error} failed="Forecast unavailable." />}
           </div>
         </Card>
 
@@ -555,7 +562,7 @@ export function LeaseForecastModule() {
             title="AI Leasing Narrative"
             trailing={
               <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                Haiku 4.5 · fail-open
+                AI draft · fail-open
               </span>
             }
           />
