@@ -38,6 +38,7 @@ import type {
 import type { Confidence, DataQualityFlag } from '../../src/contracts/common';
 import { adderTotal, adjustBand, basisClearsFloor, basisDiscount, constructionMultiplier, tiltSfFor } from '../../src/lib/rct-adjust';
 import { clamp } from './clamp';
+import { isDecimalRate } from '../../src/contracts/acquisition-bounds';
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 
 // ─── Ruleset load + fail-closed production guard ───────────────────────────────────────────────
@@ -634,10 +635,14 @@ export function scoreAcquisition(
     : '';
   // basisClearsFloor: the one predicate the deal drawer uses too (src/lib/rct-adjust.ts), at 1e-8 floor precision.
   floors.push({ id: 'basis', passed: discount !== null && basisClearsFloor(discount, vintageFloor), actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required${rctCite}` });
-  // yield floor — stabilized YoC
+  // yield floor — stabilized YoC. Unit guard (cross-repo audit 2026-11-23): a value outside the decimal-rate domain
+  // (>= 100%: a percent-scale typo, 9.5 for 9.50%) is treated like a missing YoC -- indeterminate, never passed, no
+  // yield credit. The contract already rejects it; this is the independent second layer (acquisition-bounds.ts).
+  const yocIn = input.stabilizedYoc !== null && !isDecimalRate(input.stabilizedYoc) ? null : input.stabilizedYoc;
   if (input.stabilizedYoc === null) { floorIndeterminate = true; flag('stabilizedYoc', 'stabilized YoC missing — yield floor indeterminate'); }
+  else if (yocIn === null) { floorIndeterminate = true; flag('stabilizedYoc', `stabilized YoC ${input.stabilizedYoc} is not a decimal rate (≥ 100% — percent-scale?) — yield floor indeterminate`); }
   // Strictly ABOVE the floor (SKILL.md v4.45 STAGE 1: "stabilized YoC >8%"); exactly 8.0% does not clear.
-  floors.push({ id: 'yield', passed: input.stabilizedYoc !== null && atFloorPrecision(input.stabilizedYoc) > atFloorPrecision(ruleset.floors.stabilizedYocFloorPct), actual: input.stabilizedYoc, required: ruleset.floors.stabilizedYocFloorPct, detail: input.stabilizedYoc === null ? 'YoC missing' : `${(input.stabilizedYoc * 100).toFixed(1)}% vs >${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}% floor` });
+  floors.push({ id: 'yield', passed: yocIn !== null && atFloorPrecision(yocIn) > atFloorPrecision(ruleset.floors.stabilizedYocFloorPct), actual: yocIn, required: ruleset.floors.stabilizedYocFloorPct, detail: yocIn === null ? (input.stabilizedYoc === null ? 'YoC missing' : 'YoC out of decimal domain') : `${(yocIn * 100).toFixed(1)}% vs >${(ruleset.floors.stabilizedYocFloorPct * 100).toFixed(0)}% floor` });
   // irr floor — 10-yr UNLEVERED (ruleset 2.0.0; SKILL.md v4.45 STAGE 1, v4.33 + v4.40). Levered IRR is reported only
   // and never read here: a strong levered IRR cannot stand in for a missing unlevered one.
   const irr = unleveredIrrFloor(input, ruleset, input.asAtUtc ?? scoredAt);
@@ -651,20 +656,23 @@ export function scoreAcquisition(
     }
   }
   for (const [field, issue] of irr.flags) flag(field, issue);
+  // Same unit guard as the yield floor: a percent-scale IRR (12 for 12.00%) is indeterminate, never passed.
+  const irrIn = input.unleveredIrr10yr !== null && !isDecimalRate(input.unleveredIrr10yr) ? null : input.unleveredIrr10yr;
   if (input.unleveredIrr10yr === null) { floorIndeterminate = true; flag('unleveredIrr10yr', '10-yr unlevered IRR missing — IRR floor indeterminate (levered IRR is reported only, never the floor)'); }
-  const irrCmp = input.unleveredIrr10yr === null ? null : atFloorPrecision(input.unleveredIrr10yr);
+  else if (irrIn === null) { floorIndeterminate = true; flag('unleveredIrr10yr', `10-yr unlevered IRR ${input.unleveredIrr10yr} is not a decimal rate (≥ 100% — percent-scale?) — IRR floor indeterminate`); }
+  const irrCmp = irrIn === null ? null : atFloorPrecision(irrIn);
   // Unknown vacant share decides the floor: the IRR clears without the majority-vacant premium but not with it. The
   // floor is then INDETERMINATE (null actual: caps at T2, not BUY-eligible, never flagged) until the share is supplied
   // (Gabriel in-turn 2026-11-12). The IRR itself stays visible in the detail line.
   const irrUndecided = irrCmp !== null && irrCmp >= irr.required
     && irr.requiredIfMajorityVacant !== null && irrCmp < irr.requiredIfMajorityVacant;
-  const irrDetailValue = input.unleveredIrr10yr === null ? '10-yr unlevered IRR missing' : `${(input.unleveredIrr10yr * 100).toFixed(2)}%`;
+  const irrDetailValue = irrIn === null ? (input.unleveredIrr10yr === null ? '10-yr unlevered IRR missing' : '10-yr unlevered IRR out of decimal domain') : `${(irrIn * 100).toFixed(2)}%`;
   // The vacantSfShareAtClose flag was already raised by unleveredIrrFloor(); the floor's detail line carries the specifics.
   if (irrUndecided) floorIndeterminate = true;
   floors.push({
     id: 'irr',
     passed: irrCmp !== null && !irrUndecided && irrCmp >= irr.required,
-    actual: irrUndecided ? null : input.unleveredIrr10yr,
+    actual: irrUndecided ? null : irrIn,
     required: irr.required,
     detail: irrUndecided
       ? `${irrDetailValue} vs ${(irr.required * 100).toFixed(2)}% required, ${(irr.requiredIfMajorityVacant! * 100).toFixed(2)}% if majority-vacant — vacant share at close unknown, indeterminate (${irr.basis})`
@@ -680,7 +688,7 @@ export function scoreAcquisition(
   const basisFull = ruleset.scoring.basisFullCreditDiscount;
   const cat1 = discount === null ? 0 : clamp((discount - vintageFloor) / Math.max(1e-9, basisFull - vintageFloor) * cap('basis'), 0, cap('basis'));
   // Cat 2 Yield (linear yocZero → yocFull)
-  const yoc = input.stabilizedYoc;
+  const yoc = yocIn; // domain-checked: a percent-scale YoC earns no yield credit
   const cat2 = yoc === null ? 0 : clamp((yoc - ruleset.scoring.yocZeroPct) / Math.max(1e-9, ruleset.scoring.yocFullPct - ruleset.scoring.yocZeroPct) * cap('yield'), 0, cap('yield'));
   // Cat 3 Product & Physical (clear + loading + product-fit + construction + site)
   const s3 = ruleset.scoring.cat3;
