@@ -12,8 +12,9 @@ import { NarrativeBlock } from '../../src/contracts/briefing';
 import type { BriefingModel } from '../../src/contracts/briefing';
 import { rosterMatch } from '../briefing/roster-match';
 import { egressScan } from '../sources/deal-declassification';
+import { FAST_CALL_FIELDS, FAST_MODEL } from './models';
 
-export const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+export const DEFAULT_MODEL = FAST_MODEL;
 
 const SYSTEM =
   `You are an institutional real estate investment analyst at Oxford Realty Advisors.\n` +
@@ -152,7 +153,7 @@ export async function composeNarrative(
         body: JSON.stringify({
           model: modelId,
           max_tokens: 1024,
-          temperature: 0,
+          ...FAST_CALL_FIELDS, // no temperature (400 on Haiku 5.5), thinking off; see server/ai/models.ts
           system: SYSTEM,
           messages: [{ role: 'user', content: userPrompt }],
         }),
@@ -284,7 +285,7 @@ export async function composeLeaseNarrative(
         body: JSON.stringify({
           model: modelId,
           max_tokens: 1024,
-          temperature: 0,
+          ...FAST_CALL_FIELDS, // no temperature (400 on Haiku 5.5), thinking off; see server/ai/models.ts
           system: LEASE_SYSTEM,
           messages: [{ role: 'user', content: userPrompt }],
         }),

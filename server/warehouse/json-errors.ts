@@ -14,7 +14,7 @@
 // not apply to a sibling instance, so DRY here means "one shared handler function", not "one
 // `.onError()` call site" — see sub-routers.ts's `withJsonErrors`, which applies this to every
 // sub-router factory.
-import type { ErrorHandler } from 'hono';
+import type { ErrorHandler, NotFoundHandler } from 'hono';
 
 // The 500 body is deliberately generic: a raw err.message can carry SQLite constraint/table
 // names or filesystem paths (2026-10 security review of PR #427). The full error is logged
@@ -22,7 +22,14 @@ import type { ErrorHandler } from 'hono';
 // JSON-quoted because Hono decodes it, so a crafted %0A would otherwise forge log lines. The
 // logged `err` itself may still embed input values (e.g. Zod issue text) — it never leaves
 // the process.
-export const warehouseJsonError: ErrorHandler = (err, c) => {
-  console.error(`[warehouse] route error: ${c.req.method} ${JSON.stringify(c.req.path)}`, err);
-  return c.json({ error: 'internal error' }, 500);
-};
+export function jsonErrorHandler(tag: string): ErrorHandler {
+  return (err, c) => {
+    console.error(`[${tag}] route error: ${c.req.method} ${JSON.stringify(c.req.path)}`, err);
+    return c.json({ error: 'internal error' }, 500);
+  };
+}
+
+export const warehouseJsonError: ErrorHandler = jsonErrorHandler('warehouse');
+
+/** Root-app 404 as JSON (2026-11-23 review, Tier 4): the client treats a non-JSON body as "server absent". */
+export const jsonNotFound: NotFoundHandler = (c) => c.json({ error: 'not found' }, 404);

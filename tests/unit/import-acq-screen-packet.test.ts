@@ -446,6 +446,28 @@ describe('screen order, duplicates and twins (refute wf_c51f7c6a-65b)', () => {
     expect(r).toMatchObject({ stale: 0 });
     expect(r.scored).toHaveLength(1);
   });
+
+  // Merge gate PR #591, T3-1: the stale check compares against the NEWEST earlier screen. The newest sits
+  // in the middle of the ledger, so neither "oldest", "first row" nor "last row" passes.
+  it('latestScreenedAt returns the newest recorded screen, not the oldest, first or last', () => {
+    const db = freshDb();
+    const put = db.prepare("INSERT INTO acq_source_batches (id, source, notes) VALUES (?, 'screen-packet', ?)");
+    put.run('screen-packet:one', JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-01' } }));
+    put.run('screen-packet:two', JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-20' } }));
+    put.run('screen-packet:three', JSON.stringify({ screens: { 'deal:page-aaa': '2026-11-10' } }));
+    expect(latestScreenedAt(db, 'deal:page-aaa', Date.parse('2026-11-23T12:00:00Z'))).toBe('2026-11-20');
+  });
+
+  it('a packet dated between two earlier screens is stale against the newer one (T3-1)', async () => {
+    const db = freshDb();
+    seed(db, 'deal:page-aaa', { notion: 'page-aaa' });
+    const at = (d: string, price: number, sha: string) => importScreenPackets(db,
+      [ok(parseScreenPacket(packet({ screenedAt: d }, { price })))], RULESET, RCT, { ...FILE, sha256: sha.repeat(64) });
+    expect((await at('2026-11-01', 1_350_000, 'd')).scored).toHaveLength(1);
+    expect((await at('2026-11-20', 1_300_000, 'e')).scored).toHaveLength(1);
+    expect(await at('2026-11-10', 1_000_000, 'f')).toMatchObject({ stale: 1, scored: [] });
+    expect(count(db, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(2);
+  });
 });
 
 describe('merge gate PR #591 round 1 regressions', () => {
@@ -572,6 +594,29 @@ describe('main() exit codes (merge gate PR #591, T-3)', () => {
     expect(await main([writePacketFile(dir, { packets: [packet({ screenedAt: 'x' })] }), '--db', dbPath])).toBe(1);
     const check = openWarehouse(dbPath);
     expect(count(check, "SELECT COUNT(*) n FROM acq_score_inputs WHERE scored_by = 'cowork-skill'")).toBe(1);
+    check.close();
+  });
+
+  // Merge gate PR #591, T3-2..T3-4: each term of the exit code on its own, so dropping one fails a test.
+  it('dry run of an already-imported file exits 0; a real run exits 1 on an ambiguous or a failed packet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'acq-packet-main-'));
+    const dbPath = join(dir, 'test.sqlite');
+    const db = openWarehouse(dbPath);
+    for (const id of ['page-aaa', 'page-bbb', 'page-ccc']) seed(db, `deal:${id}`, { notion: id });
+    db.close();
+    const imported = writePacketFile(dir, packet());
+    expect(await main([imported, '--db', dbPath])).toBe(0);
+    expect(await main([imported, '--db', dbPath, '--dry-run'])).toBe(0); // T3-4: already imported is not an error
+    const twice = { packets: [packet({ deal: { notionPageId: 'page-bbb' } }), packet({ deal: { notionPageId: 'page-bbb' } }, { price: 1_200_000 })] };
+    expect(await main([writePacketFile(dir, twice), '--db', dbPath])).toBe(1); // T3-2: ambiguous only
+    const w = openWarehouse(dbPath);
+    w.exec("CREATE TRIGGER boom BEFORE INSERT ON acq_score_inputs BEGIN SELECT RAISE(ABORT, 'boom'); END");
+    w.close();
+    expect(await main([writePacketFile(dir, packet({ deal: { notionPageId: 'page-ccc' } })), '--db', dbPath])).toBe(1); // T3-3: failed only
+    const check = openWarehouse(dbPath);
+    expect(count(check, "SELECT COUNT(*) n FROM data_quality_issues WHERE kind = 'acq-screen-packet-ambiguous'")).toBeGreaterThan(0);
+    expect(count(check, "SELECT COUNT(*) n FROM data_quality_issues WHERE kind = 'acq-screen-packet-check-violation'")).toBe(1);
+    expect(count(check, 'SELECT COUNT(*) n FROM acq_score_inputs')).toBe(1);
     check.close();
   });
 });

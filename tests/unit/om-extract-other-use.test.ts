@@ -26,7 +26,7 @@ function unionParamCount(schema: unknown): number {
 }
 
 interface Reply { text?: string; status?: number; throws?: boolean; jsonThrows?: boolean }
-type Body = { temperature?: number; system?: string; messages?: unknown; output_config?: { format?: { schema?: { properties?: Record<string, unknown> } } } };
+type Body = { temperature?: number; thinking?: unknown; system?: string; messages?: unknown; output_config?: { format?: { schema?: { properties?: Record<string, unknown> } } } };
 
 /** Answers each request by its schema: the main extraction gets `main`, the other-use extraction gets `otherUse`. */
 function routingFetch(main: Reply, otherUse: Reply) {
@@ -65,7 +65,9 @@ describe('other-use OM producer (E3, audit 2026-11-08)', () => {
     expect(bodies).toHaveLength(2);
     for (const b of bodies) {
       expect(unionParamCount(b.output_config?.format?.schema)).toBeLessThanOrEqual(16);
-      expect(b.temperature).toBe(0);
+      // Tier 4 (2026-11-23): Haiku 5.5 rejects a non-default temperature; thinking is off instead.
+      expect(b.temperature).toBeUndefined();
+      expect(b.thinking).toEqual({ type: 'disabled' });
     }
     const schemas = bodies.map((b) => b.output_config?.format?.schema);
     expect(schemas).toContainEqual(buildOmExtractSchema());

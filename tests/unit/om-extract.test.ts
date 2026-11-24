@@ -226,7 +226,7 @@ describe('extractOmFields', () => {
     expect(result.fieldCount).toBe(2);
   });
 
-  it('sends output_config.format (structured outputs) and temperature:0 on the request', async () => {
+  it('sends output_config.format (structured outputs), no temperature and thinking disabled on the request', async () => {
     const pdfParseFn = async () => ({ text: 'OM text' });
     const { fetchImpl, calls } = capturingFetch(VALID_JSON);
     const result = await extractOmFields(VALID_PDF_BUFFER, {
@@ -242,7 +242,10 @@ describe('extractOmFields', () => {
     const call = calls.find((c) => JSON.stringify(JSON.parse(c.opts.body ?? '{}').output_config?.format?.schema) === mainSchema);
     if (!call) throw new Error('expected the main extraction request');
     const body = JSON.parse(call.opts.body ?? '{}');
-    expect(body.temperature).toBe(0);
+    // Tier 4 (2026-11-23): Haiku 5.5 rejects a non-default temperature; thinking is off instead.
+    expect(body.temperature).toBeUndefined();
+    expect(body.thinking).toEqual({ type: 'disabled' });
+    expect(body.model).toBe('claude-haiku-5-5');
     expect(body.output_config?.format?.type).toBe('json_schema');
     expect(body.output_config.format.schema).toEqual(buildOmExtractSchema());
     // The rest of the request is unchanged by this fix.
