@@ -35,7 +35,7 @@ function compsScore(capRatePct: number | null): number | null {
 
 // ── Staleness ─────────────────────────────────────────────────────────────────
 
-const STALE_DAYS: Record<string, number> = { 'census-acs': 400, 'comps-ai': 90 };
+export const STALE_DAYS: Record<string, number> = { 'census-acs': 400, 'comps-ai': 90 };
 
 function daysBetween(isoA: string, isoB: string): number {
   return Math.abs(new Date(isoB).getTime() - new Date(isoA).getTime()) / DAY_MS;
