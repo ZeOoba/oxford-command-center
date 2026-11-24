@@ -40,6 +40,7 @@ import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insur
 import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { overlayHealthAt, setLeaseRunAssumptions } from './overlay';
+import { assistantModel, omExtractModel } from './ai/models';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
 import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
@@ -340,7 +341,7 @@ app.get('/api/health', (c) => {
     service: 'oxford-brain-server',
     state: brain.getState(),
     // Surface AI availability WITHOUT exposing the key (no silent fallbacks — System Health shows it).
-    ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL ?? 'claude-opus-5' },
+    ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: assistantModel() },
     brief: briefHealth,
     feeds,
   });
@@ -530,7 +531,7 @@ app.post('/api/actions/om-extract', async (c) => {
   const buf = Buffer.from(await file.arrayBuffer());
   const result = await extractOmFields(buf, {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
+    model: omExtractModel(), // separate from ANTHROPIC_MODEL (the assistant model); server/ai/models.ts
     // Confidentiality guards (live roster verdict, re-taken before the network call; placeholder-aware
     // text scan) — built in server/ai/egress-guards.ts, spread in LAST and unmodified (pinned by test).
     ...guards,

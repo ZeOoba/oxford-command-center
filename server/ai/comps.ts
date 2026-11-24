@@ -1,6 +1,7 @@
 import type { Deal } from '../../src/contracts/index';
 import { CompSet, RECORD_COMPS_TOOL } from '../../src/contracts/index';
 import { publicationRosterScan, rosterClaimsDeal } from '../sources/deal-declassification';
+import { ASSISTANT_MODEL } from './models';
 
 export type FetchCompsResult = { ok: true; comps: CompSet } | { ok: false; error: string };
 
@@ -68,7 +69,7 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
   }
 
   const body = {
-    model: opts.model || 'claude-opus-5',
+    model: opts.model || ASSISTANT_MODEL,
     max_tokens: 4096,
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }, RECORD_COMPS_TOOL],
     messages: [{ role: 'user', content: prompt }],

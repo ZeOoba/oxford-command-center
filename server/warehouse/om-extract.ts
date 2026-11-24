@@ -2,6 +2,7 @@
 import { egressRosterMatch } from '../briefing/roster-match';
 import { pdfToText } from '../lib/pdf-text';
 import fieldsConfig from './om-extract-fields.json';
+import { FAST_CALL_FIELDS, FAST_MODEL } from '../ai/models';
 
 export type OmExtractResult =
   | { ok: true; fields: Record<string, string>; fieldCount: number; rawText?: string }
@@ -322,9 +323,9 @@ async function requestExtraction(
       },
       body: JSON.stringify({
         // Haiku: structured extraction from text — no reasoning required, haiku is sufficient and fast.
-        model: opts.model ?? 'claude-haiku-4-5-20251001',
+        model: opts.model ?? FAST_MODEL,
         max_tokens: 1024,
-        temperature: 0,
+        ...FAST_CALL_FIELDS, // no temperature (400 on Haiku 5.5), thinking off; see server/ai/models.ts
         system,
         messages: [{ role: 'user', content: userPrompt }],
         // Structured outputs: constrains the response to this schema, eliminating the
