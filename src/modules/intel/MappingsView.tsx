@@ -11,6 +11,7 @@ import { Button } from '@/primitives/Button';
 import { useAddMapping, useWarehouseLive, type ImportSummary } from './hooks';
 import { CategorySelect, ClassificationSelect, SectionLabel } from './ImportsView';
 import type { Classification } from '@contracts/warehouse';
+import { ActionError } from '@/primitives/ActionError';
 
 /** Distinct properties drawn from the imports list — the optional override scope picker. */
 function distinctProperties(imports: ImportSummary[]): Array<{ id: string; name: string }> {
@@ -121,11 +122,7 @@ export function MappingsView({ imports }: { imports: ImportSummary[] }) {
               <Button variant="primary" size="md" onPress={submit} isDisabled={!canSubmit}>Add mapping</Button>
             </div>
 
-            {addMapping.isError && (
-              <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-                {addMapping.error instanceof Error ? addMapping.error.message : 'Add mapping failed'}
-              </span>
-            )}
+            {addMapping.isError && <ActionError error={addMapping.error} failed="The mapping was not added." />}
             {lastResult && (
               <span className="text-2xs" style={{ color: 'var(--text-pos)' }}>
                 Override saved — {lastResult.rederived} active ledger row{lastResult.rederived === 1 ? '' : 's'} re-derived.

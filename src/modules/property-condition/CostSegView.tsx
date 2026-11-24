@@ -27,6 +27,7 @@ import {
 import { fmtPartialDate } from './hooks';
 import { useCostSeg } from './cost-seg-data';
 import { useBuildingSpecs } from './specs-data';
+import { QueryError } from '@/primitives/QueryError';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 const STATUS_TONE: Record<QuantityStatus, BadgeTone> = { match: 'green', differs: 'amber', 'no-pca': 'neutral', 'not-comparable': 'neutral' };
@@ -300,7 +301,7 @@ export function CostSegPanel({ registerSf, registerStatus }: { registerSf: Recor
     return (
       <Card>
         <CardHeader title="Cost seg" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>{err instanceof Error ? err.message : 'Failed to load cost seg data.'}</div>
+        <QueryError error={err} what="cost seg data" />
       </Card>
     );
   }
@@ -322,9 +323,7 @@ export function CostSegPanel({ registerSf, registerStatus }: { registerSf: Recor
       <RegisterCard ds={ds} />
       <SpecSheetCard ds={ds} studyId={studyId} onStudy={setStudyId} />
       {specs.error && (
-        <p className="num px-1 text-2xs" style={{ color: 'var(--text-neg)' }}>
-          PCA building specs failed to load ({specs.error instanceof Error ? specs.error.message : 'error'}) — the cross-check shows register SF only.
-        </p>
+        <QueryError error={specs.error} what="the PCA building specs (the cross-check shows register SF only)" className="px-1" />
       )}
       <CrossCheckCard ds={ds} specFacts={specFacts} registerSf={registerSf} registerStatus={registerStatus} specsLoading={specs.isLoading} />
       <DiscrepancyCard ds={ds} />

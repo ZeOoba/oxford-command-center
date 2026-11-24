@@ -21,6 +21,7 @@ import { fmtUsd, fmtPct } from '@analytics/index';
 import { TaxAppealStatus } from '@contracts/tax';
 import { useFileAppeal, appealStatusTone, appealsByProperty, opportunityByProperty } from './hooks';
 import type { TaxAnalysisReport, TaxAssessment, TaxAppeal, TaxOpportunity } from './hooks';
+import { ActionError } from '@/primitives/ActionError';
 
 const fieldStyle = {
   background: 'color-mix(in oklab, var(--surface-overlay) 60%, transparent)',
@@ -259,11 +260,7 @@ function AppealFormPanel({
           {fileAppeal.isPending ? 'Filing…' : 'Submit Appeal'}
         </Button>
       </div>
-      {fileAppeal.isError && (
-        <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-neg)' }}>
-          {fileAppeal.error instanceof Error ? fileAppeal.error.message : 'Failed to file appeal.'}
-        </div>
-      )}
+      {fileAppeal.isError && <ActionError error={fileAppeal.error} failed="The appeal was not filed." className="px-4 pb-3" />}
     </Card>
   );
 }

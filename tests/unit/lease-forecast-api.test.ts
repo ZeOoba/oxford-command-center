@@ -325,6 +325,25 @@ describe('POST /rent-forecast', () => {
     expect(body.error).toMatch(/Invalid input/);
   });
 
+  // Review round 2 (2026-11-24): the body was cast, not validated.
+  it.each([
+    ['a JSON null body', 'null'],
+    ['a non-array scenarios', JSON.stringify({ scenarios: 'renew_at_current' })],
+    ['an empty scenarios list', JSON.stringify({ scenarios: [] })],
+    ['an unsupported horizon', JSON.stringify({ horizonMonths: 18 })],
+    ['a vacancyPct above 1', JSON.stringify({ vacancyPct: 2 })],
+  ])('400s (never 500s or silently defaults) on %s', async (_label, body) => {
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/Invalid input/);
+  });
+
   it('CRITICAL (fix round 1 ruling A): never uses the lease-market asking-rent feed for the renew_at_market NOI projection — manual overlay marketRents only', async () => {
     const db = freshDb();
     // A feed row for the fixture lease's property, well above its in-place rentPerSf (1.2), so if

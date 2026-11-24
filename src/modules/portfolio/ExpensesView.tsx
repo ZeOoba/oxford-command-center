@@ -8,7 +8,6 @@ import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
-import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
 import { StackedBarChart } from '@/charts/StackedBarChart';
 import { Heatmap } from '@/charts/Heatmap';
@@ -38,6 +37,7 @@ import {
   unavailablePropertyIds,
 } from './expenses-chart-data';
 import { useExpensesMonthly } from './expenses-hooks';
+import { QueryError } from '@/primitives/QueryError';
 
 const ALL = '__portfolio__';
 const WINDOW = 12;
@@ -147,14 +147,10 @@ export function ExpensesView() {
       );
     }
     if (q.isError && !isWarehouseUnavailable(q.error)) {
-      const msg = q.error instanceof Error ? q.error.message : 'Request failed';
       return (
         <Card>
           <CardHeader title="Expenses" />
-          <div className="flex flex-wrap items-center gap-3 p-4">
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Monthly expenses could not be loaded: {msg}</p>
-            <Button size="sm" onPress={() => { void q.refetch(); }}>Retry</Button>
-          </div>
+          <QueryError error={q.error} what="monthly expenses" onRetry={() => { void q.refetch(); }} className="p-4" />
         </Card>
       );
     }
