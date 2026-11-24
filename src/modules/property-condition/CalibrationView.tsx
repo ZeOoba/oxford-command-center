@@ -25,6 +25,7 @@ import {
 } from '@/analytics/calibration-ledger';
 import { fmtDeltaPct, fmtPartialDate, fmtPsf } from './hooks';
 import { calibrationLabel } from './pca-overlay';
+import { fmtMultiple } from '@analytics/index';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 
@@ -40,7 +41,7 @@ const COMPONENT_LABEL: Record<string, string> = {
   exterior_paint: 'Exterior paint', sealants: 'Sealants', hvac: 'HVAC', other: 'Other',
 };
 const label = (c: string) => COMPONENT_LABEL[c] ?? c;
-const fmtRatio = (r: number | null) => (r === null ? 'n/a' : `${r.toFixed(2)}×`);
+const fmtRatio = (r: number | null) => (r === null ? 'n/a' : fmtMultiple(r));
 
 /** Dot strip on a fixed 0–4× axis with a 1.0× (contractor = PCA) reference line. Points beyond 4× pin to the edge. */
 function DotStrip({ agg }: { agg: ComponentAggregate }) {

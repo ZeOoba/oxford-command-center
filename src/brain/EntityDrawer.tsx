@@ -15,6 +15,7 @@ import {
   fmtMonths,
   propertyLtvLabel,
   isAffiliateNoteProperty,
+  fmtPsf,
 } from '@analytics/index';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { useBrain } from '@/data/brain-context';
@@ -302,7 +303,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Lender', value: p.lender ? `${p.lender}${isAffiliateNoteProperty(p) ? ' (affiliate note — excluded from Total Debt)' : ''}` : '—' },
           { label: 'Equity Invested', value: fmtUsd(p.equityInvested) },
           { label: 'Cash-on-Cash', value: fmtPct(p.cashOnCash) },
-          { label: 'Rent $/SF', value: p.rentPerSf !== null ? `$${p.rentPerSf.toFixed(2)}` : '—' },
+          { label: 'Rent $/SF', value: fmtPsf(p.rentPerSf) },
           { label: 'Acquired', value: fmtDate(p.acqDate) },
         ],
         chips: [
@@ -326,7 +327,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Square Feet', value: fmtSf(l.sf) },
           { label: 'Monthly Rent', value: fmtUsd(l.monthlyRent) },
           { label: 'Annual Rent', value: fmtUsd(l.annualRent) },
-          { label: 'Rent $/SF', value: l.rentPerSf !== null ? `$${l.rentPerSf.toFixed(2)}` : '—' },
+          { label: 'Rent $/SF', value: fmtPsf(l.rentPerSf) },
           { label: 'Lease Start', value: fmtDate(l.leaseStart) },
           { label: 'Lease End', value: fmtDate(l.leaseEnd) },
           { label: 'Months to Expiry', value: l.monthsToExpiry !== null ? fmtMonths(l.monthsToExpiry) : '—' },

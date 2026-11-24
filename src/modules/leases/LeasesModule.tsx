@@ -5,7 +5,7 @@ import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { useLeaseForecast, gapChipLabel, buildGapMap, isMonthToMonth } from '../leasing/hooks';
-import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtYears, fmtDate, fmtMonths } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtYears, fmtDate, fmtMonths, fmtPsf } from '@analytics/index';
 import type { CriticalDate, CriticalDateKind } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
@@ -113,7 +113,7 @@ export function LeasesModule() {
     },
     { key: 'sf', header: 'SF', align: 'right', render: (l) => fmtNum(l.sf), sortValue: (l) => l.sf },
     { key: 'rent', header: 'Annual Rent', align: 'right', render: (l) => fmtUsd(l.annualRent), sortValue: (l) => l.annualRent },
-    { key: 'psf', header: '$/SF', align: 'right', render: (l) => (l.rentPerSf !== null ? `$${l.rentPerSf.toFixed(2)}` : '—'), sortValue: (l) => l.rentPerSf ?? 0 },
+    { key: 'psf', header: '$/SF', align: 'right', render: (l) => fmtPsf(l.rentPerSf), sortValue: (l) => l.rentPerSf ?? 0 },
     { key: 'end', header: 'Expires', align: 'right', render: (l) => fmtDate(l.leaseEnd), sortValue: (l) => l.monthsToExpiry ?? 99999 },
     { key: 'mos', header: 'Mos', align: 'right', render: (l) => (l.monthsToExpiry !== null ? fmtMonths(l.monthsToExpiry) : '—'), sortValue: (l) => l.monthsToExpiry ?? 99999 },
     { key: 'esc', header: 'Esc', align: 'right', render: (l) => (l.escalationPct !== null ? fmtPct(l.escalationPct, 1) : '—'), sortValue: (l) => l.escalationPct ?? 0 },

@@ -5,7 +5,7 @@
 // Immediate / Short-term (the register once did; see the correction note).
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
-import { fmtUsd } from '@analytics/index';
+import { fmtUsd, fmtPct } from '@analytics/index';
 import { INFO_LANE_DETAIL as D } from './pca-overlay';
 import { fmtPsf } from './hooks';
 
@@ -64,7 +64,7 @@ export function InfoLaneView({ rentRollMonths }: { rentRollMonths: number | null
             <li key={s.system} className="flex px-4 py-1.5 text-xs" style={{ borderTop: '1px solid var(--border-subtle)' }}>
               <span style={{ flex: 1 }}>{s.system}</span>
               <span className="num">{fmtUsd(s.usd)}</span>
-              <span className="num" style={{ width: 52, textAlign: 'right', ...muted }}>{((s.usd / systemTotal) * 100).toFixed(0)}%</span>
+              <span className="num" style={{ width: 52, textAlign: 'right', ...muted }}>{systemTotal > 0 ? fmtPct(s.usd / systemTotal, 0) : '—'}</span>
             </li>
           ))}
         </ul>

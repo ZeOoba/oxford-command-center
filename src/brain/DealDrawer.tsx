@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-react';
 import type { PortfolioSnapshot, Deal, DealStage, CompSet, AcquisitionInput, AcquisitionScore, RankedCandidate } from '@contracts/index';
 import type { DraftRequest } from './draft';
-import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate, fmtPsf } from '@analytics/index';
 import { drawerReasons, effectiveTier, governorDemotedLabel } from '@analytics/acq-governor-demotion';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
@@ -145,7 +145,7 @@ export function DealDrawer({
 
                   <CardBox title="Underwriting Assumptions">
                     <Row label="Est. Price" value={fmtUsdCompact(deal.estPrice)} />
-                    <Row label="Price / SF" value={deal.estPrice !== null && deal.sf ? `$${(deal.estPrice / deal.sf).toFixed(0)}` : '—'} />
+                    <Row label="Price / SF" value={deal.estPrice !== null && deal.sf ? fmtPsf(deal.estPrice / deal.sf, 0) : '—'} />
                     <Row label="Cap Rate" value={fmtPct(deal.capRate, 2)} />
                     <Row label="Hold Period" value={deal.holdYrs !== null ? `${deal.holdYrs} yr` : '—'} />
                     {deal.estimatedFields.length > 0 && (
@@ -177,7 +177,7 @@ export function DealDrawer({
                               : rc.basisFromSavedAllIn ? `$${rc.basisPsf.toFixed(2)}/SF (saved all-in basis)`
                               : `$${rc.basisPsf.toFixed(2)}/SF (incl. 2% closing${rc.excludesCapexCarry ? ') [EXCL. CAPEX/CARRY]' : ', CapEx and carry)'}`}
                           />
-                          <Row label="Basis floor" value={rc.floorPsf !== null ? `$${rc.floorPsf.toFixed(2)}/SF` : '—'} />
+                          <Row label="Basis floor" value={rc.floorPsf !== null ? `${fmtPsf(rc.floorPsf)}/SF` : '—'} />
                           {/* Without CapEx and lease-up carry the walk is overstated, and the walk is a price ceiling: show it as an upper bound. */}
                           <Row
                             label={rc.excludesCapexCarry ? 'Walk price (upper bound)' : 'Walk price'}
@@ -186,7 +186,7 @@ export function DealDrawer({
                           {rc.walkPriceAtBaseline !== null && (
                             <Row label="Walk at ×1.00 (sensitivity)" value={fmtUsd(rc.walkPriceAtBaseline)} />
                           )}
-                          <Row label="Price vs. Replacement" value={rc.basisToPoint !== null ? `${(rc.basisToPoint * 100).toFixed(0)}% of replacement` : '—'} />
+                          <Row label="Price vs. Replacement" value={rc.basisToPoint !== null ? `${fmtPct(rc.basisToPoint, 0)} of replacement` : '—'} />
                           {rc.verdict && (
                             <div className="pt-1">
                               <Badge tone={rc.verdict === 'Clears basis floor' ? 'green' : 'red'}>

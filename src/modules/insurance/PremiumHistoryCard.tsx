@@ -14,7 +14,7 @@ import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { BarChart } from '@/charts/BarChart';
 import { Sparkline } from '@/charts/Sparkline';
-import { fmtUsdCompact } from '@analytics/index';
+import { fmtUsdCompact, fmtSignedPct } from '@analytics/index';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { usePremiumHistory, PREMIUM_HISTORY_KEY } from './hooks';
 import { premiumHistoryBars } from './premium-history-chart-data';
@@ -75,7 +75,7 @@ export function PremiumHistoryCard() {
               <span className="flex items-center gap-2">
                 <Sparkline data={l.terms.map((t) => t.premium)} label={`${l.property} ${l.policyType} premium by term`} valueFormat={fmtUsdCompact} width={64} height={20} />
                 <span className="num" style={{ color: chg > 0 ? 'var(--text-neg)' : 'var(--text-pos)' }}>
-                  {`${chg >= 0 ? '+' : ''}${(chg * 100).toFixed(1)}%`}
+                  {fmtSignedPct(chg)}
                 </span>
               </span>
             </li>
