@@ -4,7 +4,7 @@ import { annualRentGapIsExplainedByAbatement, checkCashInvariants } from '../ser
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
 import { loadCache } from '../server/ar/mapping-cache';
-import { classifyCacheCheck, runCacheCheck } from '../server/ar/mapping-cache-basis';
+import { checkMappingCache } from '../server/ar/mapping-cache-basis';
 
 loadEnvFile();
 
@@ -220,9 +220,7 @@ async function main() {
   // roster is the FULL leases array (Expired included), matching the importers' allLeaseIds.
   // A synthetic stand-in cache (test-seeded worktree) is checked against the synthetic snapshot, not
   // the real workbook — see server/ar/mapping-cache-basis.ts.
-  const root = process.cwd();
-  const basis = classifyCacheCheck(root);
-  const cacheCheck = runCacheCheck(basis, snapshot.leases.map((l) => l.id), loadCache(), root);
+  const cacheCheck = checkMappingCache(process.cwd(), snapshot.leases.map((l) => l.id), loadCache());
   if (cacheCheck.failed) failed++;
   for (const line of cacheCheck.lines) console.log(line);
 
