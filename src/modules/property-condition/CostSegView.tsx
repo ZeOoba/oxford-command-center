@@ -28,6 +28,7 @@ import { fmtPartialDate } from './hooks';
 import { useCostSeg } from './cost-seg-data';
 import { useBuildingSpecs } from './specs-data';
 import { QueryError } from '@/primitives/QueryError';
+import { DataTable, type Column } from '@/primitives/DataTable';
 
 const muted = { color: 'var(--text-tertiary)' } as const;
 const STATUS_TONE: Record<QuantityStatus, BadgeTone> = { match: 'green', differs: 'amber', 'no-pca': 'neutral', 'not-comparable': 'neutral' };
@@ -83,50 +84,54 @@ function Flags({ f }: { f: CostSegFactT }) {
 function RegisterCard({ ds }: { ds: CostSegDatasetT }) {
   const rows = studyRegister(ds);
   const classes = ['5yr', '7yr', '15yr', '39yr', '9yr_ads'];
+  type RegisterRow = (typeof rows)[number];
+  const registerCols: Column<RegisterRow>[] = [
+    {
+      key: 'study',
+      header: 'Study · property',
+      render: (r) => (
+        <div className="text-xs">
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.studyId}</div>
+          <div className="text-2xs" style={muted}>{r.property}</div>
+        </div>
+      ),
+      sortValue: (r) => r.studyId,
+    },
+    {
+      key: 'consultant',
+      header: 'Consultant · report',
+      render: (r) => (
+        <div className="text-xs">
+          <div>{r.consultant}</div>
+          <div className="num text-2xs" style={muted}>{r.reportDate ? fmtPartialDate(r.reportDate) : 'cover date not read'}{r.ocr ? ' · OCR' : ''}</div>
+        </div>
+      ),
+      sortValue: (r) => r.consultant,
+    },
+    { key: 'visit', header: 'Site visit', render: (r) => <span className="num text-xs">{fmtPartialDate(r.asOf)}</span>, sortValue: (r) => r.asOf },
+    { key: 'pis', header: 'Placed in service', render: (r) => <span className="text-2xs">{r.pis}</span>, sortValue: (r) => r.pis },
+    { key: 'total', header: 'Total basis', align: 'right', render: (r) => <span className="num text-xs">{fmtUsd(r.total)}</span>, sortValue: (r) => r.total },
+    ...classes.map((c): Column<RegisterRow> => ({
+      key: `class-${c}`,
+      header: CLASS_LABEL[c] ?? c,
+      align: 'right',
+      render: (r) => <span className="num text-xs">{r.alloc[c] ? fmtUsd(r.alloc[c] as number) : '—'}</span>,
+      sortValue: (r) => (r.alloc[c] as number | undefined) ?? null,
+    })),
+    { key: 'fee', header: 'Fee', align: 'right', render: (r) => <span className="num text-xs">{r.fee === null ? 'n/a' : fmtUsd(r.fee)}</span>, sortValue: (r) => r.fee },
+    {
+      key: 'tie',
+      header: 'Tie',
+      render: (r) => <Badge tone={r.ties && r.qcOk ? 'green' : 'red'}>{r.ties && r.qcOk ? 'ties' : 'does not tie'}</Badge>,
+      sortValue: (r) => (r.ties && r.qcOk ? 1 : 0),
+    },
+  ];
   return (
     <Card>
       <CardHeader title="Study register & basis (read-only)" trailing={<Badge tone={rows.every((r) => r.ties && r.qcOk) ? 'green' : 'red'}>{rows.filter((r) => r.ties).length}/{rows.length} allocations tie</Badge>} />
-      <div className="overflow-x-auto">
-        <table aria-label="Cost segregation study register" style={{ width: '100%', minWidth: 980, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr className="text-2xs" style={{ ...muted, textAlign: 'left' }}>
-              <th className="px-3 py-2">Study · property</th>
-              <th className="px-3 py-2">Consultant · report</th>
-              <th className="px-3 py-2">Site visit</th>
-              <th className="px-3 py-2">Placed in service</th>
-              <th className="px-3 py-2 text-right">Total basis</th>
-              {classes.map((c) => (
-                <th key={c} className="px-3 py-2 text-right">{CLASS_LABEL[c]}</th>
-              ))}
-              <th className="px-3 py-2 text-right">Fee</th>
-              <th className="px-3 py-2">Tie</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.studyId} className="text-xs" style={{ borderTop: '1px solid var(--border-subtle)', verticalAlign: 'top' }}>
-                <td className="px-3 py-2">
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{r.studyId}</div>
-                  <div className="text-2xs" style={muted}>{r.property}</div>
-                </td>
-                <td className="px-3 py-2">
-                  <div>{r.consultant}</div>
-                  <div className="num text-2xs" style={muted}>{r.reportDate ? fmtPartialDate(r.reportDate) : 'cover date not read'}{r.ocr ? ' · OCR' : ''}</div>
-                </td>
-                <td className="num px-3 py-2">{fmtPartialDate(r.asOf)}</td>
-                <td className="px-3 py-2 text-2xs">{r.pis}</td>
-                <td className="num px-3 py-2 text-right">{fmtUsd(r.total)}</td>
-                {classes.map((c) => (
-                  <td key={c} className="num px-3 py-2 text-right">{r.alloc[c] ? fmtUsd(r.alloc[c] as number) : '—'}</td>
-                ))}
-                <td className="num px-3 py-2 text-right">{r.fee === null ? 'n/a' : fmtUsd(r.fee)}</td>
-                <td className="px-3 py-2">
-                  <Badge tone={r.ties && r.qcOk ? 'green' : 'red'}>{r.ties && r.qcOk ? 'ties' : 'does not tie'}</Badge>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Sortable on the shared DataTable (review round 2 tier B3, 2026-11-24); the label stays on the region. */}
+      <div role="region" aria-label="Cost segregation study register">
+        <DataTable columns={registerCols} rows={rows} getRowId={(r) => r.studyId} minWidth={980} />
       </div>
       <p className="num px-4 py-2 text-2xs" style={muted}>
         Class splits and placed-in-service dates are shown as read from the study / tax register (ORA Master Workbook, CostSegBasis_ORA_Portfolio,

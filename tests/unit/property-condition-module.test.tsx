@@ -195,6 +195,10 @@ describe('PropertyConditionModule', () => {
     expect(await screen.findByText('Cost segregation property data', {}, { timeout: 20000 })).toBeTruthy();
     expect(screen.getByText('Study register & basis (read-only)')).toBeTruthy();
     expect(screen.getByText('6/6 allocations tie')).toBeTruthy();
+    // Review round 2 tier B3: the register is the shared sortable DataTable, still labelled.
+    const register = screen.getByRole('region', { name: 'Cost segregation study register' });
+    expect(register.querySelector('th[aria-sort]')).toBeTruthy();
+    expect(register.querySelectorAll('tbody tr')).toHaveLength(6);
     expect(screen.getByText(/Property spec sheet/)).toBeTruthy();
     expect(screen.getByText('PCA vs cost seg — quantity cross-check')).toBeTruthy();
     expect(screen.getByText('Cost seg discrepancy queue (D1–D14)')).toBeTruthy();

@@ -364,11 +364,33 @@ function QuartileBadge({ quartile }: { quartile: Quartile }) {
 // Moved here from the old 'overview' tab so all periods sit in one place.
 // ---------------------------------------------------------------------------
 
-function NoiMatrixCard({ matrix }: { matrix: NoiMatrixCell[] }) {
+// Tag a YTD column: the NOI matrix carries period strings only (no grain hint), so a
+// 4-digit year is a full year and anything else (e.g. '2026-YTD' / '2026-06') is partial.
+// Module scope: the column memo below calls it during render (review wf B3, 2026-11-24 — a
+// later `const` inside the component threw a TDZ ReferenceError on every non-empty matrix).
+const isYtd = (p: string) => !/^\d{4}$/.test(p);
+
+export function NoiMatrixCard({ matrix }: { matrix: NoiMatrixCell[] }) {
   const { periods, rows } = useMemo(() => groupNoiByProperty(matrix), [matrix]);
-  // Tag a YTD column: the NOI matrix carries period strings only (no grain hint), so a
-  // 4-digit year is a full year and anything else (e.g. '2026-YTD' / '2026-06') is partial.
-  const isYtd = (p: string) => !/^\d{4}$/.test(p);
+  // Sortable per period on the shared DataTable (review round 2 tier B3, 2026-11-24).
+  const noiCols = useMemo((): Column<(typeof rows)[number]>[] => [
+    {
+      key: 'property',
+      header: 'Property',
+      render: (r) => <span className="text-sm" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{r.propertyName}</span>,
+      sortValue: (r) => r.propertyName,
+    },
+    ...periods.map((p): Column<(typeof rows)[number]> => ({
+      key: `p-${p}`,
+      header: isYtd(p) ? `${p} YTD` : `FY${p}`,
+      align: 'right',
+      render: (r) => {
+        const v = r.byPeriod[p];
+        return <span className="num text-xs" style={{ color: v === undefined ? 'var(--text-tertiary)' : 'var(--text-primary)' }}>{v === undefined ? '—' : fmtUsd(v)}</span>;
+      },
+      sortValue: (r) => r.byPeriod[p] ?? null,
+    })),
+  ], [periods]);
 
   return (
     <Card>
@@ -378,47 +400,7 @@ function NoiMatrixCard({ matrix }: { matrix: NoiMatrixCell[] }) {
           No committed financials yet. Run the warehouse backfill or approve a pending import.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse" style={{ minWidth: 480 }}>
-            <thead>
-              <tr>
-                <th className="px-3 py-2 text-left text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)' }}>
-                  Property
-                </th>
-                {periods.map((p) => (
-                  <th
-                    key={p}
-                    className="num px-3 py-2 text-right text-2xs font-semibold uppercase"
-                    style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)' }}
-                  >
-                    {isYtd(p) ? `${p} YTD` : `FY${p}`}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.propertyId} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <td className="px-3 py-2 text-sm" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
-                    {r.propertyName}
-                  </td>
-                  {periods.map((p) => {
-                    const v = r.byPeriod[p];
-                    return (
-                      <td
-                        key={p}
-                        className="num px-3 py-2 text-right text-xs"
-                        style={{ color: v === undefined ? 'var(--text-tertiary)' : 'var(--text-primary)' }}
-                      >
-                        {v === undefined ? '—' : fmtUsd(v)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable columns={noiCols} rows={rows} getRowId={(r) => r.propertyId} minWidth={480} />
       )}
     </Card>
   );
