@@ -93,8 +93,9 @@ describe('parseScreenPacket', () => {
     ['largest building > total SF', packet({}, { maxBuildingSf: 30_000, totalSf: 19_000 }), /maxBuildingSf exceeds totalSf/],
     ['unknown top-level key', packet({ verdict: 'PURSUE' }), /packet/],
     // Percent-form rates (refute wf_c51f7c6a-65b HIGH): 6.0 / 7.43 used to parse and clear the floors.
-    ['percent-form stabilizedYoc', packet({}, { stabilizedYoc: 6.0 }), /input\.stabilizedYoc: 6 is outside/],
-    ['percent-form unleveredIrr10yr', packet({}, { unleveredIrr10yr: 7.43 }), /input\.unleveredIrr10yr: 7\.43 is outside/],
+    // YoC / unlevered IRR >= 1 now fail the input contract itself (#602 unit guard) before this band check.
+    ['percent-form stabilizedYoc', packet({}, { stabilizedYoc: 6.0 }), /input(\.stabilizedYoc: 6 is outside|: stabilizedYoc: Number must be less than 1)/],
+    ['percent-form unleveredIrr10yr', packet({}, { unleveredIrr10yr: 7.43 }), /input(\.unleveredIrr10yr: 7\.43 is outside|: unleveredIrr10yr: Number must be less than 1)/],
     ['percent-form leveredIrr', packet({}, { leveredIrr: 12 }), /input\.leveredIrr/],
     ['percent-form env remediation', packet({}, { envRemediationPctOfPrice: 15 }), /input\.envRemediationPctOfPrice/],
     ['negative env remediation', packet({}, { envRemediationPctOfPrice: -0.01 }), /input\.envRemediationPctOfPrice/],
