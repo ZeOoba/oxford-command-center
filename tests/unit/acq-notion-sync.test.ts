@@ -13,6 +13,13 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { syncNotionPipeline } from '../../server/warehouse/acq-notion-sync';
 import type { FetchLike } from '../../server/warehouse/acq-notion-sync';
+import { readFileSync as readFileSyncOutcome } from 'node:fs';
+import { resolve as resolveOutcome } from 'node:path';
+import { persistAndLogScore } from '../../server/warehouse/acq-engine';
+import { parseRuleset } from '../../server/warehouse/acquisition';
+import { AcquisitionInput } from '@contracts/acquisition';
+import { loadTestRct } from '../support/rct';
+import { withCommitGap } from '../support/commit-gap';
 
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'acq-notion-test-'));
@@ -408,5 +415,77 @@ describe('syncNotionPipeline — spine isolation', () => {
     });
     const count = (db.prepare('SELECT COUNT(*) AS n FROM import_batches').get() as { n: number }).n;
     expect(count).toBe(0);
+  });
+});
+
+// ── Outcome logging on a terminal transition (2026-11-23) ──────────────────────────────────────
+
+describe('syncNotionPipeline — calibration outcome on a terminal status', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  async function scoredThen(stage: string): Promise<{ db: WarehouseDb; id: string }> {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-1', status: 'Candidate' })]) });
+    const id = 'deal:np-1';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const to = mockFetch([makePage({ id: 'np-1', status: stage })]);
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: to });
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: to });
+    return { db, id };
+  }
+  const bands = (db: WarehouseDb, id: string) => db.prepare(`SELECT o.realized_band AS band FROM calibration_outcome o
+    JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id);
+
+  it.each([['Passed', 'passed'], ['Killed', 'passed'], ['Closed Won', 'acquired'], ['closed won ', 'acquired']])(
+    'exact live stage %s writes one %s outcome against the stored row id, even across re-syncs',
+    async (stage, band) => {
+      const { db, id } = await scoredThen(stage);
+      expect(bands(db, id)).toEqual([{ band }]);
+    },
+  );
+
+  it.each([['Dead', 'passed'], ['Closed Lost', 'passed'], ['Closed', 'acquired']])(
+    'a terminal-looking stage outside the live select (%s) moves status to %s but writes NO outcome',
+    async (stage, status) => {
+      const { db, id } = await scoredThen(stage);
+      expect((db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get(id) as { status: string }).status).toBe(status);
+      expect(bands(db, id)).toEqual([]);
+    },
+  );
+});
+
+describe('syncNotionPipeline — status mapping checks negative terms first (refute wf_c51f7c6a-65b)', () => {
+  it.each([
+    ['Closed Lost', 'passed'],
+    ['Closed - Dead', 'passed'],
+    ["Won't Pursue", 'active'],
+    ['Won’t Pursue', 'active'], // curly apostrophe (merge gate PR #591, T2-2)
+    ['Won', 'acquired'],
+  ])('Stage %s maps to status %s', async (stage, expected) => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'map-1', status: stage })]) });
+    expect((db.prepare('SELECT status FROM acq_candidates WHERE id = ?').get('deal:map-1') as { status: string }).status).toBe(expected);
+  });
+});
+
+describe('syncNotionPipeline — outcome binds inside the status transaction (merge gate PR #591, R-3)', () => {
+  const ruleset = parseRuleset(JSON.parse(readFileSyncOutcome(resolveOutcome(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const rct = loadTestRct();
+
+  it('a score landing right after the commit does not capture the outcome', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-9', status: 'Candidate' })]) });
+    const id = 'deal:np-9';
+    await persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 1_000_000 }), ruleset, rct);
+    const decisionIv = (db.prepare('SELECT s.inputs_version AS iv FROM acq_candidates c JOIN acq_scores s ON s.id = c.current_score_id WHERE c.id = ?')
+      .get(id) as { iv: string }).iv;
+    const gap = withCommitGap(db, () => {
+      void persistAndLogScore(db, id, AcquisitionInput.parse({ dealId: id, price: 2_000_000 }), ruleset, rct);
+    });
+    await syncNotionPipeline(gap, 'tok', { databaseId: 'db', fetchImpl: mockFetch([makePage({ id: 'np-9', status: 'Passed' })]) });
+    const bound = db.prepare(`SELECT v.inputs_version AS iv FROM calibration_outcome o
+      JOIN calibration_verdict v ON v.id = o.calibration_id WHERE v.subject_id = ?`).all(id) as Array<{ iv: string }>;
+    expect(bound).toEqual([{ iv: decisionIv }]);
   });
 });

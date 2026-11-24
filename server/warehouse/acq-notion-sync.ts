@@ -3,7 +3,8 @@
 // Phase 4 Step 5 — Notion Acquisition Pipeline sync.
 // Pulls all pages from the Notion Acq Pipeline DB and upserts into acq_candidates (Spine C).
 //
-// SPINE DISCIPLINE: writes ONLY to acq_candidates. Never touches ledger_entries or import_batches.
+// SPINE DISCIPLINE: writes ONLY to acq_candidates (plus, via logAcqOutcome on a terminal status
+//   transition, calibration_outcome / data_quality_issues). Never touches ledger_entries or import_batches.
 // ERROR HANDLING: a per-page try/catch means one malformed page never kills the entire sync.
 //   First-page network/auth failure → throws (route returns 502).
 //   Per-page extraction/write error → pushed to errors[], sync continues.
@@ -15,7 +16,8 @@ import type { WarehouseDb } from './db';
 // LOCAL_LOCKED_STATUSES is defined once in acq-hubspot-sync.ts (Notion and HubSpot are the two
 // independent writers to acq_candidates and must never diverge on which statuses are locked
 // against a resync — see the constant's doc comment for the 2026-07-24 incident this closes).
-import { LOCAL_LOCKED_STATUSES } from './acq-hubspot-sync';
+import { LOCAL_LOCKED_STATUSES, terminalTransition } from './acq-hubspot-sync';
+import { logAcqOutcome } from './acq-engine';
 
 /**
  * Full UUID for the Acquisition Pipeline Tracker Notion *data source* (short id bcfe4a03).
@@ -114,11 +116,30 @@ function mapMarket(raw: string | null): string | null {
 function mapStatus(raw: string | null): 'active' | 'archived' | 'acquired' | 'passed' {
   if (!raw) return 'active';
   const lower = raw.toLowerCase();
-  if (lower.includes('closed') || lower.includes('won')) return 'acquired';
+  // Negative terms FIRST (refute wf_c51f7c6a-65b): 'Closed Lost' / 'Closed - Dead' used to match 'closed'
+  // and map to 'acquired'. Harmless while only the status label read it; wrong-signed once a status
+  // move writes a calibration outcome. 'won' is matched as a whole word so "Won't Pursue" is not a close —
+  // straight, curly (U+2019) or backtick apostrophe alike (merge gate PR #591, C-4: Notion autocorrects to
+  // the curly one, and "Won’t Pursue" used to lock the deal as 'acquired').
   if (lower.includes('dead') || lower.includes('lost') || lower.includes('passed') || lower.includes('killed')) return 'passed';
+  if (lower.includes('closed') || /\bwon\b(?!['’`])/.test(lower)) return 'acquired';
   if (lower.includes('archiv')) return 'archived';
   return 'active';
 }
+
+/**
+ * Notion stage names whose status move may write a calibration OUTCOME (refute wf_c51f7c6a-65b). mapStatus
+ * is substring-based so an unforeseen label still lands on a sensible candidate status, but a calibration
+ * outcome is permanent (logAcqOutcome's deal-level idempotency blocks any later auto-correction), so it is
+ * written only for the exact terminal options of the live Stage select (server/sources/notion-deals.ts
+ * STAGE_MAP), compared case-insensitively. Any other terminal-looking label still moves the status but
+ * logs no outcome — resolve that deal via resolveManualOutcome.
+ */
+export const NOTION_OUTCOME_STAGES: Readonly<Record<string, 'acquired' | 'passed'>> = {
+  'closed won': 'acquired',
+  passed: 'passed',
+  killed: 'passed',
+};
 
 const NOTION_TIMEOUT_MS = 15_000;
 
@@ -194,7 +215,7 @@ export async function syncNotionPipeline(
       // write), but this closes the twin-writer asymmetry the L1 fix below was itself meant to
       // eliminate: fixing HubSpot's TOCTOU exposure while leaving Notion's freshly-rewritten
       // SELECT+UPDATE pair unwrapped would have recreated exactly that drift.
-      const isExistingCandidate = db.transaction((): boolean => {
+      const upsert = db.transaction((): { candidateId: string | null; resolvedTo: 'acquired' | 'passed' | null } => {
         const existing = db.prepare(
           'SELECT id, address, county, state, market, rentable_sf, year_built, owner_name, status FROM acq_candidates WHERE notion_deal_id = ?',
         ).get(notionPageId) as
@@ -210,7 +231,7 @@ export async function syncNotionPipeline(
               status: string;
             }
           | undefined;
-        if (existing === undefined) return false;
+        if (existing === undefined) return { candidateId: null, resolvedTo: null };
 
         // 2026-07-24 (integrity sweep M1/L1, applied to this writer on refute-review): mirrors
         // acq-hubspot-sync.ts's fix. Two changes from the prior UPDATE:
@@ -245,10 +266,19 @@ export async function syncNotionPipeline(
           address, county, state, market, rentableSf, yearBuilt, ownerName,
           resolvedStatus, persistedChanged ? 1 : 0, notionPageId,
         );
-        return true;
+        const moved = terminalTransition(existing.status, resolvedStatus);
+        const key = statusRaw === null ? '' : statusRaw.trim().toLowerCase();
+        const exact = Object.hasOwn(NOTION_OUTCOME_STAGES, key) ? NOTION_OUTCOME_STAGES[key] : undefined;
+        const resolvedTo = moved !== null && exact === moved ? moved : null;
+        // Resolved in Notion: record the calibration outcome against the stored row's own id (matched by
+        // notion_deal_id), as PATCH /acq/candidates/:id/status does. INSIDE this transaction (merge gate
+        // PR #591, R-3), so no other writer can move the current-score pointer between the status move and
+        // the outcome binding. Fail-open, idempotent per deal.
+        if (resolvedTo !== null) logAcqOutcome(db, existing.id, resolvedTo);
+        return { candidateId: existing.id, resolvedTo };
       })();
 
-      if (isExistingCandidate) {
+      if (upsert.candidateId !== null) {
         result.updated += 1;
       } else {
         db.prepare(`

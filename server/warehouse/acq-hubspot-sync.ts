@@ -6,11 +6,14 @@
 // sync (acq-notion-sync.ts). HubSpot deals sourced via broker relationships never get
 // re-keyed into Notion today; this closes that coverage gap.
 //
-// SPINE DISCIPLINE: writes ONLY to acq_candidates. Never touches ledger_entries or import_batches.
+// SPINE DISCIPLINE: writes ONLY to acq_candidates (plus, via logAcqOutcome, calibration_outcome /
+//   data_quality_issues on a terminal transition). Never touches ledger_entries or import_batches.
 // ERROR HANDLING: a per-deal try/catch means one malformed deal never kills the entire sync.
 //   First-page network/auth failure → throws (route returns 502).
 //   Per-deal extraction/write error → pushed to errors[], sync continues.
 // NO OUTER TRANSACTION: intentional — per-deal autocommit gives partial-success tolerance.
+// OUTCOME LOGGING (2026-11-23): a write that moves a candidate into 'acquired' / 'passed' calls
+//   logAcqOutcome (see terminalTransition), so pipeline resolutions reach calibration.
 // STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired`, `passed` or
 //   `archived` (see LOCAL_LOCKED_STATUSES) back to `active`. This protects a human decision
 //   recorded via PATCH /acq/candidates/:id/status from being silently reverted by a resync --
@@ -28,6 +31,7 @@
 import { createHash } from 'node:crypto';
 import type { WarehouseDb } from './db';
 import { stableStringify } from './stable-stringify';
+import { logAcqOutcome } from './acq-engine';
 
 function sha16(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16);
@@ -119,6 +123,19 @@ function isTestDeal(dealName: string | null): boolean {
  * reactivated. One shared set means the two writers cannot drift apart on this again.
  */
 export const LOCAL_LOCKED_STATUSES: ReadonlySet<string> = new Set(['acquired', 'passed', 'archived']);
+
+/**
+ * The lifecycle outcome a sync write just produced: 'acquired' / 'passed' when the stored status moved
+ * INTO that terminal status on this write, else null. Both sync writers call logAcqOutcome on it, so a
+ * deal closed or lost in HubSpot / Notion reaches the calibration record the same way a PATCH does
+ * (before 2026-11-23 the syncs set the status and never logged the outcome). A locked status never moves
+ * (LOCAL_LOCKED_STATUSES), so a re-sync of an already-resolved deal is never a transition; a candidate
+ * INSERTED already terminal has no score yet, so it has nothing to resolve and is not one either.
+ */
+export function terminalTransition(before: string, after: string): 'acquired' | 'passed' | null {
+  if (before === after) return null;
+  return after === 'acquired' || after === 'passed' ? after : null;
+}
 
 /**
  * Fingerprint of the values the row actually PERSISTS (address + resolved status).
@@ -235,11 +252,11 @@ export async function syncHubSpotPipeline(
       // no-clobber invariant. db.transaction() makes the SELECT+UPDATE pair atomic without
       // touching the "NO OUTER TRANSACTION" per-deal isolation contract above — this
       // transaction is scoped to one deal, same partial-success tolerance as before.
-      const isExistingCandidate = db.transaction((): boolean => {
+      const upsert = db.transaction((): { existing: boolean; resolvedTo: 'acquired' | 'passed' | null } => {
         const existingRow = db.prepare(
           'SELECT id, address, status FROM acq_candidates WHERE id = ?',
         ).get(candidateId) as { id: string; address: string | null; status: string } | undefined;
-        if (existingRow === undefined) return false;
+        if (existingRow === undefined) return { existing: false, resolvedTo: null };
 
         // The status the row will ACTUALLY hold after this UPDATE, resolved in TS so the
         // change-detection below compares persisted-vs-persisted (see M1 note above).
@@ -259,10 +276,17 @@ export async function syncHubSpotPipeline(
               updated_at = CASE WHEN ? THEN datetime('now') ELSE updated_at END
           WHERE id = ?
         `).run(dealName, resolvedStatus, contentHash(dealName, resolvedStatus), persistedChanged ? 1 : 0, candidateId);
-        return true;
+        const resolvedTo = terminalTransition(existingRow.status, resolvedStatus);
+        // The deal just resolved in HubSpot (Closed Won / Closed Lost): record the calibration outcome, as
+        // PATCH /acq/candidates/:id/status does. INSIDE this transaction (merge gate PR #591, R-3): run after
+        // the commit, another writer (an importer) could move the current-score pointer in between and the
+        // permanent outcome would bind to a screen made after the decision. Fail-open (logAcqOutcome never
+        // throws) and idempotent per deal; it nests as plain statements under this transaction.
+        if (resolvedTo !== null) logAcqOutcome(db, candidateId, resolvedTo);
+        return { existing: true, resolvedTo };
       })();
 
-      if (isExistingCandidate) {
+      if (upsert.existing) {
         result.updated += 1;
       } else {
         const newHash = contentHash(dealName, status);
