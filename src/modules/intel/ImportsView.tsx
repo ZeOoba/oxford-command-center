@@ -205,34 +205,25 @@ function ImportDetailPanel({ id, imports, onClose }: { id: number; imports: Impo
   );
 }
 
+// Sortable list on the shared DataTable (review round 2 tier B3, 2026-11-24); was a hand-rolled table.
+// Rows carry no id; the index keeps duplicate account lines distinct, as before.
+type LedgerRowWithKey = LedgerRowView & { key: string };
+
+const ledgerCols: Column<LedgerRowWithKey>[] = [
+  { key: 'account', header: 'Account', render: (r) => <span className="text-xs" style={{ color: 'var(--text-primary)' }}>{r.rawAccount}</span>, sortValue: (r) => r.rawAccount },
+  { key: 'gl', header: 'GL', render: (r) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{r.glCode ?? '—'}</span>, sortValue: (r) => r.glCode },
+  { key: 'category', header: 'Category', render: (r) => <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{r.normalizedCategory}</span>, sortValue: (r) => r.normalizedCategory },
+  { key: 'class', header: 'Class', render: (r) => <Badge tone="neutral">{r.classification}</Badge>, sortValue: (r) => r.classification },
+  { key: 'amount', header: 'Amount', align: 'right', render: (r) => <span className="num text-xs" style={{ color: 'var(--text-primary)' }}>{fmtUsd(r.amount)}</span>, sortValue: (r) => r.amount },
+  { key: 'active', header: '', render: (r) => (!r.isActive ? <Badge tone="neutral">inactive</Badge> : null) },
+];
+
 function LedgerTable({ rows }: { rows: LedgerRowView[] }) {
+  const keyed = rows.map((r, idx) => ({ ...r, key: `${r.rawAccount}-${idx}` }));
   return (
     <div>
       <SectionLabel>Ledger rows</SectionLabel>
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse" style={{ minWidth: 560 }}>
-          <thead>
-            <tr>
-              {['Account', 'GL', 'Category', 'Class', 'Amount', ''].map((h, i) => (
-                <th key={h} className="num px-3 py-2 text-2xs font-semibold uppercase"
-                  style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', textAlign: i === 4 ? 'right' : 'left', borderBottom: '1px solid var(--border-strong)' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, idx) => (
-              <tr key={`${r.rawAccount}-${idx}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                <td className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-primary)' }}>{r.rawAccount}</td>
-                <td className="num px-3 py-1.5 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{r.glCode ?? '—'}</td>
-                <td className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{r.normalizedCategory}</td>
-                <td className="px-3 py-1.5"><Badge tone="neutral">{r.classification}</Badge></td>
-                <td className="num px-3 py-1.5 text-right text-xs" style={{ color: 'var(--text-primary)' }}>{fmtUsd(r.amount)}</td>
-                <td className="px-3 py-1.5">{!r.isActive && <Badge tone="neutral">inactive</Badge>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable columns={ledgerCols} rows={keyed} getRowId={(r) => r.key} minWidth={560} />
     </div>
   );
 }
