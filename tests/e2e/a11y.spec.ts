@@ -4,7 +4,8 @@ import AxeBuilder from '@axe-core/playwright';
 // Automated accessibility audit. Requires `npx playwright install chromium`.
 
 test('overview has no serious/critical axe violations', async ({ page }) => {
-  await page.goto('/?still=1');
+  // `/` lands on the view profile's home, not the Overview (see smoke.spec.ts).
+  await page.goto('/overview?still=1');
   await page.waitForSelector('text=Portfolio Value', { timeout: 15_000 });
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
   const serious = results.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');

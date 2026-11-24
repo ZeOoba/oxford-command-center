@@ -32,9 +32,11 @@ function contrast(a: string, b: string): number {
 
 describe.each(['command', 'parchment', 'warm'])('theme %s text contrast', (theme) => {
   const block = themeBlock(theme);
-  it.each(['--text-primary', '--text-secondary', '--text-tertiary'])('%s is at least 4.5:1 on base and raised surfaces', (name) => {
+  // --surface-overlay added 2026-11-24: the scenario/profile pills sit on it, and the first e2e axe run
+  // caught tertiary text at 4.3:1 there (the base/raised check alone missed it).
+  it.each(['--text-primary', '--text-secondary', '--text-tertiary'])('%s is at least 4.5:1 on base, raised and overlay surfaces', (name) => {
     const fg = token(block, name);
-    for (const surface of ['--surface-base', '--surface-raised']) {
+    for (const surface of ['--surface-base', '--surface-raised', '--surface-overlay']) {
       expect(contrast(fg, token(block, surface))).toBeGreaterThanOrEqual(4.5);
     }
   });
