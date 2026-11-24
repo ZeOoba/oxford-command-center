@@ -968,17 +968,24 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const parsed = StatusPatchInput.safeParse(await c.req.json().catch(() => ({})));
       if (!parsed.success) return c.json({ error: 'invalid status body', issues: parsed.error.issues }, 400);
 
-      const r = db.prepare(`
-        UPDATE acq_candidates SET status = ?, updated_at = datetime('now') WHERE id = ?
-      `).run(parsed.data.status, candidateId);
+      // Phase-4 Step 8: log a calibration intent-outcome on lifecycle-resolving transitions. The status
+      // UPDATE and the outcome binding share ONE write transaction (merge gate PR #591, R2-1), as each sync
+      // writer's per-deal transaction does: with the UPDATE autocommitted first, another writer (the
+      // screen-packet importer) could move the current-score pointer in between and the permanent outcome
+      // would bind to a screen made after the decision. IMMEDIATE takes the write lock up front.
+      // logAcqOutcome is fail-open for statement-level errors (the status still commits, 200); an error
+      // that aborts the whole SQLite transaction (disk full, I/O) fails the request and the status is not written.
+      const status = parsed.data.status;
+      const found = db.transaction((): boolean => {
+        const r = db.prepare(`
+          UPDATE acq_candidates SET status = ?, updated_at = datetime('now') WHERE id = ?
+        `).run(status, candidateId);
+        if (r.changes === 0) return false;
+        if (status === 'acquired' || status === 'passed') logAcqOutcome(db, candidateId, status);
+        return true;
+      }).immediate();
 
-      if (r.changes === 0) return c.json({ ok: false, error: 'candidate not found' }, 404);
-
-      // Phase-4 Step 8: log a calibration intent-outcome on lifecycle-resolving transitions.
-      // Fail-open inside logAcqOutcome — never affects the 200 response.
-      if (parsed.data.status === 'acquired' || parsed.data.status === 'passed') {
-        logAcqOutcome(db, candidateId, parsed.data.status);
-      }
+      if (!found) return c.json({ ok: false, error: 'candidate not found' }, 404);
 
       return c.json({ ok: true });
     }),
@@ -987,7 +994,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   // POST /acq/sync/notion — pull the Notion Acquisition Pipeline and upsert into acq_candidates.
   // POST /acq/sync/hubspot — pull the HubSpot "Acquisitions" pipeline (885606973) likewise.
   // Requires NOTION_TOKEN / HUBSPOT_TOKEN env var (never committed) → 400 when unset. Returns
-  // { inserted, updated, errors[] }. Read-only from the source; writes only Spine-C acq_candidates.
+  // { inserted, updated, errors[] }. Read-only from the source; writes Spine-C acq_candidates, plus (via
+  // logAcqOutcome, on an active -> acquired/passed transition) calibration_outcome / data_quality_issues.
   // First-page failure → 502 (redacted status logged). The two feeds never collide (namespaced ids:
   // 'deal:hubspot:<id>' vs 'deal:<notionPageId>'). Run/classify logic is shared with
   // scripts/acq-sync.ts via acq-sync-runner.ts.

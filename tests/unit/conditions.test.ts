@@ -323,6 +323,86 @@ describe('evaluateConditions — leases', () => {
     const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5) })] }), opts);
     expect(out.find((i) => i.id === 'escalation-l1')?.severity).toBe('warning');
   });
+  // Tier 2 (Gabriel 2026-11-23): a passed escalation carries the annual dollars the bump is worth,
+  // so it ranks by money like every other lease row; unknown pct stays unquantified, never $0.
+  it('passed escalation carries annual rent x escalationPct as its impact', () => {
+    const out = evaluateConditions(
+      snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 0.03 })] }),
+      opts,
+    );
+    const esc = out.find((i) => i.id === 'escalation-l1')!;
+    expect(esc.impactAnnualUsd).toBeCloseTo(720, 6);
+    expect(esc.provenance).toBe('real');
+    expect(esc.detail).toMatch(/about \$720\/yr per missed bump/);
+  });
+  // Refute wf_774968c9-439: only an honest figure is priced.
+  it.each(['Vacant', 'Expired', 'Unknown'] as const)('a %s lease is not priced (asking rent / lapsed / unknown)', (status) => {
+    const out = evaluateConditions(
+      snap({ leases: [lease({ status, escalationDate: iso(-5), monthlyRent: 1_500, annualRent: 18_000, escalationPct: 0.03 })] }),
+      opts,
+    );
+    const esc = out.find((i) => i.id === 'escalation-l1');
+    if (esc) expect(esc.impactAnnualUsd).toBeNull();
+  });
+  it('a zero-rent live lease is not priced (no "$0" row)', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 0, annualRent: 0, escalationPct: 0.03 })] }), opts);
+    const esc = out.find((i) => i.id === 'escalation-l1')!;
+    expect(esc.impactAnnualUsd).toBeNull();
+    expect(esc.detail).not.toMatch(/\$0/);
+  });
+  it('a percent-form escalationPct (3 for 3%) is not priced and is called out as mis-entered', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 3 })] }), opts);
+    const esc = out.find((i) => i.id === 'escalation-l1')!;
+    expect(esc.impactAnnualUsd).toBeNull();
+    expect(esc.provenance).toBe('absent');
+    expect(esc.detail).toMatch(/looks mis-entered/);
+  });
+  // Refute wf_0983ca4b-b20: live by date too.
+  it('an Active lease whose term has ended is not priced (the lapsed alert owns it)', () => {
+    const out = evaluateConditions(
+      snap({ leases: [lease({ escalationDate: iso(-40), leaseEnd: iso(-10), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 0.03 })] }),
+      opts,
+    );
+    const esc = out.find((i) => i.id === 'escalation-l1');
+    if (esc) expect(esc.impactAnnualUsd).toBeNull();
+  });
+  it('a bump dated after the lease end is not priced', () => {
+    const out = evaluateConditions(
+      snap({ leases: [lease({ escalationDate: iso(-5), leaseEnd: iso(-6), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 0.03 })] }),
+      opts,
+    );
+    const esc = out.find((i) => i.id === 'escalation-l1');
+    if (esc) expect(esc.impactAnnualUsd).toBeNull();
+  });
+  it('an open-term lease with a bump inside the term is priced', () => {
+    const out = evaluateConditions(
+      snap({ leases: [lease({ escalationDate: iso(-5), leaseEnd: iso(200), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 0.03 })] }),
+      opts,
+    );
+    expect(out.find((i) => i.id === 'escalation-l1')!.impactAnnualUsd).toBeCloseTo(720, 6);
+  });
+  it('a bump that rounds to $0 is not priced, and a mis-entered pct prints as a percent', () => {
+    const tiny = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 1, annualRent: 12, escalationPct: 0.03 })] }), opts);
+    expect(tiny.find((i) => i.id === 'escalation-l1')!.impactAnnualUsd).toBeNull();
+    const bad = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 3 })] }), opts);
+    expect(bad.find((i) => i.id === 'escalation-l1')!.detail).toMatch(/\(300\.0%\)/);
+  });
+
+  it('the plausibility bound is inclusive at 25%', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 1_000, annualRent: 12_000, escalationPct: 0.25 })] }), opts);
+    expect(out.find((i) => i.id === 'escalation-l1')!.impactAnnualUsd).toBeCloseTo(3_000, 6);
+  });
+  it('passed escalation with no escalationPct stays unquantified (null), never $0', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 2_000, annualRent: 24_000, escalationPct: null })] }), opts);
+    const esc = out.find((i) => i.id === 'escalation-l1')!;
+    expect(esc.impactAnnualUsd).toBeNull();
+    expect(esc.provenance).toBe('absent');
+  });
+  it('a non-positive escalationPct is treated as unknown, not a negative impact', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(-5), monthlyRent: 2_000, annualRent: 24_000, escalationPct: 0 })] }), opts);
+    expect(out.find((i) => i.id === 'escalation-l1')!.impactAnnualUsd).toBeNull();
+  });
+
   it('future escalation date does not fire', () => {
     const out = evaluateConditions(snap({ leases: [lease({ escalationDate: iso(30) })] }), opts);
     expect(out.some((i) => i.id === 'escalation-l1')).toBe(false);
