@@ -1,0 +1,48 @@
+name: E2E
+
+# Playwright end-to-end suite (tests/e2e: smoke + a11y), added 2026-11-24 (command-center review,
+# Tier 4; Gabriel ruled: a SEPARATE job, non-blocking at first). Before this the 27 e2e tests ran
+# nowhere. This is its own workflow, not a job in ci.yml: the job id `e2e` is NOT a branch-protection
+# required check, so a failure shows red on the PR without blocking the merge. Promote it to required
+# only once it has a clean track record.
+#
+# Runs on GitHub-hosted ubuntu-latest only (no CI_RUNNER toggle): the laptop runner is
+# decommissioned and Playwright's browser deps install with --with-deps on Ubuntu. Data is the
+# synthetic stand-in seeded by `npm ci`'s postinstall (scripts/ensure-local-data.ts), exactly as in
+# ci.yml; playwright.config.ts boots `npm run dev` itself (webServer) and retries twice under CI.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege, as in ci.yml: checkout and read only. PR code runs in this job.
+permissions:
+  contents: read
+
+env:
+  NODE_ENV: ''
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --include=dev --prefer-offline --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      # Traces are recorded on first retry (playwright.config.ts); keep them when a run fails.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
