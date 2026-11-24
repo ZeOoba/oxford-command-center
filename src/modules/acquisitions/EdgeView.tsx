@@ -4,7 +4,7 @@
 // data health, manual-pull queue. Lazy-mounted (no FORCE_MOUNT_PANEL): it fetches markets.json via
 // the Brain Server and the pull queue from the warehouse. Each non-ok availability state replaces the
 // board, health and queue bodies; the pull queue degrades on its own (503) while board + health stay.
-import { fmtNum } from '@analytics/index';
+import { fmtNum, fmtPct } from '@analytics/index';
 import { SERIES_UNITS, type EdgeCoverageRow, type EdgeMarketsResponse, type EdgeNewsResponse, type EdgeUnit } from '@contracts/edge';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
@@ -168,7 +168,7 @@ function EdgeDataHealth({ data }: { data: EdgeMarketsResponse }) {
       ),
     },
     { key: 'unit', header: 'Unit', render: (r) => UNIT_LABEL[SERIES_UNITS[r.field]] },
-    { key: 'coverage', header: 'Coverage', align: 'right', render: (r) => `${(r.pct * 100).toFixed(0)}% (${r.filled}/${r.total})` },
+    { key: 'coverage', header: 'Coverage', align: 'right', render: (r) => `${fmtPct(r.pct, 0)} (${r.filled}/${r.total})` },
     { key: 'byYear', header: 'By year', render: (r) => <CoverageBars byYear={r.byYear} markets={data.marketCount} /> },
     {
       key: 'mix',

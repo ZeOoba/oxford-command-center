@@ -19,12 +19,14 @@ import { AreaChart } from '@/charts/AreaChart';
 import { SeriesLegend } from '@/charts/SeriesLegend';
 import { provenanceKinds } from '@/charts/series-provenance';
 import { pointProvenance } from '../portfolio/scenario-spread';
-import { fmtDate, fmtMultiple, fmtPct, fmtSf, fmtUsd, fmtUsdCompact, propertyLtvLabel } from '@analytics/index';
+import { fmtDate, fmtMultiple, fmtPct, fmtSf, fmtUsd, fmtUsdCompact, propertyLtvLabel, fmtPsf } from '@analytics/index';
 import { isInvestmentProperty, landlordCostsNotSourced } from '@analytics/property-basis';
 import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
 import { useLeaseForecast } from '../leasing/hooks';
 import { BUCKET_LABEL, monthEndIso, propertyAlerts, rolloverLadder, type LadderRow } from './property-page-model';
-import { usePropertyLedger, usePropertyOccupancy } from './hooks';
+import { usePropertyLedgerState, usePropertyOccupancy } from './hooks';
+import { Skeleton } from '@/primitives/Skeleton';
+import { QueryError } from '@/primitives/QueryError';
 
 /** Monthly charts show the latest 24 recorded ledger months. */
 const TREND_MONTHS = 24;
@@ -58,7 +60,7 @@ function MarketCell({ row }: { row: LadderRow }) {
   const indicative = m.kind === 'indicative';
   return (
     <span style={{ color: indicative ? 'var(--text-tertiary)' : 'var(--text-primary)' }} title={indicative ? 'Lease-market asking feed — indicative, not a manual market rent' : 'Manual market rent'}>
-      {m.psf !== null ? `$${m.psf.toFixed(2)}` : '—'}
+      {fmtPsf(m.psf)}
       {m.gapAnnualUsd !== null && <> · {fmtUsdCompact(m.gapAnnualUsd)}/yr</>}
       {indicative && <> · indicative</>}
     </span>
@@ -101,7 +103,7 @@ function Ladder({ rows }: { rows: LadderRow[] }) {
                 <td className="py-1 pr-3">{r.unit ?? '—'}</td>
                 <td className="py-1 pr-3 text-right">{fmtSf(r.sf)}</td>
                 <td className="py-1 pr-3 text-right">{fmtUsd(r.annualRent)}</td>
-                <td className="py-1 pr-3 text-right">{r.rentPsf !== null ? `$${r.rentPsf.toFixed(2)}` : '—'}</td>
+                <td className="py-1 pr-3 text-right">{fmtPsf(r.rentPsf)}</td>
                 <td className="py-1 pr-3">{fmtDate(r.leaseEnd)}</td>
                 <td className="py-1"><MarketCell row={r} /></td>
               </tr>,
@@ -128,7 +130,8 @@ export function PropertyPage() {
   const snapshot = data?.snapshot;
   // The residence is excluded from every surface (ruling 2026-10-30) — its id resolves to "not found".
   const property = snapshot?.properties.find((p) => p.id === id && isInvestmentProperty(p)) ?? null;
-  const ledger = usePropertyLedger(id);
+  const ledgerState = usePropertyLedgerState(id);
+  const ledger = ledgerState.ledger;
   const occupancy = usePropertyOccupancy(snapshot, property);
 
   if (gate) return gate;
@@ -154,7 +157,11 @@ export function PropertyPage() {
   const ledgerChip = lastLedgerMonth ? <AsOfChip asOf={monthEndIso(lastLedgerMonth)} source={LEDGER_SOURCE} /> : null;
   const workbookChip = <AsOfChip asOf={snapshot.meta.asOf} source="Master Workbook" />;
 
-  const ledgerSub = !ledger
+  const ledgerSub = ledgerState.status === 'loading'
+    ? 'loading the P&L ledger…'
+    : ledgerState.status === 'error'
+      ? 'P&L ledger did not load'
+      : !ledger
     ? 'not in the P&L ledger'
     : lastT12
       ? `entity 100% · T12 to ${lastT12.month}`
@@ -202,7 +209,7 @@ export function PropertyPage() {
         <KpiStat label="Occupancy · workbook" value={p.occPct} format={(n) => fmtPct(n)} />
         <KpiStat label="DSCR · workbook" value={p.dscr} format={(n) => (n === null ? '—' : fmtMultiple(n))} />
         <KpiStat label="LTV · workbook" value={p.ltv} format={() => propertyLtvLabel(p)} />
-        <KpiStat label="Rent / SF · workbook" value={p.rentPerSf} format={(n) => (n === null ? '—' : `$${n.toFixed(2)}`)} />
+        <KpiStat label="Rent / SF · workbook" value={p.rentPerSf} format={(n) => fmtPsf(n)} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -215,7 +222,13 @@ export function PropertyPage() {
               ariaLabel={`${p.name} monthly NOI, P&L ledger basis`}
             />
           ) : (
-            <Muted>{ledger ? 'No monthly ledger detail for this property (annual statements only).' : 'This property is not in the P&L ledger set yet.'}</Muted>
+            ledgerState.status === 'loading' ? (
+              <Skeleton style={{ height: 200 }} />
+            ) : ledgerState.status === 'error' ? (
+              <QueryError error={ledgerState.error} what="the P&L ledger" className="py-2" />
+            ) : (
+              <Muted>{ledger ? 'No monthly ledger detail for this property (annual statements only).' : 'This property is not in the P&L ledger set yet.'}</Muted>
+            )
           )}
         </Section>
         <Section title={`Operating expense · ${LEDGER}, monthly`} trailing={ledgerChip}>
@@ -235,7 +248,7 @@ export function PropertyPage() {
           {recent.length > 1 && ledger?.sf ? (
             <AreaChart
               data={recent.map((m) => ({ date: `${m.month}-01`, value: (m.baseRent * 12) / ledger.sf! }))}
-              valueFormat={(n) => `$${n.toFixed(2)}`}
+              valueFormat={(n) => fmtPsf(n)}
               height={200}
               color="var(--accent)"
               ariaLabel={`${p.name} base rent per SF annualized, P&L ledger basis`}

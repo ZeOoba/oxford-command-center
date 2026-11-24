@@ -35,7 +35,7 @@ import { isWarehouseUnavailable, WAREHOUSE_KEYS } from '../intel/hooks';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { saveMarketRent } from '@/data/actions';
 import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
-import { fmtUsdCompact, fmtNum } from '@analytics/index';
+import { fmtUsdCompact, fmtNum, fmtPsf } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
@@ -248,7 +248,7 @@ function MarketRentEditor({
               <div key={s.key} className="flex items-center justify-between gap-3 rounded-[var(--radius-sm)] px-3 py-1.5" style={{ background: 'var(--surface-overlay)', border: '1px dashed var(--border-subtle)' }}>
                 <span className="num text-2xs font-medium" style={{ color: 'var(--text-secondary)' }}>{s.key}</span>
                 <div className="flex items-center gap-2">
-                  <span className="num text-2xs" style={{ color: 'var(--text-warn)' }}>${s.psf.toFixed(2)}/SF</span>
+                  <span className="num text-2xs" style={{ color: 'var(--text-warn)' }}>{fmtPsf(s.psf)}/SF</span>
                   <Button
                     size="sm"
                     variant="subtle"
@@ -271,7 +271,7 @@ function MarketRentEditor({
               <div key={k} className="flex items-center justify-between gap-3 rounded-[var(--radius-sm)] px-3 py-1.5" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
                 <span className="num text-2xs font-medium" style={{ color: 'var(--text-secondary)' }}>{k}</span>
                 <div className="flex items-center gap-2">
-                  <span className="num text-2xs" style={{ color: 'var(--text-pos)' }}>${v.toFixed(2)}/SF</span>
+                  <span className="num text-2xs" style={{ color: 'var(--text-pos)' }}>{fmtPsf(v)}/SF</span>
                   <button
                     onClick={() => handleClear(k)}
                     disabled={saveMutation.isPending}

@@ -39,8 +39,9 @@ import {
   type TimelineRange,
   type WhyPair,
 } from './explorer-model';
+import { fmtPsf } from '@analytics/index';
 
-const fmtPerSf = (v: number) => `$${v.toFixed(2)}`;
+const fmtPerSf = (v: number) => fmtPsf(v);
 
 function Sparkline({ values }: { values: readonly number[] }) {
   const s = sparklineGeometry(values, 96, 30);
