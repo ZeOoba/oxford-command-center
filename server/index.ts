@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
-import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
+import { RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
 import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
@@ -28,6 +28,8 @@ import { AlertActionInput } from '../src/contracts/alerts';
 import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
+import { jsonErrorHandler, jsonNotFound } from './warehouse/json-errors';
+import { DealStageBody, TaskBody, TenantNoteBody } from './action-bodies';
 import { WAREHOUSE_SUB_ROUTERS } from './warehouse/sub-routers';
 import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
 import type { PropertyOnboardingInput } from './warehouse/property-onboarding';
@@ -60,6 +62,12 @@ import {
 import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
+// Root routes answer errors and unknown paths as JSON (2026-11-23 review, Tier 4). The warehouse
+// sub-apps keep their own onError (sibling Hono instances, see warehouse/json-errors.ts); before
+// this, an uncaught error on a ROOT route fell back to Hono's plain-text 500, which the client
+// reads as "server absent".
+app.onError(jsonErrorHandler('server'));
+app.notFound(jsonNotFound);
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
 // be this server's own loopback authority (defeats DNS rebinding, where a foreign page is same-origin
 // to the browser and cors() never even runs), a present Origin must be same-machine (fail-closed, not
@@ -398,24 +406,21 @@ function saveFailed(err: unknown): null {
 }
 
 app.post('/api/actions/deal-stage', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { dealId?: string; stage?: string };
-  const stage = DealStage.safeParse(body.stage);
-  if (!body.dealId || !stage.success) return c.json({ ok: false, error: 'Invalid dealId or stage' }, 400);
-  const ok = await brain.setDealStage(body.dealId, stage.data).catch(saveFailed);
+  const parsed = DealStageBody.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid dealId or stage' }, 400);
+  const ok = await brain.setDealStage(parsed.data.dealId, parsed.data.stage).catch(saveFailed);
   if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
 app.post('/api/actions/task', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    label?: string; section?: string; type?: string; dueDay?: string; notes?: string;
-  };
-  const label = String(body.label ?? '').trim();
-  if (!label) return c.json({ ok: false, error: 'label required' }, 400);
+  const parsed = TaskBody.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'label required' }, 400);
+  const body = parsed.data;
   const saved = await brain.addTask({
     id: `usr-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
-    label,
-    section: String(body.section ?? 'Added in Command Center'),
+    label: body.label,
+    section: body.section ?? 'Added in Command Center',
     role: null,
     type: body.type ?? 'Manual',
     dueDay: body.dueDay ?? null,
@@ -445,10 +450,9 @@ app.post('/api/actions/renewal-stage', async (c) => {
 });
 
 app.post('/api/actions/tenant-note', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { tenantId?: string; note?: string };
-  const tenantId = String(body.tenantId ?? '').trim();
-  if (!tenantId) return c.json({ ok: false, error: 'tenantId required' }, 400);
-  const ok = await brain.setTenantNote(tenantId, String(body.note ?? '')).catch(saveFailed);
+  const parsed = TenantNoteBody.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'tenantId required' }, 400);
+  const ok = await brain.setTenantNote(parsed.data.tenantId, parsed.data.note).catch(saveFailed);
   if (ok === null) return c.json(SAVE_FAILED, 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
