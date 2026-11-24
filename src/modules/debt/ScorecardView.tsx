@@ -8,7 +8,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { fmtPct } from '@analytics/index';
+import { fmtPct, fmtMultiple } from '@analytics/index';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { useSnapshot } from '@/data/queries';
 import { noiBasisLabel } from '@/lib/spine-label';
@@ -17,10 +17,7 @@ import { useDebtScores, signalTone, signalLabel, bandTone } from './hooks';
 import type { DebtScore } from './hooks';
 import { QueryError } from '@/primitives/QueryError';
 
-function fmtDscr(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return '—';
-  return `${n.toFixed(2)}×`;
-}
+const fmtDscr = (n: number | null): string => fmtMultiple(n);
 
 function fmtDebtYield(n: number | null): string {
   return fmtPct(n, 1);

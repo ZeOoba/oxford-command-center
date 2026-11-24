@@ -9,6 +9,7 @@ import type { PfDataset } from '@contracts/property-financials';
 import { usd } from '@analytics/property-financials/format';
 import { cardName } from './explorer-model';
 import { MATRIX_LINES, MATRIX_LINE_LABEL, buildExpenseMatrix, latestFullYear, type MatrixCell, type Quartile } from './expense-matrix';
+import { fmtPsf } from '@analytics/index';
 
 /** Amber wash per quartile: Q1 none … Q4 strongest. Higher $/SF than peers, not "bad" by itself. */
 const SHADE: Readonly<Record<Exclude<Quartile, null>, number>> = { 1: 0, 2: 10, 3: 22, 4: 38 };
@@ -27,7 +28,7 @@ function Cell({ c }: { c: MatrixCell }) {
       title={`${usd(c.usd ?? 0)} posted${c.quartile ? ` · quartile ${c.quartile} of 4 in this column` : ' · column too thin to rank'}`}
       style={shade ? { background: `color-mix(in oklab, var(--pf-warn) ${shade}%, transparent)` } : undefined}
     >
-      ${c.perSf.toFixed(2)}
+      {fmtPsf(c.perSf)}
       {c.quartile && <small className="pf-mut"> Q{c.quartile}</small>}
     </td>
   );

@@ -11,7 +11,7 @@
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { fmtUsd, fmtSf } from '@analytics/index';
+import { fmtUsd, fmtSf, fmtPct } from '@analytics/index';
 import type { AdjustedProperty, NearTermRollup, PcaStatus } from '@/analytics/pca-intelligence';
 import { ageLabel, ageTone, fmtPartialDate, fmtPsf, truncate, usabilityBadge } from './hooks';
 
@@ -154,7 +154,7 @@ function NearTermRollupCard({ rollup }: { rollup: NearTermRollup }) {
       {top && (
         <div className="px-4 pb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
           <strong style={{ color: 'var(--text-primary)' }}>{top.propertyLabel}</strong> is{' '}
-          <span className="num">{(rollup.topShare * 100).toFixed(0)}%</span> of the near-term total — concentration risk.
+          <span className="num">{fmtPct(rollup.topShare, 0)}</span> of the near-term total — concentration risk.
         </div>
       )}
       <ul>
@@ -172,7 +172,7 @@ function NearTermRollupCard({ rollup }: { rollup: NearTermRollup }) {
               <div style={{ width: `${r.share * 100}%`, height: '100%', background: 'var(--color-warn)' }} />
             </div>
             <div className="num text-xs" style={{ width: 90, textAlign: 'right' }}>{fmtUsd(r.totalUsd)}</div>
-            <div className="num text-2xs" style={{ width: 44, textAlign: 'right', ...muted }}>{(r.share * 100).toFixed(1)}%</div>
+            <div className="num text-2xs" style={{ width: 44, textAlign: 'right', ...muted }}>{fmtPct(r.share)}</div>
           </li>
         ))}
         <li

@@ -5,7 +5,7 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam } from '@/lib/useTabParam';
-import { fmtNum } from '@analytics/index';
+import { fmtNum, fmtPct } from '@analytics/index';
 import { useUi } from '@/brain/ui-context';
 import { useDocSearch, fetchDocStatus, type DocStatus } from '@/data/documents';
 
@@ -181,7 +181,7 @@ function DocSearch() {
               <div className="mb-1 flex items-center justify-between gap-2">
                 <span className="truncate text-2xs font-semibold" style={{ color: 'var(--text-secondary)' }}>{h.doc}</span>
                 <span className="num shrink-0 text-[10px] tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
-                  {extOf(h.doc)} · {(h.score * 100).toFixed(0)}%
+                  {extOf(h.doc)} · {fmtPct(h.score, 0)}
                 </span>
               </div>
               <p className="text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>{highlight(h.snippet, q)}</p>
