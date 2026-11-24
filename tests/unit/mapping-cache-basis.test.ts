@@ -1,7 +1,8 @@
 // server/ar/mapping-cache-basis.ts: which lease roster scripts/reconcile.ts checks the AR mapping cache
 // against. A synthetic stand-in cache (pseudonymous lease ids that can never resolve against the real
-// workbook) is checked against the synthetic snapshot instead; every other reading, and any cache holding
-// an id the real workbook knows, keeps the real-workbook check. Temp roots only; no real data.
+// workbook) is checked against the synthetic snapshot instead; every other reading, and any cache that is
+// not positively the stand-in (every id in the committed synthetic roster), keeps the real-workbook check.
+// Temp roots only; no real data.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,7 +19,7 @@ const CACHE = 'data/ar-mapping-cache.json';
 const SNAP = 'data/snapshots/portfolio.json';
 const MARKER = 'data/.synthetic-seeded.json';
 const FIX_CACHE = '{"entries":{"synthetic co":"lease-a"}}';
-const FIX_SNAP = '{"leases":[{"id":"lease-a"}]}';
+const FIX_SNAP = '{"leases":[{"id":"lease-a"},{"id":"lease-b"}]}';
 const roots: string[] = [];
 
 function put(root: string, rel: string, body: string): void {
@@ -154,10 +155,11 @@ describe('runCacheCheck', () => {
 
   it('checks a stand-in cache against the synthetic snapshot roster, not the workbook, on the synthetic basis', () => {
     const root = makeRoot();
-    put(root, SNAP, '{"leases":[{"id":"lease-snap"}]}');
-    const ok = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-snap' }), root);
+    // The committed stand-in roster has lease-a and lease-b; the snapshot in use has only lease-a.
+    put(root, SNAP, '{"leases":[{"id":"lease-a"}]}');
+    const ok = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-a', 'z co': 'SKIP' }), root);
     expect(ok).toEqual({ failed: false, lines: [expect.stringMatching(/^✓ PASS {2}AR mapping cache resolves \(synthetic\) +0 dangling$/)] });
-    const bad = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-gone' }), root);
+    const bad = runCacheCheck('synthetic-snapshot', ['lease-wb'], cache({ 'a co': 'lease-a', 'b co': 'lease-b' }), root);
     expect(bad.failed).toBe(true);
     expect(bad.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves \(synthetic\) +1 dangling$/);
   });
@@ -172,30 +174,51 @@ describe('runCacheCheck', () => {
     expect(runCacheCheck('synthetic-snapshot', [], cache({}), root).failed).toBe(true);
   });
 
-  it('skips without failing on the skip basis when the cache holds no real id', () => {
+  it('skips without failing on the skip basis only for a positively stand-in cache', () => {
     const root = makeRoot();
-    expect(runCacheCheck('skip', ['lease-wb'], cache({ 'a co': 'nowhere' }), root)).toEqual({
+    expect(runCacheCheck('skip', ['lease-wb'], cache({ 'a co': 'lease-a', 'z co': 'SKIP' }), root)).toEqual({
       failed: false,
       lines: [expect.stringMatching(/^– SKIP {2}AR mapping cache resolves /)],
     });
+    const notStandIn = runCacheCheck('skip', ['lease-wb'], cache({ 'a co': 'nowhere' }), root);
+    expect(notStandIn.failed).toBe(true);
+    expect(notStandIn.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
   });
 
-  it('falls back to the workbook check for a cache holding a real workbook id, whatever the basis says', () => {
+  it('falls back to the workbook check for any cache that is not positively the stand-in, whatever the basis says', () => {
     // Real files restored over a seeded worktree before the marker is moved away: the marker still
     // reads both as synthetic, but the cache holds real ids. A stale entry must fail as it does on the
-    // workbook basis, not pass against the restored snapshot's roster.
+    // workbook basis, not pass against the restored snapshot's roster — including when EVERY id is
+    // stale (none the workbook knows), e.g. after a re-key.
     const root = makeRoot();
-    put(root, SNAP, '{"leases":[{"id":"real-1"},{"id":"real-stale"}]}');
-    const restored = cache({ 'real co': 'real-1', 'old co': 'real-stale', 'gone co': 'SKIP' });
+    put(root, SNAP, '{"leases":[{"id":"real-1"},{"id":"real-stale"},{"id":"real-gone"}]}');
+    const oneStale = cache({ 'real co': 'real-1', 'old co': 'real-stale', 'gone co': 'SKIP' });
+    const allStale = cache({ 'old co': 'real-stale', 'gone co': 'real-gone', 'skip co': 'SKIP' });
     for (const basis of ['synthetic-snapshot', 'skip'] as const) {
-      const r = runCacheCheck(basis, ['real-1'], restored, root);
-      expect(r.failed).toBe(true);
-      expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+      const one = runCacheCheck(basis, ['real-1'], oneStale, root);
+      expect(one.failed).toBe(true);
+      expect(one.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+      const all = runCacheCheck(basis, ['real-1'], allStale, root);
+      expect(all.failed).toBe(true);
+      expect(all.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +2 dangling$/);
     }
+    // A cache mixing a stand-in id with a real one is not the stand-in either.
+    expect(runCacheCheck('synthetic-snapshot', ['real-1'], cache({ 'a co': 'lease-a', 'real co': 'real-1' }), root).lines[0]).toMatch(
+      /^✗ FAIL {2}AR mapping cache resolves +1 dangling$/,
+    );
     expect(runCacheCheck('synthetic-snapshot', ['real-1'], cache({ 'real co': 'real-1' }), root)).toEqual({
       failed: false,
       lines: [expect.stringMatching(/^✓ PASS {2}AR mapping cache resolves +0 dangling$/)],
     });
+  });
+
+  it('keeps the workbook check when the committed stand-in roster is unreadable', () => {
+    const root = makeRoot();
+    put(root, SNAP, FIX_SNAP);
+    put(root, `fixtures/synthetic/${SNAP}`, '{not json');
+    const r = runCacheCheck('synthetic-snapshot', ['real-1'], cache({ 'a co': 'lease-a' }), root);
+    expect(r.failed).toBe(true);
+    expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
   });
 
   it('never throws on a malformed cache', () => {
@@ -218,7 +241,10 @@ describe('checkMappingCache', () => {
 
   it('fails a seeded worktree whose stand-in cache dangles against its synthetic snapshot', () => {
     const root = seededRoot();
-    expect(checkMappingCache(root, ['real-1'], cache({ 'synthetic co': 'lease-gone' }), {}).failed).toBe(true);
+    put(root, SNAP, '{"leases":[{"id":"lease-a"}]}');
+    const r = checkMappingCache(root, ['real-1'], cache({ 'synthetic co': 'lease-a', 'other co': 'lease-b' }), {});
+    expect(r.failed).toBe(true);
+    expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves \(synthetic\) +1 dangling$/);
   });
 
   it('fails a mixed checkout (stand-in cache, real snapshot, no marker) against the workbook', () => {
@@ -235,6 +261,15 @@ describe('checkMappingCache', () => {
     put(root, CACHE, '{"entries":{"real co":"real-1","old co":"real-stale"}}');
     put(root, SNAP, '{"leases":[{"id":"real-1"},{"id":"real-stale"}]}');
     const r = checkMappingCache(root, ['real-1'], cache({ 'real co': 'real-1', 'old co': 'real-stale' }), {});
+    expect(r.failed).toBe(true);
+    expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
+  });
+
+  it('fails a restore in progress whose real cache ids are ALL stale against the workbook', () => {
+    const root = seededRoot();
+    put(root, CACHE, '{"entries":{"gone co":"real-gone","skip co":"SKIP"}}');
+    put(root, SNAP, '{"leases":[{"id":"real-gone"},{"id":"real-1"}]}');
+    const r = checkMappingCache(root, ['real-1'], cache({ 'gone co': 'real-gone', 'skip co': 'SKIP' }), {});
     expect(r.failed).toBe(true);
     expect(r.lines[0]).toMatch(/^✗ FAIL {2}AR mapping cache resolves +1 dangling$/);
   });

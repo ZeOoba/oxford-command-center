@@ -6,11 +6,11 @@
 // workbook it can only fail, saying nothing about either file. So a synthetic cache is checked against
 // the synthetic snapshot instead (which still catches a build-synthetic-data regression that leaves the
 // stand-in's links dangling), and skipped only when there is no snapshot at all to check it against.
-// Every other reading keeps the real-workbook check (the strict side), and so does any cache holding
-// an id the real workbook knows: the stand-in can't, so that cache is real whatever the marker says.
+// Every other reading keeps the real-workbook check (the strict side), and so does any cache that is
+// not positively the stand-in (every id in the committed synthetic roster), whatever the marker says.
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { normPath, realDataStatus, type FileState, type PathStatus } from '../real-data-status';
+import { FIXTURE_DIR, normPath, realDataStatus, type FileState, type PathStatus } from '../real-data-status';
 import { validateMappingCache, type MappingCache } from './mapping-cache';
 
 export const CACHE_REL = 'data/ar-mapping-cache.json';
@@ -63,13 +63,24 @@ export interface CacheCheckResult {
 
 const LABEL = 'AR mapping cache resolves';
 
-/** True when any cache entry maps to a lease id the real workbook knows. The synthetic stand-in's ids
- *  are pseudonyms, so such a cache holds real data: e.g. real files restored over a seeded worktree
- *  before the seed marker is moved away (runbook), which the marker alone still reads as synthetic. */
-function holdsRealIds(cache: MappingCache, workbookLeaseIds: ReadonlySet<string>): boolean {
+/** True only when the cache in memory is positively the stand-in: every non-SKIP value is a lease id
+ *  of the COMMITTED synthetic snapshot (fixtures/synthetic/, the roster build-synthetic-data keys the
+ *  stand-in cache to). The seed marker alone can't say this: real files restored over a seeded
+ *  worktree before the marker is moved away (runbook) still read as synthetic, and a real cache whose
+ *  ids are all stale against the workbook must not pass against a restored snapshot. Anything else —
+ *  a real id, a stale id, a malformed cache, an unreadable fixture — is not the stand-in, so it keeps
+ *  the real-workbook check. */
+function isStandInCache(cache: MappingCache, root: string): boolean {
   const entries: unknown = cache?.entries;
   if (entries === null || typeof entries !== 'object' || Array.isArray(entries)) return false;
-  return Object.values(entries as Record<string, unknown>).some((v) => typeof v === 'string' && v !== 'SKIP' && workbookLeaseIds.has(v));
+  let standInIds: Set<string>;
+  try {
+    const fixture = JSON.parse(readFileSync(join(root, FIXTURE_DIR, SNAPSHOT_REL), 'utf8')) as { leases?: Array<{ id?: unknown }> };
+    standInIds = new Set((fixture.leases ?? []).filter((l) => typeof l?.id === 'string').map((l) => l.id as string));
+  } catch {
+    return false;
+  }
+  return Object.values(entries as Record<string, unknown>).every((v) => v === 'SKIP' || (typeof v === 'string' && standInIds.has(v)));
 }
 
 /** The whole reconcile check for one basis. Never throws: the synthetic snapshot is re-read here,
@@ -82,7 +93,7 @@ export function runCacheCheck(
   root: string,
 ): CacheCheckResult {
   const workbookIds = new Set(workbookLeaseIds);
-  const effective: CacheCheckBasis = basis !== 'workbook' && holdsRealIds(cache, workbookIds) ? 'workbook' : basis;
+  const effective: CacheCheckBasis = basis !== 'workbook' && !isStandInCache(cache, root) ? 'workbook' : basis;
   if (effective === 'skip') {
     return { lines: [`– SKIP  ${LABEL.padEnd(42)} synthetic stand-in cache, no synthetic snapshot to check it against`], failed: false };
   }
