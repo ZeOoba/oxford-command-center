@@ -5,9 +5,13 @@ import { test, expect } from '@playwright/test';
 
 // Portfolio figures are matched by shape, never by value: a literal here would be a real firm amount.
 const COMPACT_MILLIONS = /^\$\d+(\.\d+)?M$/;
+// `/` redirects to the current view profile's home (PROFILE_HOME), which is the acquisitions
+// pipeline in the default profile, so Overview-specific tests open /overview directly
+// (first CI run of this suite, 2026-11-24).
+const OVERVIEW = '/overview?still=1';
 
 test('overview renders the real portfolio', async ({ page }) => {
-  await page.goto('/?still=1');
+  await page.goto(OVERVIEW);
   await expect(page.getByText('Command Overview')).toBeVisible();
   await expect(page.getByText('Portfolio Value')).toBeVisible();
   await expect(page.getByText(COMPACT_MILLIONS).first()).toBeVisible({ timeout: 15_000 });
@@ -23,7 +27,7 @@ test('command palette opens and finds an entity', async ({ page }) => {
 });
 
 test('scenario switch recomputes the portfolio', async ({ page }) => {
-  await page.goto('/?still=1');
+  await page.goto(OVERVIEW);
   const value = page.getByText(COMPACT_MILLIONS).first();
   await expect(value).toBeVisible({ timeout: 15_000 });
   const base = (await value.textContent()) ?? '';
@@ -38,7 +42,8 @@ test('leasing shows the rent roll', async ({ page }) => {
   await page.getByRole('tab', { name: /^Rent roll/ }).click();
   // exact:true — the tab strip and the view switch also carry "Rent roll" labels (different case).
   await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/Tenant 155 LLC/).first()).toBeVisible({ timeout: 15_000 });
+  // Shape, not a fixture name: the synthetic stand-in's tenant pseudonyms are regenerated.
+  await expect(page.getByText(/Tenant \d{3} LLC/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('entity drill-through opens and closes with Escape', async ({ page }) => {
