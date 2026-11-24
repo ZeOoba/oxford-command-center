@@ -29,6 +29,7 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { jsonErrorHandler, jsonNotFound } from './warehouse/json-errors';
+import { requestId } from './request-id';
 import { DealStageBody, TaskBody, TenantNoteBody } from './action-bodies';
 import { WAREHOUSE_SUB_ROUTERS } from './warehouse/sub-routers';
 import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
@@ -68,6 +69,9 @@ const app = new Hono();
 // reads as "server absent".
 app.onError(jsonErrorHandler('server'));
 app.notFound(jsonNotFound);
+// Request id on every request, first in the chain (review round 2, 2026-11-24, approved in-turn):
+// X-Request-Id response header + the id on error log lines and 500 bodies (server/request-id.ts).
+app.use('*', requestId);
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
 // be this server's own loopback authority (defeats DNS rebinding, where a foreign page is same-origin
 // to the browser and cors() never even runs), a present Origin must be same-machine (fail-closed, not

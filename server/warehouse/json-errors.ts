@@ -15,17 +15,21 @@
 // `.onError()` call site" — see sub-routers.ts's `withJsonErrors`, which applies this to every
 // sub-router factory.
 import type { ErrorHandler, NotFoundHandler } from 'hono';
+import { requestIdOf } from '../request-id';
 
 // The 500 body is deliberately generic: a raw err.message can carry SQLite constraint/table
 // names or filesystem paths (2026-10 security review of PR #427). The full error is logged
 // server-side only. The log line carries method + path (never the query string); the path is
 // JSON-quoted because Hono decodes it, so a crafted %0A would otherwise forge log lines. The
 // logged `err` itself may still embed input values (e.g. Zod issue text) — it never leaves
-// the process.
+// the process. When the root app's requestId() middleware ran, its id is on the log line and in the
+// body (review round 2, 2026-11-24), so a 500 on screen can be found in the server log; the id is
+// either a server-made UUID or a short [A-Za-z0-9._-] value (server/request-id.ts), never raw input.
 export function jsonErrorHandler(tag: string): ErrorHandler {
   return (err, c) => {
-    console.error(`[${tag}] route error: ${c.req.method} ${JSON.stringify(c.req.path)}`, err);
-    return c.json({ error: 'internal error' }, 500);
+    const id = requestIdOf(c);
+    console.error(`[${tag}] route error: ${c.req.method} ${JSON.stringify(c.req.path)}${id ? ` request=${id}` : ''}`, err);
+    return c.json(id ? { error: 'internal error', requestId: id } : { error: 'internal error' }, 500);
   };
 }
 
