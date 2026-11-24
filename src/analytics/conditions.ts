@@ -8,16 +8,13 @@ import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { contractAnnualRent } from './lease-rent';
 import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
-import { addMonths, type MonthKey } from './portfolio-trends';
+import { addMonths, MAX_PLAUSIBLE_ESCALATION_PCT, type MonthKey } from './portfolio-trends';
 import { isInvestmentProperty } from './property-basis';
 import { hasBlankGovernorInput } from './governor-inputs';
 import { varianceVsTrailing, type PropertyExpenseSeries } from './expense-trends';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
-
-/** An escalationPct above this is treated as mis-entered (percent form), never priced (refute wf_774968c9-439). */
-const MAX_PLAUSIBLE_ESCALATION_PCT = 0.25;
 
 /** Single source of truth for every alert threshold. Change a number once, here. */
 export const ALERT_THRESHOLDS = {
@@ -1151,7 +1148,10 @@ export function fillImpact(insight: Insight, snapshot: PortfolioSnapshot): Insig
           provenance = 'real';
         }
       }
-    } else if (insight.category === 'lease') {
+    } else if (insight.category === 'lease' && !insight.id.startsWith('escalation-')) {
+      // Escalation rows are excluded: evaluateConditions leaves one unpriced ON PURPOSE (Vacant,
+      // Expired, implausible pct, ...); back-filling the full contract rent would price it at 100% of
+      // rent instead of the bump (refute wf_0983ca4b-b20, 2026-11-24).
       const lease = snapshot.leases.find((l) => l.id === insight.entityId);
       if (lease && contractAnnualRent(lease) > 0) {
         impactAnnualUsd = contractAnnualRent(lease);

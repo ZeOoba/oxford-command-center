@@ -539,7 +539,7 @@ export function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
     high: values.length ? Math.max(...values) : null,
   };
   const payload: Record<string, unknown> = { asOf: m.asOf, source: m.source, indicators: ind, tenYearTrend };
-  if (m.source === 'mock') {
+  if (m.source === 'mock' || m.source === 'seed') { // both mean the static snapshot (2026-11-24)
     payload.dataFreshness =
       `SEEDED — FRED_API_KEY not configured; values are a static snapshot as of ${m.asOf}. ` +
       'Tell the user the live rate feed is offline before quoting any number.';

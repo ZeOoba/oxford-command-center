@@ -141,20 +141,36 @@ describe('Tier 1 feed honesty', () => {
 
   it('register readers return the newest stamp, or null when the table is empty', () => {
     const db = new Database(':memory:');
-    db.exec('CREATE TABLE property_tax_assessments (as_of TEXT); CREATE TABLE pca_reports (imported_at TEXT NOT NULL)');
+    // One property throughout (property_id defaults to 'a'): these cases test the date reading itself.
+    db.exec("CREATE TABLE property_tax_assessments (as_of TEXT, property_id TEXT DEFAULT 'a', tax_year INTEGER); CREATE TABLE pca_reports (imported_at TEXT NOT NULL)");
     expect(lastTaxAssessmentAsOf(db)).toBeNull();
     expect(lastPcaImportAt(db)).toBeNull();
-    db.exec("INSERT INTO property_tax_assessments VALUES ('2024-07-01'), ('2025-07-01'), (NULL)");
+    db.exec("INSERT INTO property_tax_assessments (as_of) VALUES ('2024-07-01'), ('2025-07-01'), (NULL)");
     db.exec("INSERT INTO pca_reports VALUES ('2026-11-05 19:22:19'), ('2026-10-01 10:00:00')");
     expect(lastTaxAssessmentAsOf(db)).toBe('2025-07-01');
     expect(lastPcaImportAt(db)).toBe('2026-11-05 19:22:19');
     // Not lexical: '9/1/2025' would win a SQL MAX over '2026-01-01'; loose and future values are
     // ignored (refute round 2: '45658' parses as year 45658, '2052-01-01' is a typo year).
-    db.exec("INSERT INTO property_tax_assessments VALUES ('9/1/2025'), ('2026-01-01'), ('45658'), ('2052-01-01'), ('2026-02-30')");
+    db.exec("INSERT INTO property_tax_assessments (as_of) VALUES ('9/1/2025'), ('2026-01-01'), ('45658'), ('2052-01-01'), ('2026-02-30')");
     expect(lastTaxAssessmentAsOf(db, NOW)).toBe('2026-01-01');
     db.exec('DELETE FROM property_tax_assessments');
-    db.exec("INSERT INTO property_tax_assessments VALUES (NULL), ('FY2025'), ('2099-01-01')");
+    db.exec("INSERT INTO property_tax_assessments (as_of) VALUES (NULL), ('FY2025'), ('2099-01-01')");
     expect(() => lastTaxAssessmentAsOf(db, NOW)).toThrow(/none with a valid past as_of/);
+    db.close();
+  });
+
+  // Tier 1 follow-up (2026-11-24): MAX over every row let one fresh property hide a stale one.
+  it('tax register freshness is the OLDEST property\'s latest valuation', () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE property_tax_assessments (property_id TEXT, as_of TEXT, tax_year INTEGER)');
+    db.exec("INSERT INTO property_tax_assessments VALUES ('a','2023-07-01',2023), ('a','2025-07-01',2025), ('b','2022-01-01',2022), ('b','not a date',NULL)");
+    expect(lastTaxAssessmentAsOf(db, NOW)).toBe('2022-01-01');
+    // A blank as_of falls back to 1 January of the tax year; a future tax year is ignored.
+    db.exec("INSERT INTO property_tax_assessments VALUES ('b',NULL,2024), ('b',NULL,2099)");
+    expect(lastTaxAssessmentAsOf(db, NOW)).toBe('2024-01-01');
+    // A property with rows but no usable date cannot hide behind the others: the feed errors.
+    db.exec("INSERT INTO property_tax_assessments VALUES ('c','2052-01-01',NULL), ('c','FY2025',NULL)");
+    expect(() => lastTaxAssessmentAsOf(db, NOW)).toThrow(/1 property has assessments but no valid past as_of/);
     db.close();
   });
 

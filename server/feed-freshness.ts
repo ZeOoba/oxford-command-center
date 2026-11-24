@@ -83,7 +83,7 @@ const META: Record<FeedId, { label: string; fix: string }> = {
     fix: 'data/overlay.json is absent or unreadable, so write-back enrichment (arrears, renewal stages, comps) is merging empty. Restore it from the live checkout or a backup',
   },
   taxRegister: {
-    label: 'Tax assessments (latest valuation date)',
+    label: 'Tax assessments (oldest property\'s latest valuation or tax year)',
     fix: 'Import the current assessor values: scripts/import-assessments.ts',
   },
   pcaRegister: {
@@ -111,30 +111,42 @@ export function lastLedgerImportAt(db: { prepare(sql: string): { get(): unknown 
 }
 
 /**
- * Newest valuation date in the tax-assessment register (null = nothing imported). as_of is free text
- * stored verbatim by the importer, so the max is taken over PARSED dates, not a lexical SQL MAX
- * ('9/1/2025' sorts above '2026-01-01'). Rows present with no parseable as_of throw, so the feed
- * reads 'error' rather than 'none on record' (refute round 1, 2026-11-23).
+ * How current the tax-assessment register is: each property's latest valuation date, then the
+ * OLDEST of those (null = nothing imported). A row's date is its as_of when that is a valid ISO day,
+ * else 1 January of its tax_year (the live register leaves as_of blank on most rows, 2026-11-24).
+ * as_of is free text stored verbatim by the importer, so dates are parsed (strict ISO day, a real
+ * date, not in the future), never compared as text ('9/1/2025' sorts above '2026-01-01'). Throws, so
+ * the feed reads 'error', when any property has rows but no usable date: grading on the others would
+ * let it hide (refute wf_0b6281f9-b48).
  */
 export function lastTaxAssessmentAsOf(
   db: { prepare(sql: string): { all(): unknown[] } },
   now: number = Date.now(),
 ): string | null {
-  const rows = db.prepare('SELECT as_of AS t FROM property_tax_assessments').all() as Array<{ t: string | null }>;
+  const rows = db.prepare('SELECT property_id AS p, as_of AS t, tax_year AS y FROM property_tax_assessments').all() as Array<{ p: string | null; t: string | null; y: number | null }>;
   if (rows.length === 0) return null;
   // Strict ISO day, a real calendar date, not in the future (refute round 2: V8's Date.parse takes
   // '45658', 'FY 2025' and '2025-02-30', and one future row would grade a stale register fresh).
-  let best: string | null = null;
-  for (const { t } of rows) {
+  // Per property, its latest valid date; the feed is the OLDEST of those (2026-11-24): a MAX over
+  // every row let one freshly assessed property hide another that stopped being updated.
+  const latestByProperty = new Map<string, string>();
+  const seen = new Set<string>();
+  for (const { p, t, y } of rows) {
+    seen.add(p ?? '');
     const m = t ? /^(\d{4})-(\d{2})-(\d{2})/.exec(t) : null;
-    if (!m) continue;
-    const day = `${m[1]}-${m[2]}-${m[3]}`;
+    const fromYear = Number.isInteger(y) && y! >= 1900 && y! <= 9999 ? `${y}-01-01` : null;
+    const day = m ? `${m[1]}-${m[2]}-${m[3]}` : fromYear;
+    if (!day) continue;
     const d = new Date(`${day}T00:00:00Z`);
     if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day || d.getTime() > now + DAY_MS) continue;
-    if (best === null || day > best) best = day;
+    const key = p ?? '';
+    const prev = latestByProperty.get(key);
+    if (prev === undefined || day > prev) latestByProperty.set(key, day);
   }
-  if (best === null) throw new Error(`${rows.length} assessment row(s) imported, none with a valid past as_of date (YYYY-MM-DD)`);
-  return best;
+  if (latestByProperty.size === 0) throw new Error(`${rows.length} assessment row(s) imported, none with a valid past as_of date (YYYY-MM-DD)`);
+  const undated = [...seen].filter((k) => !latestByProperty.has(k)).length;
+  if (undated > 0) throw new Error(`${undated} propert${undated === 1 ? 'y has' : 'ies have'} assessments but no valid past as_of date (YYYY-MM-DD)`);
+  return [...latestByProperty.values()].sort()[0]!;
 }
 
 /** When the PCA register last took in a report (null = nothing imported). */
