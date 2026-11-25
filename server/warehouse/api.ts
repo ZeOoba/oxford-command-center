@@ -31,7 +31,7 @@ import { ingestParcelScreenBatch } from './acq-ingest';
 import { runAcqSync } from './acq-sync-runner';
 import type { AcqSyncSourceId } from './acq-sync-runner';
 import type { WarehouseDb } from './db';
-import { warehouseJsonError } from './json-errors';
+import { warehouseJsonError, routeFailure, requestIdSuffix, withRequestId } from './json-errors';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
@@ -913,8 +913,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const result = await persistAndLogScore(db, candidateId, inputParsed.data, cfg.ruleset, cfg.rct);
         return c.json({ score: result.score, calibrationVerdictId: result.calibrationVerdictId, persisted: result.persisted });
       } catch (e) {
-        console.error(`[acq/score] scoring failed for ${candidateId}: ${e instanceof Error ? e.message : String(e)}`);
-        return c.json({ error: 'scoring failed' }, 500);
+        console.error(`[acq/score] scoring failed for ${candidateId}${requestIdSuffix(c)}: ${e instanceof Error ? e.message : String(e)}`);
+        return c.json(withRequestId(c, { error: 'scoring failed' }), 500);
       }
     }),
   );
@@ -1034,8 +1034,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const report = await buildCapitalAllocationReport(db, snapshot);
         return c.json(CapitalAllocationReport.parse(report));
       } catch (err) {
-        console.error('[warehouse-api] /capital-allocation error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'capital allocation failed' }, 500);
+        return routeFailure(c, '[warehouse-api] /capital-allocation error:', err, 'capital allocation failed');
       }
     }),
   );
@@ -1070,8 +1069,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         );
         return c.json(NotionSyncResult.parse(result));
       } catch (err) {
-        console.error('[warehouse-api] /capital-allocation/sync-notion error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'notion writeback failed' }, 500);
+        return routeFailure(c, '[warehouse-api] /capital-allocation/sync-notion error:', err, 'notion writeback failed');
       }
     }),
   );

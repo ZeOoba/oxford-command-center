@@ -31,6 +31,7 @@ import {
   InsightFamilySchema,
   type DataReadinessEntry,
 } from '../../src/contracts/insights';
+import { routeFailure } from './json-errors';
 
 /** The one live generator's id — surfaced on the CF family's dataReadiness entry
  *  whether it fired (status:'live') or was benched by a missing snapshot
@@ -105,8 +106,7 @@ export function insightsApi(getDb: () => WarehouseDb): Hono {
         });
         return c.json(report);
       } catch (err) {
-        console.error('[insights-api] / error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'insight generation failed' }, 500);
+        return routeFailure(c, '[insights-api] / error:', err, 'insight generation failed');
       }
     }),
   );

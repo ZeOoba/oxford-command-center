@@ -14,7 +14,7 @@
 // not apply to a sibling instance, so DRY here means "one shared handler function", not "one
 // `.onError()` call site" — see sub-routers.ts's `withJsonErrors`, which applies this to every
 // sub-router factory.
-import type { ErrorHandler, NotFoundHandler } from 'hono';
+import type { Context, ErrorHandler, NotFoundHandler } from 'hono';
 import { requestIdOf } from '../request-id';
 
 // The 500 body is deliberately generic: a raw err.message can carry SQLite constraint/table
@@ -37,3 +37,27 @@ export const warehouseJsonError: ErrorHandler = jsonErrorHandler('warehouse');
 
 /** Root-app 404 as JSON (2026-11-23 review, Tier 4): the client treats a non-JSON body as "server absent". */
 export const jsonNotFound: NotFoundHandler = (c) => c.json({ error: 'not found' }, 404);
+
+/**
+ * Adds the request id to a hand-written error body (review round 2 follow-up, 2026-11-24), so a 500
+ * a route returns itself is traceable like an uncaught one. No id (middleware absent) = body as is.
+ */
+export function withRequestId<T extends object>(c: Context, body: T): T & { requestId?: string } {
+  const id = requestIdOf(c);
+  return id ? { ...body, requestId: id } : body;
+}
+
+/** The id as a log-line suffix (" request=<id>"), or '' when the middleware did not run. */
+export function requestIdSuffix(c: Context): string {
+  const id = requestIdOf(c);
+  return id ? ` request=${id}` : '';
+}
+
+/**
+ * The common hand-written catch: log `<logPrefix> request=<id>` with the error MESSAGE only (as the
+ * routes did before), answer a generic JSON 500 carrying the id. `error` is the client-facing text.
+ */
+export function routeFailure(c: Context, logPrefix: string, err: unknown, error: string): Response {
+  console.error(`${logPrefix}${requestIdSuffix(c)}`, err instanceof Error ? err.message : String(err));
+  return c.json(withRequestId(c, { error }), 500);
+}

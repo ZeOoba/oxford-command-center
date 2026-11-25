@@ -10,6 +10,7 @@
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildPropertyConditionReport } from './property-condition';
+import { routeFailure } from './json-errors';
 
 export function propertyConditionApi(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
@@ -25,8 +26,7 @@ export function propertyConditionApi(getDb: () => WarehouseDb): Hono {
       const asOf = new Date().toISOString().slice(0, 10);
       return c.json(buildPropertyConditionReport(db, asOf));
     } catch (err) {
-      console.error('[property-condition-api] /report error:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'property condition report failed' }, 500);
+      return routeFailure(c, '[property-condition-api] /report error:', err, 'property condition report failed');
     }
   });
 

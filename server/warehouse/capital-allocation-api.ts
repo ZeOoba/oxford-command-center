@@ -22,6 +22,7 @@ import {
 import { verdictsFromAllocations, logVerdicts, computeInputsVersion } from './calibration';
 import { referenceDate } from '../config';
 import type { AllocationVerdict } from '../../src/contracts/capital';
+import { routeFailure, requestIdSuffix, withRequestId } from './json-errors';
 
 /**
  * Round 19g (adversarial refute, MEDIUM-HIGH — reproduced on a surface no prior round had
@@ -124,12 +125,12 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
       }
       return c.json(response);
     } catch (err) {
-      console.error('[capital-api] /allocate error:', err instanceof Error ? err.message : String(err));
+      console.error(`[capital-api] /allocate error:${requestIdSuffix(c)}`, err instanceof Error ? err.message : String(err));
       // Explicit error state for the fail-closed empty-governor path (audit 2026-10-13 G6).
       if (err instanceof CapitalConfigMissingError) {
         return c.json({ error: 'capital governors unavailable (capital_config is empty) — no allocation or BUY verdict produced' }, 503);
       }
-      return c.json({ error: 'capital allocation failed' }, 500);
+      return c.json(withRequestId(c, { error: 'capital allocation failed' }), 500);
     }
   }));
 
@@ -147,8 +148,7 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
         .map((r) => r.value);
       return c.json(MarketIntelResponse.parse({ asOf, signals }));
     } catch (err) {
-      console.error('[capital-api] /market error:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'market intel failed' }, 500);
+      return routeFailure(c, '[capital-api] /market error:', err, 'market intel failed');
     }
   }));
 

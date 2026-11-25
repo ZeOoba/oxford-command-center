@@ -28,7 +28,7 @@ import { AlertActionInput } from '../src/contracts/alerts';
 import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
-import { jsonErrorHandler, jsonNotFound } from './warehouse/json-errors';
+import { jsonErrorHandler, jsonNotFound, withRequestId } from './warehouse/json-errors';
 import { requestId } from './request-id';
 import { DealStageBody, TaskBody, TenantNoteBody } from './action-bodies';
 import { WAREHOUSE_SUB_ROUTERS } from './warehouse/sub-routers';
@@ -163,7 +163,7 @@ app.post('/api/warehouse/properties/onboard', async (c) => {
     const result = onboardProperty(db, body);
     return c.json(result, result.ok ? 200 : 400);
   } catch {
-    return c.json({ ok: false, error: 'onboarding failed' }, 500);
+    return c.json(withRequestId(c, { ok: false, error: 'onboarding failed' }), 500);
   }
 });
 
@@ -413,7 +413,7 @@ app.post('/api/actions/deal-stage', async (c) => {
   const parsed = DealStageBody.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid dealId or stage' }, 400);
   const ok = await brain.setDealStage(parsed.data.dealId, parsed.data.stage).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -432,7 +432,7 @@ app.post('/api/actions/task', async (c) => {
     status: 'pending',
     monthlyPmt: null,
   }).then(() => true, saveFailed);
-  if (saved === null) return c.json(SAVE_FAILED, 500);
+  if (saved === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok: true, state: brain.getState() });
 });
 
@@ -449,7 +449,7 @@ app.post('/api/actions/renewal-stage', async (c) => {
   const parsed = RenewalStageInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or stage' }, 400);
   const ok = await brain.setRenewalStage(parsed.data.leaseId, parsed.data.stage).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -457,7 +457,7 @@ app.post('/api/actions/tenant-note', async (c) => {
   const parsed = TenantNoteBody.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'tenantId required' }, 400);
   const ok = await brain.setTenantNote(parsed.data.tenantId, parsed.data.note).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -474,7 +474,7 @@ app.post('/api/actions/deal-comps', async (c) => {
   });
   if (!result.ok) return c.json({ ok: false, error: result.error }, 502);
   const saved = await brain.setDealComps(deal.id, result.comps).catch(saveFailed);
-  if (saved === null) return c.json(SAVE_FAILED, 500);
+  if (saved === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   if (!saved) return c.json({ ok: false, error: 'Unknown deal' }, 404);
   return c.json({ ok: true, comps: result.comps });
 });
@@ -483,7 +483,7 @@ app.post('/api/actions/noi-budget', async (c) => {
   const parsed = NoiBudgetInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid propertyId or amount' }, 400);
   const ok = await brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -491,7 +491,7 @@ app.post('/api/actions/market-rent', async (c) => {
   const parsed = MarketRentInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid key or rentPsf' }, 400);
   const ok = await brain.setMarketRent(parsed.data.key, parsed.data.rentPsf).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok }, ok ? 200 : 503);
 });
 
@@ -499,7 +499,7 @@ app.post('/api/actions/acquisition-input', async (c) => {
   const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid acquisition input' }, 400);
   const ok = await brain.setAcquisitionInput(parsed.data.dealId, parsed.data).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -507,7 +507,7 @@ app.post('/api/actions/tenant-arrears', async (c) => {
   const parsed = TenantArrearsInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or arrears' }, 400);
   const ok = await brain.setTenantArrears(parsed.data.leaseId, parsed.data.arrears).catch(saveFailed);
-  if (ok === null) return c.json(SAVE_FAILED, 500);
+  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
@@ -590,7 +590,7 @@ app.post('/api/actions/lease-run-assumptions', async (c) => {
     const assumptions = await setLeaseRunAssumptions(propertyId, patch);
     return c.json({ ok: true, propertyId, assumptions });
   } catch {
-    return c.json({ ok: false, error: 'overlay persistence failed' }, 500);
+    return c.json(withRequestId(c, { ok: false, error: 'overlay persistence failed' }), 500);
   }
 });
 
