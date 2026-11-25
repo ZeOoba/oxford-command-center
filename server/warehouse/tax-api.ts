@@ -26,6 +26,7 @@ import { logVerdicts, computeInputsVersion } from './calibration';
 import { buildTaxStrategyReport } from './tax-strategy';
 import { TaxAnalysisReport, TaxAppeal, TaxAppealInput } from '../../src/contracts/tax';
 import { TaxStrategyReport } from '../../src/contracts/tax-strategy';
+import { routeFailure } from './json-errors';
 
 /**
  * Fail-open Spine-A indicated-value map. Mirrors the /capital-allocation route's snapshot fetch
@@ -106,8 +107,7 @@ export function taxApi(getDb: () => WarehouseDb): Hono {
         }
         return c.json(TaxAnalysisReport.parse(report));
       } catch (err) {
-        console.error('[tax-api] /analysis error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'tax analysis failed' }, 500);
+        return routeFailure(c, '[tax-api] /analysis error:', err, 'tax analysis failed');
       }
     }),
   );
@@ -127,8 +127,7 @@ export function taxApi(getDb: () => WarehouseDb): Hono {
         const report = buildTaxStrategyReport(db, asOf);
         return c.json(TaxStrategyReport.parse(report));
       } catch (err) {
-        console.error('[tax-api] /strategy error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'tax strategy failed' }, 500);
+        return routeFailure(c, '[tax-api] /strategy error:', err, 'tax strategy failed');
       }
     }),
   );
@@ -191,8 +190,7 @@ export function taxApi(getDb: () => WarehouseDb): Hono {
           201,
         );
       } catch (err) {
-        console.error('[tax-api] POST /appeals error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'appeal write failed' }, 500);
+        return routeFailure(c, '[tax-api] POST /appeals error:', err, 'appeal write failed');
       }
     }),
   );

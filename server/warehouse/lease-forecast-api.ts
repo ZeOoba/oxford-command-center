@@ -62,6 +62,7 @@ export const RentForecastBody = z.object({
   vacancyPct: RentForecastInput.shape.vacancyPct.removeDefault().optional(),
 });
 import { contractAnnualRent } from '../../src/analytics/lease-rent';
+import { routeFailure } from './json-errors';
 
 // ── Snapshot access ────────────────────────────────────────────────────────────
 
@@ -168,8 +169,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         });
         return c.json(response);
       } catch (err) {
-        console.error('[lease-forecast-api] /forecast error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'lease forecast failed' }, 500);
+        return routeFailure(c, '[lease-forecast-api] /forecast error:', err, 'lease forecast failed');
       }
     }),
   );
@@ -186,8 +186,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         const velocity = leasingVelocity(db, properties);
         return c.json({ velocity });
       } catch (err) {
-        console.error('[lease-forecast-api] /velocity error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'velocity query failed' }, 500);
+        return routeFailure(c, '[lease-forecast-api] /velocity error:', err, 'velocity query failed');
       }
     }),
   );
@@ -242,8 +241,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const response = RentForecastResponse.parse({ asOf, results });
       return c.json(response);
     } catch (err) {
-      console.error('[lease-forecast-api] /rent-forecast error:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'rent forecast failed' }, 500);
+      return routeFailure(c, '[lease-forecast-api] /rent-forecast error:', err, 'rent forecast failed');
     }
   });
 

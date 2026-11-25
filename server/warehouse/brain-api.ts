@@ -21,6 +21,7 @@ import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildBrainReport } from './brain-report';
 import { BrainReport, FeedbackDecision, FeedbackInput } from '../../src/contracts/brain-report';
+import { routeFailure } from './json-errors';
 
 interface FeedbackRow {
   id: string;
@@ -68,8 +69,7 @@ export function brainApi(getDb: () => WarehouseDb): Hono {
         const report = buildBrainReport(db, new Date().toISOString());
         return c.json(BrainReport.parse(report));
       } catch (err) {
-        console.error('[brain-api] /report error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'brain report failed' }, 500);
+        return routeFailure(c, '[brain-api] /report error:', err, 'brain report failed');
       }
     }),
   );
@@ -105,8 +105,7 @@ export function brainApi(getDb: () => WarehouseDb): Hono {
           note,
         }));
       } catch (err) {
-        console.error('[brain-api] POST /feedback error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'feedback write failed' }, 500);
+        return routeFailure(c, '[brain-api] POST /feedback error:', err, 'feedback write failed');
       }
     }),
   );
@@ -123,8 +122,7 @@ export function brainApi(getDb: () => WarehouseDb): Hono {
         const feedback = FeedbackDecision.array().parse(rows.map(toFeedbackDecisionShape));
         return c.json({ feedback });
       } catch (err) {
-        console.error('[brain-api] GET /feedback error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'feedback read failed' }, 500);
+        return routeFailure(c, '[brain-api] GET /feedback error:', err, 'feedback read failed');
       }
     }),
   );

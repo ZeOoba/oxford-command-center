@@ -28,6 +28,7 @@ import { buildLiveSf, type LiveSfSnapshot } from './live-sf';
 import { loadPropertyFinancials, NODE_PF_FS, type PfFsDeps } from './loader';
 import { buildEntityMapping } from './mapping';
 import { insightFingerprint, putInsightStatus, readInsightStatuses, StatusStoreCorruptError, withVersion } from './status-store';
+import { withRequestId } from '../warehouse/json-errors';
 
 export interface PropertyFinancialsApiDeps {
   dir?: () => string;
@@ -89,7 +90,7 @@ export function propertyFinancialsApi(_getDb: () => WarehouseDb, deps: PropertyF
     try {
       stored = readInsightStatuses(statusPathOf());
     } catch (e) {
-      if (e instanceof StatusStoreCorruptError) return c.json(CORRUPT, 500);
+      if (e instanceof StatusStoreCorruptError) return c.json(withRequestId(c, CORRUPT), 500);
       throw e;
     }
     const known = r.dataset ? new Map(r.dataset.insights.map((i) => [i.id, insightFingerprint(i)])) : null;
@@ -120,7 +121,7 @@ export function propertyFinancialsApi(_getDb: () => WarehouseDb, deps: PropertyF
     try {
       result = putInsightStatus(statusPathOf(), id, body, new Set(r.dataset.insights.map((i) => i.id)), now(), hash);
     } catch (e) {
-      if (e instanceof StatusStoreCorruptError) return c.json(CORRUPT, 500);
+      if (e instanceof StatusStoreCorruptError) return c.json(withRequestId(c, CORRUPT), 500);
       throw e;
     }
     if (result.ok) return c.json(withVersion(result.record, hash), 200);

@@ -17,6 +17,7 @@ import type { WarehouseDb } from './db';
 import { buildInsuranceAnalysis, logRebidVerdicts, readPolicyBook } from './insurance-analysis';
 import { buildPremiumHistory, type PremiumHistoryRow } from './insurance-history';
 import { InsuranceAnalysisReport, PremiumHistoryReport } from '../../src/contracts/insurance-analysis';
+import { routeFailure } from './json-errors';
 
 /**
  * Creates the insurance-analysis Hono sub-router.
@@ -55,8 +56,7 @@ export function insuranceAnalysisApi(getDb: () => WarehouseDb): Hono {
         }
         return c.json(report);
       } catch (err) {
-        console.error('[insurance-analysis-api] / error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'insurance analysis failed' }, 500);
+        return routeFailure(c, '[insurance-analysis-api] / error:', err, 'insurance analysis failed');
       }
     }),
   );

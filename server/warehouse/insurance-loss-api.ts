@@ -40,6 +40,7 @@ import { buildInsuranceAnalysis } from './insurance-analysis';
 import { resolveDecPages, resolveLossEvents, strOrBlank, strOrNull, termDateOrNull } from './placeholder-data';
 import { buildInsuranceLossReport, normalizePolicyNumber, type PolicyTerm } from './insurance-loss-analysis';
 import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
+import { routeFailure } from './json-errors';
 
 /** Term identity per policy row, keyed String(id) = PolicyEconomics.policyId. The loss engine uses
  *  it to attach each loss event to the one policy whose term / policy number covers it.
@@ -143,8 +144,7 @@ export function insuranceLossApi(getDb: () => WarehouseDb): Hono {
         // future phase may add it.
         return c.json(report);
       } catch (err) {
-        console.error('[insurance-loss-api] / error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'insurance loss analysis failed' }, 500);
+        return routeFailure(c, '[insurance-loss-api] / error:', err, 'insurance loss analysis failed');
       }
     }),
   );

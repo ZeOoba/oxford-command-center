@@ -48,6 +48,7 @@ import {
 } from './debt-maturity';
 import { loadGovernors } from './governors';
 import { referenceDate } from '../config';
+import { routeFailure } from './json-errors';
 
 // ── POST /snapshot payload type ────────────────────────────────────────────────────────────
 
@@ -252,8 +253,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
         );
         return c.json(DebtScoreResponse.parse({ scores, bookTrust }));
       } catch (err) {
-        console.error('[debt-api] /scores error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'debt scoring failed' }, 500);
+        return routeFailure(c, '[debt-api] /scores error:', err, 'debt scoring failed');
       }
     }),
   );
@@ -329,8 +329,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
 
         return c.json(MaturityLadderResponse.parse({ ladder, bookTrust }));
       } catch (err) {
-        console.error('[debt-api] /maturity error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'maturity ladder failed' }, 500);
+        return routeFailure(c, '[debt-api] /maturity error:', err, 'maturity ladder failed');
       }
     }),
   );
@@ -353,8 +352,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
         }))();
         return c.json(MaturityTimelineResponse.parse({ asOf, events, bookTrust }));
       } catch (err) {
-        console.error('[debt-api] /timeline error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'maturity timeline failed' }, 500);
+        return routeFailure(c, '[debt-api] /timeline error:', err, 'maturity timeline failed');
       }
     }),
   );
@@ -427,8 +425,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           }),
         );
       } catch (err) {
-        console.error('[debt-api] /refi-windows error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'refi windows failed' }, 500);
+        return routeFailure(c, '[debt-api] /refi-windows error:', err, 'refi windows failed');
       }
     }),
   );
@@ -493,8 +490,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           refused: result.refusedEmptySupersede,
         });
       } catch (err) {
-        console.error('[debt-api] POST /snapshot error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'debt snapshot write failed' }, 500);
+        return routeFailure(c, '[debt-api] POST /snapshot error:', err, 'debt snapshot write failed');
       }
     }),
   );
