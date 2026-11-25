@@ -172,6 +172,7 @@ export function AiPanel() {
 
           <form onSubmit={onSubmit} className="flex items-center gap-2 px-3 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             <input
+              aria-label="Ask the brain"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask the brain…"

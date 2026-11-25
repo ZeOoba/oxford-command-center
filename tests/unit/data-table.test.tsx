@@ -32,3 +32,25 @@ describe('DataTable responsive behavior', () => {
     expect(cell.className).toContain('whitespace-nowrap');
   });
 });
+
+// Review round 3: clickable rows were mouse-only.
+describe('DataTable keyboard row activation', () => {
+  it('a clickable row is focusable and opens on Enter or Space; keys from a control inside a cell do not', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const opened: string[] = [];
+    const withButton: Column<Row>[] = [...cols, { key: 'act', header: 'Act', render: (r) => <button type="button">act {r.id}</button> }];
+    render(<DataTable columns={withButton} rows={rows} getRowId={(r) => r.id} onRowClick={(r) => opened.push(r.id)} />);
+    const row = screen.getByText('Alpha Holdings LLC').closest('tr')!;
+    expect(row.tabIndex).toBe(0);
+    fireEvent.keyDown(row, { key: 'Enter' });
+    fireEvent.keyDown(screen.getByText('Beta Industrial').closest('tr')!, { key: ' ' });
+    fireEvent.keyDown(screen.getByText('act a'), { key: 'Enter' });
+    fireEvent.keyDown(row, { key: 'a' });
+    expect(opened).toEqual(['a', 'b']);
+  });
+
+  it('a non-clickable table adds no tab stops', () => {
+    render(<DataTable columns={cols} rows={rows} getRowId={(r) => r.id} />);
+    expect(screen.getByText('Alpha Holdings LLC').closest('tr')!.hasAttribute('tabindex')).toBe(false);
+  });
+});

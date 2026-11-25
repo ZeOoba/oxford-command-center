@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { Button } from '@/primitives/Button';
 import { isStaleChunkError, reloadOnceForStaleChunk, type StaleChunkReloadDeps } from './stale-chunk';
 
 interface Props {
@@ -47,6 +48,10 @@ export class ErrorBoundary extends Component<Props, State> {
             <summary className="cursor-pointer">Details</summary>
             {this.state.error.message}
           </details>
+          {/* Review round 3: recover in place instead of only by switching modules. */}
+          <Button variant="subtle" onPress={() => this.setState({ error: null })}>
+            Try again
+          </Button>
         </div>
       );
     }

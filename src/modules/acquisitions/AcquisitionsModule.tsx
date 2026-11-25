@@ -293,6 +293,7 @@ export function AcquisitionsModule() {
             <div className="flex items-center gap-2 px-3 pt-3">
               <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
               <select
+                aria-label="Prefill the workbench from a deal"
                 className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
                 style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
                 value={scoreDealId}
