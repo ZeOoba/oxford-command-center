@@ -71,7 +71,21 @@ export function DataTable<T>({ columns, rows, getRowId, onRowClick, initialSort,
       data-index={vIndex}
       ref={vIndex !== undefined ? virtualizer.measureElement : undefined}
       onClick={() => onRowClick?.(row)}
-      className={cn('transition-colors', onRowClick && 'cursor-pointer')}
+      // Review round 3: clickable rows were mouse-only. Focusable + Enter/Space, but only when the key
+      // lands on the row itself, so a button or select inside a cell keeps its own keys.
+      tabIndex={onRowClick ? 0 : undefined}
+      onKeyDown={
+        onRowClick
+          ? (e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onRowClick(row);
+              }
+            }
+          : undefined
+      }
+      className={cn('transition-colors', onRowClick && 'cursor-pointer focus-visible:outline focus-visible:outline-2')}
       style={{ borderBottom: '1px solid var(--border-subtle)' }}
     >
       {columns.map((c) => (

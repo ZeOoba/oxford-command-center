@@ -72,13 +72,13 @@ export function AcquisitionsIntel({ edgeEnabled = false }: { edgeEnabled?: boole
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-        <select value={status}  onChange={(e) => setStatus(e.target.value)}  style={selectStyle}>
+        <select aria-label="Candidate status" value={status}  onChange={(e) => setStatus(e.target.value)}  style={selectStyle}>
           {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={market}  onChange={(e) => setMarket(e.target.value)}  style={selectStyle}>
+        <select aria-label="Market" value={market}  onChange={(e) => setMarket(e.target.value)}  style={selectStyle}>
           {MARKET_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select value={verdict} onChange={(e) => setVerdict(e.target.value)} style={selectStyle}>
+        <select aria-label="Verdict" value={verdict} onChange={(e) => setVerdict(e.target.value)} style={selectStyle}>
           {VERDICT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>

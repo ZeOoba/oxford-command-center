@@ -177,6 +177,7 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled, edgeEn
       render: (item) =>
         writesEnabled ? (
           <select
+            aria-label={`Status for ${item.candidate.address ?? 'this candidate'}`}
             value={item.candidate.status}
             disabled={setStatus.isPending}
             onChange={(e) =>

@@ -72,6 +72,7 @@ export function TasksModule() {
       {canWrite && (
         <div className="flex items-center gap-2">
           <input
+            aria-label="New checklist task"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void addTask(); }}
