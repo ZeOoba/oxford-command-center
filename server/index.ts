@@ -490,9 +490,12 @@ app.post('/api/actions/noi-budget', async (c) => {
 app.post('/api/actions/market-rent', async (c) => {
   const parsed = MarketRentInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid key or rentPsf' }, 400);
-  const ok = await brain.setMarketRent(parsed.data.key, parsed.data.rentPsf).catch(saveFailed);
-  if (ok === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
-  return c.json({ ok }, ok ? 200 : 503);
+  const result = await brain.setMarketRent(parsed.data.key, parsed.data.rentPsf).catch(saveFailed);
+  if (result === null) return c.json(withRequestId(c, SAVE_FAILED), 500);
+  // Review round 3: an unknown key is the caller's mistake (404 with a reason), not an outage (was 503).
+  if (result === 'unknown-key') return c.json({ ok: false, error: 'Unknown property key or lease ID' }, 404);
+  if (result === 'not-loaded') return c.json({ ok: false, error: 'snapshot not loaded yet' }, 503);
+  return c.json({ ok: true });
 });
 
 app.post('/api/actions/acquisition-input', async (c) => {

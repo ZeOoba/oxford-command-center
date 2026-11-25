@@ -567,6 +567,47 @@ describe('Brain write-backs', () => {
     expect((h.lastOverlay!.tenantArrears as Record<string, unknown>).l1).toEqual(ar);
   });
 
+  // Review round 3: the forecast reads marketRents[lease.id] before marketRents[propertyKey], but the
+  // writer refused lease ids (and the route turned that into a 503 "not reachable").
+  it('setMarketRent accepts a property key or a lease id, and names an unknown key', async () => {
+    h.base = { ...makeBase(), leases: [{ id: 'l1', propertyKey: '1 Main St' }] };
+    await brain.refresh();
+    expect(await brain.setMarketRent('zzz', 12)).toBe('unknown-key');
+    expect(await brain.setMarketRent('l1', 12.5)).toBe('saved');
+    expect((h.lastOverlay!.marketRents as Record<string, number>).l1).toBe(12.5);
+    expect(await brain.setMarketRent('1 Main St', 11)).toBe('saved');
+    expect((h.lastOverlay!.marketRents as Record<string, number>)['1 Main St']).toBe(11);
+    // 0 clears the override (the overlay contract's "absent").
+    expect(await brain.setMarketRent('1 Main St', 0)).toBe('saved');
+    expect((h.lastOverlay!.marketRents as Record<string, number>)['1 Main St']).toBeUndefined();
+  });
+
+  it('setMarketRent can still CLEAR a saved key that no longer matches a live lease (orphan after turnover)', async () => {
+    // The tenant at p1 turned over: the live lease is 'p1-newco', but the overlay on disk still holds
+    // a rent saved against the old lease id 'p1-acme' (now an orphan).
+    h.base = { ...makeBase(), leases: [{ id: 'l1' }, { id: 'p1-newco', propertyKey: '1 Main St' }] };
+    await brain.refresh();
+    expect(await brain.setMarketRent('p1-acme', 13)).toBe('unknown-key'); // a positive write must name a live key
+    // The clear is judged against the overlay ON DISK (the queued read-modify-write), which holds the orphan.
+    const { mutateOverlay, loadOverlay } = await import('../../server/overlay');
+    const disk = {
+      dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {},
+      tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: { 'p1-acme': 12, '1 Main St': 11 },
+    };
+    vi.mocked(loadOverlay).mockReturnValueOnce(disk as never);
+    vi.mocked(mutateOverlay).mockImplementationOnce((async (mutate: (o: Record<string, unknown>) => Record<string, unknown>) =>
+      mutate({
+        dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {},
+        tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: { 'p1-acme': 12, '1 Main St': 11 },
+      })) as never);
+    expect(await brain.setMarketRent('p1-acme', 0)).toBe('saved'); // but the orphan is clearable
+    expect(h.lastOverlay!.marketRents).toEqual({ '1 Main St': 11 });
+    // A clear of a key that is on disk nowhere answers unknown-key WITHOUT publishing a no-op overlay.
+    vi.mocked(mutateOverlay).mockClear();
+    expect(await brain.setMarketRent('never-saved', 0)).toBe('unknown-key');
+    expect(mutateOverlay).not.toHaveBeenCalled();
+  });
+
   it('setTenantNote sets, then clears, a note for a known tenant', async () => {
     h.tenantIds = ['t1'];
     expect(await brain.setTenantNote('unknown', 'hi')).toBe(false);

@@ -181,8 +181,8 @@ describe('planMigration — positive path: a clean, unambiguous exact match migr
 
 describe('partitionMarketRents — Round-3 REFUTE Defect N: marketRents mixed-key handling', () => {
   it('a key that exactly matches a live propertyKey is excluded from migration planning, no warning', () => {
-    // "1100 Rarig Ave" is the RAW propertyKey server/brain.ts's setMarketRent writes -- not a lease
-    // id. Pre-fix, feeding this straight into planMigration (liveIds = lease ids only) misdiagnosed
+    // "1100 Rarig Ave" is a RAW propertyKey, one of the two key kinds server/brain.ts's setMarketRent
+    // writes (the other, since review round 3, is a live lease id) -- not a lease id. Pre-fix, feeding this straight into planMigration (liveIds = lease ids only) misdiagnosed
     // it as an orphaned old-scheme key ("no live lease matches...", or worse, an ambiguous prefix
     // match), inviting an operator to manually remap it onto one specific lease -- silently removing
     // the property-level market-rent fallback for every OTHER lease at that property.

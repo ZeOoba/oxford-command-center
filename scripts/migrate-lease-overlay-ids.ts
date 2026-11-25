@@ -51,8 +51,9 @@ export interface MarketRentsPartition {
 /**
  * `overlay.marketRents` is a MIXED-key domain BY DESIGN (see server/overlay.ts's Overlay.marketRents
  * doc comment: "Keyed by leaseId (precedence) or propertyKey"). The only application write path
- * (server/brain.ts's setMarketRent) writes keys as the RAW `propertyKey` string (never a lease id),
- * and the read path (src/analytics/lease-forecast.ts) does `marketRents[l.id] ?? marketRents[l.propertyKey]`.
+ * (server/brain.ts's setMarketRent) writes either the RAW `propertyKey` string or a live lease id
+ * (lease ids accepted since review round 3, 2026-11-24; a lease-id key orphaned by a tenant turnover
+ * is what planMigration below then reports), and the read path (src/analytics/lease-forecast.ts) does `marketRents[l.id] ?? marketRents[l.propertyKey]`.
  * Round-3 REFUTE (2 independent reviewers): planMigration was previously run over the ENTIRE
  * marketRents map with `liveIds` = lease ids only, so every legitimate, currently-correct
  * propertyKey-keyed entry was misdiagnosed as an orphaned old-scheme key needing "manual review" (a
