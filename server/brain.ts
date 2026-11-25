@@ -290,11 +290,35 @@ class Brain extends EventEmitter {
     return true;
   }
 
-  /** Write-back: set a user-supplied market rent for a property key (Phase 3 leasing intelligence). */
-  async setMarketRent(key: string, rentPsf: number): Promise<boolean> {
-    if (!this.base) return false;
-    const knownKeys = new Set(this.base.leases.map((l) => l.propertyKey));
-    if (!knownKeys.has(key)) return false;
+  /**
+   * Write-back: set a user-supplied market rent (Phase 3 leasing intelligence). `key` is a property
+   * key OR a lease id: the forecast reads `marketRents[lease.id] ?? marketRents[lease.propertyKey]`
+   * (src/analytics/lease-forecast.ts) and overlay.marketRents is a mixed-key domain by design
+   * (scripts/migrate-lease-overlay-ids.ts partitionMarketRents). Before review round 3 a lease id was
+   * refused here and the route reported it as a 503 "server not reachable".
+   */
+  async setMarketRent(key: string, rentPsf: number): Promise<'saved' | 'unknown-key' | 'not-loaded'> {
+    if (!this.base) return 'not-loaded';
+    const knownKeys = new Set(this.base.leases.flatMap((l) => [l.propertyKey, l.id]));
+    if (!knownKeys.has(key)) {
+      // A clear (rentPsf <= 0) of a key already saved in the overlay is always allowed: a lease id
+      // changes on tenant turnover, and its orphaned entry must still be removable from the editor
+      // (refute wf_36cb3bc1-74f). Only a positive write must name a live key. Existence is judged
+      // inside the queued read-modify-write, against the overlay on disk, not this process's copy.
+      if (rentPsf > 0) return 'unknown-key';
+      // Not saved on disk either: answer without publishing a no-op overlay or rederiving (refute
+      // wf_95b28eea-c9e). The queued write below re-checks, in case another writer raced us.
+      if (!Object.prototype.hasOwnProperty.call(loadOverlay().marketRents ?? {}, key)) return 'unknown-key';
+      let found = false;
+      await this.writeBack('action:market-rent', (o) => {
+        found = Object.prototype.hasOwnProperty.call(o.marketRents ?? {}, key); // reset per retry
+        if (!found) return o;
+        const marketRents = { ...o.marketRents };
+        delete marketRents[key];
+        return { ...o, marketRents };
+      });
+      return found ? 'saved' : 'unknown-key';
+    }
     await this.writeBack('action:market-rent', (o) => {
       const marketRents = { ...o.marketRents };
       if (rentPsf <= 0) {
@@ -304,7 +328,7 @@ class Brain extends EventEmitter {
       }
       return { ...o, marketRents };
     });
-    return true;
+    return 'saved';
   }
 
   /** Write-back: append a user-created task. Rejects if the save fails. */

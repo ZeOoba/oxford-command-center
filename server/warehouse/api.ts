@@ -674,13 +674,20 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const includeKilled = includeKilledParam === '1' || includeKilledParam === 'true';
       const limitParam = parseLimitParam(c.req.query('limit'), 100, 500);
 
+      // Review round 3: an unknown status or verdict used to be ignored silently (an invalid verdict
+      // returned the UNFILTERED list, which reads as "these are the PURSUE deals"). Refuse it instead.
+      const VALID_STATUSES = new Set(['active', 'archived', 'acquired', 'passed']);
+      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'FLOOR-FLAGGED', 'GATE-FLAGGED', 'KILLED']);
+      if (!VALID_STATUSES.has(statusParam)) return c.json({ error: `Invalid status (expected one of ${[...VALID_STATUSES].join(', ')})` }, 400);
+      if (verdictParam && !VALID_VERDICTS.has(verdictParam)) {
+        return c.json({ error: `Invalid verdict (expected one of ${[...VALID_VERDICTS].join(', ')})` }, 400);
+      }
+
       // Build candidate query with optional filters.
       const where: string[] = ['c.status = ?'];
       const params: Array<string | number> = [statusParam];
       if (marketParam) { where.push('c.market = ?'); params.push(marketParam); }
-      // Allowlist verdict values before binding to prevent junk params.
-      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'FLOOR-FLAGGED', 'GATE-FLAGGED', 'KILLED']);
-      if (verdictParam && VALID_VERDICTS.has(verdictParam)) {
+      if (verdictParam) {
         where.push('s.verdict = ?');
         params.push(verdictParam);
       } else if (!includeKilled) {

@@ -325,11 +325,7 @@ function MarketRentEditor({
           </Button>
         </div>
 
-        {saveMutation.isError && (
-          <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-            Save failed — brain server not reachable.
-          </div>
-        )}
+        {saveMutation.isError && <ActionError error={saveMutation.error} failed="The market rent was not saved." />}
       </div>
     </Card>
   );

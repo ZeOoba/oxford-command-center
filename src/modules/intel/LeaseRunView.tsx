@@ -31,6 +31,7 @@ import {
   statusLabel,
 } from './lease-run-view';
 import { ActionError } from '@/primitives/ActionError';
+import { checkAssumptionDraft } from './lease-run-draft';
 
 interface Props {
   /** The property to project. Null until a property is selected upstream. */
@@ -230,9 +231,11 @@ function AssumptionsPanel({
   const live = useWarehouseLive();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<string>('');
+  const [inputError, setInputError] = useState<string | null>(null);
 
   function startEdit(key: string, value: number) {
     setEditing(key);
+    setInputError(null);
     // Percent/rate fields edit as percent points for ergonomics; reserve as raw $/SF.
     const isPct = key !== 'roofStructuralReservePsf';
     setDraft(isPct ? String(value * 100) : String(value));
@@ -244,15 +247,16 @@ function AssumptionsPanel({
       setEditing(null);
       return;
     }
-    const raw = Number(draft);
-    if (!Number.isFinite(raw)) {
-      setEditing(null);
+    // Review round 3: Number('') is 0, so a cleared box used to save a 0% fee / vacancy / growth.
+    // A blank or non-numeric draft, or one outside the approved range, keeps the editor open instead.
+    const check = checkAssumptionDraft(key, draft);
+    if (!check.ok) {
+      setInputError(check.message);
       return;
     }
-    const isPct = key !== 'roofStructuralReservePsf';
-    const value = isPct ? raw / 100 : raw;
-    mutation.mutate({ propertyId, [key]: value } as LeaseRunAssumptionsPatch);
+    mutation.mutate({ propertyId, [key]: check.value } as LeaseRunAssumptionsPatch);
     setEditing(null);
+    setInputError(null);
   }
 
   return (
@@ -279,7 +283,12 @@ function AssumptionsPanel({
                   style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-raised)' }}
                   value={draft}
                   autoFocus
-                  onChange={(e) => setDraft(e.target.value)}
+                  aria-label={`${r.label} (${r.key === 'roofStructuralReservePsf' ? '$/SF' : '%'})`}
+                  aria-invalid={inputError ? true : undefined}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    setInputError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') commit(r.key);
                     if (e.key === 'Escape') setEditing(null);
@@ -308,6 +317,11 @@ function AssumptionsPanel({
           </div>
         ))}
       </div>
+      {inputError && editing && (
+        <div role="alert" className="px-4 py-2 text-2xs" style={{ color: 'var(--text-neg)' }}>
+          {inputError}
+        </div>
+      )}
       {mutation.isError && <ActionError error={mutation.error} failed="The assumption was not saved." className="px-4 py-2" />}
       <div className="px-4 py-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
         Management fee, reserve, vacancy, renewal growth, and cap rate are editable landlord-cost

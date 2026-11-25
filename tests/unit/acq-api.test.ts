@@ -236,6 +236,23 @@ describe('GET /acq/intel', () => {
     const body = (await res.json()) as { rankedCandidates: Array<{ governorDscrCleared: boolean | null }> };
     expect(body.rankedCandidates[0]!.governorDscrCleared).toBe(true);
   });
+
+  // Review round 3: an unknown filter used to be ignored, so verdict=PURSUEE returned the whole list.
+  it.each([
+    ['/acq/intel?verdict=PURSUEE', /Invalid verdict/],
+    ['/acq/intel?verdict=pursue', /Invalid verdict/],
+    ['/acq/intel?status=open', /Invalid status/],
+    ['/acq/intel?status=', /Invalid status/],
+  ])('%s is a 400 with the allowed values, not a silently unfiltered list', async (path, msg) => {
+    const res = await makeApp(freshDb()).request(path);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(msg);
+  });
+
+  it.each(['/acq/intel', '/acq/intel?status=archived&verdict=WATCH', '/acq/intel?verdict=KILLED'])('%s (valid filters) still answers 200', async (path) => {
+    const res = await makeApp(freshDb()).request(path);
+    expect(res.status).toBe(200);
+  });
 });
 
 // ── GET /acq/candidates ────────────────────────────────────────────────────────────────────

@@ -103,15 +103,34 @@ export const LeaseRunAssumptions = z.object({
 });
 export type LeaseRunAssumptions = z.infer<typeof LeaseRunAssumptions>;
 
+/**
+ * Plausible range for each WRITTEN assumption (review round 3, ranges approved by Gabriel
+ * 2026-11-24). Applied to the overlay WRITE only (LeaseRunAssumptionsInput below); the stored shape
+ * above keeps its original bounds so an override saved earlier always still loads. Rates are
+ * fractions (0.03 = 3%); the roof/structural reserve is $/SF/yr. The client editor checks the same
+ * table before it sends a value.
+ */
+export const LEASE_RUN_INPUT_BOUNDS = {
+  managementFeePct: { min: 0, max: 1 },
+  roofStructuralReservePsf: { min: 0, max: 5 },
+  vacancyCreditLossPct: { min: 0, max: 1 },
+  renewalMarketGrowthPct: { min: -0.1, max: 0.15 },
+  indicativeCapRate: { min: 0.02, max: 0.2 },
+} as const satisfies Record<string, { min: number; max: number }>;
+export type LeaseRunAssumptionKey = keyof typeof LEASE_RUN_INPUT_BOUNDS;
+
+const bounded = (k: LeaseRunAssumptionKey) =>
+  z.number().finite().min(LEASE_RUN_INPUT_BOUNDS[k].min).max(LEASE_RUN_INPUT_BOUNDS[k].max).optional();
+
 /** Partial overlay write — every field optional so the UI can patch one assumption at a time.
  *  Merged onto DEFAULT_LEASE_RUN_ASSUMPTIONS in the engine. */
 export const LeaseRunAssumptionsInput = z.object({
   propertyId: z.string().min(1),
-  managementFeePct: z.number().min(0).max(1).optional(),
-  roofStructuralReservePsf: z.number().min(0).optional(),
-  vacancyCreditLossPct: z.number().min(0).max(1).optional(),
-  renewalMarketGrowthPct: z.number().optional(),
-  indicativeCapRate: z.number().positive().optional(),
+  managementFeePct: bounded('managementFeePct'),
+  roofStructuralReservePsf: bounded('roofStructuralReservePsf'),
+  vacancyCreditLossPct: bounded('vacancyCreditLossPct'),
+  renewalMarketGrowthPct: bounded('renewalMarketGrowthPct'),
+  indicativeCapRate: bounded('indicativeCapRate'),
 });
 export type LeaseRunAssumptionsInput = z.infer<typeof LeaseRunAssumptionsInput>;
 
