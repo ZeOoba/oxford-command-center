@@ -53,7 +53,9 @@ import { startServer } from './startup';
 import {
   assessFeeds,
   lastBackupAt,
+  lastLeaseEventsImportAt,
   lastLedgerImportAt,
+  lastMarketSeriesAsOf,
   lastAcqInputAt,
   lastPcaImportAt,
   lastTaxAssessmentAsOf,
@@ -348,6 +350,8 @@ app.get('/api/health', (c) => {
     overlay: readFeed(() => overlayHealthAt()),
     taxRegister: fromWarehouse(lastTaxAssessmentAsOf),
     pcaRegister: fromWarehouse(lastPcaImportAt),
+    marketSeries: fromWarehouse(lastMarketSeriesAsOf),
+    leaseEvents: fromWarehouse(lastLeaseEventsImportAt),
     acqInputs: fromWarehouse(lastAcqInputAt),
   }, Date.now());
   return c.json({
