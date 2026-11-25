@@ -23,6 +23,7 @@ import {
 import type { BrainReport } from './ReportGate';
 import { MemoryBoard } from './MemoryBoard';
 import { TrackRecordList } from './TrackRecordList';
+import { actionErrorToast } from '@/lib/describe-error';
 
 function OpenQuestionRow({ q }: { q: OpenQuestion }) {
   return (
@@ -47,7 +48,7 @@ function FeedbackRow({ q }: { q: OpenQuestion }) {
         onSuccess: () =>
           toast({ tone: 'success', title: decision === 'accept' ? 'Accepted' : 'Dismissed', description: q.title }),
         onError: (e) =>
-          toast({ tone: 'error', title: 'Feedback not recorded', description: e instanceof Error ? e.message : String(e) }),
+          toast(actionErrorToast(e, 'Your feedback was not recorded.')),
       },
     );
   };

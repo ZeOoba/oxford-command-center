@@ -25,6 +25,8 @@ import { EDGE_BOARD_DEFAULT_STATE, type EdgeBoardState } from './edge-hooks';
 // palette index as "Acquisitions > Tab".
 import { ACQUISITIONS_TABS, ACQUISITIONS_TAB_KEYS, type AcqTab } from './tabs';
 import { useQueryClient } from '@tanstack/react-query';
+import { readApiError } from '@/lib/api-error';
+import { ActionError } from '@/primitives/ActionError';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 
@@ -73,7 +75,7 @@ type SyncState =
   | { phase: 'idle' }
   | { phase: 'syncing' }
   | { phase: 'done'; inserted: number; updated: number; errors: string[] }
-  | { phase: 'error'; message: string };
+  | { phase: 'error'; error: unknown };
 
 export function AcquisitionsModule() {
   const { data } = useSnapshot();
@@ -101,9 +103,7 @@ export function AcquisitionsModule() {
     try {
       const res = await fetch('/api/warehouse/acq/sync/notion', { method: 'POST', headers: ORA_CLIENT_HEADERS });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-        const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
-        setSync({ phase: 'error', message: msg });
+        setSync({ phase: 'error', error: await readApiError(res, `Sync failed (${res.status})`) });
         return;
       }
       const body = await res.json() as { inserted?: number; updated?: number; errors?: string[] };
@@ -115,8 +115,8 @@ export function AcquisitionsModule() {
       });
       // Invalidate acq intel so the ranked list refreshes.
       void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });
-    } catch {
-      setSync({ phase: 'error', message: 'Sync failed — network error' });
+    } catch (e) {
+      setSync({ phase: 'error', error: e });
     }
   }
 
@@ -128,9 +128,7 @@ export function AcquisitionsModule() {
     try {
       const res = await fetch('/api/warehouse/acq/sync/hubspot', { method: 'POST', headers: ORA_CLIENT_HEADERS });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-        const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
-        setHubspotSync({ phase: 'error', message: msg });
+        setHubspotSync({ phase: 'error', error: await readApiError(res, `Sync failed (${res.status})`) });
         return;
       }
       const body = await res.json() as { inserted?: number; updated?: number; errors?: string[] };
@@ -141,8 +139,8 @@ export function AcquisitionsModule() {
         errors: body.errors ?? [],
       });
       void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });
-    } catch {
-      setHubspotSync({ phase: 'error', message: 'Sync failed — network error' });
+    } catch (e) {
+      setHubspotSync({ phase: 'error', error: e });
     }
   }
   if (!data) return null;
@@ -209,11 +207,7 @@ export function AcquisitionsModule() {
             {sync.errors.length > 0 && ` · ${sync.errors.length} error(s)`}
           </span>
         )}
-        {sync.phase === 'error' && (
-          <span className="num text-2xs" style={{ color: 'var(--text-neg)', letterSpacing: '0.05em' }}>
-            Sync failed — {sync.message}
-          </span>
-        )}
+        {sync.phase === 'error' && <ActionError error={sync.error} failed="The Notion sync did not run." />}
         <button
           type="button"
           onClick={() => { void handleHubSpotSync(); }}
@@ -245,11 +239,7 @@ export function AcquisitionsModule() {
             {hubspotSync.errors.length > 0 && ` · ${hubspotSync.errors.length} error(s)`}
           </span>
         )}
-        {hubspotSync.phase === 'error' && (
-          <span className="num text-2xs" style={{ color: 'var(--text-neg)', letterSpacing: '0.05em' }}>
-            Sync failed — {hubspotSync.message}
-          </span>
-        )}
+        {hubspotSync.phase === 'error' && <ActionError error={hubspotSync.error} failed="The HubSpot sync did not run." />}
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -48,6 +48,8 @@ import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTa
 import { ScatterChart } from '@/charts/ScatterChart';
 import { allocationCapPoints } from './cap-rate-scatter';
 import { fmtPct, fmtBps } from '@analytics/index';
+import { readApiError } from '@/lib/api-error';
+import { actionErrorToast } from '@/lib/describe-error';
 
 const DebtModule = lazy(() => import('../debt/DebtModule').then((m) => ({ default: m.DebtModule })));
 const CashModule = lazy(() => import('../cash/CashModule').then((m) => ({ default: m.CashModule })));
@@ -79,11 +81,8 @@ function useCapitalAllocationReport() {
  */
 async function postCapitalNotionSync(): Promise<NotionSyncResult> {
   const res = await fetch('/api/warehouse/capital-allocation/sync-notion', { method: 'POST', headers: ORA_CLIENT_HEADERS });
+  if (!res.ok) throw await readApiError(res, `HTTP ${res.status}`);
   const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg = json && typeof json === 'object' && 'error' in json ? String((json as { error: unknown }).error) : `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
   return NotionSyncResult.parse(json);
 }
 
@@ -295,12 +294,7 @@ export function CapitalModule() {
           (errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''),
       });
     },
-    onError: (e) =>
-      toast({
-        tone: 'error',
-        title: 'Notion sync failed',
-        description: e instanceof Error ? e.message : String(e),
-      }),
+    onError: (e) => toast(actionErrorToast(e, 'The Notion sync did not run.')),
   });
 
   /** Rule G: the loading / offline gate belongs to the two warehouse-backed panels only. */

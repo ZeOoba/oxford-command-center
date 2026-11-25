@@ -11,6 +11,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { tenantScorecards, type TenantScorecard, pctNoiText } from '@/brain/tenants';
 import type { RenewalStage } from '@contracts/index';
+import { ActionError } from '@/primitives/ActionError';
 
 const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Expiring: 'red', Outreach: 'amber', Negotiating: 'blue', LOI: 'purple', Executed: 'green',
@@ -96,6 +97,7 @@ export function TenantsModule() {
         )}
       </Card>
 
+      {noteMut.isError && <ActionError error={noteMut.error} failed="The tenant note was not saved." />}
       {selected && <TenantDetail key={selected.id} tenant={selected} onOpenLease={(id) => ui.openEntity({ type: 'lease', id })} onDraft={(id) => ui.openDraft({ kind: 'renewal', entity: { type: 'lease', id } })} onSaveNote={(note) => noteMut.mutate({ tenantId: selected.id, note })} isSaving={noteMut.isPending} />}
     </div>
   );

@@ -12,6 +12,7 @@ import type { Classification } from '@contracts/warehouse';
 import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { loadWarehouseMirror, getMirrorEndpoint } from '../../lib/warehouse-mirror';
 import { computeWarehouseFreshness, type Freshness } from '../../lib/freshness';
+import { readApiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // Response shapes — mirror the hand-aliased camelCase rows from server/warehouse.
@@ -105,9 +106,9 @@ export function isWarehouseUnavailable(error: unknown): boolean {
 }
 
 async function readJson<T>(res: Response): Promise<T> {
-  // The static mirror serves the SPA index.html for unknown paths; a 503 from the brain
-  // server carries JSON but still means "no warehouse here". Either way → unavailable.
-  if (res.status === 503) throw new WarehouseUnavailableError();
+  // The static mirror serves the SPA index.html for unknown paths (→ unavailable). A 503 is
+  // "no warehouse here" only when it says so; see unavailableOr503Failure.
+  if (res.status === 503) throw await unavailableOr503Failure(res);
   const ct = res.headers.get('content-type') ?? '';
   if (!ct.includes('application/json')) throw new WarehouseUnavailableError('warehouse routes not present');
   return (await res.json()) as T;
@@ -126,10 +127,21 @@ export async function fetchJson<T>(path: string): Promise<T> {
     // A 4xx/5xx with a JSON error body is a real failure to surface; non-JSON is mirror.
     const ct = res.headers.get('content-type') ?? '';
     if (!ct.includes('application/json')) throw new WarehouseUnavailableError('warehouse routes not present');
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Request failed (${res.status})`);
+    throw await readApiError(res);
   }
   return readJson<T>(res);
+}
+
+/**
+ * A 503 is the "no warehouse / not loaded here" sentinel (the module's offline card) unless the server
+ * says it is a transient, retryable condition: the write-lock busy 503 ("warehouse busy ... retry") or
+ * an upstream "try again". Those keep their reason and request id and render as a real failure with
+ * Retry, instead of "this copy does not include the warehouse" (review round 3, 2026-11-24).
+ */
+async function unavailableOr503Failure(res: Response): Promise<Error> {
+  const err = await readApiError(res, '');
+  if (/busy|retry|try again/i.test(err.message)) return err;
+  return new WarehouseUnavailableError();
 }
 
 /**

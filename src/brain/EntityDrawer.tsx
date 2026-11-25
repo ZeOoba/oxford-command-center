@@ -27,6 +27,8 @@ import { Sparkline } from '@/charts/Sparkline';
 import { DealDrawer } from './DealDrawer';
 import { PropertyDrawerTrends } from '@/modules/property/PropertyDrawerTrends';
 import { BLANK_IN_WORKBOOK, hasBlankGovernorInput } from '@analytics/governor-inputs';
+import { useToast } from '@/primitives/toast-context';
+import { actionErrorToast } from '@/lib/describe-error';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -81,6 +83,7 @@ export function EntityDrawer() {
   const { data } = useSnapshot();
   const { state } = useBrain();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const open = !!ui.selected;
   // Write-back is only offered against the live server, never the static mirror.
   const canWrite = computeFreshness(state).kind === 'live';
@@ -90,8 +93,9 @@ export function EntityDrawer() {
     try {
       await advanceDealStage(dealId, stage);
       await qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
-    } catch {
-      /* surfaced by the snapshot not changing; kept silent here */
+    } catch (e) {
+      // Review round 3: this used to be silent, so a failed stage change looked saved.
+      toast(actionErrorToast(e, 'The deal stage was not changed.'));
     }
   };
 

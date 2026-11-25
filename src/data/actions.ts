@@ -1,6 +1,7 @@
 import type { DealStage, RenewalStage } from '@contracts/index';
 import type { CompSet } from '@contracts/index';
 import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
+import { readApiError } from '@/lib/api-error';
 
 /**
  * Write-back actions (Phase 5). These POST to the Brain Server, which persists to the local
@@ -10,7 +11,8 @@ import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
  */
 async function postAction(url: string, body: unknown): Promise<void> {
   const res = await fetch(url, { method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Action failed (${res.status})`);
+  // Keep the server's reason and request id (review round 3); the UI shows them under Details.
+  if (!res.ok) throw await readApiError(res, `Action failed (${res.status})`);
 }
 
 export const advanceDealStage = (dealId: string, stage: DealStage): Promise<void> =>

@@ -14,6 +14,7 @@ import { RENEWAL_STAGES, nextRenewalStage, type RenewalStage } from '@contracts/
 import { useLeaseForecast, likelihoodTone, buildSignalMap } from '../leasing/hooks';
 import type { RenewalSignal } from '../leasing/hooks';
 import { dayLabel } from './day-label';
+import { ActionError } from '@/primitives/ActionError';
 
 const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Expiring: 'red',
@@ -65,6 +66,8 @@ export function RenewalsModule() {
           {total} in pipeline
         </span>
       </div>
+
+      {advance.isError && <ActionError error={advance.error} failed="The renewal stage was not advanced." />}
 
       {total > MAX_ITEMS && (
         <CoverageBar cov={cov} expanded={showAll} onToggle={() => setShowAll((v) => !v)} />

@@ -19,10 +19,11 @@ export function ActionError({
   return (
     <div role="alert" className={`text-2xs ${className}`} style={{ color: 'var(--text-neg)' }}>
       <span>{d.headline}</span>
-      {d.detail && (
+      {(d.detail || d.requestId) && (
         <details className="mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
           <summary className="cursor-pointer">Details</summary>
-          <div className="num mt-1 max-w-lg break-words">{d.detail}</div>
+          {d.detail && <div className="num mt-1 max-w-lg break-words">{d.detail}</div>}
+          {d.requestId && <div className="num mt-1">Ref: {d.requestId}</div>}
         </details>
       )}
     </div>
