@@ -9,6 +9,7 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { BarChart } from '@/charts/BarChart';
 import { noiVariance, type NoiVarianceRow } from '@/brain/noi-variance';
+import { ActionError } from '@/primitives/ActionError';
 
 export function CloseModule() {
   const { data } = useSnapshot();
@@ -32,6 +33,7 @@ export function CloseModule() {
         {qb ? <Badge tone="green" dot>QuickBooks actuals · parsed {qb.parsedAt.slice(0, 10)}</Badge>
             : <Badge tone="amber" dot>No QuickBooks export — set QUICKBOOKS_CSV; budgets are editable now</Badge>}
       </div>
+      {budgetMut.isError && <ActionError error={budgetMut.error} failed="The NOI budget was not saved." />}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiStat label="Actual NOI" value={qb && v.pairedCount > 0 ? v.totalActual : null} format={(n) => (n === null ? '—' : fmtUsdCompact(n))} accentColor="var(--color-pos)" sublabel={qb ? `${v.pairedCount} of ${v.actualCount} paired` : undefined} />

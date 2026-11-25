@@ -415,8 +415,8 @@ describe('CapitalModule — Notion sync (folded in from CapitalAllocationModule)
     renderModule();
     fireEvent.click(screen.getByRole('button', { name: 'Sync capital decisions to Notion' }));
 
-    await waitFor(() => expect(screen.getByText('Notion sync failed')).toBeTruthy());
-    expect(screen.getByText('NOTION_TOKEN not configured')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('The Notion sync did not run.')).toBeTruthy());
+    expect(screen.getByText(/NOTION_TOKEN not configured/)).toBeTruthy();
   });
 });
 

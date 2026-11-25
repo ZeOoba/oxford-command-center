@@ -23,10 +23,11 @@ export function QueryError({
   return (
     <div role="alert" className={`flex flex-col items-start gap-2 text-sm ${className}`}>
       <div style={{ color: d.kind === 'unavailable' ? 'var(--text-secondary)' : 'var(--text-neg)' }}>{d.headline}</div>
-      {d.detail && (
+      {(d.detail || d.requestId) && (
         <details className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
           <summary className="cursor-pointer">Details</summary>
-          <div className="num mt-1 max-w-lg break-words">{d.detail}</div>
+          {d.detail && <div className="num mt-1 max-w-lg break-words">{d.detail}</div>}
+          {d.requestId && <div className="num mt-1">Ref: {d.requestId}</div>}
         </details>
       )}
       {onRetry && (

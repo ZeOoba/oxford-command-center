@@ -31,11 +31,11 @@ describe('describeError', () => {
 
   it('a server or schema error says what failed and keeps the raw text as detail only', () => {
     const d = describeError(new Error('HTTP 500: column "x" missing'), 'the debt ladder');
-    expect(d).toEqual({ kind: 'failed', headline: "Couldn't load the debt ladder.", detail: 'HTTP 500: column "x" missing' });
+    expect(d).toEqual({ kind: 'failed', headline: "Couldn't load the debt ladder.", detail: 'HTTP 500: column "x" missing' , requestId: null });
   });
 
   it('a non-Error value still describes safely', () => {
-    expect(describeError('boom', 'scores')).toEqual({ kind: 'failed', headline: "Couldn't load scores.", detail: 'boom' });
+    expect(describeError('boom', 'scores')).toEqual({ kind: 'failed', headline: "Couldn't load scores.", detail: 'boom' , requestId: null });
     expect(describeError(undefined, 'scores').detail).toBeNull();
   });
 });
@@ -67,6 +67,7 @@ describe('describeActionError / ActionError', () => {
       kind: 'failed',
       headline: 'The decision was not saved.',
       detail: 'HTTP 400: Invalid input: vacancyPct',
+      requestId: null,
     });
   });
 
