@@ -73,15 +73,15 @@ describe('buildMarketIntel', () => {
     expect(sig.sources.find(s => s.source === 'fred')?.stale).toBe(false);
   });
 
-  it('M-2: all three sources fresh — confidence01 === 1.0', async () => {
+  it('M-2: FRED + comps fresh, census housing vacancy present — confidence01 === 0.7 (census is residential, unscored)', async () => {
     const { buildMarketIntel } = await import('../../server/warehouse/market-intel');
     const db = freshDb();
     seedMarketSeries(db, [
-      { cluster: 'all-three', as_of: '2026-06-01', source: 'census-acs', metric: 'vacancy_rate', value: 4.2, confidence: 1.0 },
+      { cluster: 'all-three', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 4.2, confidence: 1.0 },
       { cluster: 'all-three', as_of: '2026-06-01', source: 'comps-ai',   metric: 'cap_rate',     value: 6.8, confidence: 1.0 },
     ]);
     const sig = await buildMarketIntel(db, 'all-three', '2026-06-21');
-    expect(sig.confidence01).toBeCloseTo(1.0, 5);
+    expect(sig.confidence01).toBeCloseTo(0.7, 5);
     expect(sig.sources).toHaveLength(3);
   });
 
@@ -90,11 +90,11 @@ describe('buildMarketIntel', () => {
     mockGetMacro.mockResolvedValue(MACRO_BEARISH as never);
     const db = freshDb();
     seedMarketSeries(db, [
-      { cluster: 'bad-market', as_of: '2026-06-01', source: 'census-acs', metric: 'vacancy_rate', value: 18.0, confidence: 1.0 },
+      { cluster: 'bad-market', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 18.0, confidence: 1.0 },
       { cluster: 'bad-market', as_of: '2026-06-01', source: 'comps-ai',   metric: 'cap_rate',     value: 10.5, confidence: 1.0 },
     ]);
     const sig = await buildMarketIntel(db, 'bad-market', '2026-06-21');
-    // fredScore=15, censusScore=0, compsScore=20 → composite < 45 → exit
+    // fredScore=15, compsScore=20 (census unscored) → composite (7.5 + 4) / 0.7 ≈ 16.4 < 45 → exit
     expect(sig.action).toBe('exit');
     expect(sig.advisoryOnly).toBe(true);
     expect(sig.marketScore).not.toBeNull();
@@ -107,11 +107,11 @@ describe('buildMarketIntel', () => {
     const db = freshDb();
     // 'new-market' cluster has no property_master rows (freshDb has no seeded properties)
     seedMarketSeries(db, [
-      { cluster: 'new-market', as_of: '2026-06-01', source: 'census-acs', metric: 'vacancy_rate', value: 2.0,  confidence: 1.0 },
+      { cluster: 'new-market', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 2.0,  confidence: 1.0 },
       { cluster: 'new-market', as_of: '2026-06-01', source: 'comps-ai',   metric: 'cap_rate',     value: 5.5,  confidence: 1.0 },
     ]);
     const sig = await buildMarketIntel(db, 'new-market', '2026-06-21');
-    // fredScore=82.5, census=84, comps=67.5 → composite ≈ 79.95 ≥ 75 AND oraCount=0
+    // fredScore=82.5, comps=67.5 (census unscored) → composite (41.25 + 13.5) / 0.7 ≈ 78.2 ≥ 75 AND oraCount=0
     expect(sig.oraPropertyCount).toBe(0);
     expect(sig.marketScore).not.toBeNull();
     expect(sig.marketScore!).toBeGreaterThanOrEqual(75);
@@ -156,5 +156,54 @@ describe('FRED provenance reason', () => {
     expect(seeded.reasons.some((r) => r.includes('seeded snapshot'))).toBe(true);
     expect(live.reasons.some((r) => r.includes('seeded snapshot'))).toBe(false);
     expect(seeded.marketScore).toBe(live.marketScore);
+  });
+});
+
+// 2026-11-27 review (Gabriel): ACS B25002/B25004 is HOUSING vacancy, not industrial. It is displayed,
+// labelled residential, and never enters the industrial MarketSignal composite.
+describe('census housing vacancy is residential context, not scored', () => {
+  it('the housing vacancy value never moves marketScore, action or confidence', async () => {
+    const { buildMarketIntel } = await import('../../server/warehouse/market-intel');
+    const db = freshDb();
+    const comps = (cluster: string) => ({ cluster, as_of: '2026-06-01', source: 'comps-ai', metric: 'cap_rate', value: 6.0, confidence: 1.0 });
+    seedMarketSeries(db, [
+      { cluster: 'tight', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 1.5, confidence: 1.0 },
+      { cluster: 'loose', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 40, confidence: 1.0 },
+      comps('tight'), comps('loose'), comps('none'),
+    ]);
+    const tight = await buildMarketIntel(db, 'tight', '2026-06-21');
+    const loose = await buildMarketIntel(db, 'loose', '2026-06-21');
+    const none = await buildMarketIntel(db, 'none', '2026-06-21');
+    expect(tight.marketScore).toBe(none.marketScore);
+    expect(loose.marketScore).toBe(none.marketScore);
+    expect(tight.action).toBe(none.action);
+    expect(loose.action).toBe(none.action);
+    expect(tight.confidence01).toBe(none.confidence01);
+    expect(loose.confidence01).toBe(none.confidence01);
+  });
+
+  it('shows the fresh value under metric housing_vacancy_rate with confidence 0 and a residential reason', async () => {
+    const { buildMarketIntel } = await import('../../server/warehouse/market-intel');
+    const db = freshDb();
+    seedMarketSeries(db, [
+      { cluster: 'shown', as_of: '2026-06-01', source: 'census-acs', metric: 'housing_vacancy_rate', value: 6.4, confidence: 1.0 },
+    ]);
+    const sig = await buildMarketIntel(db, 'shown', '2026-06-21');
+    const c = sig.sources.find((s) => s.source === 'census-acs')!;
+    expect(c).toMatchObject({ metric: 'housing_vacancy_rate', value: 6.4, stale: false, confidence01: 0, asOf: '2026-06-01' });
+    expect(sig.confidence01).toBeCloseTo(0.5, 5); // FRED only
+    expect(sig.reasons.join(' ')).toMatch(/residential/i);
+  });
+
+  it('a legacy census vacancy_rate row (the pre-migration-038 metric) is neither scored nor shown', async () => {
+    const { buildMarketIntel } = await import('../../server/warehouse/market-intel');
+    const db = freshDb();
+    seedMarketSeries(db, [
+      { cluster: 'legacy', as_of: '2026-06-01', source: 'census-acs', metric: 'vacancy_rate', value: 2.0, confidence: 1.0 },
+    ]);
+    const sig = await buildMarketIntel(db, 'legacy', '2026-06-21');
+    const base = await buildMarketIntel(db, 'fred-only-test', '2026-06-21');
+    expect(sig.marketScore).toBe(base.marketScore);
+    expect(sig.sources.find((s) => s.source === 'census-acs')).toMatchObject({ metric: 'housing_vacancy_rate', value: null });
   });
 });

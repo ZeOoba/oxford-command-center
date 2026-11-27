@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALERT_THRESHOLDS } from '../src/analytics/conditions';
-import { STALE_DAYS } from './warehouse/market-intel';
+import { CENSUS_HOUSING_METRIC, STALE_DAYS } from './warehouse/market-intel';
 
 export type FeedId =
   | 'snapshot'
@@ -60,9 +60,10 @@ export const FEED_MAX_AGE_DAYS: Record<FeedId, number> = {
   taxRegister: 548,
   // PCAs are commissioned per property every few years; three years flags an import that never recurs.
   pcaRegister: 1095,
-  // Census ACS releases annually; the budget is the market-intel scorer's own census staleness
-  // window, and the reader grades the stalest cluster, so this row goes stale when the scorer
-  // starts flagging any cluster's census series stale.
+  // Census ACS releases annually; the budget is market-intel's own census staleness window, and the
+  // reader grades the stalest cluster, so this row goes stale when market-intel starts flagging any
+  // cluster's census series stale. Census is RESIDENTIAL housing vacancy, displayed as context and
+  // never scored (2026-11-27 review), so this row is the freshness of that displayed context.
   marketSeries: STALE_DAYS['census-acs']!,
   // Last run of the rent-roll diff derivation; the snapshot refreshes weekly or faster, so two weeks
   // allows one missed run before the leasing-velocity events are called stale.
@@ -190,7 +191,9 @@ function newestValidPastDay(rows: Array<{ t: string | null }>, now: number, what
 
 /**
  * Latest Census ACS release on record for the STALEST cluster: per cluster the newest valid as_of,
- * then the oldest of those (null = never imported). The market-intel scorer flags census staleness
+ * then the oldest of those (null = never imported). Reads only metric housing_vacancy_rate, the rows
+ * market-intel reads (a legacy `vacancy_rate` row, e.g. one written by pre-038 importer code, is
+ * ignored there, so it must not read fresh here either). The market-intel reader flags census staleness
  * per cluster, so a portfolio-wide MAX would read fresh while one cluster's signal is already stale
  * (review 2026-11-23). as_of is the ACS public release date (ruling 2026-11-23), so this is the age
  * of the vintage, not of the import run. A cluster whose rows carry no valid as_of throws ('error').
@@ -201,8 +204,8 @@ export function lastMarketSeriesAsOf(
   now: number = Date.now(),
 ): string | null {
   const rows = db
-    .prepare('SELECT cluster AS c, as_of AS t FROM market_series WHERE source = ?')
-    .all('census-acs') as Array<{ c: string; t: string | null }>;
+    .prepare('SELECT cluster AS c, as_of AS t FROM market_series WHERE source = ? AND metric = ?')
+    .all('census-acs', CENSUS_HOUSING_METRIC) as Array<{ c: string; t: string | null }>;
   const byCluster = new Map<string, Array<{ t: string | null }>>();
   for (const r of rows) {
     const list = byCluster.get(r.c);

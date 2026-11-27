@@ -22,8 +22,12 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
-function SourceTag({ source, stale }: { source: string; stale: boolean }) {
-  const label = stale ? source + ' (stale)' : source;
+function SourceTag({ source, metric, value, stale }: { source: string; metric: string; value: number | null; stale: boolean }) {
+  // Census ACS carries RESIDENTIAL housing vacancy (2026-11-27 review): shown for context, never scored.
+  const base = metric === 'housing_vacancy_rate'
+    ? `${source} housing vacancy${value !== null ? ` ${value}%` : ''} (residential, not scored)`
+    : source;
+  const label = stale ? base + ' (stale)' : base;
   return (
     <span
       aria-label={label}
@@ -73,7 +77,7 @@ export function MarketScorecard({ signal }: Props) {
         {/* Source tags */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {signal.sources.map((src, i) => (
-            <SourceTag key={i} source={src.source} stale={src.stale} />
+            <SourceTag key={i} source={src.source} metric={src.metric} value={src.value} stale={src.stale} />
           ))}
           <span style={{ fontSize: 11, color: 'var(--text-tertiary)', marginLeft: 4 }}>
             {signal.oraPropertyCount} ORA prop{signal.oraPropertyCount !== 1 ? 's' : ''}

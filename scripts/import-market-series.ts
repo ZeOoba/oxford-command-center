@@ -2,21 +2,23 @@
 //
 // Populates market_series (migrations 013 + 017), the non-FRED inputs of buildMarketIntel
 // (server/warehouse/market-intel.ts) and the cluster list of capital-allocation-api.ts. Before this
-// importer nothing wrote the table, so Market Intelligence scored every cluster on FRED alone.
+// importer nothing wrote the table, so Market Intelligence scored every cluster on FRED alone. Since
+// the 2026-11-27 review only comps-ai feeds the score; census is displayed residential context.
 //
-// The reader takes, per cluster, the NEWEST row of each source and scores it only when its metric
-// matches. So this importer accepts exactly the two (source, metric) pairs the engine scores, keyed
-// by market-intel.ts STALE_DAYS:
-//   census-acs / vacancy_rate   percent (7.2 = 7.2%), scored 100 - 8*pct; stale after 400 days
-//   comps-ai   / cap_rate       percent (6.5 = 6.5%); stale after 90 days
-// Any other metric under these sources would become the newest row and blank the scored one, so it
-// is rejected, not stored.
+// The reader takes, per cluster, the NEWEST row of each source whose metric matches. So this importer
+// accepts exactly the two (source, metric) pairs the engine reads, keyed by market-intel.ts STALE_DAYS:
+//   census-acs / housing_vacancy_rate  percent (7.2 = 7.2%); RESIDENTIAL housing vacancy, displayed only,
+//                                      never scored (2026-11-27 review, Gabriel: ACS B25002/B25004 counts
+//                                      housing units, not industrial space); stale after 400 days
+//   comps-ai   / cap_rate              percent (6.5 = 6.5%), scored; stale after 90 days
+// Any other metric under these sources is rejected, not stored. The census metric was `vacancy_rate`
+// until migration 038 renamed every stored census row, so no reader can take it for industrial vacancy.
 //
 // SOURCES OF RECORD
 //   --census   US Census Bureau ACS 5-year Detailed Tables B25002 (occupancy) and B25004 (vacancy
 //              status), seasonal units excluded from both sides (the Mid-Atlantic CBSAs include beach
 //              markets, where seasonal homes would read as slack):
-//              vacancy_rate = (B25002_003E - B25004_006E) / (B25002_001E - B25004_006E) * 100, POOLED
+//              housing_vacancy_rate = (B25002_003E - B25004_006E) / (B25002_001E - B25004_006E) * 100, POOLED
 //              over the cluster's CBSAs in config/market-series-geographies.json. as_of = the vintage's
 //              PUBLIC RELEASE date (Gabriel ruling 2026-11-23), read from that file's acs5Releases table
 //              (each entry cites its census.gov source) or given with --released. Release, not period
@@ -42,9 +44,9 @@
 //            market verdict to capital allocation: that is a decision, not an import side effect)
 //   as_of    strict ISO YYYY-MM-DD, a real calendar day, not in the future
 //   source/metric  one of the two pairs above
-//   value    finite; vacancy_rate in [1, 50], cap_rate in [2, 20]. Below the floor reads as a
-//            decimal fraction (0.07) entered where percent is expected, which the score functions
-//            would turn into a near-perfect vacancy or a zero cap-rate score
+//   value    finite; housing_vacancy_rate in [1, 50], cap_rate in [2, 20]. Below the floor reads as a
+//            decimal fraction (0.07) entered where percent is expected, which the cap-rate score
+//            would turn into a zero score (and the displayed housing vacancy into a misleading one)
 //   confidence  number in [0, 1] (CHECK in migration 013)
 //
 // DUPLICATES: two payload rows with the same (cluster, as_of, source, metric) and the same value collapse
@@ -73,7 +75,7 @@ import { isIsoCalendarDate } from '../server/warehouse/placeholder-data';
 import { STALE_DAYS } from '../server/warehouse/market-intel';
 import { refuseIfSynthetic } from '../server/real-data-status';
 
-export const SOURCE_METRIC = { 'census-acs': 'vacancy_rate', 'comps-ai': 'cap_rate' } as const;
+export const SOURCE_METRIC = { 'census-acs': 'housing_vacancy_rate', 'comps-ai': 'cap_rate' } as const;
 export type MarketSource = keyof typeof SOURCE_METRIC;
 export const VALUE_BOUNDS: Record<MarketSource, [number, number]> = {
   'census-acs': [1, 50],
@@ -129,7 +131,7 @@ export function parseMarketSeriesPayload(
     if (source !== 'census-acs' && source !== 'comps-ai') return reject(cluster, `source '${String(source)}' is not one of census-acs, comps-ai`);
     if (source === 'census-acs' && !allowCensus) return reject(cluster, 'census-acs rows come only from --census (release-date as_of); not accepted in --file mode');
     if (r.metric !== SOURCE_METRIC[source]) {
-      return reject(cluster, `metric '${String(r.metric)}' is not scored for ${source} (expected ${SOURCE_METRIC[source]}); it would shadow the scored row`);
+      return reject(cluster, `metric '${String(r.metric)}' is not read for ${source} (expected ${SOURCE_METRIC[source]}); it would shadow the read row`);
     }
     const value = r.value;
     if (typeof value !== 'number' || !Number.isFinite(value)) return reject(cluster, `value '${String(value)}' is not a finite number`);
@@ -392,7 +394,7 @@ export async function fetchCensusVacancy(
       cluster,
       as_of: release.asOf,
       source: 'census-acs',
-      metric: 'vacancy_rate',
+      metric: SOURCE_METRIC['census-acs'],
       value: Math.round((vacant / total) * 10000) / 100,
       confidence: 1,
       source_detail: `ACS 5-year ${used - 4}-${used} (period end ${used}-12-31; as_of = public release ${release.asOf}: ${release.source}) `
