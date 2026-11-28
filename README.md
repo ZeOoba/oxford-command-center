@@ -67,7 +67,7 @@ flowchart LR
 
     subgraph B["Spine B — Time Dimension"]
         INGEST["server/warehouse/ingest.ts"]
-        DB[("SQLite warehouse (WAL)<br/>38 migration files (001-037)")]
+        DB[("SQLite warehouse (WAL)<br/>39 migration files (001-038)")]
         ENG["metrics · scores · debt · tax<br/>insurance · capital allocation<br/>acquisition engine · calibration"]
     end
 
@@ -143,7 +143,7 @@ chunk registered in [`src/shell/modules.tsx`](src/shell/modules.tsx). Routing is
 | Path | Contents |
 |---|---|
 | [`src/`](src/) | React client: `contracts/` (Zod, the typed boundary), `analytics/` (pure derivations), `data/` (Query hooks, SSE wiring, seed fixtures), `brain/` (command palette, drawers, AI panel), `modules/` (destination and panel folders), `shell/` (app shell and module registry), `primitives/`, `charts/`, `tokens/`, `lib/` |
-| [`server/`](server/) | Hono backend: `workbook/` (Excel parser), `warehouse/` (Spine B: ingest, engines; 38 SQL migration files in `warehouse/migrations/`, numbered 001-037), `ai/`, `sources/` (Notion, M365, QuickBooks, document index), `macro/` (FRED + seeded fallback), `reconcile/`, `brief/` and `briefing/`, `edge/` (Oxford Edge), `notion/` (capital write-back), `ar/`, `alerts/`, `insights/`, `property-financials/`, plus the request-boundary files `host-guard.ts`, `cors-policy.ts`, `access-authz.ts`, `rate-limit.ts` |
+| [`server/`](server/) | Hono backend: `workbook/` (Excel parser), `warehouse/` (Spine B: ingest, engines; 39 SQL migration files in `warehouse/migrations/`, numbered 001-038), `ai/`, `sources/` (Notion, M365, QuickBooks, document index), `macro/` (FRED + seeded fallback), `reconcile/`, `brief/` and `briefing/`, `edge/` (Oxford Edge), `notion/` (capital write-back), `ar/`, `alerts/`, `insights/`, `property-financials/`, plus the request-boundary files `host-guard.ts`, `cors-policy.ts`, `access-authz.ts`, `rate-limit.ts` |
 | [`functions/`](functions/) | Cloudflare Pages Functions: `api/ai.ts`, `api/whoami.ts`, `api/warehouse/acquisition/score.ts`, shared Access JWT verification in `_shared/` |
 | [`scripts/`](scripts/) | Extraction, reconciliation, warehouse backfill/verify/drift/backup, importers, mirror bake and deploy, governance and drift gates, git-hook installers, Windows scheduled-task registration and their PowerShell smoke tests |
 | [`architecture/`](architecture/) | Architecture-lock docs plus `ownership.json` / `status.json`, enforced by `scripts/governance-check.ts` |

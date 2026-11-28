@@ -154,18 +154,29 @@ describe('loadNoiAcknowledgments — fail closed on absence, fail loud on malfor
     expect(rarig).toBeDefined();
     expect(rarig.comparisonPeriod).toBe('2025');
     expect(rarig.direction).toBe('warehouse-exceeds-workbook');
-    expect(rarig.maxDeltaPct).toBe(0.25); // Gabriel 2026-11-23: 25% until the second move-out is re-ratified
+    expect(rarig.maxDeltaPct).toBe(0.25); // ratified 2026-11-23; see the internal record
     expect(rarig.expires <= '2027-06-30').toBe(true);
   });
 
-  it('the shipped Rarig entry covers today\'s 20.73% gap but NOT the gap after the F & I + J move-out (56.57%)', () => {
+  // 2026-11-27 review: this file is committed to a PUBLIC repo, so a reason is an opaque reference to
+  // the internal record, never unit-level occupancy events (which unit, lease dates, notices to vacate).
+  it('every shipped reason is an opaque reference: no unit, lease, notice or calendar-date detail', () => {
+    for (const a of loadNoiAcknowledgments(NOI_ACKNOWLEDGMENTS_PATH)) {
+      expect(a.reason).toMatch(/internal record/i);
+      expect(a.reason).not.toMatch(/\bunits?\b|\bsuites?\b|\blease|\bvacate|\bnotice|\btenant|\d{4}-\d{2}-\d{2}/i);
+    }
+  });
+
+  it('the shipped entry covers a gap under its 25% ceiling but NOT one above it (pseudonymous amounts)', () => {
     const rarig = loadNoiAcknowledgments(NOI_ACKNOWLEDGMENTS_PATH).find((a) => a.propertyId === RARIG)!;
     const shipped = (wb: number) => classifyNoiReconciliation(
-      input({ workbookOxfordNoi: wb, warehouseOxfordNoi: 165024, acknowledgment: rarig, asOfDate: '2026-11-23' }), TOL,
+      input({ workbookOxfordNoi: wb, warehouseOxfordNoi: 100000, acknowledgment: rarig, asOfDate: '2026-11-23' }), TOL,
     );
-    expect(shipped(130811).status).toBe('structural-mismatch'); // 20.73%
-    expect(shipped(71673).status).toBe('large-drift'); // 56.57%
-    expect(shipped(71673).severity).toBe('error');
+    // 22%: strictly between TOL.largeDriftPct (20%) and the 25% ceiling, so only the acknowledgment saves it.
+    expect(shipped(78000).status).toBe('structural-mismatch');
+    expect(shipped(78000).reason).toMatch(/Acknowledged/);
+    expect(shipped(45000).status).toBe('large-drift'); // 55%
+    expect(shipped(45000).severity).toBe('error');
   });
 });
 

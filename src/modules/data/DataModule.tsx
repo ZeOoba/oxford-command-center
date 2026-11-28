@@ -36,6 +36,7 @@ import { ImportsView } from '../intel/ImportsView';
 import { DataQualityView } from '../intel/DataQualityView';
 import { MappingsView } from '../intel/MappingsView';
 import { DataOpsKpiRow } from './DataOpsKpiRow';
+import { countAcqRescoreBacklog } from './acq-rescore-backlog';
 import { DataFeedStrip } from './DataFeedStrip';
 import { latestPeriod, ledgerCoverage } from './latestPeriod';
 import {
@@ -108,6 +109,7 @@ export function DataModule() {
               committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
               pending={(imports.data ?? []).filter((i) => i.status === 'pending-review').length}
               openIssues={issues.data?.length ?? 0}
+              rescoreBacklog={countAcqRescoreBacklog(issues.data ?? [])}
               propertiesCovered={new Set((noi.data ?? []).map((c) => c.propertyId)).size}
               latestPeriod={latestPeriod(noi.data ?? [])}
               coverage={ledgerCoverage(imports.data ?? [])}

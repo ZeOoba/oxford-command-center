@@ -18,6 +18,15 @@
     "review_detail": "Architect-owned server/index.ts edit: two feed inputs beside pcaRegister in the /api/health assessFeeds call (same shape as PR #587). Acknowledged: Gabriel (architect) approved 2026-11-23 via the design-review session (\"approve the index.ts line for the feed freshness session\"), scope limited to those input lines and their imports. Also server/feed-freshness.ts, server/warehouse/market-intel.ts (export STALE_DAYS only, no value change), tests/unit/feed-freshness.test.ts.",
     "last_updated": "2026-11-25T04:00:00Z"
   },
+  "review-fixes-2026-11-27-d0b75e": {
+    "agent_role": "Engineering (Claude Code) - side session of the 2026-11-27 command-center review, three items Gabriel approved",
+    "phase": "(1) census-acs metric vacancy_rate -> housing_vacancy_rate (ACS B25002/B25004 is residential), dropped from the industrial MarketSignal composite and shown labelled residential; migration 038 renames stored rows idempotently. (2) config/noi-crosscheck-acknowledgments.json reason replaced with an opaque reference, bounds unchanged. (3) Data module Open DQ Issues KPI counts deals stuck OPEN on acq-outcome-band-mismatch (reporting only). Branch claude/review-fixes-2026-11-27-d0b75e.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Architect-owned edit: new migration server/warehouse/migrations/038_census_housing_vacancy_rate.sql (UPDATE-only rename, no DDL, no delete). Requested by the 2026-11-27 review brief Gabriel approved (\"migrate or rename existing warehouse rows idempotently\"); Acknowledged: Gabriel (architect) approved migration 038 in-turn 2026-11-28 (\"approve migration 038\"). Not merged; merge is Gabriel's.",
+    "last_updated": "2026-11-28T00:00:00Z"
+  },
   "refute-check-clean-effort-d750f8": {
     "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-10-28",
     "phase": "Refute gate: qualifier grammar for Refute-Reviewed wf_<id> trailers (clean/scoped/effort/base-workflow/partial/accepted), per Gabriel's AskUserQuestion pick 2026-10-28.",

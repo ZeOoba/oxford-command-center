@@ -208,27 +208,37 @@ describe('market_series + lease_events feeds', () => {
     db.exec(MARKET_DDL);
     expect(lastMarketSeriesAsOf(db, NOW)).toBeNull();
     db.exec(`INSERT INTO market_series VALUES
-      ('Cluster A', '2025-01-30', 'census-acs', 'vacancy_rate'),
-      ('Cluster B', '2025-12-11', 'census-acs', 'vacancy_rate'),
+      ('Cluster A', '2025-01-30', 'census-acs', 'housing_vacancy_rate'),
+      ('Cluster B', '2025-12-11', 'census-acs', 'housing_vacancy_rate'),
       ('Cluster A', '2026-09-01', 'comps-ai', 'cap_rate'),
-      ('Cluster A', '9/1/2026', 'census-acs', 'vacancy_rate'),
-      ('Cluster A', '2025-02-30', 'census-acs', 'vacancy_rate'),
-      ('Cluster A', '2099-01-01', 'census-acs', 'vacancy_rate')`);
+      ('Cluster A', '9/1/2026', 'census-acs', 'housing_vacancy_rate'),
+      ('Cluster A', '2025-02-30', 'census-acs', 'housing_vacancy_rate'),
+      ('Cluster A', '2099-01-01', 'census-acs', 'housing_vacancy_rate')`);
     // Cluster A's newest valid release is 2025-01-30 (601 days, scorer-stale) even though Cluster B
     // has 2025-12-11: the feed reports the stalest cluster, matching the per-cluster scorer.
     expect(lastMarketSeriesAsOf(db, NOW)).toBe('2025-01-30');
-    db.exec("INSERT INTO market_series VALUES ('Cluster A', '2026-01-29', 'census-acs', 'vacancy_rate')");
+    db.exec("INSERT INTO market_series VALUES ('Cluster A', '2026-01-29', 'census-acs', 'housing_vacancy_rate')");
     expect(lastMarketSeriesAsOf(db, NOW)).toBe('2025-12-11');
+    db.close();
+  });
+
+  it('lastMarketSeriesAsOf: a legacy census vacancy_rate row (ignored by market-intel) never reads fresh', () => {
+    const db = new Database(':memory:');
+    db.exec(MARKET_DDL);
+    db.exec(`INSERT INTO market_series VALUES
+      ('Cluster A', '2025-01-30', 'census-acs', 'housing_vacancy_rate'),
+      ('Cluster A', '2026-09-12', 'census-acs', 'vacancy_rate')`);
+    expect(lastMarketSeriesAsOf(db, NOW)).toBe('2025-01-30');
     db.close();
   });
 
   it('lastMarketSeriesAsOf: census rows present but none valid throws (feed reads error)', () => {
     const db = new Database(':memory:');
     db.exec(MARKET_DDL);
-    db.exec("INSERT INTO market_series VALUES ('Cluster A', 'ACS 2024', 'census-acs', 'v'), ('Cluster A', '2026-09-01', 'comps-ai', 'c')");
+    db.exec("INSERT INTO market_series VALUES ('Cluster A', 'ACS 2024', 'census-acs', 'housing_vacancy_rate'), ('Cluster A', '2026-09-01', 'comps-ai', 'c')");
     expect(() => lastMarketSeriesAsOf(db, NOW)).toThrow(/none with a valid past as_of/);
     // One valid cluster does not mask another cluster whose rows are all invalid.
-    db.exec("INSERT INTO market_series VALUES ('Cluster B', '2026-01-29', 'census-acs', 'v')");
+    db.exec("INSERT INTO market_series VALUES ('Cluster B', '2026-01-29', 'census-acs', 'housing_vacancy_rate')");
     expect(() => lastMarketSeriesAsOf(db, NOW)).toThrow(/cluster Cluster A/);
     expect(readFeed(() => lastMarketSeriesAsOf(db, NOW))).toMatchObject({ error: expect.stringMatching(/census-acs/) });
     db.close();

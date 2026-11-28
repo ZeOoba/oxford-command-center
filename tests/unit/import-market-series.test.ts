@@ -41,7 +41,7 @@ function freshDb(markets: string[] = ['Alpha Metro']): WarehouseDb {
 }
 
 const census = (over: Record<string, unknown> = {}) => ({
-  cluster: 'Alpha Metro', as_of: '2026-06-30', source: 'census-acs', metric: 'vacancy_rate', value: 6.5, confidence: 1, ...over,
+  cluster: 'Alpha Metro', as_of: '2026-06-30', source: 'census-acs', metric: 'housing_vacancy_rate', value: 6.5, confidence: 1, ...over,
 });
 const comps = (over: Record<string, unknown> = {}) => ({
   cluster: 'Alpha Metro', as_of: '2026-10-01', source: 'comps-ai', metric: 'cap_rate', value: 7.25, confidence: 0.6, source_detail: 'n=4 sales', ...over,
@@ -52,7 +52,7 @@ describe('parseMarketSeriesPayload', () => {
     const { rows, rejected } = parseMarketSeriesPayload([census({ source_detail: '  ' }), comps()], TODAY);
     expect(rejected).toEqual([]);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ cluster: 'Alpha Metro', source: 'census-acs', metric: 'vacancy_rate', value: 6.5, sourceDetail: null });
+    expect(rows[0]).toMatchObject({ cluster: 'Alpha Metro', source: 'census-acs', metric: 'housing_vacancy_rate', value: 6.5, sourceDetail: null });
     expect(rows[1]).toMatchObject({ source: 'comps-ai', metric: 'cap_rate', value: 7.25, sourceDetail: 'n=4 sales' });
   });
 
@@ -85,7 +85,8 @@ describe('parseMarketSeriesPayload', () => {
     ['future as_of', census({ as_of: '2026-12-01' }), /in the future/],
     ['unknown source', census({ source: 'fred' }), /not one of/],
     ['metric not scored for the source', census({ metric: 'population' }), /would shadow/],
-    ['census source with the comps metric', census({ metric: 'cap_rate' }), /expected vacancy_rate/],
+    ['census source with the comps metric', census({ metric: 'cap_rate' }), /expected housing_vacancy_rate/],
+    ['census source with the legacy vacancy_rate metric', census({ metric: 'vacancy_rate' }), /expected housing_vacancy_rate/],
     ['non-numeric value', census({ value: '6.5' }), /not a finite number/],
     ['NaN value', census({ value: Number.NaN }), /not a finite number/],
     ['decimal-fraction vacancy', census({ value: 0.065 }), /decimal fraction/],
@@ -143,17 +144,20 @@ describe('cutover: buildMarketIntel reads the imported rows', () => {
     ],
   };
 
-  it('a fresh imported census row joins the composite; FRED alone before it', async () => {
+  it('a fresh imported census row is shown but never scored; comps joins the composite', async () => {
     const db = freshDb();
     const before = await buildMarketIntel(db, 'Alpha Metro', TODAY, macro as never);
     expect(before.confidence01).toBe(0.5); // FRED only
-    importMarketSeries(db, [census({ value: 5 }), comps({ value: 6 })], TODAY);
+    importMarketSeries(db, [census({ value: 5 })], TODAY);
+    const censusOnly = await buildMarketIntel(db, 'Alpha Metro', TODAY, macro as never);
+    expect(censusOnly.marketScore).toBe(before.marketScore); // housing vacancy is residential context only
+    expect(censusOnly.confidence01).toBe(0.5);
+    importMarketSeries(db, [comps({ value: 6 })], TODAY);
     const after = await buildMarketIntel(db, 'Alpha Metro', TODAY, macro as never);
     const src = Object.fromEntries(after.sources.map((s) => [s.source, s]));
-    expect(src['census-acs']!.stale).toBe(false);
-    expect(src['census-acs']!.value).toBe(5);
+    expect(src['census-acs']).toMatchObject({ stale: false, value: 5, metric: 'housing_vacancy_rate', confidence01: 0 });
     expect(src['comps-ai']!.stale).toBe(false);
-    expect(after.confidence01).toBe(1);
+    expect(after.confidence01).toBeCloseTo(0.7, 10);
     expect(after.marketScore).not.toBe(before.marketScore);
   });
 
@@ -165,7 +169,7 @@ describe('cutover: buildMarketIntel reads the imported rows', () => {
     expect(c.stale).toBe(true);
     expect(c.value).toBe(6.5);
     expect(s.confidence01).toBe(0.5);
-    expect(s.reasons.join(' ')).toMatch(/Census ACS data stale/);
+    expect(s.reasons.join(' ')).toMatch(/Census ACS housing vacancy stale/);
   });
 });
 
@@ -190,7 +194,7 @@ describe('fetchCensusVacancy', () => {
     expect(res.vintage).toBe(2024);
     expect(urls[0]).toContain('/data/2024/acs/acs5?get=NAME,B25002_001E,B25002_003E,B25004_006E');
     const byCluster = Object.fromEntries(res.payload.map((p) => [p.cluster, p]));
-    expect(byCluster['Alpha Metro']).toMatchObject({ as_of: '2026-01-29', source: 'census-acs', metric: 'vacancy_rate', value: 7 });
+    expect(byCluster['Alpha Metro']).toMatchObject({ as_of: '2026-01-29', source: 'census-acs', metric: 'housing_vacancy_rate', value: 7 });
     expect(byCluster['Alpha Metro']!.source_detail).toMatch(/period end 2024-12-31; as_of = public release 2026-01-29: test release note/);
     // (150 + (250-100)) / (3000 + (1100-100)): seasonal off both sides, pooled, not the mean of 5% and 15%
     expect(byCluster['Pooled Metro']!.value).toBe(7.5);
@@ -213,7 +217,7 @@ describe('fetchCensusVacancy', () => {
     await expect(fetchCensusVacancy(geos, 'k', fetchFn, 2024, undefined, '2024-06-01')).rejects.toThrow(/not after the 2024 period end/);
   });
 
-  it('the release-date row is fresh against the 400-day census budget, so census joins the composite', async () => {
+  it('the release-date row is fresh against the 400-day census budget, so it is shown (unscored)', async () => {
     const db = freshDb(['Alpha Metro']);
     const res = await fetchCensusVacancy(geos, 'k', async () => ok(body), 2024);
     importMarketSeries(db, res.payload, TODAY);
@@ -252,7 +256,7 @@ describe('readMarketSeriesXlsx', () => {
     ws.addRow(['Cluster', 'As_Of', 'Source', 'Metric', 'Value', 'Confidence', 'Source_Detail']);
     ws.addRow(['Alpha Metro', new Date(Date.UTC(2026, 9, 1)), 'comps-ai', 'cap_rate', 7.1, 0.5, 'broker survey']);
     ws.addRow([null, null, null, null, null, null, null]);
-    ws.addRow(['Alpha Metro', 46022, 'census-acs', 'vacancy_rate', '6.4', '1', null]); // 46022 = 2025-12-31
+    ws.addRow(['Alpha Metro', 46022, 'census-acs', 'housing_vacancy_rate', '6.4', '1', null]); // 46022 = 2025-12-31
     await wb.xlsx.writeFile(path);
 
     const payload = await readMarketSeriesXlsx(path);

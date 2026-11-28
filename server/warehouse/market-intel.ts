@@ -17,11 +17,6 @@ function fredScore(indicators: MacroIndicator[]): number | null {
   return Math.max(0, Math.min(100, score));
 }
 
-function censusScore(vacancyRatePct: number | null): number | null {
-  if (vacancyRatePct === null) return null;
-  return Math.max(0, Math.min(100, 100 - vacancyRatePct * 8));
-}
-
 function compsScore(capRatePct: number | null): number | null {
   if (capRatePct === null) return null;
   const cr = capRatePct;
@@ -36,6 +31,9 @@ function compsScore(capRatePct: number | null): number | null {
 // ── Staleness ─────────────────────────────────────────────────────────────────
 
 export const STALE_DAYS: Record<string, number> = { 'census-acs': 400, 'comps-ai': 90 };
+
+/** The one metric census-acs rows carry: ACS RESIDENTIAL housing vacancy, displayed, never scored. */
+export const CENSUS_HOUSING_METRIC = 'housing_vacancy_rate';
 
 function daysBetween(isoA: string, isoB: string): number {
   return Math.abs(new Date(isoB).getTime() - new Date(isoA).getTime()) / DAY_MS;
@@ -89,21 +87,21 @@ export async function buildMarketIntel(
     weight: 0.5,
   };
 
-  // ── Census ACS source ────────────────────────────────────────────────────
-  const censusRows = seriesRows.filter(r => r.source === 'census-acs');
+  // ── Census ACS source: RESIDENTIAL context, never scored ─────────────────
+  // ACS B25002/B25004 counts HOUSING units, so its vacancy says nothing about industrial space
+  // (2026-11-27 review, Gabriel): it is displayed under metric housing_vacancy_rate with confidence 0
+  // and is NOT in the composite below. Only rows under that metric are read; a legacy `vacancy_rate`
+  // census row (pre-migration 038) is ignored rather than shown under the residential label.
+  const censusRows = seriesRows.filter(r => r.source === 'census-acs' && r.metric === CENSUS_HOUSING_METRIC);
   const latestCensus = censusRows[0] as MarketSeriesRow | undefined;
   const censusStale = !latestCensus || daysBetween(latestCensus.as_of, asOf) > STALE_DAYS['census-acs']!;
-  const censusVal = censusStale ? null : (latestCensus?.metric === 'vacancy_rate' ? latestCensus.value : null);
-  const cScore = censusScore(censusVal);
   const censusSrc = {
     source: 'census-acs' as MarketSourceTag,
-    metric: 'vacancy_rate',
+    metric: CENSUS_HOUSING_METRIC,
     value: latestCensus?.value ?? null,
-    confidence01: cScore !== null && !censusStale ? 1.0 : 0,
+    confidence01: 0,
     asOf: latestCensus?.as_of ?? asOf,
     stale: censusStale,
-    score: censusStale ? null : cScore,
-    weight: 0.3,
   };
 
   // ── Comps-AI source ──────────────────────────────────────────────────────
@@ -123,9 +121,12 @@ export async function buildMarketIntel(
     weight: 0.2,
   };
 
-  // ── Composite ────────────────────────────────────────────────────────────
-  const allSrcs = [fredSrc, censusSrc, compsSrc];
-  const active = allSrcs.filter(s => !s.stale && s.score !== null);
+  // ── Composite (industrial inputs only: census housing vacancy is excluded) ─
+  // Weights are NOT renormalized to fill census's old 0.3: confidence01 tops out at 0.7 (FRED + comps)
+  // because no industrial vacancy input exists. The score itself is a weighted mean over active sources
+  // (FRED + comps: comps carries 0.2/0.7 = 2/7 of it).
+  const scoredSrcs = [fredSrc, compsSrc];
+  const active = scoredSrcs.filter(s => !s.stale && s.score !== null);
 
   let marketScore: number | null = null;
   let confidence01 = 0;
@@ -143,7 +144,10 @@ export async function buildMarketIntel(
   const reasons: string[] = [];
   if (marketScore !== null) reasons.push(`Market score ${marketScore}/100`);
   if (marketScore === null) reasons.push('Insufficient data — defaulting to maintain');
-  if (censusStale && latestCensus) reasons.push('Census ACS data stale (>400d)');
+  if (latestCensus && latestCensus.value !== null && !censusStale) {
+    reasons.push(`Census ACS housing vacancy ${latestCensus.value}% is residential context only, not scored`);
+  }
+  if (censusStale && latestCensus) reasons.push('Census ACS housing vacancy stale (>400d); residential, not scored');
   if (compsStale && latestComps)   reasons.push('Comps data stale (>90d)');
   if (macro.source === 'mock' || macro.source === 'seed') {
     reasons.push(`FRED rates are the seeded snapshot (as of ${macro.asOf}), not a live fetch`);
@@ -159,7 +163,7 @@ export async function buildMarketIntel(
     confidenceTier,
     advisoryOnly: true,
     oraPropertyCount: oraCount,
-    sources: allSrcs.map(s => ({
+    sources: [fredSrc, censusSrc, compsSrc].map(s => ({
       source: s.source,
       metric: s.metric,
       value: s.value,
